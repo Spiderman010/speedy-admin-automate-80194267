@@ -19,7 +19,136 @@ import { useClients } from "@/hooks/useClients";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
-import { Pencil, Trash2, Plus, RefreshCw } from "lucide-react";
+import { Pencil, Trash2, Plus, RefreshCw, User, LogOut } from "lucide-react";
+
+// ──── Tab 0: Profiel ────
+function ProfielTab() {
+  const { user } = useAuth();
+  const { data: settings, isLoading } = useAppSettings();
+  const saveMut = useSaveAppSetting();
+
+  const [naam, setNaam] = useState("");
+  const [bedrijf, setBedrijf] = useState("");
+  const [telefoon, setTelefoon] = useState("");
+  const [kvk, setKvk] = useState("");
+  const [btwnummer, setBtwnummer] = useState("");
+  const [nieuwWachtwoord, setNieuwWachtwoord] = useState("");
+  const [wachtwoordBevestig, setWachtwoordBevestig] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  useEffect(() => {
+    if (!settings) return;
+    const p = (settings as any).profiel || {};
+    if (p.naam) setNaam(p.naam);
+    if (p.bedrijf) setBedrijf(p.bedrijf);
+    if (p.telefoon) setTelefoon(p.telefoon);
+    if (p.kvk) setKvk(p.kvk);
+    if (p.btwnummer) setBtwnummer(p.btwnummer);
+  }, [settings]);
+
+  const handleSaveProfiel = () => {
+    saveMut.mutate(
+      { profiel: { naam, bedrijf, telefoon, kvk, btwnummer } } as any,
+      { onSuccess: () => toast({ title: "Profiel opgeslagen" }) }
+    );
+  };
+
+  const handleWachtwoordWijzigen = async () => {
+    if (!nieuwWachtwoord) return;
+    if (nieuwWachtwoord !== wachtwoordBevestig) {
+      toast({ title: "Wachtwoorden komen niet overeen", variant: "destructive" });
+      return;
+    }
+    if (nieuwWachtwoord.length < 6) {
+      toast({ title: "Wachtwoord moet minimaal 6 tekens zijn", variant: "destructive" });
+      return;
+    }
+    setSavingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: nieuwWachtwoord });
+    setSavingPassword(false);
+    if (error) {
+      toast({ title: "Fout bij wijzigen wachtwoord", description: error.message, variant: "destructive" });
+    } else {
+      toast({ title: "Wachtwoord gewijzigd" });
+      setNieuwWachtwoord("");
+      setWachtwoordBevestig("");
+    }
+  };
+
+  const handleUitloggen = async () => {
+    await supabase.auth.signOut();
+  };
+
+  if (isLoading) return <p className="text-muted-foreground">Laden...</p>;
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><User className="h-5 w-5" />Bedrijfsgegevens</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label>Naam</Label>
+              <Input value={naam} onChange={e => setNaam(e.target.value)} placeholder="Je volledige naam" />
+            </div>
+            <div className="space-y-1">
+              <Label>Bedrijfsnaam</Label>
+              <Input value={bedrijf} onChange={e => setBedrijf(e.target.value)} placeholder="Agio Finance" />
+            </div>
+            <div className="space-y-1">
+              <Label>E-mailadres</Label>
+              <Input value={user?.email || ""} disabled className="bg-muted" />
+              <p className="text-xs text-muted-foreground">E-mailadres kan niet worden gewijzigd</p>
+            </div>
+            <div className="space-y-1">
+              <Label>Telefoonnummer</Label>
+              <Input value={telefoon} onChange={e => setTelefoon(e.target.value)} placeholder="+31 6 00000000" />
+            </div>
+            <div className="space-y-1">
+              <Label>KVK nummer</Label>
+              <Input value={kvk} onChange={e => setKvk(e.target.value)} placeholder="12345678" />
+            </div>
+            <div className="space-y-1">
+              <Label>BTW nummer</Label>
+              <Input value={btwnummer} onChange={e => setBtwnummer(e.target.value)} placeholder="NL123456789B01" />
+            </div>
+          </div>
+          <Button onClick={handleSaveProfiel} disabled={saveMut.isPending}>Profiel opslaan</Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Wachtwoord wijzigen</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label>Nieuw wachtwoord</Label>
+              <Input type="password" value={nieuwWachtwoord} onChange={e => setNieuwWachtwoord(e.target.value)} placeholder="Minimaal 6 tekens" />
+            </div>
+            <div className="space-y-1">
+              <Label>Bevestig wachtwoord</Label>
+              <Input type="password" value={wachtwoordBevestig} onChange={e => setWachtwoordBevestig(e.target.value)} placeholder="Herhaal wachtwoord" />
+            </div>
+          </div>
+          <Button onClick={handleWachtwoordWijzigen} disabled={savingPassword || !nieuwWachtwoord}>
+            {savingPassword ? "Bezig..." : "Wachtwoord wijzigen"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Account</CardTitle></CardHeader>
+        <CardContent>
+          <Button variant="destructive" onClick={handleUitloggen} className="gap-2">
+            <LogOut className="h-4 w-4" />Uitloggen
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
 
 // ──── Tab 1: Matching ────
 function MatchingTab() {
@@ -546,14 +675,16 @@ export default function Instellingen() {
   return (
     <div className="space-y-6">
       <PageHeader title="Instellingen" description="Beheer je applicatie-instellingen" />
-      <Tabs defaultValue="matching">
-        <TabsList className="grid w-full grid-cols-5">
+      <Tabs defaultValue="profiel">
+        <TabsList className="grid w-full grid-cols-6">
+          <TabsTrigger value="profiel">Profiel</TabsTrigger>
           <TabsTrigger value="matching">Matching</TabsTrigger>
           <TabsTrigger value="herkenningsregels">Herkenningsregels</TabsTrigger>
           <TabsTrigger value="btw">BTW</TabsTrigger>
           <TabsTrigger value="grootboek">Grootboek standaarden</TabsTrigger>
           <TabsTrigger value="export">Export</TabsTrigger>
         </TabsList>
+        <TabsContent value="profiel"><ProfielTab /></TabsContent>
         <TabsContent value="matching"><MatchingTab /></TabsContent>
         <TabsContent value="herkenningsregels"><HerkenningsregelsTab /></TabsContent>
         <TabsContent value="btw"><BtwTab /></TabsContent>
