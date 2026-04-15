@@ -34,8 +34,11 @@ const formatCurrency = (amount: number | null) =>
 type SortField = "supplier" | "invoice_number" | "date" | "amount" | "btw" | "status";
 type SortDir = "asc" | "desc";
 
+import { useClientContext } from "@/hooks/useClientContext";
+
 export default function Facturen() {
-  const [clientFilter, setClientFilter] = useState<string>("all");
+  const { selectedClientId, setSelectedClientId } = useClientContext();
+  const [clientFilter, setClientFilter] = useState(selectedClientId);
   const [uploadClientId, setUploadClientId] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string[]>([]);
@@ -198,7 +201,7 @@ export default function Facturen() {
   return (
     <>
       <PageHeader title="Inkoopfacturen" description="Upload, verwerk en exporteer inkoopfacturen">
-        <Select value={clientFilter} onValueChange={setClientFilter}>
+        <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
           <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle klanten</SelectItem>

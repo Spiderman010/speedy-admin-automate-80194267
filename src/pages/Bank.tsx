@@ -36,9 +36,12 @@ const formatCurrency = (amount: number) =>
 type SortField = "date" | "amount" | "description" | "status";
 type SortDir = "asc" | "desc";
 
+import { useClientContext } from "@/hooks/useClientContext";
+
 export default function Bank() {
   const [searchParams] = useSearchParams();
-  const [clientFilter, setClientFilter] = useState(() => searchParams.get("client") ?? "all");
+  const { selectedClientId, setSelectedClientId } = useClientContext();
+  const [clientFilter, setClientFilter] = useState(() => searchParams.get("client") ?? selectedClientId);
   const [statusFilter, setStatusFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
@@ -396,7 +399,7 @@ export default function Bank() {
   return (
     <>
       <PageHeader title="Bankafschriften" description="Upload en match bankafschriften met facturen">
-        <Select value={clientFilter} onValueChange={setClientFilter}>
+        <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
           <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle klanten</SelectItem>
