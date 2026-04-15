@@ -652,6 +652,8 @@ export default function Bank() {
           toast({ title: "Transactie overgeslagen" });
         }}
       />
+
+      <BankStatementUploadDialog
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         clients={clients ?? []}
