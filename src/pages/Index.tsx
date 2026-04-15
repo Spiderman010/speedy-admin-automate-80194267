@@ -9,9 +9,11 @@ import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices } from "@/hooks/useSalesInvoices";
 import { useBankTransactions } from "@/hooks/useBankTransactions";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useClientContext } from "@/hooks/useClientContext";
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { setSelectedClientId } = useClientContext();
   const { data: clients, isLoading: loadingClients } = useClients();
   const { data: invoices, isLoading: loadingInvoices } = usePurchaseInvoices();
   const { data: salesInvoices, isLoading: loadingSales } = useSalesInvoices();
@@ -60,6 +62,11 @@ export default function Dashboard() {
 
   const isGoodStatus = (s: string) =>
     s === "gecontroleerd" || s === "geexporteerd" || s === "betaald" || s === "verzonden";
+
+  const handleClientClick = (clientId: string) => {
+    setSelectedClientId(clientId);
+    navigate(`/bank?client=${clientId}`);
+  };
 
   return (
     <>
@@ -138,7 +145,7 @@ export default function Dashboard() {
                     <div
                       key={client.id}
                       className="flex items-center justify-between cursor-pointer hover:bg-muted/50 rounded-md px-2 py-1 -mx-2"
-                      onClick={() => navigate(`/bank?client=${client.id}`)}
+                      onClick={() => handleClientClick(client.id)}
                     >
                       <div>
                         <p className="text-sm font-medium">{client.name}</p>
