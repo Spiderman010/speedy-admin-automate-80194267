@@ -14,6 +14,15 @@ import {
   LogOut,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { useClients } from "@/hooks/useClients";
+import { useClientContext } from "@/hooks/useClientContext";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -28,11 +37,15 @@ const navItems = [
 
 export function AppSidebar() {
   const navigate = useNavigate();
+  const { data: clients } = useClients();
+  const { selectedClientId, setSelectedClientId } = useClientContext();
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     navigate("/auth");
   };
+
+  const selectedClient = clients?.find(c => c.id === selectedClientId);
 
   return (
     <aside className="fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-sidebar text-sidebar-foreground">
@@ -43,6 +56,24 @@ export function AppSidebar() {
         <span className="font-display text-lg font-semibold text-sidebar-primary-foreground">
           BoekAssist
         </span>
+      </div>
+
+      {/* Klantenkiezer */}
+      <div className="px-3 py-3 border-b border-sidebar-border">
+        <p className="text-xs text-sidebar-foreground/50 mb-1.5 px-1">Actieve klant</p>
+        <Select value={selectedClientId} onValueChange={setSelectedClientId}>
+          <SelectTrigger className="w-full bg-sidebar-accent border-sidebar-border text-sidebar-foreground text-sm h-9">
+            <SelectValue placeholder="Kies een klant">
+              {selectedClientId === "all" ? "Alle klanten" : selectedClient?.name ?? "Kies een klant"}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Alle klanten</SelectItem>
+            {clients?.map(c => (
+              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <nav className="flex-1 space-y-1 px-3 py-4 overflow-y-auto">
