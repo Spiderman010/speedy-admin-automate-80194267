@@ -15,7 +15,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Search } from "lucide-react";
+import { Plus, Pencil, Trash2, Search, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   useGrootboekrekeningen,
@@ -120,6 +120,21 @@ export default function Grootboek() {
   return (
     <>
       <PageHeader title="Grootboekrekeningen" description="Beheer het globale rekeningschema">
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (confirm(`Dit importeert ${rekeningen && rekeningen.length > 0 ? "en overschrijft" : ""} alle standaard SnelStart rekeningen. Doorgaan?`)) {
+              seedRek.mutate(true as any, {
+                onSuccess: () => toast({ title: "190 grootboekrekeningen geïmporteerd ✅" }),
+                onError: (e: any) => toast({ title: "Fout bij importeren", description: e.message, variant: "destructive" }),
+              });
+            }
+          }}
+          disabled={seedRek.isPending}
+        >
+          <Download className="mr-2 h-4 w-4" />
+          {seedRek.isPending ? "Bezig..." : "Import standaard schema"}
+        </Button>
         <Button onClick={openNew}>
           <Plus className="mr-2 h-4 w-4" />Nieuwe grootboekrekening
         </Button>
