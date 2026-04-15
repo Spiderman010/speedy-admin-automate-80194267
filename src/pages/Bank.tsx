@@ -28,6 +28,7 @@ import { useBookingTemplates } from "@/hooks/useBookingTemplates";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
 import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
+import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 
 const formatCurrency = (amount: number) =>
@@ -48,6 +49,7 @@ export default function Bank() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
+  const [verwerkingOpen, setVerwerkingOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLedger, setBulkLedger] = useState("");
   const [bulkLedgerId, setBulkLedgerId] = useState("");
@@ -415,7 +417,9 @@ export default function Bank() {
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
-        <Button onClick={() => setUploadOpen(true)}>
+        <Button variant="outline" onClick={() => setVerwerkingOpen(true)} disabled={!transactions?.some(t => t.match_status === "niet_gematcht")}>
+          ⚡ Verwerken ({transactions?.filter(t => t.match_status === "niet_gematcht").length ?? 0})
+        </Button>
           <Upload className="mr-2 h-4 w-4" />Upload afschrift
         </Button>
       </PageHeader>
@@ -615,7 +619,38 @@ export default function Bank() {
         </div>
       )}
 
-      <BankStatementUploadDialog
+      <VerwerkingsScherm
+        open={verwerkingOpen}
+        onOpenChange={setVerwerkingOpen}
+        transactions={transactions?.filter(t => clientFilter === "all" || t.client_id === clientFilter) ?? []}
+        purchaseInvoices={invoices ?? []}
+        salesInvoices={salesInvs ?? []}
+        onBookPrivate={async (id) => {
+          await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: undefined });
+          toast({ title: "Privé geboekt" });
+          refetch();
+        }}
+        onBookLedger={async (id, ledgerText, ledgerId) => {
+          await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: ledgerId || undefined });
+          toast({ title: `Geboekt: ${ledgerText}` });
+          refetch();
+        }}
+        onMatchInvoice={async (id, invoiceId, invoiceType) => {
+          await updateTx.mutateAsync({ id, match_status: "gematcht", matched_invoice_id: invoiceId, match_confidence: 100 });
+          if (invoiceType === "inkoop") {
+            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald" });
+          } else {
+            await updateSales.mutateAsync({ id: invoiceId, status: "betaald" });
+          }
+          toast({ title: "Factuur gekoppeld" });
+          refetch();
+          refetchPurchase();
+          refetchSales();
+        }}
+        onSkip={(id) => {
+          toast({ title: "Transactie overgeslagen" });
+        }}
+      />
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         clients={clients ?? []}
