@@ -319,13 +319,13 @@ export function useSeedGrootboekrekeningen() {
         ...a,
       }));
 
-      // Insert in batches of 50
+      // Insert in batches of 50, skip duplicates
       for (let i = 0; i < rows.length; i += 50) {
         const batch = rows.slice(i, i + 50);
         const { error } = await supabase
           .from("grootboekrekeningen")
-          .upsert(batch, { onConflict: "nummer,user_id" });
-        if (error) throw error;
+          .insert(batch);
+        if (error && !error.message.includes("duplicate")) throw error;
       }
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["grootboekrekeningen"] }),
