@@ -1,0 +1,2 @@
+ALTER TABLE public.bank_transactions DROP CONSTRAINT bank_transactions_match_status_check;
+ALTER TABLE public.bank_transactions ADD CONSTRAINT bank_transactions_match_status_check CHECK (match_status = ANY (ARRAY['niet_gematcht'::text, 'suggestie'::text, 'gematcht'::text, 'handmatig_geboekt'::text]));

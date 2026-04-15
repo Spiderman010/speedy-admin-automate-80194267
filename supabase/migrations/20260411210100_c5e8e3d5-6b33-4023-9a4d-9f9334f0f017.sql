@@ -1,0 +1,1 @@
+ALTER TABLE public.clients ADD COLUMN btw_vrijgesteld boolean NOT NULL DEFAULT false;

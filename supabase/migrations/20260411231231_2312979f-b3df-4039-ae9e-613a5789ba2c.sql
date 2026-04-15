@@ -1,0 +1,2 @@
+ALTER TABLE public.sales_invoices DROP CONSTRAINT sales_invoices_status_check;
+ALTER TABLE public.sales_invoices ADD CONSTRAINT sales_invoices_status_check CHECK (status = ANY (ARRAY['concept'::text, 'gecontroleerd'::text, 'verzonden'::text, 'betaald'::text]));
