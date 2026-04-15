@@ -16,6 +16,7 @@ import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, AlertTriangle,
 import { parseBankStatementFull, detectDuplicates, type ParsedTransaction, type DuplicateInfo } from "@/lib/bank-statement-parser";
 import type { Tables } from "@/integrations/supabase/types";
 import type { BookingTemplate } from "@/hooks/useBookingTemplates";
+import { useClientContext } from "@/hooks/useClientContext";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type BankTransaction = Tables<"bank_transactions">;
@@ -152,7 +153,8 @@ function invoiceLabel(inv: PurchaseInvoice) {
 }
 
 export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, onImport, existingTransactions, bookingTemplates = [] }: Props) {
-  const [clientId, setClientId] = useState("");
+  const { selectedClientId } = useClientContext();
+  const [clientId, setClientId] = useState(selectedClientId !== "all" ? selectedClientId : "");
   const [parsed, setParsed] = useState<MatchedTransaction[] | null>(null);
   const [duplicateInfos, setDuplicateInfos] = useState<DuplicateInfo[]>([]);
   const [selected, setSelected] = useState<boolean[]>([]);
