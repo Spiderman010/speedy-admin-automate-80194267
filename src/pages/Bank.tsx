@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
@@ -84,6 +84,9 @@ export default function Bank() {
 
   const suggested = suggestionIds.size;
   const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0) - suggested;
+
+  // Alle openstaande transacties (niet_gematcht + suggesties) voor de verwerkingsknop
+  const openCount = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -246,8 +249,6 @@ export default function Bank() {
     }
   }, [updateTx, toast]);
 
-  
-
   const handleBulkBook = useCallback(async () => {
     if (selectedIds.size === 0 || !bulkLedger) return;
     
@@ -319,39 +320,30 @@ export default function Bank() {
           } else {
             await updateSales.mutateAsync({ id: best.id, status: "betaald" });
           }
-        } else if (best.isPartialPayment && best.remainingAmount != null) {
-          if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, amount_incl: best.remainingAmount });
-          } else {
-            await updateSales.mutateAsync({ id: best.id, amount_incl: best.remainingAmount });
-          }
         }
-
         confirmed++;
       } catch (e: any) {
-        console.error("Bulk confirm error:", e);
         errors.push(e.message || "Onbekende fout");
       }
     }
 
     setSelectedIds(new Set());
     await refetch();
-    refetchPurchase();
-    refetchSales();
+    await refetchPurchase();
+    await refetchSales();
 
-    const parts: string[] = [];
-    if (confirmed > 0) parts.push(`${confirmed} bevestigd`);
-    if (skipped > 0) parts.push(`${skipped} overgeslagen (geen suggestie)`);
-    if (errors.length > 0) parts.push(`${errors.length} mislukt`);
-
-    toast({
-      title: `Suggesties verwerkt`,
-      description: parts.join(", "),
-      variant: errors.length > 0 && confirmed === 0 ? "destructive" : undefined,
-    });
+    if (confirmed > 0) {
+      toast({ title: `${confirmed} suggestie(s) bevestigd` });
+    }
+    if (skipped > 0) {
+      toast({ title: `${skipped} transactie(s) overgeslagen (geen suggestie)` });
+    }
+    if (errors.length > 0) {
+      toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
+    }
   }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
 
-  const handleImport = useCallback(async (clientId: string, txs: MatchedTransaction[]) => {
+  const handleImport = useCallback(async (txs: MatchedTransaction[], clientId: string) => {
     let success = 0;
     for (const tx of txs) {
       try {
@@ -417,15 +409,20 @@ export default function Bank() {
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
-        <Button variant="outline" onClick={() => setVerwerkingOpen(true)} disabled={!transactions?.some(t => t.match_status === "niet_gematcht")}>
-          ⚡ Verwerken ({transactions?.filter(t => t.match_status === "niet_gematcht").length ?? 0})
+        <Button
+          variant="default"
+          onClick={() => setVerwerkingOpen(true)}
+          disabled={openCount === 0}
+        >
+          <Zap className="mr-2 h-4 w-4" />
+          Verwerken {openCount > 0 && `(${openCount})`}
         </Button>
         <Button onClick={() => setUploadOpen(true)}>
           <Upload className="mr-2 h-4 w-4" />Upload afschrift
         </Button>
       </PageHeader>
 
-      <div className="grid gap-4 sm:grid-cols-3 mb-6">
+      <div className="grid gap-4 sm:grid-cols-4 mb-6">
         <Card><CardContent className="flex items-center gap-3 p-4">
           <CheckCircle2 className="h-5 w-5 text-success" />
           <div><p className="font-display text-xl font-bold">{matched}</p><p className="text-xs text-muted-foreground">Gematcht</p></div>
@@ -433,6 +430,10 @@ export default function Bank() {
         <Card><CardContent className="flex items-center gap-3 p-4">
           <Link2 className="h-5 w-5 text-warning" />
           <div><p className="font-display text-xl font-bold">{suggested}</p><p className="text-xs text-muted-foreground">Suggesties</p></div>
+        </CardContent></Card>
+        <Card><CardContent className="flex items-center gap-3 p-4">
+          <Download className="h-5 w-5 text-muted-foreground" />
+          <div><p className="font-display text-xl font-bold">{transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
         </CardContent></Card>
         <Card><CardContent className="flex items-center gap-3 p-4">
           <HelpCircle className="h-5 w-5 text-destructive" />
