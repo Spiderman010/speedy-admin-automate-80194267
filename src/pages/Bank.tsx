@@ -420,6 +420,7 @@ export default function Bank() {
         <Button variant="outline" onClick={() => setVerwerkingOpen(true)} disabled={!transactions?.some(t => t.match_status === "niet_gematcht")}>
           ⚡ Verwerken ({transactions?.filter(t => t.match_status === "niet_gematcht").length ?? 0})
         </Button>
+        <Button onClick={() => setUploadOpen(true)}>
           <Upload className="mr-2 h-4 w-4" />Upload afschrift
         </Button>
       </PageHeader>
