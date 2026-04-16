@@ -12,12 +12,11 @@ import { CheckCircle2, RefreshCw } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { getInvoiceRemainingAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
 
 type BankTransaction = Tables<"bank_transactions">;
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type SalesInvoice = Tables<"sales_invoices">;
-
-const CLOSED_STATUSES = ["betaald", "geëxporteerd"];
 
 export interface InvoiceCandidate {
   id: string;
@@ -59,8 +58,8 @@ export function rankCandidates(
   const searchText = `${txDesc} ${txRef} ${(parsed.reference || "").toLowerCase()}`;
 
   for (const inv of purchases) {
-    if (CLOSED_STATUSES.includes(inv.status)) continue;
-    const invoiceAmount = inv.amount_incl ?? inv.amount_excl;
+    if (isClosedInvoiceStatus(inv.status)) continue;
+    const invoiceAmount = getInvoiceRemainingAmount(inv);
     const absInvoiceAmount = invoiceAmount != null ? Math.abs(invoiceAmount) : null;
 
     let score = 0;
@@ -116,8 +115,8 @@ export function rankCandidates(
   }
 
   for (const inv of sales) {
-    if (CLOSED_STATUSES.includes(inv.status)) continue;
-    const invoiceAmount = inv.amount_incl ?? inv.amount_excl;
+    if (isClosedInvoiceStatus(inv.status)) continue;
+    const invoiceAmount = getInvoiceRemainingAmount(inv);
     const absInvoiceAmount = invoiceAmount != null ? Math.abs(invoiceAmount) : null;
 
     let score = 0;
@@ -143,7 +142,7 @@ export function rankCandidates(
 
     // Invoice number in description/reference
     const invNum = inv.invoice_number.toLowerCase();
-    if (searchText.includes(invNum)) {
+    if (invNum && searchText.includes(invNum)) {
       score += 50;
       reasons.push("Factuurnr gevonden");
     }

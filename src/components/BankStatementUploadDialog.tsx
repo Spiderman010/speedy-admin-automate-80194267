@@ -17,6 +17,7 @@ import { parseBankStatementFull, detectDuplicates, type ParsedTransaction, type 
 import type { Tables } from "@/integrations/supabase/types";
 import type { BookingTemplate } from "@/hooks/useBookingTemplates";
 import { useClientContext } from "@/hooks/useClientContext";
+import { getInvoiceRemainingAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type BankTransaction = Tables<"bank_transactions">;
@@ -50,10 +51,13 @@ function autoMatch(
     let bestScore = 0;
 
     for (const inv of invoices) {
+      if (isClosedInvoiceStatus(inv.status)) continue;
+
+      const remainingAmount = getInvoiceRemainingAmount(inv);
       let score = 0;
-      if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 0.02) {
+      if (remainingAmount != null && Math.abs(Math.abs(tx.amount) - remainingAmount) < 0.02) {
         score += 60;
-      } else if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 1) {
+      } else if (remainingAmount != null && Math.abs(Math.abs(tx.amount) - remainingAmount) < 1) {
         score += 30;
       }
       if (inv.invoice_number && tx.description) {

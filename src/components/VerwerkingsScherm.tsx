@@ -6,10 +6,14 @@ import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { X, ChevronRight, ChevronLeft, Home, Briefcase, FileText, SkipForward, CheckCircle2 } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
+import { getInvoiceRemainingAmount, getInvoiceTotalAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
 
 type BankTransaction = Tables<"bank_transactions">;
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type SalesInvoice = Tables<"sales_invoices">;
+
+const isActionableTransaction = (matchStatus: string) =>
+  matchStatus === "niet_gematcht" || matchStatus === "suggestie";
 
 interface Props {
   open: boolean;
@@ -49,7 +53,7 @@ export function VerwerkingsScherm({
 
   const openTransactions = useMemo(() =>
     transactions.filter(t =>
-      t.match_status === "niet_gematcht" && !skipped.has(t.id)
+      isActionableTransaction(t.match_status) && !skipped.has(t.id)
     ), [transactions, skipped]);
 
   const total = openTransactions.length;
@@ -104,10 +108,10 @@ export function VerwerkingsScherm({
       ...salesInvoices.filter(i => i.client_id === current.client_id).map(i => ({ ...i, type: "verkoop" as const })),
     ];
     return allInvoices
-      .filter(i => i.status !== "betaald" && i.status !== "geexporteerd")
+      .filter(i => !isClosedInvoiceStatus(i.status))
       .sort((a, b) => {
-        const diffA = Math.abs(Math.abs(a.amount_incl ?? 0) - txAmount);
-        const diffB = Math.abs(Math.abs(b.amount_incl ?? 0) - txAmount);
+        const diffA = Math.abs(Math.abs(getInvoiceRemainingAmount(a) ?? 0) - txAmount);
+        const diffB = Math.abs(Math.abs(getInvoiceRemainingAmount(b) ?? 0) - txAmount);
         return diffA - diffB;
       })
       .slice(0, 8);
@@ -234,30 +238,38 @@ export function VerwerkingsScherm({
                 {candidateInvoices.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Geen openstaande facturen gevonden.</p>
                 ) : (
-                  candidateInvoices.map(inv => (
-                    <button
-                      key={inv.id}
-                      className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                      onClick={async () => {
-                        setLoading(true);
-                        await onMatchInvoice(current.id, inv.id, inv.type);
-                        setLoading(false);
-                        goNext();
-                      }}
-                      disabled={loading}
-                    >
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="text-sm font-medium">{inv.type === "inkoop" ? (inv as any).supplier : (inv as any).customer_name}</p>
-                          <p className="text-xs text-muted-foreground">{(inv as any).invoice_number || "Geen nummer"}</p>
+                  candidateInvoices.map(inv => {
+                    const remainingAmount = getInvoiceRemainingAmount(inv);
+                    const totalAmount = getInvoiceTotalAmount(inv);
+
+                    return (
+                      <button
+                        key={inv.id}
+                        className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                        onClick={async () => {
+                          setLoading(true);
+                          await onMatchInvoice(current.id, inv.id, inv.type);
+                          setLoading(false);
+                          goNext();
+                        }}
+                        disabled={loading}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="text-sm font-medium">{inv.type === "inkoop" ? (inv as any).supplier : (inv as any).customer_name}</p>
+                            <p className="text-xs text-muted-foreground">{(inv as any).invoice_number || "Geen nummer"}</p>
+                            {remainingAmount != null && totalAmount != null && remainingAmount !== totalAmount && (
+                              <p className="text-xs text-muted-foreground">Openstaand: {formatCurrency(remainingAmount)} van {formatCurrency(totalAmount)}</p>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-mono font-medium">{formatCurrency(remainingAmount ?? totalAmount ?? 0)}</p>
+                            <Badge variant="outline" className="text-[10px]">{inv.type}</Badge>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-sm font-mono font-medium">{formatCurrency(inv.amount_incl ?? 0)}</p>
-                          <Badge variant="outline" className="text-[10px]">{inv.type}</Badge>
-                        </div>
-                      </div>
-                    </button>
-                  ))
+                      </button>
+                    );
+                  })
                 )}
               </div>
               <Button variant="outline" onClick={() => setMode("main")} className="w-full">

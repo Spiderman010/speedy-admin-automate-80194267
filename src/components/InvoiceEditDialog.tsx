@@ -13,6 +13,7 @@ import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw } from "lucide-
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 
@@ -138,17 +139,24 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const hasFile = !!invoice.file_path;
   const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
 
-  const buildUpdates = (): Partial<PurchaseInvoice> => ({
-    supplier: form.supplier,
-    invoice_number: form.invoice_number || null,
-    invoice_date: form.invoice_date || null,
-    amount_excl: form.amount_excl ? parseFloat(form.amount_excl) : null,
-    amount_incl: form.amount_incl ? parseFloat(form.amount_incl) : null,
-    btw_amount: form.btw_amount ? parseFloat(form.btw_amount) : null,
-    btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
-    ledger_account_text: form.ledger_account_text || null,
-    notes: form.notes || null,
-  });
+  const buildUpdates = (): Partial<PurchaseInvoice> => {
+    const amountExcl = form.amount_excl ? parseFloat(form.amount_excl) : null;
+    const amountIncl = form.amount_incl ? parseFloat(form.amount_incl) : null;
+    const nextTotal = amountIncl ?? amountExcl;
+
+    return {
+      supplier: form.supplier,
+      invoice_number: form.invoice_number || null,
+      invoice_date: form.invoice_date || null,
+      amount_excl: amountExcl,
+      amount_incl: amountIncl,
+      btw_amount: form.btw_amount ? parseFloat(form.btw_amount) : null,
+      btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
+      ledger_account_text: form.ledger_account_text || null,
+      notes: form.notes || null,
+      remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
+    };
+  };
 
   const handleSave = async () => {
     setSaving(true);

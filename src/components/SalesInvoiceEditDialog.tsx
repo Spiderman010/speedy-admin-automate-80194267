@@ -15,6 +15,7 @@ import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, Check, Chevron
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
+import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 
 type SalesInvoice = Tables<"sales_invoices">;
 
@@ -207,18 +208,23 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
 
   const buildUpdates = (): Partial<SalesInvoice> => {
     const isVerlegd = form.btw_percentage === "verlegd";
+    const amountExcl = form.amount_excl ? parseFloat(form.amount_excl) : null;
+    const amountIncl = form.amount_incl ? parseFloat(form.amount_incl) : null;
+    const nextTotal = amountIncl ?? amountExcl;
+
     return {
       customer_name: form.customer_name,
       invoice_number: form.invoice_number,
       invoice_date: form.invoice_date || undefined,
       due_date: form.due_date || null,
-      amount_excl: form.amount_excl ? parseFloat(form.amount_excl) : null,
-      amount_incl: form.amount_incl ? parseFloat(form.amount_incl) : null,
+      amount_excl: amountExcl,
+      amount_incl: amountIncl,
       btw_amount: isVerlegd ? 0 : (form.btw_amount ? parseFloat(form.btw_amount) : null),
       btw_percentage: isVerlegd ? 0 : (form.btw_percentage ? parseFloat(form.btw_percentage) : null),
       btw_verlegd: isVerlegd,
       ledger_account_text: form.ledger_account_text || null,
       notes: form.notes || null,
+      remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
     } as any;
   };
 

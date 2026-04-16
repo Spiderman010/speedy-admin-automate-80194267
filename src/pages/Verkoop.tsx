@@ -124,6 +124,7 @@ export default function Verkoop() {
       btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
       btw_amount: form.btw_amount ? parseFloat(form.btw_amount) : null,
       amount_incl: form.amount_incl ? parseFloat(form.amount_incl) : null,
+      remaining_amount: form.amount_incl ? parseFloat(form.amount_incl) : form.amount_excl ? parseFloat(form.amount_excl) : null,
       notes: form.notes || null,
       pdf_path: pdfPath,
     });

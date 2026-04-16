@@ -27,9 +27,10 @@ export function useAddPurchaseInvoice() {
   return useMutation({
     mutationFn: async (invoice: Omit<PurchaseInvoiceInsert, "user_id">) => {
       if (!user) throw new Error("Not authenticated");
+      const remainingAmount = invoice.remaining_amount ?? invoice.amount_incl ?? invoice.amount_excl ?? null;
       const { data, error } = await supabase
         .from("purchase_invoices")
-        .insert({ ...invoice, user_id: user.id })
+        .insert({ ...invoice, user_id: user.id, remaining_amount: remainingAmount })
         .select()
         .single();
       if (error) throw error;

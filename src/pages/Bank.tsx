@@ -30,6 +30,7 @@ import { BankStatementUploadDialog, type MatchedTransaction } from "@/components
 import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
+import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -38,6 +39,9 @@ type SortField = "date" | "amount" | "description" | "status";
 type SortDir = "asc" | "desc";
 
 import { useClientContext } from "@/hooks/useClientContext";
+
+const isOpenTransactionStatus = (matchStatus: string) =>
+  matchStatus === "niet_gematcht" || matchStatus === "suggestie";
 
 export default function Bank() {
   const [searchParams] = useSearchParams();
@@ -70,9 +74,16 @@ export default function Bank() {
 
   // Compute which niet_gematcht transactions have candidate matches (= suggestions)
   const suggestionIds = useMemo(() => {
-    if (!transactions || !invoices || !salesInvs) return new Set<string>();
     const ids = new Set<string>();
+    if (!transactions) return ids;
+
     for (const t of transactions) {
+      if (t.match_status === "suggestie") {
+        ids.add(t.id);
+        continue;
+      }
+
+      if (!invoices || !salesInvs) continue;
       if (t.match_status !== "niet_gematcht") continue;
       const candidates = rankCandidates(t, invoices, salesInvs);
       if (candidates.some(c => c.score > 0)) {
@@ -83,10 +94,11 @@ export default function Bank() {
   }, [transactions, invoices, salesInvs]);
 
   const suggested = suggestionIds.size;
-  const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0) - suggested;
+  const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0)
+    - (transactions?.filter((t) => t.match_status === "niet_gematcht" && suggestionIds.has(t.id)).length ?? 0);
 
   // Alle openstaande transacties (niet_gematcht + suggesties) voor de verwerkingsknop
-  const openCount = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0);
+  const openCount = transactions?.filter((t) => isOpenTransactionStatus(t.match_status)).length ?? 0;
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -139,7 +151,7 @@ export default function Bank() {
     return result;
   }, [transactions, statusFilter, searchQuery, sortField, sortDir]);
 
-  const openTransactions = filteredSorted.filter((t) => t.match_status !== "gematcht");
+  const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
 
   const handleConfirm = async (id: string) => {
     try {
@@ -168,17 +180,16 @@ export default function Bank() {
 
       if (exactMatch && !isPartialPayment) {
         if (invoiceType === "inkoop") {
-          await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald" });
+          await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
         } else {
-          await updateSales.mutateAsync({ id: invoiceId, status: "betaald" });
+          await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
         }
         toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
       } else if (isPartialPayment && remainingAmount != null) {
-        // Update invoice amount to remaining
         if (invoiceType === "inkoop") {
-          await updatePurchase.mutateAsync({ id: invoiceId, amount_incl: remainingAmount });
+          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
         } else {
-          await updateSales.mutateAsync({ id: invoiceId, amount_incl: remainingAmount });
+          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
         }
         toast({ title: "Deelbetaling gekoppeld", description: `Resterend: ${formatCurrency(remainingAmount)}` });
       } else {
@@ -203,27 +214,25 @@ export default function Bank() {
         match_confidence: null,
       });
 
-      // Restore invoice amount if it was a partial payment
       if (invoiceId) {
-        // Try to find in purchases first, then sales
         const purchaseInv = invoices?.find(i => i.id === invoiceId);
         const salesInv = salesInvs?.find(i => i.id === invoiceId);
 
         if (purchaseInv) {
-          const currentAmount = purchaseInv.amount_incl ?? 0;
-          // If invoice is betaald, set back to gecontroleerd; if partial, restore amount
+          const totalAmount = getInvoiceTotalAmount(purchaseInv);
+          const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
           if (purchaseInv.status === "betaald") {
-            await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd" });
-          } else {
-            // Partial payment — restore the original amount
-            await updatePurchase.mutateAsync({ id: invoiceId, amount_incl: currentAmount + txAmount });
+            await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+          } else if (totalAmount != null) {
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
           }
         } else if (salesInv) {
+          const totalAmount = getInvoiceTotalAmount(salesInv);
+          const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
           if (salesInv.status === "betaald") {
-            await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd" });
-          } else {
-            const currentAmount = salesInv.amount_incl ?? 0;
-            await updateSales.mutateAsync({ id: invoiceId, amount_incl: currentAmount + txAmount });
+            await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+          } else if (totalAmount != null) {
+            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
           }
         }
       }
@@ -316,9 +325,15 @@ export default function Bank() {
 
         if (exactMatch && !best.isPartialPayment) {
           if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, status: "betaald" });
+            await updatePurchase.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
           } else {
-            await updateSales.mutateAsync({ id: best.id, status: "betaald" });
+            await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+          }
+        } else if (best.isPartialPayment && best.remainingAmount != null) {
+          if (best.type === "inkoop") {
+            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: best.remainingAmount });
+          } else {
+            await updateSales.mutateAsync({ id: best.id, remaining_amount: best.remainingAmount });
           }
         }
         confirmed++;
@@ -490,7 +505,8 @@ export default function Bank() {
               </TableHeader>
               <TableBody>
                 {filteredSorted.map((t) => {
-                  const isOpen = t.match_status !== "gematcht";
+                  const isOpen = isOpenTransactionStatus(t.match_status);
+                  const isSuggestion = suggestionIds.has(t.id);
                   return (
                     <TableRow key={t.id}>
                       <TableCell>
@@ -525,8 +541,36 @@ export default function Bank() {
                           })()}
                         </div>
                       </TableCell>
-                      <TableCell className={`text-right font-mono ${t.amount < 0 ? "text-destructive" : "text-success"}`}>
-                        {formatCurrency(t.amount)}
+                      <TableCell className="text-right">
+                        <span className={`font-mono ${t.amount < 0 ? "text-destructive" : "text-success"}`}>
+                          {formatCurrency(t.amount)}
+                        </span>
+                        {t.matched_invoice_id && (() => {
+                          const inv =
+                            invoices?.find(i => i.id === t.matched_invoice_id) ??
+                            salesInvs?.find(i => i.id === t.matched_invoice_id);
+                          if (!inv) return null;
+                          const total = getInvoiceTotalAmount(inv);
+                          const remaining = getInvoiceRemainingAmount(inv);
+                          if (total == null) return null;
+                          const fullyPaid = remaining != null && Math.abs(remaining) < 0.01;
+                          return (
+                            <div className="mt-0.5 space-y-0.5">
+                              {fullyPaid ? (
+                                <p className="text-xs text-success">Volledig betaald</p>
+                              ) : (
+                                <>
+                                  <p className="text-xs text-muted-foreground">
+                                    Betaald: {formatCurrency(total - (remaining ?? total))}
+                                  </p>
+                                  <p className="text-xs text-warning font-medium">
+                                    Openstaand: {formatCurrency(remaining ?? total)}
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>
                         {t.match_confidence != null ? (
@@ -542,12 +586,12 @@ export default function Bank() {
                         <Badge variant={
                           t.match_status === "gematcht" ? "default" 
                           : t.match_status === "handmatig_geboekt" ? "secondary"
-                          : suggestionIds.has(t.id) ? "secondary" 
+                          : isSuggestion ? "secondary" 
                           : "destructive"
                         }>
                           {t.match_status === "gematcht" ? "Gematcht" 
                            : t.match_status === "handmatig_geboekt" ? "Handmatig geboekt"
-                           : suggestionIds.has(t.id) ? "Suggestie" 
+                           : isSuggestion ? "Suggestie" 
                            : "Open"}
                         </Badge>
                       </TableCell>
@@ -640,9 +684,9 @@ export default function Bank() {
         onMatchInvoice={async (id, invoiceId, invoiceType) => {
           await updateTx.mutateAsync({ id, match_status: "gematcht", matched_invoice_id: invoiceId, match_confidence: 100 });
           if (invoiceType === "inkoop") {
-            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald" });
+            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
           } else {
-            await updateSales.mutateAsync({ id: invoiceId, status: "betaald" });
+            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
           }
           toast({ title: "Factuur gekoppeld" });
           refetch();

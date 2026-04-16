@@ -409,6 +409,7 @@ export type Database = {
           ledger_account_text: string | null
           notes: string | null
           ocr_data: Json | null
+          remaining_amount: number | null
           status: string
           supplier: string
           updated_at: string
@@ -430,6 +431,7 @@ export type Database = {
           ledger_account_text?: string | null
           notes?: string | null
           ocr_data?: Json | null
+          remaining_amount?: number | null
           status?: string
           supplier: string
           updated_at?: string
@@ -451,6 +453,7 @@ export type Database = {
           ledger_account_text?: string | null
           notes?: string | null
           ocr_data?: Json | null
+          remaining_amount?: number | null
           status?: string
           supplier?: string
           updated_at?: string
@@ -497,6 +500,7 @@ export type Database = {
           ledger_account_text: string | null
           notes: string | null
           pdf_path: string | null
+          remaining_amount: number | null
           status: string
           updated_at: string
           user_id: string
@@ -517,6 +521,7 @@ export type Database = {
           ledger_account_text?: string | null
           notes?: string | null
           pdf_path?: string | null
+          remaining_amount?: number | null
           status?: string
           updated_at?: string
           user_id: string
@@ -537,6 +542,7 @@ export type Database = {
           ledger_account_text?: string | null
           notes?: string | null
           pdf_path?: string | null
+          remaining_amount?: number | null
           status?: string
           updated_at?: string
           user_id?: string

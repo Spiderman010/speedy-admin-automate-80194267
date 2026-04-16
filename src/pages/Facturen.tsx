@@ -25,6 +25,7 @@ import type { Tables } from "@/integrations/supabase/types";
 const statusConfig = {
   te_controleren: { label: "Te controleren", icon: Clock, variant: "secondary" as const },
   gecontroleerd: { label: "Gecontroleerd", icon: CheckCircle2, variant: "default" as const },
+  betaald: { label: "Betaald", icon: CheckCircle2, variant: "default" as const },
   geexporteerd: { label: "Geëxporteerd", icon: Download, variant: "outline" as const },
 };
 
@@ -209,8 +210,8 @@ export default function Facturen() {
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={() => {
-          const exportable = invoices?.filter(i => i.status === "gecontroleerd") ?? [];
-          if (!exportable.length) { toast({ title: "Geen gecontroleerde facturen om te exporteren", variant: "destructive" }); return; }
+          const exportable = invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [];
+          if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
           const ids = exportPurchaseInvoicesCSV(exportable, clientName);
           ids.forEach(id => updateInvoice.mutateAsync({ id, status: "geexporteerd" }));

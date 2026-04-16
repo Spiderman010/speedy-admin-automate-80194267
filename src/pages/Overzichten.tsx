@@ -52,7 +52,7 @@ export default function Overzichten() {
     try {
       await exportAllForClient(
         clientName,
-        invoices?.filter(i => i.status === "gecontroleerd") ?? [],
+        invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [],
         entries ?? [],
         transactions?.filter(t => t.match_status === "gematcht") ?? [],
       );

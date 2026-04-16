@@ -211,6 +211,7 @@ serve(async (req) => {
         btw_amount: extracted.btw_amount || null,
         amount_incl: extracted.amount_incl || null,
         btw_percentage: extracted.btw_percentage || null,
+        remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? null,
         file_path: filePath,
         ocr_data: extracted,
         status: "te_controleren",
