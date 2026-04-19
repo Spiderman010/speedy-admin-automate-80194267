@@ -301,8 +301,8 @@ export function useSeedGrootboekrekeningen() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: async (force = false) => {
+  return useMutation<void, Error, boolean | undefined>({
+    mutationFn: async (force) => {
       if (!user) throw new Error("Niet ingelogd");
       if (!force) {
         const { count } = await supabase
