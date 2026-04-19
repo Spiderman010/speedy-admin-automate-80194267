@@ -1,723 +1,507 @@
-import { useState, useCallback, useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
-import { GrootboekCombobox } from "@/components/GrootboekCombobox";
-
-import { PageHeader } from "@/components/PageHeader";
+import { useState, useCallback, useRef } from "react";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Input } from "@/components/ui/input";
-import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
-import { useToast } from "@/hooks/use-toast";
-import { useBankTransactions, useAddBankTransaction, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
-import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
-import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
-import { exportBankTransactionsCSV } from "@/lib/snelstart-export";
-import { useClients } from "@/hooks/useClients";
-import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
-import { useBookingTemplates } from "@/hooks/useBookingTemplates";
-import { Skeleton } from "@/components/ui/skeleton";
-import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
-import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
-import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, AlertTriangle, Copy } from "lucide-react";
+import { parseBankStatementFull, detectDuplicates, type ParsedTransaction, type DuplicateInfo } from "@/lib/bank-statement-parser";
 import type { Tables } from "@/integrations/supabase/types";
-import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
+import type { BookingTemplate } from "@/hooks/useBookingTemplates";
+
+type PurchaseInvoice = Tables<"purchase_invoices">;
+type BankTransaction = Tables<"bank_transactions">;
+
+interface Props {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  clients: { id: string; name: string; ibans?: string[] | null }[];
+  invoices: PurchaseInvoice[];
+  onImport: (clientId: string, transactions: MatchedTransaction[]) => Promise<void>;
+  existingTransactions?: BankTransaction[];
+  bookingTemplates?: BookingTemplate[];
+}
+
+export interface MatchedTransaction extends ParsedTransaction {
+  matchedInvoiceId: string | null;
+  matchConfidence: number | null;
+  matchStatus: "gematcht" | "suggestie" | "niet_gematcht" | "handmatig_geboekt";
+  matchedInvoiceLabel: string | null;
+  grootboekrekeningId?: string | null;
+  grootboekText?: string | null;
+  templateName?: string | null;
+}
+
+function autoMatch(
+  transactions: ParsedTransaction[],
+  invoices: PurchaseInvoice[]
+): MatchedTransaction[] {
+  return transactions.map((tx) => {
+    let bestMatch: PurchaseInvoice | null = null;
+    let bestScore = 0;
+
+    for (const inv of invoices) {
+      let score = 0;
+      if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 0.02) {
+        score += 60;
+      } else if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 1) {
+        score += 30;
+      }
+      if (inv.invoice_number && tx.description) {
+        const invNum = inv.invoice_number.toLowerCase().replace(/\s/g, "");
+        const desc = tx.description.toLowerCase().replace(/\s/g, "");
+        if (desc.includes(invNum)) score += 30;
+      }
+      if (inv.invoice_number && tx.reference) {
+        const invNum = inv.invoice_number.toLowerCase().replace(/\s/g, "");
+        const ref = tx.reference.toLowerCase().replace(/\s/g, "");
+        if (ref.includes(invNum)) score += 25;
+      }
+      if (inv.supplier && tx.description) {
+        const supplier = inv.supplier.toLowerCase();
+        const desc = tx.description.toLowerCase();
+        if (desc.includes(supplier)) score += 20;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = inv;
+      }
+    }
+
+    const isMatch = bestScore >= 70;
+    const isSuggestion = bestScore >= 40 && bestScore < 70;
+
+    return {
+      ...tx,
+      matchedInvoiceId: isMatch || isSuggestion ? bestMatch!.id : null,
+      matchConfidence: bestScore > 0 ? Math.min(bestScore, 100) : null,
+      matchStatus: isMatch ? "gematcht" : isSuggestion ? "suggestie" : "niet_gematcht",
+      matchedInvoiceLabel: isMatch || isSuggestion
+        ? `${bestMatch!.supplier} - ${bestMatch!.invoice_number || "?"}`
+        : null,
+    };
+  });
+}
+
+// Pas herkenningsregels toe op transacties die nog niet gematcht zijn
+function applyTemplates(
+  transactions: MatchedTransaction[],
+  templates: BookingTemplate[],
+  clientId: string
+): MatchedTransaction[] {
+  const activeTemplates = templates
+    .filter(t => t.actief && t.zoekterm)
+    .filter(t => !t.client_id_filter || t.client_id_filter === clientId)
+    .sort((a, b) => (b.prioriteit ?? 0) - (a.prioriteit ?? 0));
+
+  if (!activeTemplates.length) return transactions;
+
+  return transactions.map(tx => {
+    // Factuurmatches niet overschrijven
+    if (tx.matchStatus === "gematcht") return tx;
+
+    const desc = (tx.description || "").toLowerCase();
+    const ref = (tx.reference || "").toLowerCase();
+    const counter = (tx.counterAccount || "").toLowerCase();
+
+    for (const template of activeTemplates) {
+      const zoekterm = (template.zoekterm || "").toLowerCase();
+      const zoekIn = template.zoek_in || "alles";
+
+      let found = false;
+      if (zoekIn === "alles" || zoekIn === "omschrijving") {
+        if (desc.includes(zoekterm)) found = true;
+      }
+      if (zoekIn === "alles" || zoekIn === "referentie") {
+        if (ref.includes(zoekterm)) found = true;
+      }
+      if (zoekIn === "alles" || zoekIn === "naam") {
+        if (counter.includes(zoekterm)) found = true;
+      }
+
+      if (found) {
+        return {
+          ...tx,
+          matchStatus: "handmatig_geboekt" as const,
+          matchConfidence: 100,
+          grootboekrekeningId: template.ledger_account_id ?? null,
+          grootboekText: template.ledger_account_text ?? null,
+          templateName: template.zoekterm || template.name,
+        };
+      }
+    }
+
+    return tx;
+  });
+}
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
 
-type SortField = "date" | "amount" | "description" | "status";
-type SortDir = "asc" | "desc";
+function invoiceLabel(inv: PurchaseInvoice) {
+  const amt = inv.amount_incl != null ? ` (€${inv.amount_incl.toFixed(2)})` : "";
+  return `${inv.supplier} - ${inv.invoice_number || "?"}${amt}`;
+}
 
-import { useClientContext } from "@/hooks/useClientContext";
+export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, onImport, existingTransactions, bookingTemplates = [] }: Props) {
+  const [clientId, setClientId] = useState("");
+  const [parsed, setParsed] = useState<MatchedTransaction[] | null>(null);
+  const [duplicateInfos, setDuplicateInfos] = useState<DuplicateInfo[]>([]);
+  const [selected, setSelected] = useState<boolean[]>([]);
+  const [openingBalance, setOpeningBalance] = useState<number | null>(null);
+  const [closingBalance, setClosingBalance] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-const isOpenTransactionStatus = (matchStatus: string) =>
-  matchStatus === "niet_gematcht" || matchStatus === "suggestie";
+  // IBAN mismatch warning state
+  const [ibanWarning, setIbanWarning] = useState<{ fileIban: string; clientName: string } | null>(null);
+  const [pendingFileText, setPendingFileText] = useState<string | null>(null);
 
-export default function Bank() {
-  const [searchParams] = useSearchParams();
-  const { selectedClientId, setSelectedClientId } = useClientContext();
-  const [clientFilter, setClientFilter] = useState(() => searchParams.get("client") ?? selectedClientId);
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortField, setSortField] = useState<SortField>("date");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [uploadOpen, setUploadOpen] = useState(false);
-  const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
-  const [verwerkingOpen, setVerwerkingOpen] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkLedger, setBulkLedger] = useState("");
-  const [bulkLedgerId, setBulkLedgerId] = useState("");
-  const { toast } = useToast();
-
-  const { data: clients } = useClients();
-  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
-  const { data: bookingTemplates } = useBookingTemplates();
-  const { data: transactions, isLoading, refetch } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
-  const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices();
-  const { data: salesInvs, refetch: refetchSales } = useSalesInvoices();
-  const addTx = useAddBankTransaction();
-  const updateTx = useUpdateBankTransaction();
-  const updatePurchase = useUpdatePurchaseInvoice();
-  const updateSales = useUpdateSalesInvoice();
-
-  const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
-
-  // Compute which niet_gematcht transactions have candidate matches (= suggestions)
-  const suggestionIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (!transactions) return ids;
-
-    for (const t of transactions) {
-      if (t.match_status === "suggestie") {
-        ids.add(t.id);
-        continue;
-      }
-
-      if (!invoices || !salesInvs) continue;
-      if (t.match_status !== "niet_gematcht") continue;
-      const candidates = rankCandidates(t, invoices, salesInvs);
-      if (candidates.some(c => c.score > 0)) {
-        ids.add(t.id);
-      }
+  const processFile = useCallback((text: string) => {
+    const statement = parseBankStatementFull(text);
+    if (!statement.transactions.length) {
+      setError("Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
+      return;
     }
-    return ids;
-  }, [transactions, invoices, salesInvs]);
 
-  const suggested = suggestionIds.size;
-  const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0)
-    - (transactions?.filter((t) => t.match_status === "niet_gematcht" && suggestionIds.has(t.id)).length ?? 0);
+    setOpeningBalance(statement.openingBalance);
+    setClosingBalance(statement.closingBalance);
 
-  // Alle openstaande transacties (niet_gematcht + suggesties) voor de verwerkingsknop
-  const openCount = transactions?.filter((t) => isOpenTransactionStatus(t.match_status)).length ?? 0;
+    const matched = autoMatch(statement.transactions, invoices);
+    const withTemplates = applyTemplates(matched, bookingTemplates, clientId);
+    setParsed(withTemplates);
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(d => d === "asc" ? "desc" : "asc");
+    const dupInfos = detectDuplicates(
+      statement.transactions,
+      (existingTransactions ?? []).map(t => ({
+        transaction_date: t.transaction_date,
+        amount: t.amount,
+        description: t.description,
+        counter_account: t.counter_account,
+        reference: t.reference,
+      }))
+    );
+    setDuplicateInfos(dupInfos);
+    setSelected(dupInfos.map(d => !d.isDuplicate));
+  }, [invoices, existingTransactions]);
+
+  const handleFile = useCallback(async (file: File) => {
+    setError(null);
+    try {
+      const text = await file.text();
+      const statement = parseBankStatementFull(text);
+
+      // Check IBAN match
+      if (statement.accountIban && clientId) {
+        const client = clients.find(c => c.id === clientId);
+        const clientIbans = (client?.ibans || []).map(i => i.replace(/\s/g, "").toUpperCase());
+        const fileIban = statement.accountIban.replace(/\s/g, "").toUpperCase();
+
+        if (clientIbans.length > 0 && !clientIbans.includes(fileIban)) {
+          setIbanWarning({ fileIban: statement.accountIban, clientName: client?.name || "" });
+          setPendingFileText(text);
+          return;
+        }
+      }
+
+      processFile(text);
+    } catch (e: any) {
+      setError(`Fout bij verwerken: ${e.message}`);
+    }
+  }, [invoices, existingTransactions, clientId, clients, processFile]);
+
+  const updateMatch = (index: number, invoiceId: string | null) => {
+    if (!parsed) return;
+    const updated = [...parsed];
+    if (!invoiceId) {
+      updated[index] = {
+        ...updated[index],
+        matchedInvoiceId: null,
+        matchConfidence: null,
+        matchStatus: "niet_gematcht",
+        matchedInvoiceLabel: null,
+      };
     } else {
-      setSortField(field);
-      setSortDir(field === "date" ? "desc" : "asc");
+      const inv = invoices.find(i => i.id === invoiceId);
+      updated[index] = {
+        ...updated[index],
+        matchedInvoiceId: invoiceId,
+        matchConfidence: 100,
+        matchStatus: "gematcht",
+        matchedInvoiceLabel: inv ? invoiceLabel(inv) : null,
+      };
     }
+    setParsed(updated);
   };
 
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return null;
-    return sortDir === "asc" ? <ArrowUp className="h-3 w-3 inline ml-1" /> : <ArrowDown className="h-3 w-3 inline ml-1" />;
-  };
-
-  const filteredSorted = useMemo(() => {
-    if (!transactions) return [];
-    let result = [...transactions];
-
-    // Status filter
-    if (statusFilter === "open") result = result.filter(t => t.match_status === "niet_gematcht" || t.match_status === "suggestie");
-    else if (statusFilter === "gematcht") result = result.filter(t => t.match_status === "gematcht");
-    else if (statusFilter === "handmatig") result = result.filter(t => t.match_status === "handmatig_geboekt");
-
-    // Search
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(t => {
-        const desc = (t.description || "").toLowerCase();
-        const ref = (t.reference || "").toLowerCase();
-        const counter = (t.counter_account || "").toLowerCase();
-        const parsed = parseMT940Description(t.description);
-        const name = (parsed.name || "").toLowerCase();
-        return desc.includes(q) || ref.includes(q) || counter.includes(q) || name.includes(q);
-      });
-    }
-
-    // Sort
-    result.sort((a, b) => {
-      const dir = sortDir === "asc" ? 1 : -1;
-      switch (sortField) {
-        case "date": return dir * (new Date(a.transaction_date).getTime() - new Date(b.transaction_date).getTime());
-        case "amount": return dir * (a.amount - b.amount);
-        case "description": return dir * (a.description || "").localeCompare(b.description || "", "nl");
-        case "status": return dir * a.match_status.localeCompare(b.match_status, "nl");
-        default: return 0;
-      }
-    });
-
-    return result;
-  }, [transactions, statusFilter, searchQuery, sortField, sortDir]);
-
-  const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
-
-  const handleConfirm = async (id: string) => {
-    try {
-      await updateTx.mutateAsync({ id, match_status: "gematcht" });
-      toast({ title: "Transactie bevestigd" });
-    } catch (e: any) {
-      toast({ title: "Fout", description: e.message, variant: "destructive" });
-    }
-  };
-
-  const handleMatch = useCallback(async (
-    transactionId: string,
-    invoiceId: string,
-    invoiceType: "inkoop" | "verkoop",
-    exactMatch: boolean,
-    isPartialPayment: boolean,
-    remainingAmount: number | null
-  ) => {
-    try {
-      await updateTx.mutateAsync({
-        id: transactionId,
-        match_status: "gematcht",
-        matched_invoice_id: invoiceId,
-        match_confidence: exactMatch ? 100 : isPartialPayment ? 60 : 80,
-      });
-
-      if (exactMatch && !isPartialPayment) {
-        if (invoiceType === "inkoop") {
-          await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-        } else {
-          await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-        }
-        toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
-      } else if (isPartialPayment && remainingAmount != null) {
-        if (invoiceType === "inkoop") {
-          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
-        } else {
-          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
-        }
-        toast({ title: "Deelbetaling gekoppeld", description: `Resterend: ${formatCurrency(remainingAmount)}` });
-      } else {
-        toast({ title: "Transactie gekoppeld" });
-      }
-
-      setMatchTx(null);
-    } catch (e: any) {
-      toast({ title: "Fout bij koppelen", description: e.message, variant: "destructive" });
-    }
-  }, [updateTx, updatePurchase, updateSales, toast]);
-
-  const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
-    try {
-      const invoiceId = tx.matched_invoice_id;
-      const txAmount = Math.abs(tx.amount);
-
-      await updateTx.mutateAsync({
-        id: tx.id,
-        match_status: "niet_gematcht",
-        matched_invoice_id: null,
-        match_confidence: null,
-      });
-
-      if (invoiceId) {
-        const purchaseInv = invoices?.find(i => i.id === invoiceId);
-        const salesInv = salesInvs?.find(i => i.id === invoiceId);
-
-        if (purchaseInv) {
-          const totalAmount = getInvoiceTotalAmount(purchaseInv);
-          const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
-          if (purchaseInv.status === "betaald") {
-            await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-          } else if (totalAmount != null) {
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-          }
-        } else if (salesInv) {
-          const totalAmount = getInvoiceTotalAmount(salesInv);
-          const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
-          if (salesInv.status === "betaald") {
-            await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-          } else if (totalAmount != null) {
-            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-          }
-        }
-      }
-
-      toast({ title: "Koppeling verwijderd", description: "Transactie is weer open." });
-    } catch (e: any) {
-      toast({ title: "Fout bij ontkoppelen", description: e.message, variant: "destructive" });
-    }
-  }, [updateTx, updatePurchase, updateSales, invoices, salesInvs, toast]);
-
-  const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => {
-    try {
-      await updateTx.mutateAsync({
-        id: transactionId,
-        match_status: "handmatig_geboekt",
-        description: description || undefined,
-        grootboekrekening_id: grootboekrekeningId || undefined,
-      });
-      toast({ title: "Transactie geboekt", description: `Grootboek: ${ledgerAccount}` });
-      setMatchTx(null);
-    } catch (e: any) {
-      toast({ title: "Fout bij boeken", description: e.message, variant: "destructive" });
-    }
-  }, [updateTx, toast]);
-
-  const handleBulkBook = useCallback(async () => {
-    if (selectedIds.size === 0 || !bulkLedger) return;
-    
-    const ids = Array.from(selectedIds);
-    let success = 0;
-    const errors: string[] = [];
-    
-    for (const id of ids) {
-      try {
-        await updateTx.mutateAsync({
-          id,
-          match_status: "handmatig_geboekt",
-          grootboekrekening_id: bulkLedgerId || undefined,
-        });
-        success++;
-      } catch (e: any) {
-        console.error("Bulk boeken error:", e);
-        errors.push(e.message || "Onbekende fout");
-      }
-    }
-    
-    setSelectedIds(new Set());
-    setBulkLedger("");
-    setBulkLedgerId("");
-    await refetch();
-    
-    if (success > 0) {
-      toast({ title: `${success} transactie(s) geboekt naar ${bulkLedger}` });
-    }
-    if (errors.length > 0) {
-      toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
-    }
-  }, [selectedIds, bulkLedger, updateTx, toast, refetch]);
-
-  const handleBulkConfirmSuggestions = useCallback(async () => {
-    if (selectedIds.size === 0 || !transactions || !invoices || !salesInvs) return;
-
-    let confirmed = 0;
-    let skipped = 0;
-    const errors: string[] = [];
-
-    for (const id of Array.from(selectedIds)) {
-      const tx = transactions.find(t => t.id === id);
-      if (!tx || !suggestionIds.has(tx.id)) {
-        skipped++;
-        continue;
-      }
-
-      const candidates = rankCandidates(tx, invoices, salesInvs);
-      const best = candidates.find(c => c.score > 0);
-      if (!best) {
-        skipped++;
-        continue;
-      }
-
-      const exactMatch = best.reasons.includes("Exact bedrag") || best.reasons.includes("Bedrag ≈ gelijk (≤€0,50)");
-
-      try {
-        await updateTx.mutateAsync({
-          id: tx.id,
-          match_status: "gematcht",
-          matched_invoice_id: best.id,
-          match_confidence: exactMatch && !best.isPartialPayment ? 100 : best.isPartialPayment ? 60 : 80,
-        });
-
-        if (exactMatch && !best.isPartialPayment) {
-          if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
-          }
-        } else if (best.isPartialPayment && best.remainingAmount != null) {
-          if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: best.remainingAmount });
-          } else {
-            await updateSales.mutateAsync({ id: best.id, remaining_amount: best.remainingAmount });
-          }
-        }
-        confirmed++;
-      } catch (e: any) {
-        errors.push(e.message || "Onbekende fout");
-      }
-    }
-
-    setSelectedIds(new Set());
-    await refetch();
-    await refetchPurchase();
-    await refetchSales();
-
-    if (confirmed > 0) {
-      toast({ title: `${confirmed} suggestie(s) bevestigd` });
-    }
-    if (skipped > 0) {
-      toast({ title: `${skipped} transactie(s) overgeslagen (geen suggestie)` });
-    }
-    if (errors.length > 0) {
-      toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
-    }
-  }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
-
-  const handleImport = useCallback(async (txs: MatchedTransaction[], clientId: string) => {
-    let success = 0;
-    for (const tx of txs) {
-      try {
-        await addTx.mutateAsync({
-          client_id: clientId,
-          transaction_date: tx.date,
-          amount: tx.amount,
-          description: tx.description,
-          counter_account: tx.counterAccount,
-          reference: tx.reference,
-          match_status: tx.matchStatus,
-          match_confidence: tx.matchConfidence,
-          matched_invoice_id: tx.matchedInvoiceId,
-          grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
-        });
-        success++;
-      } catch (e: any) {
-        console.error("Import error:", e);
-      }
-    }
-    toast({ title: `${success} van ${txs.length} transacties geïmporteerd` });
-  }, [addTx, toast]);
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const toggleSelected = (index: number) => {
+    setSelected(prev => {
+      const next = [...prev];
+      next[index] = !next[index];
       return next;
     });
   };
 
-  const toggleSelectAll = () => {
-    if (selectedIds.size === openTransactions.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(openTransactions.map(t => t.id)));
-    }
+  const handleImport = async () => {
+    if (!clientId || !parsed) return;
+    const toImport = parsed.filter((_, i) => selected[i]);
+    if (!toImport.length) return;
+    setImporting(true);
+    await onImport(clientId, toImport);
+    setImporting(false);
+    setParsed(null);
+    setDuplicateInfos([]);
+    setSelected([]);
+    setOpeningBalance(null);
+    setClosingBalance(null);
+    onOpenChange(false);
   };
 
-  const handleRefreshMatching = useCallback(() => {
-    refetch();
-    refetchPurchase();
-    refetchSales();
-  }, [refetch, refetchPurchase, refetchSales]);
+  const selectedCount = selected.filter(Boolean).length;
+  const matchedCount = parsed?.filter((t, i) => selected[i] && t.matchStatus === "gematcht").length ?? 0;
+  const suggestedCount = parsed?.filter((t, i) => selected[i] && t.matchStatus === "suggestie").length ?? 0;
+  const templateCount = parsed?.filter((t, i) => selected[i] && t.matchStatus === "handmatig_geboekt").length ?? 0;
+  const duplicateCount = duplicateInfos.filter(d => d.isDuplicate).length;
+
+  // Balance check
+  const balanceCheck = (() => {
+    if (openingBalance === null || closingBalance === null || !parsed) return null;
+    const sum = parsed.reduce((acc, tx) => acc + tx.amount, 0);
+    const diff = Math.abs(openingBalance + sum - closingBalance);
+    return diff <= 0.01;
+  })();
 
   return (
     <>
-      <PageHeader title="Bankafschriften" description="Upload en match bankafschriften met facturen">
-        <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle klanten</SelectItem>
-            {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Button variant="outline" onClick={() => {
-          const matched_txs = transactions?.filter(t => t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") ?? [];
-          if (!matched_txs.length) { toast({ title: "Geen verwerkte transacties om te exporteren", variant: "destructive" }); return; }
-          const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-          exportBankTransactionsCSV(matched_txs, grootboekrekeningen ?? [], clientName);
-          toast({ title: `${matched_txs.length} transacties geëxporteerd` });
-        }}>
-          <Download className="mr-2 h-4 w-4" />Export Snelstart
-        </Button>
-        <Button
-          variant="default"
-          onClick={() => setVerwerkingOpen(true)}
-          disabled={openCount === 0}
-        >
-          <Zap className="mr-2 h-4 w-4" />
-          Verwerken {openCount > 0 && `(${openCount})`}
-        </Button>
-        <Button onClick={() => setUploadOpen(true)}>
-          <Upload className="mr-2 h-4 w-4" />Upload afschrift
-        </Button>
-      </PageHeader>
+    <Dialog open={open} onOpenChange={(o) => {
+      if (!o) {
+        setParsed(null);
+        setDuplicateInfos([]);
+        setSelected([]);
+        setOpeningBalance(null);
+        setClosingBalance(null);
+      }
+      onOpenChange(o);
+    }}>
+      <DialogContent className="sm:max-w-4xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Bankafschrift importeren</DialogTitle>
+        </DialogHeader>
 
-      <div className="grid gap-4 sm:grid-cols-4 mb-6">
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <CheckCircle2 className="h-5 w-5 text-success" />
-          <div><p className="font-display text-xl font-bold">{matched}</p><p className="text-xs text-muted-foreground">Gematcht</p></div>
-        </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <Link2 className="h-5 w-5 text-warning" />
-          <div><p className="font-display text-xl font-bold">{suggested}</p><p className="text-xs text-muted-foreground">Suggesties</p></div>
-        </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <Download className="h-5 w-5 text-muted-foreground" />
-          <div><p className="font-display text-xl font-bold">{transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
-        </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <HelpCircle className="h-5 w-5 text-destructive" />
-          <div><p className="font-display text-xl font-bold">{unmatched}</p><p className="text-xs text-muted-foreground">Niet gematcht</p></div>
-        </CardContent></Card>
-      </div>
-
-      <div className="flex gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Zoeken op omschrijving, naam, referentie, tegenrekening..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle statussen</SelectItem>
-            <SelectItem value="open">Open</SelectItem>
-            <SelectItem value="gematcht">Gematcht</SelectItem>
-            <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <Card>
-        <CardContent className="p-6">
-          {isLoading ? (
-            <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : !filteredSorted.length ? (
-            <div className="py-12 text-center text-muted-foreground">
-              {transactions?.length ? "Geen transacties gevonden met deze filters." : "Nog geen transacties. Upload een bankafschrift om te beginnen."}
+        {!parsed ? (
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-2 block">Klant selecteren *</label>
+              <Select value={clientId} onValueChange={setClientId}>
+                <SelectTrigger className="w-64"><SelectValue placeholder="Kies klant" /></SelectTrigger>
+                <SelectContent>
+                  {clients.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={openTransactions.length > 0 && selectedIds.size === openTransactions.length}
-                      onCheckedChange={toggleSelectAll}
-                    />
-                  </TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort("date")}>Datum<SortIcon field="date" /></TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort("description")}>Omschrijving<SortIcon field="description" /></TableHead>
-                  <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
-                  <TableHead>Betrouwbaarheid</TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort("status")}>Status<SortIcon field="status" /></TableHead>
-                  <TableHead className="w-32"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredSorted.map((t) => {
-                  const isOpen = isOpenTransactionStatus(t.match_status);
-                  const isSuggestion = suggestionIds.has(t.id);
-                  return (
-                    <TableRow key={t.id}>
-                      <TableCell>
-                        {isOpen ? (
-                          <Checkbox
-                            checked={selectedIds.has(t.id)}
-                            onCheckedChange={() => toggleSelect(t.id)}
-                          />
-                        ) : null}
-                      </TableCell>
-                      <TableCell>{new Date(t.transaction_date).toLocaleDateString("nl-NL")}</TableCell>
-                      <TableCell className="max-w-xs">
-                        <div className="flex items-center gap-1">
-                          <span className="truncate">{getDisplayDescription(t.description)}</span>
-                          {t.description && (() => {
-                            const p = parseMT940Description(t.description);
-                            return (p.name || p.iban || p.reference) ? (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0 cursor-help" />
-                                  </TooltipTrigger>
-                                  <TooltipContent side="bottom" align="start" className="max-w-sm text-xs space-y-1">
-                                    {p.name && <div><span className="text-muted-foreground">Naam:</span> {p.name}</div>}
-                                    {p.iban && <div><span className="text-muted-foreground">Tegenrekening:</span> {p.iban}</div>}
-                                    {p.reference && <div><span className="text-muted-foreground">Referentie:</span> {p.reference}</div>}
-                                    <div className="pt-1 border-t text-muted-foreground break-all">{p.raw}</div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            ) : null;
-                          })()}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className={`font-mono ${t.amount < 0 ? "text-destructive" : "text-success"}`}>
-                          {formatCurrency(t.amount)}
-                        </span>
-                        {t.matched_invoice_id && (() => {
-                          const inv =
-                            invoices?.find(i => i.id === t.matched_invoice_id) ??
-                            salesInvs?.find(i => i.id === t.matched_invoice_id);
-                          if (!inv) return null;
-                          const total = getInvoiceTotalAmount(inv);
-                          const remaining = getInvoiceRemainingAmount(inv);
-                          if (total == null) return null;
-                          const fullyPaid = remaining != null && Math.abs(remaining) < 0.01;
-                          return (
-                            <div className="mt-0.5 space-y-0.5">
-                              {fullyPaid ? (
-                                <p className="text-xs text-success">Volledig betaald</p>
-                              ) : (
-                                <>
-                                  <p className="text-xs text-muted-foreground">
-                                    Betaald: {formatCurrency(total - (remaining ?? total))}
-                                  </p>
-                                  <p className="text-xs text-warning font-medium">
-                                    Openstaand: {formatCurrency(remaining ?? total)}
-                                  </p>
-                                </>
+
+            <div
+              className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 transition-colors border-border"
+              style={{ opacity: clientId ? 1 : 0.5, pointerEvents: clientId ? "auto" : "none" }}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) handleFile(file); }}
+            >
+              <Upload className="h-8 w-8 text-primary mb-3" />
+              <h3 className="font-display text-lg font-semibold">Sleep een MT940 of CAMT.053 bestand hierheen</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Of klik om een bestand te selecteren</p>
+              <input ref={fileRef} type="file" accept=".sta,.mt940,.940,.txt,.xml,.csv" className="hidden"
+                onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ""; }} />
+              <Button className="mt-4" onClick={() => fileRef.current?.click()} disabled={!clientId}>
+                <FileText className="mr-2 h-4 w-4" />Bestand selecteren
+              </Button>
+            </div>
+
+            {error && (
+              <div className="flex items-center gap-2 text-destructive text-sm">
+                <AlertCircle className="h-4 w-4" />{error}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {/* Balance display */}
+            {(openingBalance !== null || closingBalance !== null) && (
+              <div className="flex flex-wrap items-center gap-4 rounded-lg border p-3 bg-muted/30">
+                {openingBalance !== null && (
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">Beginsaldo: </span>
+                    <span className="font-mono font-semibold">{formatCurrency(openingBalance)}</span>
+                  </div>
+                )}
+                {closingBalance !== null && (
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">Eindsaldo: </span>
+                    <span className="font-mono font-semibold">{formatCurrency(closingBalance)}</span>
+                  </div>
+                )}
+                {balanceCheck !== null && (
+                  <div className={`flex items-center gap-1.5 text-sm font-medium ml-auto ${balanceCheck ? "text-green-600" : "text-destructive"}`}>
+                    {balanceCheck ? (
+                      <><CheckCircle2 className="h-4 w-4" />Saldo-controle OK</>
+                    ) : (
+                      <><AlertTriangle className="h-4 w-4" />Saldo-controle verschil!</>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Summary badges */}
+            <div className="flex gap-3 flex-wrap">
+              <Badge variant="default" className="gap-1"><CheckCircle2 className="h-3 w-3" />{matchedCount} gematcht</Badge>
+              <Badge variant="secondary">{suggestedCount} suggesties</Badge>
+              {templateCount > 0 && (
+                <Badge variant="secondary" className="gap-1 bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                  ⚡ {templateCount} via herkenningsregel
+                </Badge>
+              )}
+              <Badge variant="outline">{(parsed?.length ?? 0) - matchedCount - suggestedCount - templateCount} onbekend</Badge>
+              {duplicateCount > 0 && (
+                <Badge variant="destructive" className="gap-1"><Copy className="h-3 w-3" />{duplicateCount} duplicaten</Badge>
+              )}
+              <span className="text-sm text-muted-foreground ml-auto">{selectedCount} van {parsed.length} geselecteerd</span>
+            </div>
+
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10"></TableHead>
+                      <TableHead>Datum</TableHead>
+                      <TableHead>Omschrijving</TableHead>
+                      <TableHead className="text-right">Bedrag</TableHead>
+                      <TableHead>Factuur koppelen</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {parsed.map((tx, i) => {
+                      const dup = duplicateInfos[i];
+                      return (
+                        <TableRow key={i} className={dup?.isDuplicate ? "opacity-60" : ""}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selected[i] ?? false}
+                              onCheckedChange={() => toggleSelected(i)}
+                            />
+                          </TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">{tx.date.split("-").reverse().join("-")}</TableCell>
+                          <TableCell className="text-sm max-w-[200px] truncate">{tx.description}</TableCell>
+                          <TableCell className={`text-right font-mono text-sm whitespace-nowrap ${tx.amount < 0 ? "text-destructive" : "text-green-600"}`}>
+                            {formatCurrency(tx.amount)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-1">
+                              <Select
+                                value={tx.matchedInvoiceId || "none"}
+                                onValueChange={(val) => updateMatch(i, val === "none" ? null : val)}
+                              >
+                                <SelectTrigger className={`w-[220px] h-8 text-xs ${
+                                  tx.matchStatus === "gematcht" ? "border-green-500 bg-green-50 dark:bg-green-950/20" :
+                                  tx.matchStatus === "suggestie" ? "border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20" : ""
+                                }`}>
+                                  <SelectValue placeholder="— Geen match —" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">— Geen match —</SelectItem>
+                                  {invoices.map(inv => (
+                                    <SelectItem key={inv.id} value={inv.id}>
+                                      {invoiceLabel(inv)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {tx.matchedInvoiceId && (
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => updateMatch(i, null)}>
+                                  <X className="h-3 w-3" />
+                                </Button>
                               )}
                             </div>
-                          );
-                        })()}
-                      </TableCell>
-                      <TableCell>
-                        {t.match_confidence != null ? (
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-16 rounded-full bg-secondary">
-                              <div className="h-full rounded-full bg-primary" style={{ width: `${t.match_confidence}%` }} />
-                            </div>
-                            <span className="text-xs text-muted-foreground">{t.match_confidence}%</span>
-                          </div>
-                        ) : "—"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={
-                          t.match_status === "gematcht" ? "default" 
-                          : t.match_status === "handmatig_geboekt" ? "secondary"
-                          : isSuggestion ? "secondary" 
-                          : "destructive"
-                        }>
-                          {t.match_status === "gematcht" ? "Gematcht" 
-                           : t.match_status === "handmatig_geboekt" ? "Handmatig geboekt"
-                           : isSuggestion ? "Suggestie" 
-                           : "Open"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          {t.match_status === "gematcht" || t.match_status === "handmatig_geboekt" ? (
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button size="sm" variant="ghost" onClick={() => {
-                                    if (t.match_status === "handmatig_geboekt") {
-                                      updateTx.mutateAsync({
-                                        id: t.id,
-                                        match_status: "niet_gematcht",
-                                        grootboekrekening_id: null,
-                                      }).then(() => {
-                                        toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." });
-                                      });
-                                    } else {
-                                      handleUnlink(t);
-                                    }
-                                  }}>
-                                    <Unlink className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Ontkoppelen</TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          ) : t.match_status === "suggestie" ? (
-                            <Button size="sm" variant="default" onClick={() => handleConfirm(t.id)}>
-                              Bevestig
-                            </Button>
-                          ) : (
-                            <Button size="sm" variant="outline" onClick={() => setMatchTx(t)}>
-                              Koppel
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Bulk boeken toolbar */}
-      {selectedIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4">
-          <span className="text-sm font-medium">{selectedIds.size} transactie(s) geselecteerd</span>
-          {(() => {
-            const selectedSuggestionCount = Array.from(selectedIds).filter(id => suggestionIds.has(id)).length;
-            return selectedSuggestionCount > 0 ? (
-              <Button size="sm" variant="default" onClick={handleBulkConfirmSuggestions}>
-                <CheckCircle2 className="mr-1 h-4 w-4" />
-                Bevestig {selectedSuggestionCount} suggestie(s)
-              </Button>
-            ) : null;
-          })()}
-          <div className="w-64">
-            <GrootboekCombobox value={bulkLedger} onValueChange={setBulkLedger} onIdChange={setBulkLedgerId} />
+                          </TableCell>
+                          <TableCell>
+                            {dup?.isDuplicate && (
+                              <Badge variant="destructive" className="text-[10px] gap-1">
+                                <Copy className="h-3 w-3" />
+                                {dup.reason === "reference" ? "Duplicaat (TransactionID)" : "Duplicaat (datum/bedrag/omschrijving)"}
+                              </Badge>
+                            )}
+                            {!dup?.isDuplicate && tx.matchStatus === "handmatig_geboekt" && tx.templateName && (
+                              <Badge variant="secondary" className="text-[10px] bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
+                                ⚡ {tx.grootboekText || tx.templateName}
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           </div>
-          <Button size="sm" onClick={handleBulkBook} disabled={!bulkLedger}>
-            Boek geselecteerde transacties
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => { setSelectedIds(new Set()); setBulkLedger(""); setBulkLedgerId(""); }}>
+        )}
+
+        {parsed && (
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setParsed(null);
+              setDuplicateInfos([]);
+              setSelected([]);
+              setOpeningBalance(null);
+              setClosingBalance(null);
+            }}>Terug</Button>
+            <Button onClick={handleImport} disabled={importing || selectedCount === 0}>
+              {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+              {selectedCount} transacties importeren
+            </Button>
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+
+    {/* IBAN mismatch warning dialog */}
+    <Dialog open={!!ibanWarning} onOpenChange={(o) => { if (!o) { setIbanWarning(null); setPendingFileText(null); } }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <AlertTriangle className="h-5 w-5 text-destructive" />
+            IBAN komt niet overeen
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          Let op: dit bankafschrift lijkt niet bij {ibanWarning?.clientName} te horen.
+          Het IBAN in het bestand ({ibanWarning?.fileIban}) komt niet overeen met het bekende
+          zakelijke IBAN van deze klant. Wil je toch importeren?
+        </p>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { setIbanWarning(null); setPendingFileText(null); }}>
             Annuleren
           </Button>
-        </div>
-      )}
-
-      <VerwerkingsScherm
-        open={verwerkingOpen}
-        onOpenChange={setVerwerkingOpen}
-        transactions={transactions?.filter(t => clientFilter === "all" || t.client_id === clientFilter) ?? []}
-        purchaseInvoices={invoices ?? []}
-        salesInvoices={salesInvs ?? []}
-        onBookPrivate={async (id) => {
-          await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: undefined });
-          toast({ title: "Privé geboekt" });
-          refetch();
-        }}
-        onBookLedger={async (id, ledgerText, ledgerId) => {
-          await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: ledgerId || undefined });
-          toast({ title: `Geboekt: ${ledgerText}` });
-          refetch();
-        }}
-        onMatchInvoice={async (id, invoiceId, invoiceType) => {
-          await updateTx.mutateAsync({ id, match_status: "gematcht", matched_invoice_id: invoiceId, match_confidence: 100 });
-          if (invoiceType === "inkoop") {
-            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-          }
-          toast({ title: "Factuur gekoppeld" });
-          refetch();
-          refetchPurchase();
-          refetchSales();
-        }}
-        onSkip={(id) => {
-          toast({ title: "Transactie overgeslagen" });
-        }}
-      />
-
-      <BankStatementUploadDialog
-        open={uploadOpen}
-        onOpenChange={setUploadOpen}
-        clients={clients ?? []}
-        invoices={invoices ?? []}
-        onImport={handleImport}
-        existingTransactions={transactions ?? []}
-        bookingTemplates={bookingTemplates ?? []}
-      />
-
-      <BankMatchDialog
-        open={!!matchTx}
-        onOpenChange={(v) => { if (!v) setMatchTx(null); }}
-        transaction={matchTx}
-        purchaseInvoices={(invoices ?? []).filter(i => matchTx ? i.client_id === matchTx.client_id : true)}
-        salesInvoices={(salesInvs ?? []).filter(i => matchTx ? i.client_id === matchTx.client_id : true)}
-        onConfirm={handleMatch}
-        onManualBook={handleManualBook}
-        onRefresh={handleRefreshMatching}
-      />
+          <Button onClick={() => {
+            if (pendingFileText) processFile(pendingFileText);
+            setIbanWarning(null);
+            setPendingFileText(null);
+          }}>
+            Toch importeren
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }
