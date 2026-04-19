@@ -52,7 +52,7 @@ export default function Grootboek() {
   // Auto-seed on first load if no records exist
   useEffect(() => {
     if (rekeningen && rekeningen.length === 0) {
-      seedRek.mutate();
+      seedRek.mutate(false);
     }
   }, [rekeningen]);
 

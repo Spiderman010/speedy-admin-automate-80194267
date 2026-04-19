@@ -358,7 +358,7 @@ export default function Bank() {
     }
   }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
 
-  const handleImport = useCallback(async (txs: MatchedTransaction[], clientId: string) => {
+  const handleImport = useCallback(async (clientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
     for (const tx of txs) {
       try {
