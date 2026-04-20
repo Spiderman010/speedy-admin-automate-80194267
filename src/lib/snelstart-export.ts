@@ -105,6 +105,17 @@ function buildSnelstartCSV(rows: string[]): string {
   return [SNELSTART_HEADERS.join(SEP), ...rows].join("\r\n");
 }
 
+function downloadSnelstartCSV(content: string, filename: string) {
+  // SnelStart 12 verwacht GEEN BOM marker
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function exportBankTransactionsCSV(
   transactions: BankTransaction[],
   grootboekrekeningen: Array<{ id: string; nummer: number; omschrijving: string }>,
@@ -152,7 +163,7 @@ export function exportBankTransactionsCSV(
   }
 
   const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
-  downloadCSV(buildSnelstartCSV(rows), `${prefix}banktransacties_snelstart.csv`);
+  downloadSnelstartCSV(buildSnelstartCSV(rows), `${prefix}banktransacties_snelstart.csv`);
 }
 
 export async function exportAllForClient(
