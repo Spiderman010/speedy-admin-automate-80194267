@@ -114,6 +114,21 @@ export type Database = {
           },
         ]
       }
+      bank_tx_grootboek_backup_20260420: {
+        Row: {
+          grootboekrekening_id: string | null
+          id: string | null
+        }
+        Insert: {
+          grootboekrekening_id?: string | null
+          id?: string | null
+        }
+        Update: {
+          grootboekrekening_id?: string | null
+          id?: string | null
+        }
+        Relationships: []
+      }
       booking_templates: {
         Row: {
           actie: string | null
@@ -285,6 +300,42 @@ export type Database = {
           omschrijving?: string
           updated_at?: string
           user_id?: string
+        }
+        Relationships: []
+      }
+      grootboekrekeningen_backup_20260420: {
+        Row: {
+          actief: boolean | null
+          categorie: string | null
+          client_id: string | null
+          created_at: string | null
+          id: string | null
+          nummer: number | null
+          omschrijving: string | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          actief?: boolean | null
+          categorie?: string | null
+          client_id?: string | null
+          created_at?: string | null
+          id?: string | null
+          nummer?: number | null
+          omschrijving?: string | null
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          actief?: boolean | null
+          categorie?: string | null
+          client_id?: string | null
+          created_at?: string | null
+          id?: string | null
+          nummer?: number | null
+          omschrijving?: string | null
+          updated_at?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
