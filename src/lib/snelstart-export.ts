@@ -86,19 +86,73 @@ export function exportSalesInvoicesCSV(invoices: SalesInvoice[], clientName?: st
   return invoices.map(i => i.id);
 }
 
+// SnelStart 12 boekingen import formaat
+const SNELSTART_HEADERS = [
+  "fldDagboek",
+  "fldBoekingcode",
+  "fldDatum",
+  "fldGrootboeknummer",
+  "fldDebet",
+  "fldCredit",
+  "fldOmschrijving",
+];
+
+function snelstartRow(fields: (string | number)[]): string {
+  return fields.map(f => String(f ?? "")).join(SEP);
+}
+
+function buildSnelstartCSV(rows: string[]): string {
+  return [SNELSTART_HEADERS.join(SEP), ...rows].join("\r\n");
+}
+
 export function exportBankTransactionsCSV(
   transactions: BankTransaction[],
   grootboekrekeningen: Array<{ id: string; nummer: number; omschrijving: string }>,
-  clientName?: string
+  clientName?: string,
+  bankDagboek: number = 1100
 ) {
-  const rows = transactions.map(t => {
+  const rows: string[] = [];
+  let boekingcode = 1;
+
+  for (const t of transactions) {
     const gbId = (t as any).grootboekrekening_id;
     const gb = gbId ? grootboekrekeningen.find(g => g.id === gbId) : null;
-    const gbLabel = gb ? `${gb.nummer} - ${gb.omschrijving}` : null;
-    return toStandardRow(t.transaction_date, t.description, gbLabel, t.amount, null);
-  });
+    if (!gb) continue; // Sla over als geen tegenrekening
+
+    const datum = formatDate(t.transaction_date);
+    const omschrijving = (t.description ?? "").substring(0, 100).replace(/[\r\n;]/g, " ");
+    const bedrag = Math.abs(t.amount);
+    const isPositief = t.amount >= 0;
+
+    // Regel 1: bank rekening
+    // Positief bedrag (inkomend) → bank debet, tegenrekening credit
+    // Negatief bedrag (uitgaand) → bank credit, tegenrekening debet
+    rows.push(snelstartRow([
+      bankDagboek,
+      boekingcode,
+      datum,
+      bankDagboek,
+      isPositief ? formatAmount(bedrag) : "0",
+      isPositief ? "0" : formatAmount(bedrag),
+      omschrijving,
+    ]));
+
+    // Regel 2: tegenrekening (grootboek)
+    rows.push(snelstartRow([
+      bankDagboek,
+      boekingcode,
+      datum,
+      gb.nummer,
+      isPositief ? "0" : formatAmount(bedrag),
+      isPositief ? formatAmount(bedrag) : "0",
+      omschrijving,
+    ]));
+
+    boekingcode++;
+  }
+
   const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
-  downloadCSV(buildStandardCSV(rows), `${prefix}banktransacties_snelstart.csv`);
+  downloadCSV(buildSnelstartCSV(rows), `${prefix}banktransacties_snelstart.csv`);
 }
 
 export async function exportAllForClient(
