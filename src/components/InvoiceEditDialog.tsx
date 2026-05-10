@@ -182,8 +182,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={hasFile ? "sm:max-w-5xl max-h-[90vh]" : "sm:max-w-lg"}>
-        <DialogHeader>
+      <DialogContent className={hasFile ? "sm:max-w-5xl max-h-[90vh] flex flex-col" : "sm:max-w-lg flex flex-col"}>
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             Factuur controleren
             <Badge variant={invoice.status === "te_controleren" ? "secondary" : "default"}>
@@ -192,12 +192,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           </DialogTitle>
         </DialogHeader>
 
-        <div className={hasFile ? "grid grid-cols-2 gap-6 min-h-[450px]" : ""}>
+        <div className={hasFile ? "grid grid-cols-2 gap-6 flex-1 overflow-hidden min-h-0" : "flex-1 overflow-auto"}>
           {hasFile && (
             <InvoicePreview filePath={invoice.file_path} />
           )}
 
-          <div className="space-y-4 overflow-y-auto max-h-[60vh] pr-1">
+          <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
             <div>
               <Label>Leverancier *</Label>
               <Input value={form.supplier} onChange={e => set("supplier", e.target.value)} />
@@ -280,7 +280,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 flex-shrink-0 border-t pt-4">
           <Button variant="outline" onClick={handleSave} disabled={saving || !form.supplier}>
             <Save className="mr-2 h-4 w-4" />Opslaan
           </Button>
