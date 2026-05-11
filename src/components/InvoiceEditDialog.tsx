@@ -9,13 +9,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2 } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl } from "@/lib/ubl-generator";
 import { useToast } from "@/hooks/use-toast";
+import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
