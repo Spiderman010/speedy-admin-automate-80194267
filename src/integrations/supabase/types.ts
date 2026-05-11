@@ -443,6 +443,42 @@ export type Database = {
           },
         ]
       }
+      purchase_invoice_lines: {
+        Row: {
+          amount_excl: number
+          btw_percentage: number | null
+          created_at: string
+          grootboekrekening_id: string | null
+          id: string
+          omschrijving: string
+          purchase_invoice_id: string
+          sort_order: number
+          user_id: string
+        }
+        Insert: {
+          amount_excl: number
+          btw_percentage?: number | null
+          created_at?: string
+          grootboekrekening_id?: string | null
+          id?: string
+          omschrijving: string
+          purchase_invoice_id: string
+          sort_order?: number
+          user_id: string
+        }
+        Update: {
+          amount_excl?: number
+          btw_percentage?: number | null
+          created_at?: string
+          grootboekrekening_id?: string | null
+          id?: string
+          omschrijving?: string
+          purchase_invoice_id?: string
+          sort_order?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       purchase_invoices: {
         Row: {
           amount_excl: number | null
