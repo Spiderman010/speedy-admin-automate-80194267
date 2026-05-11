@@ -342,6 +342,67 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               />
             </div>
 
+            <div className="border-t pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Factuurregels (optioneel)</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addLine}>
+                  <Plus className="h-3.5 w-3.5 mr-1" />Regel toevoegen
+                </Button>
+              </div>
+              {lines.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Geen regels. Voeg regels toe om de factuur over meerdere grootboekrekeningen of BTW-tarieven te splitsen.
+                </p>
+              )}
+              {lines.map((l, i) => (
+                <div key={i} className="rounded-md border p-2 space-y-2 bg-muted/20">
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Omschrijving"
+                      value={l.omschrijving}
+                      onChange={(e) => updateLine(i, { omschrijving: e.target.value })}
+                    />
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeLine(i)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Bedrag excl.</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={l.amount_excl}
+                        onChange={(e) => updateLine(i, { amount_excl: parseFloat(e.target.value) || 0 })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">BTW %</Label>
+                      <Select
+                        value={String(l.btw_percentage ?? 0)}
+                        onValueChange={(v) => updateLine(i, { btw_percentage: parseFloat(v) })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">0%</SelectItem>
+                          <SelectItem value="9">9%</SelectItem>
+                          <SelectItem value="21">21%</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Grootboekrekening</Label>
+                    <GrootboekCombobox
+                      value={l._ledgerLabel}
+                      onValueChange={(v) => updateLine(i, { _ledgerLabel: v })}
+                      onIdChange={(id) => updateLine(i, { grootboekrekening_id: id })}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div>
               <Label>Notities</Label>
               <Textarea value={form.notes} onChange={e => set("notes", e.target.value)} rows={2} />
