@@ -104,6 +104,9 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
 
 export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client }: Props) {
   const { toast } = useToast();
+  const { data: existingLines } = usePurchaseInvoiceLines(invoice?.id);
+  const replaceLines = useReplacePurchaseInvoiceLines();
+  const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
   const [form, setForm] = useState({
     supplier: "",
     invoice_number: "",
