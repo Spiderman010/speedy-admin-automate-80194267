@@ -203,16 +203,40 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     };
   };
 
+  const persistLines = async () => {
+    await replaceLines.mutateAsync({
+      invoiceId: invoice.id,
+      lines: lines.map((l) => ({
+        omschrijving: l.omschrijving,
+        amount_excl: Number(l.amount_excl) || 0,
+        btw_percentage: l.btw_percentage,
+        grootboekrekening_id: l.grootboekrekening_id,
+      })),
+    });
+  };
+
   const handleSave = async () => {
+    const err = validateLines();
+    if (err) {
+      toast({ title: "Ongeldige factuurregels", description: err, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     await onSave(invoice.id, buildUpdates());
+    await persistLines();
     setSaving(false);
     onOpenChange(false);
   };
 
   const handleApprove = async () => {
+    const err = validateLines();
+    if (err) {
+      toast({ title: "Ongeldige factuurregels", description: err, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     await onApprove(invoice.id, { ...buildUpdates(), status: "gecontroleerd" });
+    await persistLines();
     setSaving(false);
     onOpenChange(false);
   };
