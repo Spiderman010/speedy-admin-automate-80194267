@@ -29,7 +29,11 @@ const fmt = (n: number) => n.toFixed(2);
 
 const sanitizeFilename = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
 
-export function generatePurchaseInvoiceUbl(invoice: PurchaseInvoice, client?: Client | null): string {
+export function generatePurchaseInvoiceUbl(
+  invoice: PurchaseInvoice,
+  client?: Client | null,
+  lines?: PurchaseInvoiceLine[] | null,
+): string {
   const amountExcl = Number(invoice.amount_excl ?? 0);
   const amountIncl = Number(invoice.amount_incl ?? 0);
   const btwAmount = invoice.btw_amount != null
@@ -55,6 +59,53 @@ export function generatePurchaseInvoiceUbl(invoice: PurchaseInvoice, client?: Cl
   const dueDateLine = invoice.invoice_date && (invoice as any).due_date
     ? `\n  <cbc:DueDate>${(invoice as any).due_date}</cbc:DueDate>`
     : "";
+
+  // Build invoice lines: multi-line mode if lines exist, otherwise fallback to single generic line.
+  const useLines = Array.isArray(lines) && lines.length > 0;
+  const invoiceLinesXml = useLines
+    ? lines!.map((l, idx) => {
+        const lineExcl = Number(l.amount_excl ?? 0);
+        const linePct = Number(l.btw_percentage ?? 0);
+        const desc = xmlEscape(l.omschrijving || `Regel ${idx + 1}`);
+        return `  <cac:InvoiceLine>
+    <cbc:ID>${idx + 1}</cbc:ID>
+    <cbc:InvoicedQuantity unitCode="ZZ">1.00</cbc:InvoicedQuantity>
+    <cbc:LineExtensionAmount currencyID="EUR">${fmt(lineExcl)}</cbc:LineExtensionAmount>
+    <cac:Item>
+      <cbc:Description>${desc}</cbc:Description>
+      <cbc:Name>${desc}</cbc:Name>
+      <cac:ClassifiedTaxCategory>
+        <cbc:ID>S</cbc:ID>
+        <cbc:Percent>${fmt(linePct)}</cbc:Percent>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:ClassifiedTaxCategory>
+    </cac:Item>
+    <cac:Price>
+      <cbc:PriceAmount currencyID="EUR">${fmt(lineExcl)}</cbc:PriceAmount>
+    </cac:Price>
+  </cac:InvoiceLine>`;
+      }).join("\n")
+    : `  <cac:InvoiceLine>
+    <cbc:ID>1</cbc:ID>
+    <cbc:InvoicedQuantity unitCode="ZZ">1.00</cbc:InvoicedQuantity>
+    <cbc:LineExtensionAmount currencyID="EUR">${fmt(amountExcl)}</cbc:LineExtensionAmount>
+    <cac:Item>
+      <cbc:Description>Inkoopfactuur</cbc:Description>
+      <cbc:Name>Inkoopfactuur</cbc:Name>
+      <cac:ClassifiedTaxCategory>
+        <cbc:ID>S</cbc:ID>
+        <cbc:Percent>${fmt(btwPct)}</cbc:Percent>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:ClassifiedTaxCategory>
+    </cac:Item>
+    <cac:Price>
+      <cbc:PriceAmount currencyID="EUR">${fmt(amountExcl)}</cbc:PriceAmount>
+    </cac:Price>
+  </cac:InvoiceLine>`;
+
+  const lineExtensionTotal = useLines
+    ? lines!.reduce((s, l) => s + Number(l.amount_excl ?? 0), 0)
+    : amountExcl;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
@@ -104,34 +155,22 @@ export function generatePurchaseInvoiceUbl(invoice: PurchaseInvoice, client?: Cl
     </cac:TaxSubtotal>
   </cac:TaxTotal>
   <cac:LegalMonetaryTotal>
-    <cbc:LineExtensionAmount currencyID="EUR">${fmt(amountExcl)}</cbc:LineExtensionAmount>
+    <cbc:LineExtensionAmount currencyID="EUR">${fmt(lineExtensionTotal)}</cbc:LineExtensionAmount>
     <cbc:TaxExclusiveAmount currencyID="EUR">${fmt(amountExcl)}</cbc:TaxExclusiveAmount>
     <cbc:TaxInclusiveAmount currencyID="EUR">${fmt(amountIncl)}</cbc:TaxInclusiveAmount>
     <cbc:PayableAmount currencyID="EUR">${fmt(amountIncl)}</cbc:PayableAmount>
   </cac:LegalMonetaryTotal>
-  <cac:InvoiceLine>
-    <cbc:ID>1</cbc:ID>
-    <cbc:InvoicedQuantity unitCode="ZZ">1.00</cbc:InvoicedQuantity>
-    <cbc:LineExtensionAmount currencyID="EUR">${fmt(amountExcl)}</cbc:LineExtensionAmount>
-    <cac:Item>
-      <cbc:Description>Inkoopfactuur</cbc:Description>
-      <cbc:Name>Inkoopfactuur</cbc:Name>
-      <cac:ClassifiedTaxCategory>
-        <cbc:ID>S</cbc:ID>
-        <cbc:Percent>${fmt(btwPct)}</cbc:Percent>
-        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
-      </cac:ClassifiedTaxCategory>
-    </cac:Item>
-    <cac:Price>
-      <cbc:PriceAmount currencyID="EUR">${fmt(amountExcl)}</cbc:PriceAmount>
-    </cac:Price>
-  </cac:InvoiceLine>
+${invoiceLinesXml}
 </Invoice>
 `;
 }
 
-export function downloadPurchaseInvoiceUbl(invoice: PurchaseInvoice, client?: Client | null) {
-  const xml = generatePurchaseInvoiceUbl(invoice, client);
+export function downloadPurchaseInvoiceUbl(
+  invoice: PurchaseInvoice,
+  client?: Client | null,
+  lines?: PurchaseInvoiceLine[] | null,
+) {
+  const xml = generatePurchaseInvoiceUbl(invoice, client, lines);
   const filename = `UBL-${sanitizeFilename(invoice.invoice_number ?? "factuur")}-${sanitizeFilename(invoice.supplier ?? "leverancier")}.xml`;
   const blob = new Blob([xml], { type: "application/xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
