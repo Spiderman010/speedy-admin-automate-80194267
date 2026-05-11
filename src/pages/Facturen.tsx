@@ -360,6 +360,7 @@ export default function Facturen() {
         onOpenChange={(open) => !open && setEditInvoice(null)}
         onSave={handleSaveInvoice}
         onApprove={handleApproveInvoice}
+        client={editInvoice ? clients?.find(c => c.id === editInvoice.client_id) ?? null : null}
       />
     </>
   );
