@@ -2,6 +2,7 @@ import type { Tables } from "@/integrations/supabase/types";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
+type PurchaseInvoiceLine = Tables<"purchase_invoice_lines">;
 
 const REQUIRED_FIELDS: { key: keyof PurchaseInvoice; label: string }[] = [
   { key: "invoice_number", label: "Factuurnummer" },
