@@ -143,6 +143,42 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   }, [invoice]);
 
+  useEffect(() => {
+    setLines(
+      (existingLines ?? []).map((l) => ({
+        omschrijving: l.omschrijving,
+        amount_excl: Number(l.amount_excl),
+        btw_percentage: l.btw_percentage != null ? Number(l.btw_percentage) : null,
+        grootboekrekening_id: l.grootboekrekening_id,
+        _ledgerLabel: "",
+      }))
+    );
+  }, [existingLines, invoice?.id]);
+
+  const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
+  const removeLine = (i: number) => setLines((p) => p.filter((_, idx) => idx !== i));
+  const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
+    setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+
+  const validateLines = (): string | null => {
+    if (lines.length === 0) return null;
+    for (const l of lines) {
+      if (!l.omschrijving.trim()) return "Elke regel moet een omschrijving hebben";
+      if (isNaN(Number(l.amount_excl))) return "Elke regel moet een geldig bedrag excl. hebben";
+    }
+    const sumExcl = lines.reduce((s, l) => s + Number(l.amount_excl || 0), 0);
+    const sumIncl = lines.reduce((s, l) => s + Number(l.amount_excl || 0) * (1 + Number(l.btw_percentage || 0) / 100), 0);
+    const headerIncl = parseFloat(form.amount_incl);
+    const headerExcl = parseFloat(form.amount_excl);
+    if (!isNaN(headerExcl) && Math.abs(sumExcl - headerExcl) > 0.02) {
+      return `Totaal regels excl. (€${sumExcl.toFixed(2)}) komt niet overeen met factuurtotaal excl. (€${headerExcl.toFixed(2)})`;
+    }
+    if (!isNaN(headerIncl) && Math.abs(sumIncl - headerIncl) > 0.02) {
+      return `Totaal regels incl. BTW (€${sumIncl.toFixed(2)}) komt niet overeen met factuurtotaal incl. (€${headerIncl.toFixed(2)})`;
+    }
+    return null;
+  };
+
   if (!invoice) return null;
 
   const hasFile = !!invoice.file_path;
