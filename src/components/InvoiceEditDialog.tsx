@@ -9,13 +9,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2 } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl } from "@/lib/ubl-generator";
 import { useToast } from "@/hooks/use-toast";
+import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
@@ -103,6 +104,9 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
 
 export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client }: Props) {
   const { toast } = useToast();
+  const { data: existingLines } = usePurchaseInvoiceLines(invoice?.id);
+  const replaceLines = useReplacePurchaseInvoiceLines();
+  const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
   const [form, setForm] = useState({
     supplier: "",
     invoice_number: "",
@@ -139,6 +143,42 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   }, [invoice]);
 
+  useEffect(() => {
+    setLines(
+      (existingLines ?? []).map((l) => ({
+        omschrijving: l.omschrijving,
+        amount_excl: Number(l.amount_excl),
+        btw_percentage: l.btw_percentage != null ? Number(l.btw_percentage) : null,
+        grootboekrekening_id: l.grootboekrekening_id,
+        _ledgerLabel: "",
+      }))
+    );
+  }, [existingLines, invoice?.id]);
+
+  const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
+  const removeLine = (i: number) => setLines((p) => p.filter((_, idx) => idx !== i));
+  const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
+    setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+
+  const validateLines = (): string | null => {
+    if (lines.length === 0) return null;
+    for (const l of lines) {
+      if (!l.omschrijving.trim()) return "Elke regel moet een omschrijving hebben";
+      if (isNaN(Number(l.amount_excl))) return "Elke regel moet een geldig bedrag excl. hebben";
+    }
+    const sumExcl = lines.reduce((s, l) => s + Number(l.amount_excl || 0), 0);
+    const sumIncl = lines.reduce((s, l) => s + Number(l.amount_excl || 0) * (1 + Number(l.btw_percentage || 0) / 100), 0);
+    const headerIncl = parseFloat(form.amount_incl);
+    const headerExcl = parseFloat(form.amount_excl);
+    if (!isNaN(headerExcl) && Math.abs(sumExcl - headerExcl) > 0.02) {
+      return `Totaal regels excl. (€${sumExcl.toFixed(2)}) komt niet overeen met factuurtotaal excl. (€${headerExcl.toFixed(2)})`;
+    }
+    if (!isNaN(headerIncl) && Math.abs(sumIncl - headerIncl) > 0.02) {
+      return `Totaal regels incl. BTW (€${sumIncl.toFixed(2)}) komt niet overeen met factuurtotaal incl. (€${headerIncl.toFixed(2)})`;
+    }
+    return null;
+  };
+
   if (!invoice) return null;
 
   const hasFile = !!invoice.file_path;
@@ -163,16 +203,40 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     };
   };
 
+  const persistLines = async () => {
+    await replaceLines.mutateAsync({
+      invoiceId: invoice.id,
+      lines: lines.map((l) => ({
+        omschrijving: l.omschrijving,
+        amount_excl: Number(l.amount_excl) || 0,
+        btw_percentage: l.btw_percentage,
+        grootboekrekening_id: l.grootboekrekening_id,
+      })),
+    });
+  };
+
   const handleSave = async () => {
+    const err = validateLines();
+    if (err) {
+      toast({ title: "Ongeldige factuurregels", description: err, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     await onSave(invoice.id, buildUpdates());
+    await persistLines();
     setSaving(false);
     onOpenChange(false);
   };
 
   const handleApprove = async () => {
+    const err = validateLines();
+    if (err) {
+      toast({ title: "Ongeldige factuurregels", description: err, variant: "destructive" });
+      return;
+    }
     setSaving(true);
     await onApprove(invoice.id, { ...buildUpdates(), status: "gecontroleerd" });
+    await persistLines();
     setSaving(false);
     onOpenChange(false);
   };
@@ -278,6 +342,67 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               />
             </div>
 
+            <div className="border-t pt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Factuurregels (optioneel)</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addLine}>
+                  <Plus className="h-3.5 w-3.5 mr-1" />Regel toevoegen
+                </Button>
+              </div>
+              {lines.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Geen regels. Voeg regels toe om de factuur over meerdere grootboekrekeningen of BTW-tarieven te splitsen.
+                </p>
+              )}
+              {lines.map((l, i) => (
+                <div key={i} className="rounded-md border p-2 space-y-2 bg-muted/20">
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Omschrijving"
+                      value={l.omschrijving}
+                      onChange={(e) => updateLine(i, { omschrijving: e.target.value })}
+                    />
+                    <Button type="button" variant="ghost" size="icon" onClick={() => removeLine(i)}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label className="text-xs">Bedrag excl.</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={l.amount_excl}
+                        onChange={(e) => updateLine(i, { amount_excl: parseFloat(e.target.value) || 0 })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">BTW %</Label>
+                      <Select
+                        value={String(l.btw_percentage ?? 0)}
+                        onValueChange={(v) => updateLine(i, { btw_percentage: parseFloat(v) })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">0%</SelectItem>
+                          <SelectItem value="9">9%</SelectItem>
+                          <SelectItem value="21">21%</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Grootboekrekening</Label>
+                    <GrootboekCombobox
+                      value={l._ledgerLabel}
+                      onValueChange={(v) => updateLine(i, { _ledgerLabel: v })}
+                      onIdChange={(id) => updateLine(i, { grootboekrekening_id: id })}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div>
               <Label>Notities</Label>
               <Textarea value={form.notes} onChange={e => set("notes", e.target.value)} rows={2} />
@@ -299,7 +424,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   });
                   return;
                 }
-                downloadPurchaseInvoiceUbl(invoice, client);
+                downloadPurchaseInvoiceUbl(invoice, client, existingLines ?? null);
                 toast({ title: "UBL XML gedownload" });
               }}
             >
