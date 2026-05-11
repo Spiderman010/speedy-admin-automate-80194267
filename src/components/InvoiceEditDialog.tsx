@@ -424,7 +424,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   });
                   return;
                 }
-                downloadPurchaseInvoiceUbl(invoice, client);
+                downloadPurchaseInvoiceUbl(invoice, client, existingLines ?? null);
                 toast({ title: "UBL XML gedownload" });
               }}
             >
