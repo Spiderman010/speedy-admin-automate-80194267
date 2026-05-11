@@ -286,6 +286,26 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         </div>
 
         <DialogFooter className="gap-2 flex-shrink-0 border-t pt-4">
+          {invoice.status === "gecontroleerd" && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                const missing = validatePurchaseInvoiceForUbl(invoice);
+                if (missing.length) {
+                  toast({
+                    title: "UBL niet gegenereerd",
+                    description: `Ontbrekende velden: ${missing.join(", ")}`,
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                downloadPurchaseInvoiceUbl(invoice, client);
+                toast({ title: "UBL XML gedownload" });
+              }}
+            >
+              <FileCode2 className="mr-2 h-4 w-4" />Genereer UBL
+            </Button>
+          )}
           <Button variant="outline" onClick={handleSave} disabled={saving || !form.supplier}>
             <Save className="mr-2 h-4 w-4" />Opslaan
           </Button>
