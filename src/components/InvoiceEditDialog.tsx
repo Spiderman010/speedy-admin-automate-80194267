@@ -101,7 +101,8 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
   );
 }
 
-export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove }: Props) {
+export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client }: Props) {
+  const { toast } = useToast();
   const [form, setForm] = useState({
     supplier: "",
     invoice_number: "",
