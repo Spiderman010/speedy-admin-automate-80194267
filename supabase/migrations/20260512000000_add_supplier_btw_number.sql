@@ -1,0 +1,2 @@
+alter table purchase_invoices
+  add column if not exists supplier_btw_number text null;

@@ -19,6 +19,10 @@ export function validatePurchaseInvoiceForUbl(invoice: PurchaseInvoice): string[
     const v = invoice[f.key];
     if (v === null || v === undefined || v === "") missing.push(f.label);
   }
+  // For invoices with VAT, supplier VAT number is required for a valid NLCIUS/Peppol UBL.
+  if (Number(invoice.btw_percentage ?? 0) > 0 && !invoice.supplier_btw_number) {
+    missing.push("BTW-nummer leverancier (verplicht bij facturen met BTW)");
+  }
   return missing;
 }
 
@@ -42,7 +46,7 @@ export function generatePurchaseInvoiceUbl(
   const btwPct = Number(invoice.btw_percentage ?? 0);
 
   const supplierName = xmlEscape(invoice.supplier ?? "");
-  const supplierVat = (invoice as any).supplier_btw_number || (invoice.ocr_data as any)?.supplier_btw_number || null;
+  const supplierVat = invoice.supplier_btw_number || (invoice.ocr_data as any)?.supplier_btw_number || null;
 
   const buyerName = xmlEscape(client?.name ?? "Onbekende klant");
   const buyerStreet = xmlEscape(client?.address ?? "");

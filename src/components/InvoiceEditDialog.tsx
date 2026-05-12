@@ -109,6 +109,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
   const [form, setForm] = useState({
     supplier: "",
+    supplier_btw_number: "",
     invoice_number: "",
     invoice_date: "",
     amount_excl: "",
@@ -131,6 +132,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
       setForm({
         supplier: invoice.supplier || "",
+        supplier_btw_number: invoice.supplier_btw_number || "",
         invoice_number: invoice.invoice_number || "",
         invoice_date: invoice.invoice_date || "",
         amount_excl: invoice.amount_excl?.toString() || "",
@@ -191,6 +193,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
     return {
       supplier: form.supplier,
+      supplier_btw_number: form.supplier_btw_number || null,
       invoice_number: form.invoice_number || null,
       invoice_date: form.invoice_date || null,
       amount_excl: amountExcl,
@@ -267,9 +270,19 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           )}
 
           <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
-            <div>
-              <Label>Leverancier *</Label>
-              <Input value={form.supplier} onChange={e => set("supplier", e.target.value)} />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Leverancier *</Label>
+                <Input value={form.supplier} onChange={e => set("supplier", e.target.value)} />
+              </div>
+              <div>
+                <Label>BTW-nummer leverancier</Label>
+                <Input
+                  value={form.supplier_btw_number}
+                  onChange={e => set("supplier_btw_number", e.target.value)}
+                  placeholder="bv. NL123456789B01"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
