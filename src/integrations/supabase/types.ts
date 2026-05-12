@@ -656,6 +656,51 @@ export type Database = {
           },
         ]
       }
+      vraagposten: {
+        Row: {
+          categorie: string
+          client_id: string | null
+          created_at: string
+          id: string
+          omschrijving: string | null
+          resolved_at: string | null
+          source_id: string | null
+          source_type: string
+          status: string
+          titel: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          categorie: string
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          omschrijving?: string | null
+          resolved_at?: string | null
+          source_id?: string | null
+          source_type: string
+          status?: string
+          titel: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          categorie?: string
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          omschrijving?: string | null
+          resolved_at?: string | null
+          source_id?: string | null
+          source_type?: string
+          status?: string
+          titel?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
