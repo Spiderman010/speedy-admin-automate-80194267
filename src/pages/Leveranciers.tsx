@@ -160,14 +160,12 @@ export default function Leveranciers() {
       <PageHeader
         title="Leveranciers"
         description="Beheer leveranciers per klant voor inkoopfacturen en UBL"
-        icon={Truck}
-        actions={
-          <Button onClick={openNew} disabled={noClientSelected}>
-            <Plus className="h-4 w-4 mr-2" />
-            Nieuwe leverancier
-          </Button>
-        }
-      />
+      >
+        <Button onClick={openNew} disabled={noClientSelected}>
+          <Plus className="h-4 w-4 mr-2" />
+          Nieuwe leverancier
+        </Button>
+      </PageHeader>
 
       {noClientSelected && (
         <Card>
