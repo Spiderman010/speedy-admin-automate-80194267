@@ -39,11 +39,20 @@ interface ClientForm {
   btw_number: string;
   contact_person: string;
   email: string;
+  phone: string;
+  address: string;
+  postal_code: string;
+  city: string;
+  country: string;
   btw_vrijgesteld: boolean;
   rechtsvorm: string;
   btw_type: string;
   ibans: string[];
   verwerkingsfrequentie: string;
+  inkoop_dagboek: string;
+  verkoop_dagboek: string;
+  bank_dagboek: string;
+  afgesloten_boekjaar: string;
 }
 
 const emptyForm: ClientForm = {
@@ -52,11 +61,20 @@ const emptyForm: ClientForm = {
   btw_number: "",
   contact_person: "",
   email: "",
+  phone: "",
+  address: "",
+  postal_code: "",
+  city: "",
+  country: "NL",
   btw_vrijgesteld: false,
   rechtsvorm: "",
   btw_type: "plichtig",
   ibans: [],
   verwerkingsfrequentie: "kwartaal",
+  inkoop_dagboek: "",
+  verkoop_dagboek: "",
+  bank_dagboek: "",
+  afgesloten_boekjaar: "",
 };
 
 function validateKvk(v: string): string | null {
@@ -152,14 +170,30 @@ export default function Klanten() {
       btw_number: client.btw_number || "",
       contact_person: client.contact_person || "",
       email: client.email || "",
+      phone: client.phone || "",
+      address: client.address || "",
+      postal_code: client.postal_code || "",
+      city: client.city || "",
+      country: client.country || "NL",
       btw_vrijgesteld: client.btw_vrijgesteld ?? false,
       rechtsvorm: client.rechtsvorm || "",
       btw_type: client.btw_type || "plichtig",
       ibans: client.ibans || [],
       verwerkingsfrequentie: client.verwerkingsfrequentie || "kwartaal",
+      inkoop_dagboek: client.inkoop_dagboek != null ? String(client.inkoop_dagboek) : "",
+      verkoop_dagboek: client.verkoop_dagboek != null ? String(client.verkoop_dagboek) : "",
+      bank_dagboek: client.bank_dagboek != null ? String(client.bank_dagboek) : "",
+      afgesloten_boekjaar: client.afgesloten_boekjaar != null ? String(client.afgesloten_boekjaar) : "",
     });
     setEditingId(client.id);
     setShowDialog(true);
+  };
+
+  const toIntOrNull = (v: string): number | null => {
+    const t = v.trim();
+    if (!t) return null;
+    const n = parseInt(t, 10);
+    return Number.isFinite(n) ? n : null;
   };
 
   const handleSave = async () => {
@@ -174,11 +208,20 @@ export default function Klanten() {
         btw_number: form.btw_number || null,
         contact_person: form.contact_person || null,
         email: form.email || null,
+        phone: form.phone || null,
+        address: form.address || null,
+        postal_code: form.postal_code || null,
+        city: form.city || null,
+        country: form.country || "NL",
         btw_vrijgesteld: form.btw_type === "vrijgesteld",
         rechtsvorm: form.rechtsvorm || null,
         btw_type: form.btw_type,
         ibans: form.ibans.filter(Boolean),
         verwerkingsfrequentie: form.verwerkingsfrequentie,
+        inkoop_dagboek: toIntOrNull(form.inkoop_dagboek),
+        verkoop_dagboek: toIntOrNull(form.verkoop_dagboek),
+        bank_dagboek: toIntOrNull(form.bank_dagboek),
+        afgesloten_boekjaar: toIntOrNull(form.afgesloten_boekjaar),
       };
       if (editingId) {
         await updateClient.mutateAsync({ id: editingId, ...payload });
@@ -400,6 +443,37 @@ export default function Klanten() {
               </div>
             </div>
 
+            {/* Telefoon */}
+            <div className="grid gap-2">
+              <Label htmlFor="phone">Telefoon</Label>
+              <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+31 6 00000000" />
+            </div>
+
+            {/* Adres */}
+            <div className="grid gap-2">
+              <Label htmlFor="address">Adres</Label>
+              <Input id="address" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Straat 1" />
+            </div>
+
+            {/* Postcode + Plaats + Land */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="postal_code">Postcode</Label>
+                <Input id="postal_code" value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value })} placeholder="1234 AB" />
+                {form.postal_code && !/^[1-9][0-9]{3}\s?[A-Za-z]{2}$/.test(form.postal_code.trim()) && (
+                  <p className="text-xs text-muted-foreground">Tip: Nederlandse postcode is 4 cijfers + 2 letters</p>
+                )}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="city">Plaats</Label>
+                <Input id="city" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Amsterdam" />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="country">Land</Label>
+                <Input id="country" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="NL" />
+              </div>
+            </div>
+
             {/* Verwerkingsfrequentie */}
             <div className="grid gap-2">
               <Label>Verwerkingsfrequentie</Label>
@@ -411,6 +485,29 @@ export default function Klanten() {
                   <SelectItem value="jaarlijks">Jaarlijks</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* SnelStart instellingen */}
+            <div className="grid gap-2">
+              <Label className="text-sm font-semibold">SnelStart instellingen</Label>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="inkoop_dagboek" className="text-xs font-normal">Inkoop-dagboek</Label>
+                  <Input id="inkoop_dagboek" inputMode="numeric" value={form.inkoop_dagboek} onChange={(e) => setForm({ ...form, inkoop_dagboek: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 700" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="verkoop_dagboek" className="text-xs font-normal">Verkoop-dagboek</Label>
+                  <Input id="verkoop_dagboek" inputMode="numeric" value={form.verkoop_dagboek} onChange={(e) => setForm({ ...form, verkoop_dagboek: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 800" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="bank_dagboek" className="text-xs font-normal">Bank-dagboek</Label>
+                  <Input id="bank_dagboek" inputMode="numeric" value={form.bank_dagboek} onChange={(e) => setForm({ ...form, bank_dagboek: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 1100" />
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="afgesloten_boekjaar" className="text-xs font-normal">Afgesloten boekjaar</Label>
+                <Input id="afgesloten_boekjaar" inputMode="numeric" value={form.afgesloten_boekjaar} onChange={(e) => setForm({ ...form, afgesloten_boekjaar: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 2024" className="max-w-[160px]" />
+              </div>
             </div>
 
             {/* Zakelijk IBAN */}

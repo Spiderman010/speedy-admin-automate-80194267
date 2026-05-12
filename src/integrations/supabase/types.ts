@@ -207,15 +207,19 @@ export type Database = {
       clients: {
         Row: {
           address: string | null
+          afgesloten_boekjaar: number | null
+          bank_dagboek: number | null
           btw_number: string | null
           btw_type: string
           btw_vrijgesteld: boolean
           city: string | null
           contact_person: string | null
+          country: string
           created_at: string
           email: string | null
           ibans: string[] | null
           id: string
+          inkoop_dagboek: number | null
           kvk_number: string | null
           name: string
           phone: string | null
@@ -223,19 +227,24 @@ export type Database = {
           rechtsvorm: string | null
           updated_at: string
           user_id: string
+          verkoop_dagboek: number | null
           verwerkingsfrequentie: string | null
         }
         Insert: {
           address?: string | null
+          afgesloten_boekjaar?: number | null
+          bank_dagboek?: number | null
           btw_number?: string | null
           btw_type?: string
           btw_vrijgesteld?: boolean
           city?: string | null
           contact_person?: string | null
+          country?: string
           created_at?: string
           email?: string | null
           ibans?: string[] | null
           id?: string
+          inkoop_dagboek?: number | null
           kvk_number?: string | null
           name: string
           phone?: string | null
@@ -243,19 +252,24 @@ export type Database = {
           rechtsvorm?: string | null
           updated_at?: string
           user_id: string
+          verkoop_dagboek?: number | null
           verwerkingsfrequentie?: string | null
         }
         Update: {
           address?: string | null
+          afgesloten_boekjaar?: number | null
+          bank_dagboek?: number | null
           btw_number?: string | null
           btw_type?: string
           btw_vrijgesteld?: boolean
           city?: string | null
           contact_person?: string | null
+          country?: string
           created_at?: string
           email?: string | null
           ibans?: string[] | null
           id?: string
+          inkoop_dagboek?: number | null
           kvk_number?: string | null
           name?: string
           phone?: string | null
@@ -263,6 +277,7 @@ export type Database = {
           rechtsvorm?: string | null
           updated_at?: string
           user_id?: string
+          verkoop_dagboek?: number | null
           verwerkingsfrequentie?: string | null
         }
         Relationships: []
