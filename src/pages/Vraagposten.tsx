@@ -54,7 +54,14 @@ export default function Vraagposten() {
 
   const handleStatus = async (id: string, status: VraagpostStatus) => {
     await updateStatus.mutateAsync({ id, status });
-    toast({ title: status === "opgelost" ? "Vraagpost opgelost" : "Vraagpost genegeerd" });
+    toast({
+      title:
+        status === "opgelost"
+          ? "Vraagpost opgelost"
+          : status === "genegeerd"
+          ? "Vraagpost genegeerd"
+          : "Vraagpost heropend",
+    });
   };
 
   return (
