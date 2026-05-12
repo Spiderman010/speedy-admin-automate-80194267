@@ -17,6 +17,7 @@ import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl } from "@/lib/ubl-generator";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
+import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
