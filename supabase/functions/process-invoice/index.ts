@@ -152,6 +152,14 @@ serve(async (req) => {
                     type: "number",
                     description: "BTW-percentage (bijv. 21, 9, 0)",
                   },
+                  supplier_btw_number: {
+                    type: "string",
+                    description: "BTW-nummer van de leverancier (bv. NL807936494B01). Laat leeg indien niet zichtbaar.",
+                  },
+                  raw_text: {
+                    type: "string",
+                    description: "Volledige ruwe tekst van de factuur, exact zoals zichtbaar (gebruikt voor fallback-extractie).",
+                  },
                 },
                 required: ["supplier"],
                 additionalProperties: false,
