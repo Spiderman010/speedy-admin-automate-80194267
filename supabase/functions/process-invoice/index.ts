@@ -152,6 +152,14 @@ serve(async (req) => {
                     type: "number",
                     description: "BTW-percentage (bijv. 21, 9, 0)",
                   },
+                  supplier_btw_number: {
+                    type: "string",
+                    description: "BTW-nummer van de leverancier (bv. NL807936494B01). Laat leeg indien niet zichtbaar.",
+                  },
+                  raw_text: {
+                    type: "string",
+                    description: "Volledige ruwe tekst van de factuur, exact zoals zichtbaar (gebruikt voor fallback-extractie).",
+                  },
                 },
                 required: ["supplier"],
                 additionalProperties: false,
@@ -198,6 +206,24 @@ serve(async (req) => {
       console.error("Failed to parse AI response:", e);
     }
 
+    // Normalize Dutch VAT number: uppercase, strip separators
+    const normalizeBtw = (raw: string | null | undefined): string | null => {
+      if (!raw) return null;
+      const cleaned = String(raw).toUpperCase().replace(/[\s.\-/\\]/g, "");
+      const m = cleaned.match(/NL\d{9}B\d{2}/);
+      return m ? m[0] : null;
+    };
+
+    // Fallback: regex on raw OCR text if AI did not return a normalized number
+    let supplierBtw = normalizeBtw(extracted.supplier_btw_number);
+    if (!supplierBtw && extracted.raw_text) {
+      supplierBtw = normalizeBtw(extracted.raw_text);
+    }
+    if (!supplierBtw) {
+      // Last resort: scan over the entire extracted JSON string
+      supplierBtw = normalizeBtw(JSON.stringify(extracted));
+    }
+
     // Save to database
     const { data: invoice, error: insertError } = await supabase
       .from("purchase_invoices")
@@ -211,6 +237,7 @@ serve(async (req) => {
         btw_amount: extracted.btw_amount || null,
         amount_incl: extracted.amount_incl || null,
         btw_percentage: extracted.btw_percentage || null,
+        supplier_btw_number: supplierBtw,
         remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? null,
         file_path: filePath,
         ocr_data: extracted,
