@@ -111,6 +111,13 @@ export default function Vraagposten() {
                           </Button>
                         </div>
                       )}
+                      {(vp.status === "opgelost" || vp.status === "genegeerd") && (
+                        <div className="inline-flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => handleStatus(vp.id, "open")}>
+                            <RotateCcw className="h-3.5 w-3.5 mr-1" />Heropenen
+                          </Button>
+                        </div>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
