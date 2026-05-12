@@ -145,6 +145,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         ledger_account_text: ledgerValue,
         notes: invoice.notes || "",
       });
+      setDocumentRoute(getDocumentRoute((invoice as any).document_route));
+      setRouteReason(((invoice as any).route_reason as string | null) || "");
     }
   }, [invoice]);
 
