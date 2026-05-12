@@ -21,6 +21,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
 import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import type { Tables } from "@/integrations/supabase/types";
+import { getDocumentRouteLabel } from "@/lib/document-route";
 
 const statusConfig = {
   te_controleren: { label: "Te controleren", icon: Clock, variant: "secondary" as const },
@@ -323,6 +324,7 @@ export default function Facturen() {
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
                       <TableHead>Grootboek</TableHead>
+                      <TableHead>Route</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -338,6 +340,11 @@ export default function Facturen() {
                           <TableCell className="text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
                           <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell className="text-sm">{inv.ledger_account_text || "—"}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {getDocumentRouteLabel((inv as any).document_route)}
+                            </Badge>
+                          </TableCell>
                           <TableCell>
                             <Badge variant={sc.variant} className="gap-1">
                               <sc.icon className="h-3 w-3" />{sc.label}

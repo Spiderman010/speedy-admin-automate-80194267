@@ -17,6 +17,7 @@ import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl } from "@/lib/ubl-generator";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
+import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
@@ -120,6 +121,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     notes: "",
   });
   const [btwEnabled, setBtwEnabled] = useState(true);
+  const [documentRoute, setDocumentRoute] = useState<DocumentRoute>("pdf_route");
+  const [routeReason, setRouteReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -142,6 +145,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         ledger_account_text: ledgerValue,
         notes: invoice.notes || "",
       });
+      setDocumentRoute(getDocumentRoute((invoice as any).document_route));
+      setRouteReason(((invoice as any).route_reason as string | null) || "");
     }
   }, [invoice]);
 
@@ -203,7 +208,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       ledger_account_text: form.ledger_account_text || null,
       notes: form.notes || null,
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
-    };
+      document_route: documentRoute,
+      route_reason: routeReason || null,
+    } as Partial<PurchaseInvoice>;
   };
 
   const persistLines = async () => {
@@ -256,11 +263,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={hasFile ? "sm:max-w-5xl max-h-[90vh] flex flex-col" : "sm:max-w-lg flex flex-col"}>
         <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
             Factuur controleren
             <Badge variant={invoice.status === "te_controleren" ? "secondary" : "default"}>
               {invoice.status === "te_controleren" ? "Te controleren" : invoice.status}
             </Badge>
+            <Badge variant="outline">{getDocumentRouteLabel(documentRoute)}</Badge>
           </DialogTitle>
         </DialogHeader>
 
@@ -414,6 +422,24 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div className="border-t pt-3 grid grid-cols-2 gap-3">
+              <div>
+                <Label>Document-route</Label>
+                <Select value={documentRoute} onValueChange={(v) => setDocumentRoute(v as DocumentRoute)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DOCUMENT_ROUTE_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Reden route (optioneel)</Label>
+                <Input value={routeReason} onChange={(e) => setRouteReason(e.target.value)} placeholder="bv. ontbrekend BTW-nummer" />
+              </div>
             </div>
 
             <div>

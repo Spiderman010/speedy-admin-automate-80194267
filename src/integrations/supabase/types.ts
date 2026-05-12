@@ -487,6 +487,7 @@ export type Database = {
           btw_percentage: number | null
           client_id: string
           created_at: string
+          document_route: string
           file_path: string | null
           grootboekrekening_id: string | null
           id: string
@@ -496,7 +497,9 @@ export type Database = {
           ledger_account_text: string | null
           notes: string | null
           ocr_data: Json | null
+          original_ubl_path: string | null
           remaining_amount: number | null
+          route_reason: string | null
           status: string
           supplier: string
           supplier_btw_number: string | null
@@ -510,6 +513,7 @@ export type Database = {
           btw_percentage?: number | null
           client_id: string
           created_at?: string
+          document_route?: string
           file_path?: string | null
           grootboekrekening_id?: string | null
           id?: string
@@ -519,7 +523,9 @@ export type Database = {
           ledger_account_text?: string | null
           notes?: string | null
           ocr_data?: Json | null
+          original_ubl_path?: string | null
           remaining_amount?: number | null
+          route_reason?: string | null
           status?: string
           supplier: string
           supplier_btw_number?: string | null
@@ -533,6 +539,7 @@ export type Database = {
           btw_percentage?: number | null
           client_id?: string
           created_at?: string
+          document_route?: string
           file_path?: string | null
           grootboekrekening_id?: string | null
           id?: string
@@ -542,7 +549,9 @@ export type Database = {
           ledger_account_text?: string | null
           notes?: string | null
           ocr_data?: Json | null
+          original_ubl_path?: string | null
           remaining_amount?: number | null
+          route_reason?: string | null
           status?: string
           supplier?: string
           supplier_btw_number?: string | null
