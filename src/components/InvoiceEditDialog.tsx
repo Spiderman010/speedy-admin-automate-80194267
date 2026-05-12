@@ -424,6 +424,24 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               ))}
             </div>
 
+            <div className="border-t pt-3 grid grid-cols-2 gap-3">
+              <div>
+                <Label>Document-route</Label>
+                <Select value={documentRoute} onValueChange={(v) => setDocumentRoute(v as DocumentRoute)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {DOCUMENT_ROUTE_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Reden route (optioneel)</Label>
+                <Input value={routeReason} onChange={(e) => setRouteReason(e.target.value)} placeholder="bv. ontbrekend BTW-nummer" />
+              </div>
+            </div>
+
             <div>
               <Label>Notities</Label>
               <Textarea value={form.notes} onChange={e => set("notes", e.target.value)} rows={2} />
