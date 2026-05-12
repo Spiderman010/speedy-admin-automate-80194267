@@ -341,6 +341,11 @@ export default function Facturen() {
                           <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell className="text-sm">{inv.ledger_account_text || "—"}</TableCell>
                           <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {getDocumentRouteLabel((inv as any).document_route)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
                             <Badge variant={sc.variant} className="gap-1">
                               <sc.icon className="h-3 w-3" />{sc.label}
                             </Badge>
