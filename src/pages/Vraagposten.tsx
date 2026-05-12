@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CheckCircle2, RotateCcw, XCircle } from "lucide-react";
+import { CheckCircle2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
@@ -54,12 +54,7 @@ export default function Vraagposten() {
 
   const handleStatus = async (id: string, status: VraagpostStatus) => {
     await updateStatus.mutateAsync({ id, status });
-    const titleMap: Record<string, string> = {
-      opgelost: "Vraagpost opgelost",
-      genegeerd: "Vraagpost genegeerd",
-      open: "Vraagpost heropend",
-    };
-    toast({ title: titleMap[status] ?? "Status gewijzigd" });
+    toast({ title: status === "opgelost" ? "Vraagpost opgelost" : "Vraagpost genegeerd" });
   };
 
   return (
@@ -108,13 +103,6 @@ export default function Vraagposten() {
                           </Button>
                           <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "genegeerd")}>
                             <XCircle className="h-3.5 w-3.5 mr-1" />Negeren
-                          </Button>
-                        </div>
-                      )}
-                      {(vp.status === "opgelost" || vp.status === "genegeerd") && (
-                        <div className="inline-flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleStatus(vp.id, "open")}>
-                            <RotateCcw className="h-3.5 w-3.5 mr-1" />Heropenen
                           </Button>
                         </div>
                       )}
