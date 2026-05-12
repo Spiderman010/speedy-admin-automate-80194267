@@ -263,11 +263,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={hasFile ? "sm:max-w-5xl max-h-[90vh] flex flex-col" : "sm:max-w-lg flex flex-col"}>
         <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
             Factuur controleren
             <Badge variant={invoice.status === "te_controleren" ? "secondary" : "default"}>
               {invoice.status === "te_controleren" ? "Te controleren" : invoice.status}
             </Badge>
+            <Badge variant="outline">{getDocumentRouteLabel(documentRoute)}</Badge>
           </DialogTitle>
         </DialogHeader>
 
