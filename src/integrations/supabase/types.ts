@@ -499,7 +499,6 @@ export type Database = {
           remaining_amount: number | null
           status: string
           supplier: string
-          supplier_btw_number: string | null
           updated_at: string
           user_id: string
         }
@@ -522,7 +521,6 @@ export type Database = {
           remaining_amount?: number | null
           status?: string
           supplier: string
-          supplier_btw_number?: string | null
           updated_at?: string
           user_id: string
         }
@@ -545,7 +543,6 @@ export type Database = {
           remaining_amount?: number | null
           status?: string
           supplier?: string
-          supplier_btw_number?: string | null
           updated_at?: string
           user_id?: string
         }
