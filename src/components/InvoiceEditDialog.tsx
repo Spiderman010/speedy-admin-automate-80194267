@@ -428,7 +428,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             <Button
               variant="outline"
               onClick={() => {
-                const missing = validatePurchaseInvoiceForUbl(invoice);
+                const missing = validatePurchaseInvoiceForUbl(invoice, client);
                 if (missing.length) {
                   toast({
                     title: "UBL niet gegenereerd",
