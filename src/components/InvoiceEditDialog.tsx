@@ -450,7 +450,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         </div>
 
         <DialogFooter className="gap-2 flex-shrink-0 border-t pt-4">
-          {invoice.status === "gecontroleerd" && (
+          {invoice.status === "gecontroleerd" && documentRoute === "boekassist_ubl" && (
             <Button
               variant="outline"
               onClick={() => {
