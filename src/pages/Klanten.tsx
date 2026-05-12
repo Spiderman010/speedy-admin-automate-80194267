@@ -170,14 +170,30 @@ export default function Klanten() {
       btw_number: client.btw_number || "",
       contact_person: client.contact_person || "",
       email: client.email || "",
+      phone: client.phone || "",
+      address: client.address || "",
+      postal_code: client.postal_code || "",
+      city: client.city || "",
+      country: client.country || "NL",
       btw_vrijgesteld: client.btw_vrijgesteld ?? false,
       rechtsvorm: client.rechtsvorm || "",
       btw_type: client.btw_type || "plichtig",
       ibans: client.ibans || [],
       verwerkingsfrequentie: client.verwerkingsfrequentie || "kwartaal",
+      inkoop_dagboek: client.inkoop_dagboek != null ? String(client.inkoop_dagboek) : "",
+      verkoop_dagboek: client.verkoop_dagboek != null ? String(client.verkoop_dagboek) : "",
+      bank_dagboek: client.bank_dagboek != null ? String(client.bank_dagboek) : "",
+      afgesloten_boekjaar: client.afgesloten_boekjaar != null ? String(client.afgesloten_boekjaar) : "",
     });
     setEditingId(client.id);
     setShowDialog(true);
+  };
+
+  const toIntOrNull = (v: string): number | null => {
+    const t = v.trim();
+    if (!t) return null;
+    const n = parseInt(t, 10);
+    return Number.isFinite(n) ? n : null;
   };
 
   const handleSave = async () => {
@@ -192,11 +208,20 @@ export default function Klanten() {
         btw_number: form.btw_number || null,
         contact_person: form.contact_person || null,
         email: form.email || null,
+        phone: form.phone || null,
+        address: form.address || null,
+        postal_code: form.postal_code || null,
+        city: form.city || null,
+        country: form.country || "NL",
         btw_vrijgesteld: form.btw_type === "vrijgesteld",
         rechtsvorm: form.rechtsvorm || null,
         btw_type: form.btw_type,
         ibans: form.ibans.filter(Boolean),
         verwerkingsfrequentie: form.verwerkingsfrequentie,
+        inkoop_dagboek: toIntOrNull(form.inkoop_dagboek),
+        verkoop_dagboek: toIntOrNull(form.verkoop_dagboek),
+        bank_dagboek: toIntOrNull(form.bank_dagboek),
+        afgesloten_boekjaar: toIntOrNull(form.afgesloten_boekjaar),
       };
       if (editingId) {
         await updateClient.mutateAsync({ id: editingId, ...payload });
