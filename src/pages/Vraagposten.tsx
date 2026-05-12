@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, RotateCcw, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
