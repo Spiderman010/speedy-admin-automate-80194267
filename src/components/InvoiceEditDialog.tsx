@@ -9,7 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle } from "lucide-react";
+import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
@@ -124,6 +125,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [documentRoute, setDocumentRoute] = useState<DocumentRoute>("pdf_route");
   const [routeReason, setRouteReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [vraagpostOpen, setVraagpostOpen] = useState(false);
 
   useEffect(() => {
     if (invoice) {
@@ -450,6 +452,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         </div>
 
         <DialogFooter className="gap-2 flex-shrink-0 border-t pt-4">
+          <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
+            <HelpCircle className="mr-2 h-4 w-4" />Maak vraagpost
+          </Button>
           {invoice.status === "gecontroleerd" && documentRoute === "boekassist_ubl" && (
             <Button
               variant="outline"
@@ -478,6 +483,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           </Button>
         </DialogFooter>
       </DialogContent>
+      <CreateVraagpostDialog
+        open={vraagpostOpen}
+        onOpenChange={setVraagpostOpen}
+        sourceType="purchase_invoice"
+        sourceId={invoice.id}
+        clientId={invoice.client_id}
+        defaultTitel={invoice.supplier ?? ""}
+      />
     </Dialog>
   );
 }

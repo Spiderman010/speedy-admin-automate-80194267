@@ -13,6 +13,7 @@ import Verkoop from "./pages/Verkoop";
 import Boekingen from "./pages/Boekingen";
 import Overzichten from "./pages/Overzichten";
 import Grootboek from "./pages/Grootboek";
+import Vraagposten from "./pages/Vraagposten";
 import Instellingen from "./pages/Instellingen";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -51,6 +52,7 @@ const App = () => (
               <Route path="/boekingen" element={<Boekingen />} />
               <Route path="/overzichten" element={<Overzichten />} />
               <Route path="/grootboek" element={<Grootboek />} />
+              <Route path="/vraagposten" element={<Vraagposten />} />
               <Route path="/instellingen" element={<Instellingen />} />
             </Route>
             <Route path="*" element={<NotFound />} />
