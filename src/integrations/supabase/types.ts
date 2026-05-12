@@ -458,6 +458,75 @@ export type Database = {
           },
         ]
       }
+      leveranciers: {
+        Row: {
+          actief: boolean
+          adres: string | null
+          btw_nummer: string | null
+          client_id: string
+          created_at: string
+          iban: string | null
+          id: string
+          kvk_nummer: string | null
+          land: string
+          naam: string
+          plaats: string | null
+          postcode: string | null
+          standaard_grootboekrekening_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          actief?: boolean
+          adres?: string | null
+          btw_nummer?: string | null
+          client_id: string
+          created_at?: string
+          iban?: string | null
+          id?: string
+          kvk_nummer?: string | null
+          land?: string
+          naam: string
+          plaats?: string | null
+          postcode?: string | null
+          standaard_grootboekrekening_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          actief?: boolean
+          adres?: string | null
+          btw_nummer?: string | null
+          client_id?: string
+          created_at?: string
+          iban?: string | null
+          id?: string
+          kvk_nummer?: string | null
+          land?: string
+          naam?: string
+          plaats?: string | null
+          postcode?: string | null
+          standaard_grootboekrekening_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leveranciers_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leveranciers_standaard_grootboekrekening_id_fkey"
+            columns: ["standaard_grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       purchase_invoice_lines: {
         Row: {
           amount_excl: number
@@ -510,6 +579,7 @@ export type Database = {
           invoice_number: string | null
           ledger_account_id: string | null
           ledger_account_text: string | null
+          leverancier_id: string | null
           notes: string | null
           ocr_data: Json | null
           original_ubl_path: string | null
@@ -536,6 +606,7 @@ export type Database = {
           invoice_number?: string | null
           ledger_account_id?: string | null
           ledger_account_text?: string | null
+          leverancier_id?: string | null
           notes?: string | null
           ocr_data?: Json | null
           original_ubl_path?: string | null
@@ -562,6 +633,7 @@ export type Database = {
           invoice_number?: string | null
           ledger_account_id?: string | null
           ledger_account_text?: string | null
+          leverancier_id?: string | null
           notes?: string | null
           ocr_data?: Json | null
           original_ubl_path?: string | null
@@ -593,6 +665,13 @@ export type Database = {
             columns: ["ledger_account_id"]
             isOneToOne: false
             referencedRelation: "ledger_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_invoices_leverancier_id_fkey"
+            columns: ["leverancier_id"]
+            isOneToOne: false
+            referencedRelation: "leveranciers"
             referencedColumns: ["id"]
           },
         ]
