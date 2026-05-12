@@ -443,6 +443,37 @@ export default function Klanten() {
               </div>
             </div>
 
+            {/* Telefoon */}
+            <div className="grid gap-2">
+              <Label htmlFor="phone">Telefoon</Label>
+              <Input id="phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="+31 6 00000000" />
+            </div>
+
+            {/* Adres */}
+            <div className="grid gap-2">
+              <Label htmlFor="address">Adres</Label>
+              <Input id="address" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Straat 1" />
+            </div>
+
+            {/* Postcode + Plaats + Land */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="postal_code">Postcode</Label>
+                <Input id="postal_code" value={form.postal_code} onChange={(e) => setForm({ ...form, postal_code: e.target.value })} placeholder="1234 AB" />
+                {form.postal_code && !/^[1-9][0-9]{3}\s?[A-Za-z]{2}$/.test(form.postal_code.trim()) && (
+                  <p className="text-xs text-muted-foreground">Tip: Nederlandse postcode is 4 cijfers + 2 letters</p>
+                )}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="city">Plaats</Label>
+                <Input id="city" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} placeholder="Amsterdam" />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="country">Land</Label>
+                <Input id="country" value={form.country} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="NL" />
+              </div>
+            </div>
+
             {/* Verwerkingsfrequentie */}
             <div className="grid gap-2">
               <Label>Verwerkingsfrequentie</Label>
@@ -454,6 +485,29 @@ export default function Klanten() {
                   <SelectItem value="jaarlijks">Jaarlijks</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* SnelStart instellingen */}
+            <div className="grid gap-2">
+              <Label className="text-sm font-semibold">SnelStart instellingen</Label>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="inkoop_dagboek" className="text-xs font-normal">Inkoop-dagboek</Label>
+                  <Input id="inkoop_dagboek" inputMode="numeric" value={form.inkoop_dagboek} onChange={(e) => setForm({ ...form, inkoop_dagboek: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 700" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="verkoop_dagboek" className="text-xs font-normal">Verkoop-dagboek</Label>
+                  <Input id="verkoop_dagboek" inputMode="numeric" value={form.verkoop_dagboek} onChange={(e) => setForm({ ...form, verkoop_dagboek: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 800" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="bank_dagboek" className="text-xs font-normal">Bank-dagboek</Label>
+                  <Input id="bank_dagboek" inputMode="numeric" value={form.bank_dagboek} onChange={(e) => setForm({ ...form, bank_dagboek: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 1100" />
+                </div>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="afgesloten_boekjaar" className="text-xs font-normal">Afgesloten boekjaar</Label>
+                <Input id="afgesloten_boekjaar" inputMode="numeric" value={form.afgesloten_boekjaar} onChange={(e) => setForm({ ...form, afgesloten_boekjaar: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 2024" className="max-w-[160px]" />
+              </div>
             </div>
 
             {/* Zakelijk IBAN */}
