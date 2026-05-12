@@ -39,11 +39,20 @@ interface ClientForm {
   btw_number: string;
   contact_person: string;
   email: string;
+  phone: string;
+  address: string;
+  postal_code: string;
+  city: string;
+  country: string;
   btw_vrijgesteld: boolean;
   rechtsvorm: string;
   btw_type: string;
   ibans: string[];
   verwerkingsfrequentie: string;
+  inkoop_dagboek: string;
+  verkoop_dagboek: string;
+  bank_dagboek: string;
+  afgesloten_boekjaar: string;
 }
 
 const emptyForm: ClientForm = {
@@ -52,11 +61,20 @@ const emptyForm: ClientForm = {
   btw_number: "",
   contact_person: "",
   email: "",
+  phone: "",
+  address: "",
+  postal_code: "",
+  city: "",
+  country: "NL",
   btw_vrijgesteld: false,
   rechtsvorm: "",
   btw_type: "plichtig",
   ibans: [],
   verwerkingsfrequentie: "kwartaal",
+  inkoop_dagboek: "",
+  verkoop_dagboek: "",
+  bank_dagboek: "",
+  afgesloten_boekjaar: "",
 };
 
 function validateKvk(v: string): string | null {
