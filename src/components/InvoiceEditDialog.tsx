@@ -121,6 +121,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     notes: "",
   });
   const [btwEnabled, setBtwEnabled] = useState(true);
+  const [documentRoute, setDocumentRoute] = useState<DocumentRoute>("pdf_route");
+  const [routeReason, setRouteReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
