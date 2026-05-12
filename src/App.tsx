@@ -14,6 +14,7 @@ import Boekingen from "./pages/Boekingen";
 import Overzichten from "./pages/Overzichten";
 import Grootboek from "./pages/Grootboek";
 import Vraagposten from "./pages/Vraagposten";
+import Leveranciers from "./pages/Leveranciers";
 import Instellingen from "./pages/Instellingen";
 import Auth from "./pages/Auth";
 import NotFound from "./pages/NotFound";
@@ -46,6 +47,7 @@ const App = () => (
             <Route element={<ProtectedRoutes />}>
               <Route path="/" element={<Index />} />
               <Route path="/klanten" element={<Klanten />} />
+              <Route path="/leveranciers" element={<Leveranciers />} />
               <Route path="/facturen" element={<Facturen />} />
               <Route path="/bank" element={<Bank />} />
               <Route path="/verkoop" element={<Verkoop />} />

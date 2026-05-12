@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   LayoutDashboard,
   Users,
+  Truck,
   FileText,
   Landmark,
   Receipt,
@@ -28,6 +29,7 @@ import { useClientContext } from "@/hooks/useClientContext";
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/klanten", icon: Users, label: "Klanten" },
+  { to: "/leveranciers", icon: Truck, label: "Leveranciers" },
   { to: "/facturen", icon: FileText, label: "Inkoopfacturen" },
   { to: "/bank", icon: Landmark, label: "Bankafschriften" },
   { to: "/vraagposten", icon: HelpCircle, label: "Vraagposten" },
