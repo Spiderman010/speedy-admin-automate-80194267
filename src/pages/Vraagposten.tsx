@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, RotateCcw, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
@@ -54,7 +54,14 @@ export default function Vraagposten() {
 
   const handleStatus = async (id: string, status: VraagpostStatus) => {
     await updateStatus.mutateAsync({ id, status });
-    toast({ title: status === "opgelost" ? "Vraagpost opgelost" : "Vraagpost genegeerd" });
+    toast({
+      title:
+        status === "opgelost"
+          ? "Vraagpost opgelost"
+          : status === "genegeerd"
+          ? "Vraagpost genegeerd"
+          : "Vraagpost heropend",
+    });
   };
 
   return (
@@ -105,6 +112,11 @@ export default function Vraagposten() {
                             <XCircle className="h-3.5 w-3.5 mr-1" />Negeren
                           </Button>
                         </div>
+                      )}
+                      {(vp.status === "opgelost" || vp.status === "genegeerd") && (
+                        <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "open")}>
+                          <RotateCcw className="h-3.5 w-3.5 mr-1" />Heropenen
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>
