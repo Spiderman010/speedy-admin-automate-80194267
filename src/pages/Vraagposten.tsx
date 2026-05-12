@@ -113,6 +113,11 @@ export default function Vraagposten() {
                           </Button>
                         </div>
                       )}
+                      {(vp.status === "opgelost" || vp.status === "genegeerd") && (
+                        <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "open")}>
+                          <RotateCcw className="h-3.5 w-3.5 mr-1" />Heropenen
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
