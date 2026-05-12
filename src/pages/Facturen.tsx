@@ -21,6 +21,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
 import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import type { Tables } from "@/integrations/supabase/types";
+import { getDocumentRouteLabel } from "@/lib/document-route";
 
 const statusConfig = {
   te_controleren: { label: "Te controleren", icon: Clock, variant: "secondary" as const },
