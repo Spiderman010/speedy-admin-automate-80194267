@@ -54,7 +54,12 @@ export default function Vraagposten() {
 
   const handleStatus = async (id: string, status: VraagpostStatus) => {
     await updateStatus.mutateAsync({ id, status });
-    toast({ title: status === "opgelost" ? "Vraagpost opgelost" : "Vraagpost genegeerd" });
+    const titleMap: Record<string, string> = {
+      opgelost: "Vraagpost opgelost",
+      genegeerd: "Vraagpost genegeerd",
+      open: "Vraagpost heropend",
+    };
+    toast({ title: titleMap[status] ?? "Status gewijzigd" });
   };
 
   return (
