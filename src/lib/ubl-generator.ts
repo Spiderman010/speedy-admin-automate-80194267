@@ -4,34 +4,112 @@ type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
 type PurchaseInvoiceLine = Tables<"purchase_invoice_lines">;
 
-const REQUIRED_FIELDS: { key: keyof PurchaseInvoice; label: string }[] = [
-  { key: "invoice_number", label: "Factuurnummer" },
-  { key: "invoice_date", label: "Factuurdatum" },
-  { key: "supplier", label: "Leverancier" },
-  { key: "amount_excl", label: "Bedrag excl. BTW" },
-  { key: "amount_incl", label: "Bedrag incl. BTW" },
-  { key: "btw_percentage", label: "BTW-percentage" },
-];
-
-export function validatePurchaseInvoiceForUbl(invoice: PurchaseInvoice): string[] {
-  const missing: string[] = [];
-  for (const f of REQUIRED_FIELDS) {
-    const v = invoice[f.key];
-    if (v === null || v === undefined || v === "") missing.push(f.label);
-  }
-  // For invoices with VAT, supplier VAT number is required for a valid NLCIUS/Peppol UBL.
-  if (Number(invoice.btw_percentage ?? 0) > 0 && !invoice.supplier_btw_number) {
-    missing.push("BTW-nummer leverancier (verplicht bij facturen met BTW)");
-  }
-  return missing;
-}
-
 const xmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
 const fmt = (n: number) => n.toFixed(2);
 
 const sanitizeFilename = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+
+const trimOrNull = (v: any): string | null => {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s ? s : null;
+};
+
+/** Extract supplier party data from invoice + ocr_data fallback. */
+function extractSupplierParty(invoice: PurchaseInvoice) {
+  const ocr = (invoice.ocr_data as any) || {};
+  return {
+    name: trimOrNull(invoice.supplier),
+    btw: trimOrNull(invoice.supplier_btw_number) || trimOrNull(ocr.supplier_btw_number),
+    street: trimOrNull(ocr.supplier_address) || trimOrNull(ocr.supplier_street),
+    postal_code: trimOrNull(ocr.supplier_postal_code) || trimOrNull(ocr.supplier_zip),
+    city: trimOrNull(ocr.supplier_city),
+    country: trimOrNull(ocr.supplier_country) || "NL",
+    kvk: trimOrNull(ocr.supplier_kvk) || trimOrNull(ocr.supplier_kvk_number),
+    iban: trimOrNull(ocr.supplier_iban) || trimOrNull(ocr.iban),
+  };
+}
+
+function extractBuyerParty(client?: Client | null) {
+  if (!client) {
+    return { name: null, street: null, postal_code: null, city: null, country: "NL", kvk: null, btw: null };
+  }
+  return {
+    name: trimOrNull(client.name),
+    street: trimOrNull(client.address),
+    postal_code: trimOrNull(client.postal_code),
+    city: trimOrNull(client.city),
+    country: "NL",
+    kvk: trimOrNull(client.kvk_number),
+    btw: trimOrNull(client.btw_number),
+  };
+}
+
+const REQUIRED_INVOICE_FIELDS: { key: keyof PurchaseInvoice; label: string }[] = [
+  { key: "invoice_number", label: "factuurnummer" },
+  { key: "invoice_date", label: "factuurdatum" },
+  { key: "amount_excl", label: "bedrag excl. BTW" },
+  { key: "amount_incl", label: "bedrag incl. BTW" },
+  { key: "btw_percentage", label: "BTW-percentage" },
+];
+
+export function validatePurchaseInvoiceForUbl(invoice: PurchaseInvoice, client?: Client | null): string[] {
+  const missing: string[] = [];
+
+  for (const f of REQUIRED_INVOICE_FIELDS) {
+    const v = invoice[f.key];
+    if (v === null || v === undefined || v === "") missing.push(f.label);
+  }
+
+  const supplier = extractSupplierParty(invoice);
+  if (!supplier.name) missing.push("leverancier naam");
+  if (Number(invoice.btw_percentage ?? 0) > 0 && !supplier.btw) {
+    missing.push("leverancier BTW-nummer (verplicht bij facturen met BTW)");
+  }
+  if (!supplier.street) missing.push("leverancier adres");
+  if (!supplier.postal_code) missing.push("leverancier postcode");
+  if (!supplier.city) missing.push("leverancier plaats");
+  if (!supplier.country) missing.push("leverancier land");
+  if (!supplier.kvk) missing.push("leverancier KVK-nummer");
+
+  const buyer = extractBuyerParty(client);
+  if (!buyer.name) missing.push("klant naam");
+  if (!buyer.street) missing.push("klant adres");
+  if (!buyer.postal_code) missing.push("klant postcode");
+  if (!buyer.city) missing.push("klant plaats");
+  if (!buyer.country) missing.push("klant land");
+  if (!buyer.kvk) missing.push("klant KVK-nummer");
+
+  return missing;
+}
+
+function partyXml(p: ReturnType<typeof extractSupplierParty> | ReturnType<typeof extractBuyerParty>) {
+  const name = xmlEscape(p.name ?? "");
+  const endpoint = p.kvk
+    ? `      <cbc:EndpointID schemeID="0106">${xmlEscape(p.kvk)}</cbc:EndpointID>\n`
+    : "";
+  const taxScheme = (p as any).btw
+    ? `      <cac:PartyTaxScheme>
+        <cbc:CompanyID>${xmlEscape(String((p as any).btw))}</cbc:CompanyID>
+        <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
+      </cac:PartyTaxScheme>\n`
+    : "";
+  const legalCompanyId = p.kvk
+    ? `        <cbc:CompanyID schemeID="0106">${xmlEscape(p.kvk)}</cbc:CompanyID>\n`
+    : "";
+
+  return `    <cac:Party>
+${endpoint}      <cac:PartyName><cbc:Name>${name}</cbc:Name></cac:PartyName>
+      <cac:PostalAddress>
+        ${p.street ? `<cbc:StreetName>${xmlEscape(p.street)}</cbc:StreetName>\n        ` : ""}${p.city ? `<cbc:CityName>${xmlEscape(p.city)}</cbc:CityName>\n        ` : ""}${p.postal_code ? `<cbc:PostalZone>${xmlEscape(p.postal_code)}</cbc:PostalZone>\n        ` : ""}<cac:Country><cbc:IdentificationCode>${xmlEscape(p.country ?? "NL")}</cbc:IdentificationCode></cac:Country>
+      </cac:PostalAddress>
+${taxScheme}      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>${name}</cbc:RegistrationName>
+${legalCompanyId}      </cac:PartyLegalEntity>
+    </cac:Party>`;
+}
 
 export function generatePurchaseInvoiceUbl(
   invoice: PurchaseInvoice,
@@ -45,26 +123,13 @@ export function generatePurchaseInvoiceUbl(
     : Math.max(0, amountIncl - amountExcl);
   const btwPct = Number(invoice.btw_percentage ?? 0);
 
-  const supplierName = xmlEscape(invoice.supplier ?? "");
-  const supplierVat = invoice.supplier_btw_number || (invoice.ocr_data as any)?.supplier_btw_number || null;
-
-  const buyerName = xmlEscape(client?.name ?? "Onbekende klant");
-  const buyerStreet = xmlEscape(client?.address ?? "");
-  const buyerCity = xmlEscape(client?.city ?? "");
-  const buyerZip = xmlEscape(client?.postal_code ?? "");
-
-  const supplierTaxScheme = supplierVat
-    ? `\n    <cac:PartyTaxScheme>
-      <cbc:CompanyID>${xmlEscape(String(supplierVat))}</cbc:CompanyID>
-      <cac:TaxScheme><cbc:ID>VAT</cbc:ID></cac:TaxScheme>
-    </cac:PartyTaxScheme>`
-    : "";
+  const supplier = extractSupplierParty(invoice);
+  const buyer = extractBuyerParty(client);
 
   const dueDateLine = invoice.invoice_date && (invoice as any).due_date
     ? `\n  <cbc:DueDate>${(invoice as any).due_date}</cbc:DueDate>`
     : "";
 
-  // Build invoice lines: multi-line mode if lines exist, otherwise fallback to single generic line.
   const useLines = Array.isArray(lines) && lines.length > 0;
   const invoiceLinesXml = useLines
     ? lines!.map((l, idx) => {
@@ -111,6 +176,17 @@ export function generatePurchaseInvoiceUbl(
     ? lines!.reduce((s, l) => s + Number(l.amount_excl ?? 0), 0)
     : amountExcl;
 
+  const paymentMeansXml = supplier.iban
+    ? `  <cac:PaymentMeans>
+    <cbc:PaymentMeansCode>58</cbc:PaymentMeansCode>
+    <cac:PayeeFinancialAccount>
+      <cbc:ID>${xmlEscape(supplier.iban)}</cbc:ID>
+    </cac:PayeeFinancialAccount>
+  </cac:PaymentMeans>`
+    : `  <cac:PaymentMeans>
+    <cbc:PaymentMeansCode>57</cbc:PaymentMeansCode>
+  </cac:PaymentMeans>`;
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
   <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
@@ -122,30 +198,12 @@ export function generatePurchaseInvoiceUbl(
   <cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>
   <cbc:BuyerReference>NA</cbc:BuyerReference>
   <cac:AccountingSupplierParty>
-    <cac:Party>
-      <cac:PartyName><cbc:Name>${supplierName}</cbc:Name></cac:PartyName>
-      <cac:PostalAddress>
-        <cac:Country><cbc:IdentificationCode>NL</cbc:IdentificationCode></cac:Country>
-      </cac:PostalAddress>${supplierTaxScheme}
-      <cac:PartyLegalEntity>
-        <cbc:RegistrationName>${supplierName}</cbc:RegistrationName>
-      </cac:PartyLegalEntity>
-    </cac:Party>
+${partyXml(supplier)}
   </cac:AccountingSupplierParty>
   <cac:AccountingCustomerParty>
-    <cac:Party>
-      <cac:PartyName><cbc:Name>${buyerName}</cbc:Name></cac:PartyName>
-      <cac:PostalAddress>
-        ${buyerStreet ? `<cbc:StreetName>${buyerStreet}</cbc:StreetName>\n        ` : ""}${buyerCity ? `<cbc:CityName>${buyerCity}</cbc:CityName>\n        ` : ""}${buyerZip ? `<cbc:PostalZone>${buyerZip}</cbc:PostalZone>\n        ` : ""}<cac:Country><cbc:IdentificationCode>NL</cbc:IdentificationCode></cac:Country>
-      </cac:PostalAddress>
-      <cac:PartyLegalEntity>
-        <cbc:RegistrationName>${buyerName}</cbc:RegistrationName>
-      </cac:PartyLegalEntity>
-    </cac:Party>
+${partyXml(buyer)}
   </cac:AccountingCustomerParty>
-  <cac:PaymentMeans>
-    <cbc:PaymentMeansCode>57</cbc:PaymentMeansCode>
-  </cac:PaymentMeans>
+${paymentMeansXml}
   <cac:TaxTotal>
     <cbc:TaxAmount currencyID="EUR">${fmt(btwAmount)}</cbc:TaxAmount>
     <cac:TaxSubtotal>
