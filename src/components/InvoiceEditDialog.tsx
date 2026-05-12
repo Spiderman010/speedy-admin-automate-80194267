@@ -208,7 +208,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       ledger_account_text: form.ledger_account_text || null,
       notes: form.notes || null,
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
-    };
+      document_route: documentRoute,
+      route_reason: routeReason || null,
+    } as Partial<PurchaseInvoice>;
   };
 
   const persistLines = async () => {
