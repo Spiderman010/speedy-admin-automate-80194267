@@ -133,7 +133,7 @@ export function generatePurchaseInvoiceUbl(
   const supplier = extractSupplierParty(invoice, leverancier);
   const buyer = extractBuyerParty(client);
 
-  const dueDateLine = invoice.invoice_date && (invoice as any).due_date
+  const dueDateLine = (invoice as any).due_date
     ? `\n  <cbc:DueDate>${(invoice as any).due_date}</cbc:DueDate>`
     : "";
 
