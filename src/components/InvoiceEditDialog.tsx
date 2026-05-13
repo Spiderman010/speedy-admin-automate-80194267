@@ -370,14 +370,68 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 <Input
                   value={form.supplier_btw_number}
                   onChange={e => set("supplier_btw_number", e.target.value)}
-                  placeholder="bv. NL123456789B01"
-                />
+            </div>
+
+            <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="flex items-center gap-1.5"><Truck className="h-3.5 w-3.5" />Leverancier koppeling</Label>
+                {linkedLeverancier ? (
+                  <Badge variant="secondary" className="font-normal">
+                    {linkedLeverancier.naam}
+                    {linkedLeverancier.btw_nummer ? ` · ${linkedLeverancier.btw_nummer}` : ""}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Geen leverancier gekoppeld</span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" size="sm">
+                      <Link2 className="h-3.5 w-3.5 mr-1" />Koppel bestaande leverancier
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="p-0 w-[320px]" align="start">
+                    <Command
+                      filter={(value, search) => {
+                        const s = search.toLowerCase();
+                        return value.toLowerCase().includes(s) ? 1 : 0;
+                      }}
+                    >
+                      <CommandInput placeholder="Zoek op naam, BTW of KvK..." />
+                      <CommandList>
+                        <CommandEmpty>Geen leveranciers gevonden</CommandEmpty>
+                        <CommandGroup>
+                          {(leveranciers ?? []).map((l) => (
+                            <CommandItem
+                              key={l.id}
+                              value={`${l.naam} ${l.btw_nummer ?? ""} ${l.kvk_nummer ?? ""}`}
+                              onSelect={() => handleLinkExisting(l.id)}
+                            >
+                              <div className="flex flex-col">
+                                <span>{l.naam}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {l.btw_nummer ?? "—"} · KvK {l.kvk_nummer ?? "—"}
+                                </span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <Button type="button" variant="outline" size="sm" onClick={openCreateSupplier}>
+                  <UserPlus className="h-3.5 w-3.5 mr-1" />Maak leverancier aan
+                </Button>
+                {linkedLeverancier && (
+                  <Button type="button" variant="ghost" size="sm" onClick={handleUnlink}>
+                    <Link2Off className="h-3.5 w-3.5 mr-1" />Leverancier ontkoppelen
+                  </Button>
+                )}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Factuurnummer</Label>
                 <Input value={form.invoice_number} onChange={e => set("invoice_number", e.target.value)} />
               </div>
               <div>
