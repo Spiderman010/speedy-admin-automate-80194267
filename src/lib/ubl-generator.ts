@@ -57,7 +57,11 @@ const REQUIRED_INVOICE_FIELDS: { key: keyof PurchaseInvoice; label: string }[] =
   { key: "btw_percentage", label: "BTW-percentage" },
 ];
 
-export function validatePurchaseInvoiceForUbl(invoice: PurchaseInvoice, client?: Client | null): string[] {
+export function validatePurchaseInvoiceForUbl(
+  invoice: PurchaseInvoice,
+  client?: Client | null,
+  leverancier?: Leverancier | null,
+): string[] {
   const missing: string[] = [];
 
   for (const f of REQUIRED_INVOICE_FIELDS) {
@@ -65,7 +69,7 @@ export function validatePurchaseInvoiceForUbl(invoice: PurchaseInvoice, client?:
     if (v === null || v === undefined || v === "") missing.push(f.label);
   }
 
-  const supplier = extractSupplierParty(invoice);
+  const supplier = extractSupplierParty(invoice, leverancier);
   if (!supplier.name) missing.push("leverancier naam");
   if (Number(invoice.btw_percentage ?? 0) > 0 && !supplier.btw) {
     missing.push("leverancier BTW-nummer (verplicht bij facturen met BTW)");
