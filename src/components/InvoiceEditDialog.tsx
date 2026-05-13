@@ -599,7 +599,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             <Button
               variant="outline"
               onClick={() => {
-                const missing = validatePurchaseInvoiceForUbl(invoice, client);
+                const missing = validatePurchaseInvoiceForUbl(invoice, client, linkedLeverancier);
                 if (missing.length) {
                   toast({
                     title: "UBL niet gegenereerd",
@@ -608,7 +608,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   });
                   return;
                 }
-                downloadPurchaseInvoiceUbl(invoice, client, existingLines ?? null);
+                downloadPurchaseInvoiceUbl(invoice, client, existingLines ?? null, linkedLeverancier);
                 toast({ title: "UBL XML gedownload" });
               }}
             >
