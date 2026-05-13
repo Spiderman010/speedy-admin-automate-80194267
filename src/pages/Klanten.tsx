@@ -53,6 +53,7 @@ interface ClientForm {
   verkoop_dagboek: string;
   bank_dagboek: string;
   afgesloten_boekjaar: string;
+  snelstart_inkoop_mailbox: string;
 }
 
 const emptyForm: ClientForm = {
