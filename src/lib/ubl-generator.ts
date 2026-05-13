@@ -238,9 +238,11 @@ export function downloadPurchaseInvoiceUbl(
   invoice: PurchaseInvoice,
   client?: Client | null,
   lines?: PurchaseInvoiceLine[] | null,
+  leverancier?: Leverancier | null,
 ) {
-  const xml = generatePurchaseInvoiceUbl(invoice, client, lines);
-  const filename = `UBL-${sanitizeFilename(invoice.invoice_number ?? "factuur")}-${sanitizeFilename(invoice.supplier ?? "leverancier")}.xml`;
+  const xml = generatePurchaseInvoiceUbl(invoice, client, lines, leverancier);
+  const supplierName = leverancier?.naam ?? invoice.supplier ?? "leverancier";
+  const filename = `UBL-${sanitizeFilename(invoice.invoice_number ?? "factuur")}-${sanitizeFilename(supplierName)}.xml`;
   const blob = new Blob([xml], { type: "application/xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
