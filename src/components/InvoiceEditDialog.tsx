@@ -18,7 +18,8 @@ import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { useLeveranciers, useAddLeverancier, normalizeBtwNummer } from "@/hooks/useLeveranciers";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
-import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl } from "@/lib/ubl-generator";
+import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl, generatePurchaseInvoiceUbl } from "@/lib/ubl-generator";
+import JSZip from "jszip";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
@@ -613,6 +614,58 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               }}
             >
               <FileCode2 className="mr-2 h-4 w-4" />Genereer UBL
+            </Button>
+          )}
+          {invoice.status === "gecontroleerd" && documentRoute === "boekassist_ubl" && invoice.file_path && (
+            <Button
+              variant="outline"
+              onClick={async () => {
+                const missing = validatePurchaseInvoiceForUbl(invoice, client, linkedLeverancier);
+                if (missing.length) {
+                  toast({
+                    title: "UBL niet gegenereerd",
+                    description: `Ontbrekende velden: ${missing.join(", ")}`,
+                    variant: "destructive",
+                  });
+                  return;
+                }
+                try {
+                  const { data: fileBlob, error: dlError } = await supabase.storage
+                    .from("invoices")
+                    .download(invoice.file_path!);
+                  if (dlError || !fileBlob) {
+                    toast({ title: "Origineel document niet gevonden", variant: "destructive" });
+                    return;
+                  }
+                  const xml = generatePurchaseInvoiceUbl(invoice, client, existingLines ?? null, linkedLeverancier);
+                  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+                  const supplierName = linkedLeverancier?.naam ?? invoice.supplier ?? "";
+                  const invNum = invoice.invoice_number ?? "";
+                  const baseName = (invNum && supplierName)
+                    ? `UBL-${sanitize(invNum)}-${sanitize(supplierName)}`
+                    : `UBL-${invoice.id}`;
+                  const pathLower = invoice.file_path!.toLowerCase();
+                  const dotIdx = pathLower.lastIndexOf(".");
+                  const ext = dotIdx >= 0 ? pathLower.substring(dotIdx) : ".pdf";
+                  const zip = new JSZip();
+                  zip.file(`${baseName}.xml`, xml);
+                  zip.file(`${baseName}${ext}`, fileBlob);
+                  const zipBlob = await zip.generateAsync({ type: "blob" });
+                  const url = URL.createObjectURL(zipBlob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `${baseName}.zip`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  toast({ title: "SnelStart-pakket gedownload" });
+                } catch (e: any) {
+                  toast({ title: "Origineel document niet gevonden", description: e?.message, variant: "destructive" });
+                }
+              }}
+            >
+              <FileCode2 className="mr-2 h-4 w-4" />Download SnelStart-pakket
             </Button>
           )}
           <Button variant="outline" onClick={handleSave} disabled={saving || !form.supplier}>
