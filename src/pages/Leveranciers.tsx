@@ -361,6 +361,23 @@ export default function Leveranciers() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leverancier verwijderen</AlertDialogTitle>
+            <AlertDialogDescription>
+              Weet je zeker dat je deze leverancier wilt verwijderen?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteId(null)}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} disabled={deleteMut.isPending || updateMut.isPending}>
+              Verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
