@@ -631,6 +631,55 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         clientId={invoice.client_id}
         defaultTitel={invoice.supplier ?? ""}
       />
+      <Dialog open={createSupplierOpen} onOpenChange={setCreateSupplierOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Nieuwe leverancier</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Naam *</Label>
+              <Input value={supplierForm.naam} onChange={(e) => setSupplierForm((f) => ({ ...f, naam: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>BTW-nummer</Label>
+                <Input value={supplierForm.btw_nummer} onChange={(e) => setSupplierForm((f) => ({ ...f, btw_nummer: e.target.value }))} placeholder="NL123456789B01" />
+              </div>
+              <div>
+                <Label>KvK-nummer</Label>
+                <Input value={supplierForm.kvk_nummer} onChange={(e) => setSupplierForm((f) => ({ ...f, kvk_nummer: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>Adres</Label>
+              <Input value={supplierForm.adres} onChange={(e) => setSupplierForm((f) => ({ ...f, adres: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Postcode</Label>
+                <Input value={supplierForm.postcode} onChange={(e) => setSupplierForm((f) => ({ ...f, postcode: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Plaats</Label>
+                <Input value={supplierForm.plaats} onChange={(e) => setSupplierForm((f) => ({ ...f, plaats: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Land</Label>
+                <Input value={supplierForm.land} onChange={(e) => setSupplierForm((f) => ({ ...f, land: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>IBAN</Label>
+              <Input value={supplierForm.iban} onChange={(e) => setSupplierForm((f) => ({ ...f, iban: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateSupplierOpen(false)}>Annuleren</Button>
+            <Button onClick={handleCreateSupplier} disabled={addLeverancier.isPending}>Opslaan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }
