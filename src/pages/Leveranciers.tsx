@@ -13,6 +13,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import {
   Table,
@@ -22,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Truck } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useClients } from "@/hooks/useClients";
@@ -30,10 +40,12 @@ import {
   useLeveranciers,
   useAddLeverancier,
   useUpdateLeverancier,
+  useDeleteLeverancier,
   normalizeBtwNummer,
 } from "@/hooks/useLeveranciers";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { Skeleton } from "@/components/ui/skeleton";
+import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Leverancier = Tables<"leveranciers">;
@@ -72,10 +84,13 @@ export default function Leveranciers() {
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
   const addMut = useAddLeverancier();
   const updateMut = useUpdateLeverancier();
+  const deleteMut = useDeleteLeverancier();
 
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<LeverancierForm>(emptyForm);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const grootboekById = useMemo(() => {
     const m = new Map<string, string>();
@@ -149,6 +164,34 @@ export default function Leveranciers() {
   const set = <K extends keyof LeverancierForm>(k: K, v: LeverancierForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  const openDelete = (id: string) => {
+    setDeleteId(id);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteId) return;
+    try {
+      const { count, error: countError } = await supabase
+        .from("purchase_invoices")
+        .select("*", { count: "exact", head: true })
+        .eq("leverancier_id", deleteId);
+      if (countError) throw countError;
+
+      if (count && count > 0) {
+        await updateMut.mutateAsync({ id: deleteId, actief: false });
+        toast({ title: "Leverancier is gekoppeld aan facturen en is daarom op inactief gezet." });
+      } else {
+        await deleteMut.mutateAsync(deleteId);
+        toast({ title: "Leverancier verwijderd" });
+      }
+      setDeleteConfirmOpen(false);
+      setDeleteId(null);
+    } catch (e: any) {
+      toast({ title: "Verwijderen mislukt", description: e.message, variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -219,6 +262,9 @@ export default function Leveranciers() {
                       <TableCell className="text-right">
                         <Button variant="ghost" size="sm" onClick={() => openEdit(l)}>
                           <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openDelete(l.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -315,6 +361,23 @@ export default function Leveranciers() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Leverancier verwijderen</AlertDialogTitle>
+            <AlertDialogDescription>
+              Weet je zeker dat je deze leverancier wilt verwijderen?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteId(null)}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} disabled={deleteMut.isPending || updateMut.isPending}>
+              Verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
