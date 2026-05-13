@@ -194,6 +194,10 @@ export function generatePurchaseInvoiceUbl(
     <cbc:PaymentMeansCode>57</cbc:PaymentMeansCode>
   </cac:PaymentMeans>`;
 
+  const paymentTermsXml = !(invoice as any).due_date && amountIncl > 0
+    ? `\n  <cac:PaymentTerms>\n    <cbc:Note>Betaling volgens factuurvoorwaarden</cbc:Note>\n  </cac:PaymentTerms>`
+    : "";
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
   <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
@@ -210,7 +214,7 @@ ${partyXml(supplier)}
   <cac:AccountingCustomerParty>
 ${partyXml(buyer)}
   </cac:AccountingCustomerParty>
-${paymentMeansXml}
+${paymentMeansXml}${paymentTermsXml}
   <cac:TaxTotal>
     <cbc:TaxAmount currencyID="EUR">${fmt(btwAmount)}</cbc:TaxAmount>
     <cac:TaxSubtotal>
