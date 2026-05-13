@@ -512,6 +512,20 @@ export default function Klanten() {
                 <Label htmlFor="afgesloten_boekjaar" className="text-xs font-normal">Afgesloten boekjaar</Label>
                 <Input id="afgesloten_boekjaar" inputMode="numeric" value={form.afgesloten_boekjaar} onChange={(e) => setForm({ ...form, afgesloten_boekjaar: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 2024" className="max-w-[160px]" />
               </div>
+              <div className="grid gap-2">
+                <Label htmlFor="snelstart_inkoop_mailbox" className="text-xs font-normal">SnelStart inkoopmailbox</Label>
+                <Input
+                  id="snelstart_inkoop_mailbox"
+                  type="email"
+                  value={form.snelstart_inkoop_mailbox}
+                  onChange={(e) => setForm({ ...form, snelstart_inkoop_mailbox: e.target.value })}
+                  placeholder="bijvoorbeeld administratie@..."
+                  className={validateEmail(form.snelstart_inkoop_mailbox) ? "border-destructive" : ""}
+                />
+                {validateEmail(form.snelstart_inkoop_mailbox) && (
+                  <p className="text-xs text-muted-foreground">Tip: vul een geldig e-mailadres in</p>
+                )}
+              </div>
             </div>
 
             {/* Zakelijk IBAN */}
