@@ -13,6 +13,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import {
   Table,
@@ -22,7 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Truck } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useClients } from "@/hooks/useClients";
@@ -30,10 +40,12 @@ import {
   useLeveranciers,
   useAddLeverancier,
   useUpdateLeverancier,
+  useDeleteLeverancier,
   normalizeBtwNummer,
 } from "@/hooks/useLeveranciers";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { Skeleton } from "@/components/ui/skeleton";
+import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Leverancier = Tables<"leveranciers">;
