@@ -370,6 +370,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 <Input
                   value={form.supplier_btw_number}
                   onChange={e => set("supplier_btw_number", e.target.value)}
+                  placeholder="bv. NL123456789B01"
+                />
+              </div>
             </div>
 
             <div className="rounded-md border bg-muted/30 p-3 space-y-2">
@@ -432,6 +435,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Factuurnummer</Label>
                 <Input value={form.invoice_number} onChange={e => set("invoice_number", e.target.value)} />
               </div>
               <div>
