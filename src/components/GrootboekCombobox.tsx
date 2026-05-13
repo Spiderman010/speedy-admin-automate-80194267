@@ -59,6 +59,20 @@ export function GrootboekCombobox({ value, onValueChange, onIdChange, className,
                   </CommandItem>
                 );
               })}
+              {noneOption && (
+                <CommandItem
+                  key="none"
+                  value="Geen"
+                  onSelect={() => {
+                    onValueChange("");
+                    onIdChange?.("");
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", value === "" ? "opacity-100" : "opacity-0")} />
+                  Geen
+                </CommandItem>
+              )}
             </CommandGroup>
           </CommandList>
         </Command>
