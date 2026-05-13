@@ -3,6 +3,7 @@ import type { Tables } from "@/integrations/supabase/types";
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
 type PurchaseInvoiceLine = Tables<"purchase_invoice_lines">;
+type Leverancier = Tables<"leveranciers">;
 
 const xmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
