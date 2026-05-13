@@ -225,6 +225,7 @@ export default function Klanten() {
         verkoop_dagboek: toIntOrNull(form.verkoop_dagboek),
         bank_dagboek: toIntOrNull(form.bank_dagboek),
         afgesloten_boekjaar: toIntOrNull(form.afgesloten_boekjaar),
+        snelstart_inkoop_mailbox: form.snelstart_inkoop_mailbox.trim() || null,
       };
       if (editingId) {
         await updateClient.mutateAsync({ id: editingId, ...payload });
