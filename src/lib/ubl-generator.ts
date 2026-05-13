@@ -121,6 +121,7 @@ export function generatePurchaseInvoiceUbl(
   invoice: PurchaseInvoice,
   client?: Client | null,
   lines?: PurchaseInvoiceLine[] | null,
+  leverancier?: Leverancier | null,
 ): string {
   const amountExcl = Number(invoice.amount_excl ?? 0);
   const amountIncl = Number(invoice.amount_incl ?? 0);
@@ -129,7 +130,7 @@ export function generatePurchaseInvoiceUbl(
     : Math.max(0, amountIncl - amountExcl);
   const btwPct = Number(invoice.btw_percentage ?? 0);
 
-  const supplier = extractSupplierParty(invoice);
+  const supplier = extractSupplierParty(invoice, leverancier);
   const buyer = extractBuyerParty(client);
 
   const dueDateLine = invoice.invoice_date && (invoice as any).due_date
