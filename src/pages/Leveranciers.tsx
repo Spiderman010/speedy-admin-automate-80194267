@@ -284,24 +284,13 @@ export default function Leveranciers() {
 
             <div className="space-y-2">
               <Label>Standaard grootboekrekening</Label>
-              <Select
-                value={form.standaard_grootboekrekening_id || "none"}
-                onValueChange={(v) =>
-                  set("standaard_grootboekrekening_id", v === "none" ? "" : v)
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Geen" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Geen</SelectItem>
-                  {grootboekrekeningen?.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>
-                      {g.nummer} - {g.omschrijving}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <GrootboekCombobox
+                value={form.standaard_grootboekrekening_id ? (grootboekById.get(form.standaard_grootboekrekening_id) ?? "") : ""}
+                onValueChange={() => {}}
+                onIdChange={(id) => set("standaard_grootboekrekening_id", id || "")}
+                noneOption
+                placeholder="Geen"
+              />
             </div>
 
             <div className="flex items-center gap-3 pt-2">
