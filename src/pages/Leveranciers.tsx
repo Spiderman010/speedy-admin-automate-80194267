@@ -263,6 +263,9 @@ export default function Leveranciers() {
                         <Button variant="ghost" size="sm" onClick={() => openEdit(l)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openDelete(l.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
