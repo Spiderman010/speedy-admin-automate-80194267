@@ -18,18 +18,19 @@ const trimOrNull = (v: any): string | null => {
   return s ? s : null;
 };
 
-/** Extract supplier party data from invoice + ocr_data fallback. */
-function extractSupplierParty(invoice: PurchaseInvoice) {
+/** Extract supplier party data with priority: linked leverancier > invoice snapshot > ocr_data fallback. */
+function extractSupplierParty(invoice: PurchaseInvoice, leverancier?: Leverancier | null) {
   const ocr = (invoice.ocr_data as any) || {};
+  const lev = leverancier ?? null;
   return {
-    name: trimOrNull(invoice.supplier),
-    btw: trimOrNull(invoice.supplier_btw_number) || trimOrNull(ocr.supplier_btw_number),
-    street: trimOrNull(ocr.supplier_address) || trimOrNull(ocr.supplier_street),
-    postal_code: trimOrNull(ocr.supplier_postal_code) || trimOrNull(ocr.supplier_zip),
-    city: trimOrNull(ocr.supplier_city),
-    country: trimOrNull(ocr.supplier_country) || "NL",
-    kvk: trimOrNull(ocr.supplier_kvk) || trimOrNull(ocr.supplier_kvk_number),
-    iban: trimOrNull(ocr.supplier_iban) || trimOrNull(ocr.iban),
+    name: trimOrNull(lev?.naam) || trimOrNull(invoice.supplier),
+    btw: trimOrNull(lev?.btw_nummer) || trimOrNull(invoice.supplier_btw_number) || trimOrNull(ocr.supplier_btw_number),
+    street: trimOrNull(lev?.adres) || trimOrNull(ocr.supplier_address) || trimOrNull(ocr.supplier_street),
+    postal_code: trimOrNull(lev?.postcode) || trimOrNull(ocr.supplier_postal_code) || trimOrNull(ocr.supplier_zip),
+    city: trimOrNull(lev?.plaats) || trimOrNull(ocr.supplier_city),
+    country: trimOrNull(lev?.land) || trimOrNull(ocr.supplier_country) || "NL",
+    kvk: trimOrNull(lev?.kvk_nummer) || trimOrNull(ocr.supplier_kvk) || trimOrNull(ocr.supplier_kvk_number),
+    iban: trimOrNull(lev?.iban) || trimOrNull(ocr.supplier_iban) || trimOrNull(ocr.iban),
   };
 }
 
