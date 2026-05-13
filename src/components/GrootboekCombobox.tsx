@@ -15,15 +15,17 @@ interface Props {
   onValueChange: (v: string) => void;
   onIdChange?: (id: string) => void;
   className?: string;
+  noneOption?: boolean;
+  placeholder?: string;
 }
 
-export function GrootboekCombobox({ value, onValueChange, onIdChange, className }: Props) {
+export function GrootboekCombobox({ value, onValueChange, onIdChange, className, noneOption, placeholder = "Selecteer rekening..." }: Props) {
   const [open, setOpen] = useState(false);
   const { data: accounts } = useActiveGrootboekrekeningen();
 
   const items = accounts ?? [];
   const selectedItem = items.find(a => formatAccount(a.nummer, a.omschrijving) === value);
-  const displayLabel = selectedItem ? formatAccount(selectedItem.nummer, selectedItem.omschrijving) : value || "Selecteer rekening...";
+  const displayLabel = selectedItem ? formatAccount(selectedItem.nummer, selectedItem.omschrijving) : value || placeholder;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
