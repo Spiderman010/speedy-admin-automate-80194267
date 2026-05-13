@@ -53,6 +53,7 @@ interface ClientForm {
   verkoop_dagboek: string;
   bank_dagboek: string;
   afgesloten_boekjaar: string;
+  snelstart_inkoop_mailbox: string;
 }
 
 const emptyForm: ClientForm = {
@@ -75,6 +76,7 @@ const emptyForm: ClientForm = {
   verkoop_dagboek: "",
   bank_dagboek: "",
   afgesloten_boekjaar: "",
+  snelstart_inkoop_mailbox: "",
 };
 
 function validateKvk(v: string): string | null {
@@ -184,6 +186,7 @@ export default function Klanten() {
       verkoop_dagboek: client.verkoop_dagboek != null ? String(client.verkoop_dagboek) : "",
       bank_dagboek: client.bank_dagboek != null ? String(client.bank_dagboek) : "",
       afgesloten_boekjaar: client.afgesloten_boekjaar != null ? String(client.afgesloten_boekjaar) : "",
+      snelstart_inkoop_mailbox: client.snelstart_inkoop_mailbox || "",
     });
     setEditingId(client.id);
     setShowDialog(true);
@@ -222,6 +225,7 @@ export default function Klanten() {
         verkoop_dagboek: toIntOrNull(form.verkoop_dagboek),
         bank_dagboek: toIntOrNull(form.bank_dagboek),
         afgesloten_boekjaar: toIntOrNull(form.afgesloten_boekjaar),
+        snelstart_inkoop_mailbox: form.snelstart_inkoop_mailbox.trim() || null,
       };
       if (editingId) {
         await updateClient.mutateAsync({ id: editingId, ...payload });
@@ -507,6 +511,20 @@ export default function Klanten() {
               <div className="grid gap-2">
                 <Label htmlFor="afgesloten_boekjaar" className="text-xs font-normal">Afgesloten boekjaar</Label>
                 <Input id="afgesloten_boekjaar" inputMode="numeric" value={form.afgesloten_boekjaar} onChange={(e) => setForm({ ...form, afgesloten_boekjaar: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 2024" className="max-w-[160px]" />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="snelstart_inkoop_mailbox" className="text-xs font-normal">SnelStart inkoopmailbox</Label>
+                <Input
+                  id="snelstart_inkoop_mailbox"
+                  type="email"
+                  value={form.snelstart_inkoop_mailbox}
+                  onChange={(e) => setForm({ ...form, snelstart_inkoop_mailbox: e.target.value })}
+                  placeholder="bijvoorbeeld administratie@..."
+                  className={validateEmail(form.snelstart_inkoop_mailbox) ? "border-destructive" : ""}
+                />
+                {validateEmail(form.snelstart_inkoop_mailbox) && (
+                  <p className="text-xs text-muted-foreground">Tip: vul een geldig e-mailadres in</p>
+                )}
               </div>
             </div>
 
