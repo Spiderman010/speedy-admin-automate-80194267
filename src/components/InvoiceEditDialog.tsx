@@ -291,6 +291,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
       document_route: documentRoute,
       route_reason: routeReason || null,
+      leverancier_id: leverancierId,
     } as Partial<PurchaseInvoice>;
   };
 
