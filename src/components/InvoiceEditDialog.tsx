@@ -160,8 +160,76 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       });
       setDocumentRoute(getDocumentRoute((invoice as any).document_route));
       setRouteReason(((invoice as any).route_reason as string | null) || "");
+      setLeverancierId((invoice as any).leverancier_id ?? null);
     }
   }, [invoice]);
+
+  const linkedLeverancier = leveranciers?.find((l) => l.id === leverancierId) ?? null;
+
+  const handleLinkExisting = (id: string) => {
+    const l = leveranciers?.find((x) => x.id === id);
+    if (!l) return;
+    setLeverancierId(l.id);
+    setForm((prev) => ({
+      ...prev,
+      supplier: l.naam,
+      supplier_btw_number: l.btw_nummer ?? prev.supplier_btw_number,
+    }));
+    setLinkPopoverOpen(false);
+    toast({ title: "Leverancier gekoppeld" });
+  };
+
+  const handleUnlink = () => {
+    setLeverancierId(null);
+    toast({ title: "Leverancier ontkoppeld" });
+  };
+
+  const openCreateSupplier = () => {
+    const ocr: any = invoice?.ocr_data ?? {};
+    setSupplierForm({
+      naam: invoice?.supplier ?? "",
+      btw_nummer: invoice?.supplier_btw_number ?? "",
+      kvk_nummer: ocr.supplier_kvk ?? "",
+      adres: ocr.supplier_address ?? "",
+      postcode: ocr.supplier_postal_code ?? "",
+      plaats: ocr.supplier_city ?? "",
+      land: "NL",
+      iban: ocr.supplier_iban ?? "",
+    });
+    setCreateSupplierOpen(true);
+  };
+
+  const handleCreateSupplier = async () => {
+    if (!supplierForm.naam.trim()) {
+      toast({ title: "Naam is verplicht", variant: "destructive" });
+      return;
+    }
+    if (!invoice?.client_id) return;
+    try {
+      const created = await addLeverancier.mutateAsync({
+        client_id: invoice.client_id,
+        naam: supplierForm.naam.trim(),
+        btw_nummer: supplierForm.btw_nummer ? normalizeBtwNummer(supplierForm.btw_nummer) : null,
+        kvk_nummer: supplierForm.kvk_nummer.trim() || null,
+        adres: supplierForm.adres.trim() || null,
+        postcode: supplierForm.postcode.trim() || null,
+        plaats: supplierForm.plaats.trim() || null,
+        land: supplierForm.land.trim() || "NL",
+        iban: supplierForm.iban.trim() || null,
+        actief: true,
+      });
+      setLeverancierId(created.id);
+      setForm((prev) => ({
+        ...prev,
+        supplier: created.naam,
+        supplier_btw_number: created.btw_nummer ?? prev.supplier_btw_number,
+      }));
+      setCreateSupplierOpen(false);
+      toast({ title: "Leverancier aangemaakt en gekoppeld" });
+    } catch (e: any) {
+      toast({ title: "Aanmaken mislukt", description: e.message, variant: "destructive" });
+    }
+  };
 
   useEffect(() => {
     setLines(
