@@ -76,6 +76,7 @@ const emptyForm: ClientForm = {
   verkoop_dagboek: "",
   bank_dagboek: "",
   afgesloten_boekjaar: "",
+  snelstart_inkoop_mailbox: "",
 };
 
 function validateKvk(v: string): string | null {
