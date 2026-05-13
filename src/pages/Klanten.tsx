@@ -186,6 +186,7 @@ export default function Klanten() {
       verkoop_dagboek: client.verkoop_dagboek != null ? String(client.verkoop_dagboek) : "",
       bank_dagboek: client.bank_dagboek != null ? String(client.bank_dagboek) : "",
       afgesloten_boekjaar: client.afgesloten_boekjaar != null ? String(client.afgesloten_boekjaar) : "",
+      snelstart_inkoop_mailbox: client.snelstart_inkoop_mailbox || "",
     });
     setEditingId(client.id);
     setShowDialog(true);
