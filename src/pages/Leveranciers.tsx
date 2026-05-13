@@ -164,6 +164,34 @@ export default function Leveranciers() {
   const set = <K extends keyof LeverancierForm>(k: K, v: LeverancierForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
+  const openDelete = (id: string) => {
+    setDeleteId(id);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteId) return;
+    try {
+      const { count, error: countError } = await supabase
+        .from("purchase_invoices")
+        .select("*", { count: "exact", head: true })
+        .eq("leverancier_id", deleteId);
+      if (countError) throw countError;
+
+      if (count && count > 0) {
+        await updateMut.mutateAsync({ id: deleteId, actief: false });
+        toast({ title: "Leverancier is gekoppeld aan facturen en is daarom op inactief gezet." });
+      } else {
+        await deleteMut.mutateAsync(deleteId);
+        toast({ title: "Leverancier verwijderd" });
+      }
+      setDeleteConfirmOpen(false);
+      setDeleteId(null);
+    } catch (e: any) {
+      toast({ title: "Verwijderen mislukt", description: e.message, variant: "destructive" });
+    }
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
