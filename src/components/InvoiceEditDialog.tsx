@@ -111,7 +111,15 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const { toast } = useToast();
   const { data: existingLines } = usePurchaseInvoiceLines(invoice?.id);
   const replaceLines = useReplacePurchaseInvoiceLines();
+  const { data: leveranciers } = useLeveranciers(invoice?.client_id);
+  const addLeverancier = useAddLeverancier();
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
+  const [leverancierId, setLeverancierId] = useState<string | null>(null);
+  const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
+  const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
+  const [supplierForm, setSupplierForm] = useState({
+    naam: "", btw_nummer: "", kvk_nummer: "", adres: "", postcode: "", plaats: "", land: "NL", iban: "",
+  });
   const [form, setForm] = useState({
     supplier: "",
     supplier_btw_number: "",
