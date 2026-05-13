@@ -13,13 +13,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import {
   Table,
   TableBody,
