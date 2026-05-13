@@ -225,6 +225,7 @@ export type Database = {
           phone: string | null
           postal_code: string | null
           rechtsvorm: string | null
+          snelstart_inkoop_mailbox: string | null
           updated_at: string
           user_id: string
           verkoop_dagboek: number | null
@@ -250,6 +251,7 @@ export type Database = {
           phone?: string | null
           postal_code?: string | null
           rechtsvorm?: string | null
+          snelstart_inkoop_mailbox?: string | null
           updated_at?: string
           user_id: string
           verkoop_dagboek?: number | null
@@ -275,6 +277,7 @@ export type Database = {
           phone?: string | null
           postal_code?: string | null
           rechtsvorm?: string | null
+          snelstart_inkoop_mailbox?: string | null
           updated_at?: string
           user_id?: string
           verkoop_dagboek?: number | null
