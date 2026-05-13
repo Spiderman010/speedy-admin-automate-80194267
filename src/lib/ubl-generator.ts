@@ -3,6 +3,7 @@ import type { Tables } from "@/integrations/supabase/types";
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
 type PurchaseInvoiceLine = Tables<"purchase_invoice_lines">;
+type Leverancier = Tables<"leveranciers">;
 
 const xmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
@@ -17,18 +18,19 @@ const trimOrNull = (v: any): string | null => {
   return s ? s : null;
 };
 
-/** Extract supplier party data from invoice + ocr_data fallback. */
-function extractSupplierParty(invoice: PurchaseInvoice) {
+/** Extract supplier party data with priority: linked leverancier > invoice snapshot > ocr_data fallback. */
+function extractSupplierParty(invoice: PurchaseInvoice, leverancier?: Leverancier | null) {
   const ocr = (invoice.ocr_data as any) || {};
+  const lev = leverancier ?? null;
   return {
-    name: trimOrNull(invoice.supplier),
-    btw: trimOrNull(invoice.supplier_btw_number) || trimOrNull(ocr.supplier_btw_number),
-    street: trimOrNull(ocr.supplier_address) || trimOrNull(ocr.supplier_street),
-    postal_code: trimOrNull(ocr.supplier_postal_code) || trimOrNull(ocr.supplier_zip),
-    city: trimOrNull(ocr.supplier_city),
-    country: trimOrNull(ocr.supplier_country) || "NL",
-    kvk: trimOrNull(ocr.supplier_kvk) || trimOrNull(ocr.supplier_kvk_number),
-    iban: trimOrNull(ocr.supplier_iban) || trimOrNull(ocr.iban),
+    name: trimOrNull(lev?.naam) || trimOrNull(invoice.supplier),
+    btw: trimOrNull(lev?.btw_nummer) || trimOrNull(invoice.supplier_btw_number) || trimOrNull(ocr.supplier_btw_number),
+    street: trimOrNull(lev?.adres) || trimOrNull(ocr.supplier_address) || trimOrNull(ocr.supplier_street),
+    postal_code: trimOrNull(lev?.postcode) || trimOrNull(ocr.supplier_postal_code) || trimOrNull(ocr.supplier_zip),
+    city: trimOrNull(lev?.plaats) || trimOrNull(ocr.supplier_city),
+    country: trimOrNull(lev?.land) || trimOrNull(ocr.supplier_country) || "NL",
+    kvk: trimOrNull(lev?.kvk_nummer) || trimOrNull(ocr.supplier_kvk) || trimOrNull(ocr.supplier_kvk_number),
+    iban: trimOrNull(lev?.iban) || trimOrNull(ocr.supplier_iban) || trimOrNull(ocr.iban),
   };
 }
 
@@ -55,7 +57,11 @@ const REQUIRED_INVOICE_FIELDS: { key: keyof PurchaseInvoice; label: string }[] =
   { key: "btw_percentage", label: "BTW-percentage" },
 ];
 
-export function validatePurchaseInvoiceForUbl(invoice: PurchaseInvoice, client?: Client | null): string[] {
+export function validatePurchaseInvoiceForUbl(
+  invoice: PurchaseInvoice,
+  client?: Client | null,
+  leverancier?: Leverancier | null,
+): string[] {
   const missing: string[] = [];
 
   for (const f of REQUIRED_INVOICE_FIELDS) {
@@ -63,7 +69,7 @@ export function validatePurchaseInvoiceForUbl(invoice: PurchaseInvoice, client?:
     if (v === null || v === undefined || v === "") missing.push(f.label);
   }
 
-  const supplier = extractSupplierParty(invoice);
+  const supplier = extractSupplierParty(invoice, leverancier);
   if (!supplier.name) missing.push("leverancier naam");
   if (Number(invoice.btw_percentage ?? 0) > 0 && !supplier.btw) {
     missing.push("leverancier BTW-nummer (verplicht bij facturen met BTW)");
@@ -115,6 +121,7 @@ export function generatePurchaseInvoiceUbl(
   invoice: PurchaseInvoice,
   client?: Client | null,
   lines?: PurchaseInvoiceLine[] | null,
+  leverancier?: Leverancier | null,
 ): string {
   const amountExcl = Number(invoice.amount_excl ?? 0);
   const amountIncl = Number(invoice.amount_incl ?? 0);
@@ -123,7 +130,7 @@ export function generatePurchaseInvoiceUbl(
     : Math.max(0, amountIncl - amountExcl);
   const btwPct = Number(invoice.btw_percentage ?? 0);
 
-  const supplier = extractSupplierParty(invoice);
+  const supplier = extractSupplierParty(invoice, leverancier);
   const buyer = extractBuyerParty(client);
 
   const dueDateLine = invoice.invoice_date && (invoice as any).due_date
@@ -231,9 +238,11 @@ export function downloadPurchaseInvoiceUbl(
   invoice: PurchaseInvoice,
   client?: Client | null,
   lines?: PurchaseInvoiceLine[] | null,
+  leverancier?: Leverancier | null,
 ) {
-  const xml = generatePurchaseInvoiceUbl(invoice, client, lines);
-  const filename = `UBL-${sanitizeFilename(invoice.invoice_number ?? "factuur")}-${sanitizeFilename(invoice.supplier ?? "leverancier")}.xml`;
+  const xml = generatePurchaseInvoiceUbl(invoice, client, lines, leverancier);
+  const supplierName = leverancier?.naam ?? invoice.supplier ?? "leverancier";
+  const filename = `UBL-${sanitizeFilename(invoice.invoice_number ?? "factuur")}-${sanitizeFilename(supplierName)}.xml`;
   const blob = new Blob([xml], { type: "application/xml;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
