@@ -84,10 +84,13 @@ export default function Leveranciers() {
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
   const addMut = useAddLeverancier();
   const updateMut = useUpdateLeverancier();
+  const deleteMut = useDeleteLeverancier();
 
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<LeverancierForm>(emptyForm);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const grootboekById = useMemo(() => {
     const m = new Map<string, string>();
