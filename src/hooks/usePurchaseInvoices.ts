@@ -56,3 +56,38 @@ export function useUpdatePurchaseInvoice() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["purchase_invoices"] }),
   });
 }
+
+export function useDeletePurchaseInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (invoice: { id: string; file_path?: string | null }) => {
+      const { error: linesErr } = await supabase
+        .from("purchase_invoice_lines")
+        .delete()
+        .eq("purchase_invoice_id", invoice.id);
+      if (linesErr) throw linesErr;
+
+      await supabase
+        .from("vraagposten")
+        .delete()
+        .eq("source_type", "purchase_invoice")
+        .eq("source_id", invoice.id);
+
+      if (invoice.file_path) {
+        try {
+          await supabase.storage.from("invoices").remove([invoice.file_path]);
+        } catch {
+          // ignore missing file
+        }
+      }
+
+      const { error } = await supabase.from("purchase_invoices").delete().eq("id", invoice.id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["purchase_invoices"] });
+      qc.invalidateQueries({ queryKey: ["purchase_invoice_lines"] });
+      qc.invalidateQueries({ queryKey: ["vraagposten"] });
+    },
+  });
+}
