@@ -59,8 +59,10 @@ export default function Facturen() {
   const { data: clients } = useClients();
   const { data: invoices, isLoading } = usePurchaseInvoices(clientFilter !== "all" ? clientFilter : undefined);
   const updateInvoice = useUpdatePurchaseInvoice();
+  const deleteInvoice = useDeletePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
