@@ -57,6 +57,11 @@ export default function Bank() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLedger, setBulkLedger] = useState("");
   const [bulkLedgerId, setBulkLedgerId] = useState("");
+
+  useEffect(() => {
+    setClientFilter(selectedClientId);
+  }, [selectedClientId]);
+
   const { toast } = useToast();
 
   const { data: clients } = useClients();
