@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { useLeveranciers, useAddLeverancier, normalizeBtwNummer } from "@/hooks/useLeveranciers";
+import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl, generatePurchaseInvoiceUbl } from "@/lib/ubl-generator";
 import JSZip from "jszip";
@@ -114,6 +115,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const replaceLines = useReplacePurchaseInvoiceLines();
   const { data: leveranciers } = useLeveranciers(invoice?.client_id);
   const addLeverancier = useAddLeverancier();
+  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
@@ -171,11 +173,19 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     const l = leveranciers?.find((x) => x.id === id);
     if (!l) return;
     setLeverancierId(l.id);
-    setForm((prev) => ({
-      ...prev,
-      supplier: l.naam,
-      supplier_btw_number: l.btw_nummer ?? prev.supplier_btw_number,
-    }));
+    setForm((prev) => {
+      let ledger_account_text = prev.ledger_account_text;
+      if (!ledger_account_text && l.standaard_grootboekrekening_id) {
+        const gb = grootboekrekeningen?.find((g) => g.id === l.standaard_grootboekrekening_id);
+        if (gb) ledger_account_text = `${gb.nummer} - ${gb.omschrijving}`;
+      }
+      return {
+        ...prev,
+        supplier: l.naam,
+        supplier_btw_number: l.btw_nummer ?? prev.supplier_btw_number,
+        ledger_account_text,
+      };
+    });
     setLinkPopoverOpen(false);
     toast({ title: "Leverancier gekoppeld" });
   };
