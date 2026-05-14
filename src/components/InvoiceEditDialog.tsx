@@ -488,13 +488,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 ) : (
                   <span className="text-xs text-muted-foreground">Geen leverancier gekoppeld</span>
                 )}
-            </div>
-
-            {duplicateWarning && (
-              <div className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
-                Mogelijk dubbele factuur: er bestaat al een factuur met dit factuurnummer voor deze leverancier.
               </div>
-            )}
               <div className="flex flex-wrap gap-2">
                 <Popover open={linkPopoverOpen} onOpenChange={setLinkPopoverOpen}>
                   <PopoverTrigger asChild>
