@@ -339,6 +339,55 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   };
 
+  const openEditSupplier = () => {
+    if (!linkedLeverancier) return;
+    setEditSupplierForm({
+      naam: linkedLeverancier.naam ?? "",
+      btw_nummer: linkedLeverancier.btw_nummer ?? "",
+      kvk_nummer: linkedLeverancier.kvk_nummer ?? "",
+      adres: linkedLeverancier.adres ?? "",
+      postcode: linkedLeverancier.postcode ?? "",
+      plaats: linkedLeverancier.plaats ?? "",
+      land: linkedLeverancier.land ?? "NL",
+      iban: linkedLeverancier.iban ?? "",
+      standaard_grootboekrekening_id: linkedLeverancier.standaard_grootboekrekening_id ?? "",
+      actief: linkedLeverancier.actief ?? true,
+    });
+    setEditSupplierOpen(true);
+  };
+
+  const handleUpdateSupplier = async () => {
+    if (!linkedLeverancier) return;
+    if (!editSupplierForm.naam.trim()) {
+      toast({ title: "Naam is verplicht", variant: "destructive" });
+      return;
+    }
+    try {
+      const updated = await updateLeverancier.mutateAsync({
+        id: linkedLeverancier.id,
+        naam: editSupplierForm.naam.trim(),
+        btw_nummer: editSupplierForm.btw_nummer ? normalizeBtwNummer(editSupplierForm.btw_nummer) : null,
+        kvk_nummer: editSupplierForm.kvk_nummer.trim() || null,
+        adres: editSupplierForm.adres.trim() || null,
+        postcode: editSupplierForm.postcode.trim() || null,
+        plaats: editSupplierForm.plaats.trim() || null,
+        land: editSupplierForm.land.trim() || "NL",
+        iban: editSupplierForm.iban.trim() || null,
+        standaard_grootboekrekening_id: editSupplierForm.standaard_grootboekrekening_id || null,
+        actief: editSupplierForm.actief,
+      });
+      setForm((prev) => ({
+        ...prev,
+        supplier: updated.naam,
+        supplier_btw_number: updated.btw_nummer ?? prev.supplier_btw_number,
+      }));
+      setEditSupplierOpen(false);
+      toast({ title: "Leverancier bijgewerkt" });
+    } catch (e: any) {
+      toast({ title: "Bijwerken mislukt", description: e.message, variant: "destructive" });
+    }
+  };
+
   useEffect(() => {
     setLines(
       (existingLines ?? []).map((l) => ({
