@@ -548,6 +548,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
             </div>
 
+            {duplicateWarning && (
+              <div className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
+                Mogelijk dubbele factuur: er bestaat al een factuur met dit factuurnummer voor deze leverancier.
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label>Bedrag excl.</Label>
