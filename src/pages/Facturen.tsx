@@ -10,10 +10,14 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, Download, CheckCircle2, Clock, AlertCircle, Loader2, ArrowUp, ArrowDown, Search } from "lucide-react";
+import { Upload, FileText, Download, CheckCircle2, Clock, AlertCircle, Loader2, ArrowUp, ArrowDown, Search, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { exportPurchaseInvoicesCSV } from "@/lib/snelstart-export";
 import { useClients } from "@/hooks/useClients";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -55,8 +59,10 @@ export default function Facturen() {
   const { data: clients } = useClients();
   const { data: invoices, isLoading } = usePurchaseInvoices(clientFilter !== "all" ? clientFilter : undefined);
   const updateInvoice = useUpdatePurchaseInvoice();
+  const deleteInvoice = useDeletePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
@@ -372,6 +378,7 @@ export default function Facturen() {
                       <TableHead>Grootboek</TableHead>
                       <TableHead>Route</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
+                      <TableHead className="w-10"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -405,6 +412,17 @@ export default function Facturen() {
                               <sc.icon className="h-3 w-3" />{sc.label}
                             </Badge>
                           </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeleteTarget(inv)}
+                              aria-label="Verwijderen"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
@@ -424,6 +442,38 @@ export default function Facturen() {
         onApprove={handleApproveInvoice}
         client={editInvoice ? clients?.find(c => c.id === editInvoice.client_id) ?? null : null}
       />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Inkoopfactuur verwijderen</AlertDialogTitle>
+            <AlertDialogDescription>
+              Weet je zeker dat je deze inkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteInvoice.isPending}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteInvoice.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!deleteTarget) return;
+                try {
+                  await deleteInvoice.mutateAsync({ id: deleteTarget.id, file_path: deleteTarget.file_path });
+                  toast({ title: "Inkoopfactuur verwijderd" });
+                  if (editInvoice?.id === deleteTarget.id) setEditInvoice(null);
+                  setDeleteTarget(null);
+                } catch (err: any) {
+                  toast({ title: "Verwijderen mislukt", description: err?.message, variant: "destructive" });
+                }
+              }}
+            >
+              Verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
