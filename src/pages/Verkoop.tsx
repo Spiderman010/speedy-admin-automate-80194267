@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,6 +58,10 @@ export default function Verkoop() {
   const updateInvoice = useUpdateSalesInvoice();
   const [editInvoice, setEditInvoice] = useState<any>(null);
   const [editOpen, setEditOpen] = useState(false);
+
+  useEffect(() => {
+    setClientFilter(selectedClientId);
+  }, [selectedClientId]);
 
   const getClientName = (id: string) => clients?.find(c => c.id === id)?.name ?? "—";
 
