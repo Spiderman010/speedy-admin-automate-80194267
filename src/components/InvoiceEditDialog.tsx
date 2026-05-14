@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -27,6 +27,12 @@ import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type D
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
+
+
+type SupplierAutoFillTracker = {
+  leverancierId: string;
+  text: string;
+};
 
 
 interface Props {
@@ -135,6 +141,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     ledger_account_text: "",
     notes: "",
   });
+  const supplierAutoFilledLedgerRef = useRef<SupplierAutoFillTracker | null>(null);
   const [btwEnabled, setBtwEnabled] = useState(true);
   const [documentRoute, setDocumentRoute] = useState<DocumentRoute>("pdf_route");
   const [routeReason, setRouteReason] = useState<string>("");
@@ -148,6 +155,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       setBtwEnabled(enabled);
 
       const ledgerValue = invoice.ledger_account_text || "";
+      supplierAutoFilledLedgerRef.current = null;
 
       setForm({
         supplier: invoice.supplier || "",
@@ -169,46 +177,63 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   const linkedLeverancier = leveranciers?.find((l) => l.id === leverancierId) ?? null;
 
+  const getSupplierDefaultLedgerLabel = (supplierId: string) => {
+    const leverancier = leveranciers?.find((l) => l.id === supplierId);
+    if (!leverancier?.standaard_grootboekrekening_id) return null;
+    const gb = grootboekrekeningen?.find((g) => g.id === leverancier.standaard_grootboekrekening_id);
+    if (!gb) return null;
+    return `${gb.nummer} - ${gb.omschrijving}`;
+  };
+
   // Retry auto-fill if grootboekrekeningen loaded after the leverancier was linked.
-  // setForm returns the same `prev` reference when the field is already filled,
+  // setForm returns the same `prev` reference when no changes are needed,
   // so React skips the re-render and there is no infinite loop.
   useEffect(() => {
-    if (!linkedLeverancier?.standaard_grootboekrekening_id) return;
-    if (!grootboekrekeningen) return;
-    const gb = grootboekrekeningen.find(
-      (g) => g.id === linkedLeverancier.standaard_grootboekrekening_id,
-    );
-    if (!gb) return;
-    const label = `${gb.nummer} - ${gb.omschrijving}`;
+    if (!leverancierId) return;
+    const label = getSupplierDefaultLedgerLabel(leverancierId);
+    if (!label) return;
+
     setForm((prev) => {
-      if (prev.ledger_account_text) return prev;
+      const tracked = supplierAutoFilledLedgerRef.current;
+      const canAutofill = !prev.ledger_account_text
+        || (tracked?.leverancierId === leverancierId && tracked.text === prev.ledger_account_text)
+        || (tracked?.leverancierId !== leverancierId && tracked?.text === prev.ledger_account_text);
+
+      if (!canAutofill || prev.ledger_account_text === label) {
+        if (tracked?.leverancierId === leverancierId && tracked.text === prev.ledger_account_text) {
+          supplierAutoFilledLedgerRef.current = { leverancierId, text: label };
+        }
+        return prev;
+      }
+
+      supplierAutoFilledLedgerRef.current = { leverancierId, text: label };
       return { ...prev, ledger_account_text: label };
     });
-  }, [linkedLeverancier, grootboekrekeningen]);
+  }, [leverancierId, leveranciers, grootboekrekeningen]);
 
   const handleLinkExisting = (id: string) => {
     const l = leveranciers?.find((x) => x.id === id);
     if (!l) return;
     setLeverancierId(l.id);
-    setForm((prev) => {
-      let ledger_account_text = prev.ledger_account_text;
-      if (!ledger_account_text && l.standaard_grootboekrekening_id) {
-        const gb = grootboekrekeningen?.find((g) => g.id === l.standaard_grootboekrekening_id);
-        if (gb) ledger_account_text = `${gb.nummer} - ${gb.omschrijving}`;
-      }
-      return {
-        ...prev,
-        supplier: l.naam,
-        supplier_btw_number: l.btw_nummer ?? prev.supplier_btw_number,
-        ledger_account_text,
-      };
-    });
+    setForm((prev) => ({
+      ...prev,
+      supplier: l.naam,
+      supplier_btw_number: l.btw_nummer ?? prev.supplier_btw_number,
+    }));
     setLinkPopoverOpen(false);
     toast({ title: "Leverancier gekoppeld" });
   };
 
   const handleUnlink = () => {
+    const tracked = supplierAutoFilledLedgerRef.current;
     setLeverancierId(null);
+    setForm((prev) => {
+      if (tracked && prev.ledger_account_text === tracked.text) {
+        return { ...prev, ledger_account_text: "" };
+      }
+      return prev;
+    });
+    supplierAutoFilledLedgerRef.current = null;
     toast({ title: "Leverancier ontkoppeld" });
   };
 
@@ -529,7 +554,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               <Label>Grootboekrekening</Label>
               <GrootboekCombobox
                 value={form.ledger_account_text}
-                onValueChange={(v) => set("ledger_account_text", v)}
+                onValueChange={(v) => { supplierAutoFilledLedgerRef.current = null; set("ledger_account_text", v); }}
               />
             </div>
 
