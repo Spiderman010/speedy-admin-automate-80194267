@@ -260,7 +260,44 @@ BELANGRIJK: gebruik NOOIT het adres of de gegevens van de klant/koper als levera
       supplierBtw = normalizeBtw(JSON.stringify(extracted));
     }
 
-    // Save to database
+    // Light normalization for new supplier fields (stored in ocr_data only)
+    const trimOrNull = (v: any): string | null => {
+      if (v === null || v === undefined) return null;
+      const s = String(v).trim();
+      return s ? s : null;
+    };
+    const normalizeKvk = (v: any): string | null => {
+      const s = trimOrNull(v);
+      if (!s) return null;
+      const digits = s.replace(/\D+/g, "");
+      return digits || s;
+    };
+    const normalizeIban = (v: any): string | null => {
+      const s = trimOrNull(v);
+      if (!s) return null;
+      return s.toUpperCase().replace(/\s+/g, "");
+    };
+    const normalizePostal = (v: any): string | null => {
+      const s = trimOrNull(v);
+      if (!s) return null;
+      return s.toUpperCase();
+    };
+
+    if (extracted && typeof extracted === "object") {
+      const k = normalizeKvk(extracted.supplier_kvk);
+      const addr = trimOrNull(extracted.supplier_address);
+      const pc = normalizePostal(extracted.supplier_postal_code);
+      const city = trimOrNull(extracted.supplier_city);
+      const country = trimOrNull(extracted.supplier_country);
+      const iban = normalizeIban(extracted.supplier_iban);
+      extracted.supplier_kvk = k;
+      extracted.supplier_address = addr;
+      extracted.supplier_postal_code = pc;
+      extracted.supplier_city = city;
+      extracted.supplier_country = country;
+      extracted.supplier_iban = iban;
+    }
+
     const { data: invoice, error: insertError } = await supabase
       .from("purchase_invoices")
       .insert({
