@@ -412,6 +412,17 @@ export default function Facturen() {
                               <sc.icon className="h-3 w-3" />{sc.label}
                             </Badge>
                           </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeleteTarget(inv)}
+                              aria-label="Verwijderen"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
