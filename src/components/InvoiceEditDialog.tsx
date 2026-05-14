@@ -895,6 +895,23 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               <Label>IBAN</Label>
               <Input value={supplierForm.iban} onChange={(e) => setSupplierForm((f) => ({ ...f, iban: e.target.value }))} />
             </div>
+            <div>
+              <Label>Standaard grootboekrekening</Label>
+              <GrootboekCombobox
+                value={
+                  supplierForm.standaard_grootboekrekening_id
+                    ? (() => {
+                        const gb = grootboekrekeningen?.find((g) => g.id === supplierForm.standaard_grootboekrekening_id);
+                        return gb ? `${gb.nummer} - ${gb.omschrijving}` : "";
+                      })()
+                    : ""
+                }
+                onValueChange={() => {}}
+                onIdChange={(id) => setSupplierForm((f) => ({ ...f, standaard_grootboekrekening_id: id || "" }))}
+                noneOption
+                placeholder="Geen"
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateSupplierOpen(false)}>Annuleren</Button>
