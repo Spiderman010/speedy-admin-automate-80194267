@@ -442,6 +442,38 @@ export default function Facturen() {
         onApprove={handleApproveInvoice}
         client={editInvoice ? clients?.find(c => c.id === editInvoice.client_id) ?? null : null}
       />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Inkoopfactuur verwijderen</AlertDialogTitle>
+            <AlertDialogDescription>
+              Weet je zeker dat je deze inkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteInvoice.isPending}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteInvoice.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!deleteTarget) return;
+                try {
+                  await deleteInvoice.mutateAsync({ id: deleteTarget.id, file_path: deleteTarget.file_path });
+                  toast({ title: "Inkoopfactuur verwijderd" });
+                  if (editInvoice?.id === deleteTarget.id) setEditInvoice(null);
+                  setDeleteTarget(null);
+                } catch (err: any) {
+                  toast({ title: "Verwijderen mislukt", description: err?.message, variant: "destructive" });
+                }
+              }}
+            >
+              Verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
