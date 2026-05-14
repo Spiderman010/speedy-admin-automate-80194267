@@ -585,6 +585,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   <UserPlus className="h-3.5 w-3.5 mr-1" />Maak leverancier aan
                 </Button>
                 {linkedLeverancier && (
+                  <Button type="button" variant="outline" size="sm" onClick={openEditSupplier}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" />Leverancier bewerken
+                  </Button>
+                )}
+                {linkedLeverancier && (
                   <Button type="button" variant="ghost" size="sm" onClick={handleUnlink}>
                     <Link2Off className="h-3.5 w-3.5 mr-1" />Leverancier ontkoppelen
                   </Button>
