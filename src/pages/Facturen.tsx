@@ -112,6 +112,48 @@ export default function Facturen() {
     return list;
   }, [invoices, searchQuery, sortField, sortDir]);
 
+  const duplicateIds = useMemo(() => {
+    const result = new Set<string>();
+    if (!invoices) return result;
+    const normBtw = (s: string | null | undefined) =>
+      (s || "").toUpperCase().replace(/[\s.\-]/g, "");
+    const normName = (s: string | null | undefined) =>
+      (s || "").toLowerCase().trim().replace(/\s+/g, " ");
+    const groups = new Map<string, typeof invoices>();
+    for (const inv of invoices) {
+      const num = (inv.invoice_number || "").trim();
+      if (!num || !inv.client_id) continue;
+      const key = `${inv.client_id}|${num}`;
+      if (!groups.has(key)) groups.set(key, [] as any);
+      groups.get(key)!.push(inv);
+    }
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      for (let i = 0; i < group.length; i++) {
+        const a = group[i];
+        const aBtw = normBtw(a.supplier_btw_number);
+        const aName = normName(a.supplier);
+        const aHasIdentity = !!a.leverancier_id || !!aBtw || !!aName;
+        for (let j = i + 1; j < group.length; j++) {
+          const b = group[j];
+          const bBtw = normBtw(b.supplier_btw_number);
+          const bName = normName(b.supplier);
+          const bHasIdentity = !!b.leverancier_id || !!bBtw || !!bName;
+          let match = false;
+          if (a.leverancier_id && b.leverancier_id && a.leverancier_id === b.leverancier_id) match = true;
+          else if (aBtw && bBtw && aBtw === bBtw) match = true;
+          else if (aName && bName && aName === bName) match = true;
+          else if (!aHasIdentity || !bHasIdentity) match = true;
+          if (match) {
+            result.add(a.id);
+            result.add(b.id);
+          }
+        }
+      }
+    }
+    return result;
+  }, [invoices]);
+
   const processFiles = useCallback(async (files: File[]) => {
     if (!uploadClientId) {
       toast({ title: "Selecteer eerst een klant", variant: "destructive" });
