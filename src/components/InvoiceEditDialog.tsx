@@ -304,6 +304,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       plaats: ocr.supplier_city ?? "",
       land: "NL",
       iban: ocr.supplier_iban ?? "",
+      standaard_grootboekrekening_id: "",
     });
     setCreateSupplierOpen(true);
   };
