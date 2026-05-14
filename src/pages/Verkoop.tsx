@@ -38,7 +38,8 @@ type SortField = "invoice_number" | "client" | "customer_name" | "date" | "due_d
 type SortDir = "asc" | "desc";
 
 export default function Verkoop() {
-  const [clientFilter, setClientFilter] = useState("all");
+  const { selectedClientId, setSelectedClientId } = useClientContext();
+  const [clientFilter, setClientFilter] = useState(selectedClientId);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [uploadClientId, setUploadClientId] = useState("");
   const [uploading, setUploading] = useState(false);
