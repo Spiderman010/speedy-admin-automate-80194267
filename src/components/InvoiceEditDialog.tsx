@@ -11,12 +11,12 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil } from "lucide-react";
 import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
-import { useLeveranciers, useAddLeverancier, normalizeBtwNummer } from "@/hooks/useLeveranciers";
+import { useLeveranciers, useAddLeverancier, useUpdateLeverancier, normalizeBtwNummer } from "@/hooks/useLeveranciers";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl, generatePurchaseInvoiceUbl } from "@/lib/ubl-generator";
@@ -121,6 +121,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const replaceLines = useReplacePurchaseInvoiceLines();
   const { data: leveranciers } = useLeveranciers(invoice?.client_id);
   const addLeverancier = useAddLeverancier();
+  const updateLeverancier = useUpdateLeverancier();
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
@@ -128,6 +129,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
   const [supplierForm, setSupplierForm] = useState({
     naam: "", btw_nummer: "", kvk_nummer: "", adres: "", postcode: "", plaats: "", land: "NL", iban: "",
+  });
+  const [editSupplierOpen, setEditSupplierOpen] = useState(false);
+  const [editSupplierForm, setEditSupplierForm] = useState({
+    naam: "", btw_nummer: "", kvk_nummer: "", adres: "", postcode: "", plaats: "", land: "NL", iban: "",
+    standaard_grootboekrekening_id: "" as string, actief: true,
   });
   const [form, setForm] = useState({
     supplier: "",
@@ -333,6 +339,55 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   };
 
+  const openEditSupplier = () => {
+    if (!linkedLeverancier) return;
+    setEditSupplierForm({
+      naam: linkedLeverancier.naam ?? "",
+      btw_nummer: linkedLeverancier.btw_nummer ?? "",
+      kvk_nummer: linkedLeverancier.kvk_nummer ?? "",
+      adres: linkedLeverancier.adres ?? "",
+      postcode: linkedLeverancier.postcode ?? "",
+      plaats: linkedLeverancier.plaats ?? "",
+      land: linkedLeverancier.land ?? "NL",
+      iban: linkedLeverancier.iban ?? "",
+      standaard_grootboekrekening_id: linkedLeverancier.standaard_grootboekrekening_id ?? "",
+      actief: linkedLeverancier.actief ?? true,
+    });
+    setEditSupplierOpen(true);
+  };
+
+  const handleUpdateSupplier = async () => {
+    if (!linkedLeverancier) return;
+    if (!editSupplierForm.naam.trim()) {
+      toast({ title: "Naam is verplicht", variant: "destructive" });
+      return;
+    }
+    try {
+      const updated = await updateLeverancier.mutateAsync({
+        id: linkedLeverancier.id,
+        naam: editSupplierForm.naam.trim(),
+        btw_nummer: editSupplierForm.btw_nummer ? normalizeBtwNummer(editSupplierForm.btw_nummer) : null,
+        kvk_nummer: editSupplierForm.kvk_nummer.trim() || null,
+        adres: editSupplierForm.adres.trim() || null,
+        postcode: editSupplierForm.postcode.trim() || null,
+        plaats: editSupplierForm.plaats.trim() || null,
+        land: editSupplierForm.land.trim() || "NL",
+        iban: editSupplierForm.iban.trim() || null,
+        standaard_grootboekrekening_id: editSupplierForm.standaard_grootboekrekening_id || null,
+        actief: editSupplierForm.actief,
+      });
+      setForm((prev) => ({
+        ...prev,
+        supplier: updated.naam,
+        supplier_btw_number: updated.btw_nummer ?? prev.supplier_btw_number,
+      }));
+      setEditSupplierOpen(false);
+      toast({ title: "Leverancier bijgewerkt" });
+    } catch (e: any) {
+      toast({ title: "Bijwerken mislukt", description: e.message, variant: "destructive" });
+    }
+  };
+
   useEffect(() => {
     setLines(
       (existingLines ?? []).map((l) => ({
@@ -529,6 +584,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 <Button type="button" variant="outline" size="sm" onClick={openCreateSupplier}>
                   <UserPlus className="h-3.5 w-3.5 mr-1" />Maak leverancier aan
                 </Button>
+                {linkedLeverancier && (
+                  <Button type="button" variant="outline" size="sm" onClick={openEditSupplier}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" />Leverancier bewerken
+                  </Button>
+                )}
                 {linkedLeverancier && (
                   <Button type="button" variant="ghost" size="sm" onClick={handleUnlink}>
                     <Link2Off className="h-3.5 w-3.5 mr-1" />Leverancier ontkoppelen
@@ -837,6 +897,80 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateSupplierOpen(false)}>Annuleren</Button>
             <Button onClick={handleCreateSupplier} disabled={addLeverancier.isPending}>Opslaan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={editSupplierOpen} onOpenChange={setEditSupplierOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Leverancier bewerken</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Naam *</Label>
+              <Input value={editSupplierForm.naam} onChange={(e) => setEditSupplierForm((f) => ({ ...f, naam: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>BTW-nummer</Label>
+                <Input value={editSupplierForm.btw_nummer} onChange={(e) => setEditSupplierForm((f) => ({ ...f, btw_nummer: e.target.value }))} placeholder="NL123456789B01" />
+              </div>
+              <div>
+                <Label>KvK-nummer</Label>
+                <Input value={editSupplierForm.kvk_nummer} onChange={(e) => setEditSupplierForm((f) => ({ ...f, kvk_nummer: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>Adres</Label>
+              <Input value={editSupplierForm.adres} onChange={(e) => setEditSupplierForm((f) => ({ ...f, adres: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Postcode</Label>
+                <Input value={editSupplierForm.postcode} onChange={(e) => setEditSupplierForm((f) => ({ ...f, postcode: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Plaats</Label>
+                <Input value={editSupplierForm.plaats} onChange={(e) => setEditSupplierForm((f) => ({ ...f, plaats: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Land</Label>
+                <Input value={editSupplierForm.land} onChange={(e) => setEditSupplierForm((f) => ({ ...f, land: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>IBAN</Label>
+              <Input value={editSupplierForm.iban} onChange={(e) => setEditSupplierForm((f) => ({ ...f, iban: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Standaard grootboekrekening</Label>
+              <GrootboekCombobox
+                value={
+                  editSupplierForm.standaard_grootboekrekening_id
+                    ? (() => {
+                        const gb = grootboekrekeningen?.find((g) => g.id === editSupplierForm.standaard_grootboekrekening_id);
+                        return gb ? `${gb.nummer} - ${gb.omschrijving}` : "";
+                      })()
+                    : ""
+                }
+                onValueChange={() => {}}
+                onIdChange={(id) => setEditSupplierForm((f) => ({ ...f, standaard_grootboekrekening_id: id || "" }))}
+                noneOption
+                placeholder="Geen"
+              />
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <Switch
+                id="edit-supplier-actief"
+                checked={editSupplierForm.actief}
+                onCheckedChange={(v) => setEditSupplierForm((f) => ({ ...f, actief: v }))}
+              />
+              <Label htmlFor="edit-supplier-actief" className="cursor-pointer">Actief</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditSupplierOpen(false)}>Annuleren</Button>
+            <Button onClick={handleUpdateSupplier} disabled={updateLeverancier.isPending}>Opslaan</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
