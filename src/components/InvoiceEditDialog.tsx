@@ -16,7 +16,7 @@ import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
-import { useLeveranciers, useAddLeverancier, normalizeBtwNummer } from "@/hooks/useLeveranciers";
+import { useLeveranciers, useAddLeverancier, useUpdateLeverancier, normalizeBtwNummer } from "@/hooks/useLeveranciers";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { downloadPurchaseInvoiceUbl, validatePurchaseInvoiceForUbl, generatePurchaseInvoiceUbl } from "@/lib/ubl-generator";
