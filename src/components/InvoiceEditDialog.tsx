@@ -121,6 +121,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const replaceLines = useReplacePurchaseInvoiceLines();
   const { data: leveranciers } = useLeveranciers(invoice?.client_id);
   const addLeverancier = useAddLeverancier();
+  const updateLeverancier = useUpdateLeverancier();
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
@@ -128,6 +129,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
   const [supplierForm, setSupplierForm] = useState({
     naam: "", btw_nummer: "", kvk_nummer: "", adres: "", postcode: "", plaats: "", land: "NL", iban: "",
+  });
+  const [editSupplierOpen, setEditSupplierOpen] = useState(false);
+  const [editSupplierForm, setEditSupplierForm] = useState({
+    naam: "", btw_nummer: "", kvk_nummer: "", adres: "", postcode: "", plaats: "", land: "NL", iban: "",
+    standaard_grootboekrekening_id: "" as string, actief: true,
   });
   const [form, setForm] = useState({
     supplier: "",
