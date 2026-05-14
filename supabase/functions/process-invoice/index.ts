@@ -102,7 +102,19 @@ serve(async (req) => {
             },
             {
               type: "text",
-              text: "Analyseer deze factuur en extraheer: leverancier, factuurnummer, factuurdatum, bedrag exclusief BTW, BTW-bedrag, bedrag inclusief BTW, en BTW-percentage.",
+              text: `Analyseer deze Nederlandse inkoopfactuur en extraheer de volgende velden van de LEVERANCIER (= verkoper/uitgever van de factuur, NIET de klant/koper):
+- leverancier (naam)
+- factuurnummer, factuurdatum
+- bedragen: excl BTW, BTW-bedrag, incl BTW, BTW-percentage
+- supplier_btw_number (BTW-nummer leverancier, bv. NL807936494B01)
+- supplier_kvk (KvK-nummer leverancier, meestal 8 cijfers)
+- supplier_address (straat + huisnummer van de leverancier)
+- supplier_postal_code (postcode leverancier, bv. 1234 AB)
+- supplier_city (plaats leverancier)
+- supplier_country (land leverancier, alleen als duidelijk zichtbaar)
+- supplier_iban (IBAN leverancier indien zichtbaar)
+
+BELANGRIJK: gebruik NOOIT het adres of de gegevens van de klant/koper als leveranciersgegevens. Laat velden leeg/null als ze niet zichtbaar zijn op de factuur.`,
             },
           ],
         },
@@ -155,6 +167,30 @@ serve(async (req) => {
                   supplier_btw_number: {
                     type: "string",
                     description: "BTW-nummer van de leverancier (bv. NL807936494B01). Laat leeg indien niet zichtbaar.",
+                  },
+                  supplier_kvk: {
+                    type: "string",
+                    description: "KvK-nummer van de leverancier (meestal 8 cijfers). Laat leeg indien niet zichtbaar.",
+                  },
+                  supplier_address: {
+                    type: "string",
+                    description: "Straat + huisnummer van de leverancier. Niet het adres van de klant.",
+                  },
+                  supplier_postal_code: {
+                    type: "string",
+                    description: "Postcode van de leverancier (bv. 1234 AB).",
+                  },
+                  supplier_city: {
+                    type: "string",
+                    description: "Plaats van de leverancier.",
+                  },
+                  supplier_country: {
+                    type: "string",
+                    description: "Land van de leverancier (bv. NL). Alleen invullen indien duidelijk zichtbaar.",
+                  },
+                  supplier_iban: {
+                    type: "string",
+                    description: "IBAN van de leverancier indien zichtbaar op de factuur.",
                   },
                   raw_text: {
                     type: "string",
@@ -224,7 +260,44 @@ serve(async (req) => {
       supplierBtw = normalizeBtw(JSON.stringify(extracted));
     }
 
-    // Save to database
+    // Light normalization for new supplier fields (stored in ocr_data only)
+    const trimOrNull = (v: any): string | null => {
+      if (v === null || v === undefined) return null;
+      const s = String(v).trim();
+      return s ? s : null;
+    };
+    const normalizeKvk = (v: any): string | null => {
+      const s = trimOrNull(v);
+      if (!s) return null;
+      const digits = s.replace(/\D+/g, "");
+      return digits || s;
+    };
+    const normalizeIban = (v: any): string | null => {
+      const s = trimOrNull(v);
+      if (!s) return null;
+      return s.toUpperCase().replace(/\s+/g, "");
+    };
+    const normalizePostal = (v: any): string | null => {
+      const s = trimOrNull(v);
+      if (!s) return null;
+      return s.toUpperCase();
+    };
+
+    if (extracted && typeof extracted === "object") {
+      const k = normalizeKvk(extracted.supplier_kvk);
+      const addr = trimOrNull(extracted.supplier_address);
+      const pc = normalizePostal(extracted.supplier_postal_code);
+      const city = trimOrNull(extracted.supplier_city);
+      const country = trimOrNull(extracted.supplier_country);
+      const iban = normalizeIban(extracted.supplier_iban);
+      extracted.supplier_kvk = k;
+      extracted.supplier_address = addr;
+      extracted.supplier_postal_code = pc;
+      extracted.supplier_city = city;
+      extracted.supplier_country = country;
+      extracted.supplier_iban = iban;
+    }
+
     const { data: invoice, error: insertError } = await supabase
       .from("purchase_invoices")
       .insert({
