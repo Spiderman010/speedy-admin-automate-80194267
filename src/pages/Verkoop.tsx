@@ -59,6 +59,10 @@ export default function Verkoop() {
   const [editInvoice, setEditInvoice] = useState<any>(null);
   const [editOpen, setEditOpen] = useState(false);
 
+  useEffect(() => {
+    setClientFilter(selectedClientId);
+  }, [selectedClientId]);
+
   const getClientName = (id: string) => clients?.find(c => c.id === id)?.name ?? "—";
 
   const toggleSort = (field: SortField) => {
