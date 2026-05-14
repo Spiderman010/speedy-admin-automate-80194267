@@ -22,6 +22,7 @@ import { SalesInvoiceEditDialog } from "@/components/SalesInvoiceEditDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
+import { useClientContext } from "@/hooks/useClientContext";
 
 const statusConfig: Record<string, { label: string; icon: typeof Clock; variant: "default" | "secondary" | "outline" }> = {
   concept: { label: "Concept", icon: Clock, variant: "secondary" },
