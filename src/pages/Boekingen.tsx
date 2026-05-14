@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,24 +8,16 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
 import { Plus, Save, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useAddJournalEntry, useJournalEntries } from "@/hooks/useJournalEntries";
 import { exportJournalEntriesCSV } from "@/lib/snelstart-export";
-
-const grootboekrekeningen = [
-  "4100 - Inkoopkosten",
-  "4200 - Personeelskosten",
-  "4300 - Kantoorkosten",
-  "4400 - Vervoerskosten",
-  "4500 - Telecom",
-  "4600 - Energie",
-  "4700 - Huisvestingskosten",
-  "4800 - Afschrijvingen",
-  "8000 - Omzet",
-  "8100 - Overige opbrengsten",
-];
+import { useClientContext } from "@/hooks/useClientContext";
+import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
 const btwOptions = [
   { label: "0%", value: 0 },
@@ -37,10 +29,14 @@ export default function Boekingen() {
   const { toast } = useToast();
   const { data: clients } = useClients();
   const addEntry = useAddJournalEntry();
+  const { selectedClientId, setSelectedClientId } = useClientContext();
+
+  const hasSpecificClient = !!selectedClientId && selectedClientId !== "all";
 
   const [form, setForm] = useState({
-    client_id: "",
+    client_id: hasSpecificClient ? selectedClientId : "",
     entry_date: new Date().toISOString().split("T")[0],
+    ledger_account_id: "" as string,
     ledger_account_text: "",
     btw_percentage: 21,
     amount: "",
@@ -48,11 +44,29 @@ export default function Boekingen() {
     description: "",
   });
 
+  // Sync local form client to global selected client
+  useEffect(() => {
+    const next = selectedClientId && selectedClientId !== "all" ? selectedClientId : "";
+    setForm((prev) => {
+      if (prev.client_id === next) return prev;
+      const client = clients?.find((c) => c.id === next);
+      return {
+        ...prev,
+        client_id: next,
+        btw_percentage: client?.btw_vrijgesteld ? 0 : prev.btw_percentage,
+      };
+    });
+  }, [selectedClientId, clients]);
+
   const { data: journalEntries } = useJournalEntries(form.client_id || undefined);
 
   const handleSave = async () => {
-    if (!form.client_id || !form.amount) {
-      toast({ title: "Vul klant en bedrag in", variant: "destructive" });
+    if (!form.client_id) {
+      toast({ title: "Kies eerst een specifieke administratie om een boeking toe te voegen.", variant: "destructive" });
+      return;
+    }
+    if (!form.amount) {
+      toast({ title: "Vul een bedrag in", variant: "destructive" });
       return;
     }
     const amountIncl = parseFloat(form.amount);
@@ -62,6 +76,7 @@ export default function Boekingen() {
       await addEntry.mutateAsync({
         client_id: form.client_id,
         entry_date: form.entry_date,
+        ledger_account_id: form.ledger_account_id || null,
         ledger_account_text: form.ledger_account_text,
         btw_percentage: form.btw_percentage,
         amount: amountIncl,
@@ -71,10 +86,19 @@ export default function Boekingen() {
         entry_type: "handmatig",
       });
       toast({ title: "Boeking opgeslagen" });
-      setForm({ ...form, amount: "", invoice_number: "", description: "", ledger_account_text: "" });
+      setForm({ ...form, amount: "", invoice_number: "", description: "", ledger_account_id: "", ledger_account_text: "" });
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
+  };
+
+  const formatBedrag = (n: number | null | undefined) =>
+    typeof n === "number"
+      ? n.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : "-";
+  const formatDatum = (d: string) => {
+    const [y, m, day] = d.split("-");
+    return `${day}-${m}-${y}`;
   };
 
   return (
@@ -91,23 +115,33 @@ export default function Boekingen() {
       </PageHeader>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="font-display text-lg">Nieuwe boeking</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              {!hasSpecificClient && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  Kies eerst een specifieke administratie om een boeking toe te voegen.
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
                   <Label>Klant *</Label>
-                  <Select value={form.client_id} onValueChange={(v) => {
-                    const client = clients?.find((c) => c.id === v);
-                    setForm((prev) => ({
-                      ...prev,
-                      client_id: v,
-                      btw_percentage: client?.btw_vrijgesteld ? 0 : 21,
-                    }));
-                  }}>
+                  <Select
+                    value={form.client_id}
+                    onValueChange={(v) => {
+                      const client = clients?.find((c) => c.id === v);
+                      setForm((prev) => ({
+                        ...prev,
+                        client_id: v,
+                        btw_percentage: client?.btw_vrijgesteld ? 0 : 21,
+                      }));
+                      setSelectedClientId(v);
+                    }}
+                  >
                     <SelectTrigger><SelectValue placeholder="Selecteer klant" /></SelectTrigger>
                     <SelectContent>
                       {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}{c.btw_vrijgesteld ? " (BTW-vrij)" : ""}</SelectItem>)}
@@ -123,12 +157,11 @@ export default function Boekingen() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
                   <Label>Grootboekrekening</Label>
-                  <Select value={form.ledger_account_text} onValueChange={(v) => setForm({ ...form, ledger_account_text: v })}>
-                    <SelectTrigger><SelectValue placeholder="Selecteer rekening" /></SelectTrigger>
-                    <SelectContent>
-                      {grootboekrekeningen.map((gb) => <SelectItem key={gb} value={gb}>{gb}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <GrootboekCombobox
+                    value={form.ledger_account_text}
+                    onValueChange={(v) => setForm((prev) => ({ ...prev, ledger_account_text: v }))}
+                    onIdChange={(id) => setForm((prev) => ({ ...prev, ledger_account_id: id }))}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>BTW-percentage</Label>
@@ -158,13 +191,57 @@ export default function Boekingen() {
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setForm({ ...form, amount: "", invoice_number: "", description: "", ledger_account_text: "" })}>
+                <Button variant="outline" onClick={() => setForm({ ...form, amount: "", invoice_number: "", description: "", ledger_account_id: "", ledger_account_text: "" })}>
                   Wissen
                 </Button>
-                <Button onClick={handleSave} disabled={addEntry.isPending}>
+                <Button onClick={handleSave} disabled={addEntry.isPending || !hasSpecificClient}>
                   <Save className="mr-2 h-4 w-4" />{addEntry.isPending ? "Opslaan..." : "Opslaan"}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="font-display text-lg">Boekingen</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {!hasSpecificClient ? (
+                <p className="text-sm text-muted-foreground">
+                  Kies een specifieke administratie om de boekingen te zien.
+                </p>
+              ) : !journalEntries?.length ? (
+                <p className="text-sm text-muted-foreground">
+                  Nog geen snelle invoer boekingen voor deze administratie.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Datum</TableHead>
+                        <TableHead>Omschrijving</TableHead>
+                        <TableHead>Grootboek</TableHead>
+                        <TableHead className="text-right">Bedrag</TableHead>
+                        <TableHead className="text-right">BTW %</TableHead>
+                        <TableHead className="text-right">BTW-bedrag</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {journalEntries.map((e) => (
+                        <TableRow key={e.id}>
+                          <TableCell>{formatDatum(e.entry_date)}</TableCell>
+                          <TableCell className="max-w-[260px] truncate">{e.description ?? "-"}</TableCell>
+                          <TableCell className="max-w-[220px] truncate">{e.ledger_account_text ?? "-"}</TableCell>
+                          <TableCell className="text-right">{formatBedrag(Number(e.amount))}</TableCell>
+                          <TableCell className="text-right">{e.btw_percentage ?? 0}%</TableCell>
+                          <TableCell className="text-right">{formatBedrag(Number(e.btw_amount))}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -178,9 +255,10 @@ export default function Boekingen() {
               <p className="text-sm text-muted-foreground">
                 Sla veelvoorkomende boekingen op als sjabloon zodat je ze met één klik kunt herhalen.
               </p>
-              <Button variant="outline" className="mt-4 w-full">
+              <Button variant="outline" className="mt-4 w-full" disabled>
                 <Plus className="mr-2 h-4 w-4" />Sjabloon aanmaken
               </Button>
+              <p className="mt-2 text-xs text-muted-foreground text-center">Sjablonen volgen later</p>
             </CardContent>
           </Card>
         </div>
