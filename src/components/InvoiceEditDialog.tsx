@@ -147,6 +147,55 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [routeReason, setRouteReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [vraagpostOpen, setVraagpostOpen] = useState(false);
+  const [duplicateWarning, setDuplicateWarning] = useState(false);
+
+  const normalizeSupplierName = (s: string) =>
+    s.toLowerCase().trim().replace(/\s+/g, " ");
+
+  useEffect(() => {
+    if (!invoice?.id || !invoice?.client_id) {
+      setDuplicateWarning(false);
+      return;
+    }
+    const invNum = form.invoice_number.trim();
+    if (!invNum) {
+      setDuplicateWarning(false);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      const { data, error } = await supabase
+        .from("purchase_invoices")
+        .select("id, leverancier_id, supplier_btw_number, supplier")
+        .eq("client_id", invoice.client_id)
+        .eq("invoice_number", invNum)
+        .neq("id", invoice.id);
+      if (error || !data) {
+        setDuplicateWarning(false);
+        return;
+      }
+      if (data.length === 0) {
+        setDuplicateWarning(false);
+        return;
+      }
+      const curBtw = form.supplier_btw_number ? normalizeBtwNummer(form.supplier_btw_number) : "";
+      const curName = form.supplier ? normalizeSupplierName(form.supplier) : "";
+      const hasIdentity = !!leverancierId || !!curBtw || !!curName;
+      if (!hasIdentity) {
+        setDuplicateWarning(true);
+        return;
+      }
+      const match = data.some((c: any) => {
+        if (leverancierId && c.leverancier_id && c.leverancier_id === leverancierId) return true;
+        const cBtw = c.supplier_btw_number ? normalizeBtwNummer(c.supplier_btw_number) : "";
+        if (curBtw && cBtw && curBtw === cBtw) return true;
+        const cName = c.supplier ? normalizeSupplierName(c.supplier) : "";
+        if (curName && cName && curName === cName) return true;
+        return false;
+      });
+      setDuplicateWarning(match);
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [invoice?.id, invoice?.client_id, form.invoice_number, form.supplier, form.supplier_btw_number, leverancierId]);
 
   useEffect(() => {
     if (invoice) {
