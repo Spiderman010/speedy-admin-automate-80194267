@@ -169,6 +169,23 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   const linkedLeverancier = leveranciers?.find((l) => l.id === leverancierId) ?? null;
 
+  // Retry auto-fill if grootboekrekeningen loaded after the leverancier was linked.
+  // setForm returns the same `prev` reference when the field is already filled,
+  // so React skips the re-render and there is no infinite loop.
+  useEffect(() => {
+    if (!linkedLeverancier?.standaard_grootboekrekening_id) return;
+    if (!grootboekrekeningen) return;
+    const gb = grootboekrekeningen.find(
+      (g) => g.id === linkedLeverancier.standaard_grootboekrekening_id,
+    );
+    if (!gb) return;
+    const label = `${gb.nummer} - ${gb.omschrijving}`;
+    setForm((prev) => {
+      if (prev.ledger_account_text) return prev;
+      return { ...prev, ledger_account_text: label };
+    });
+  }, [linkedLeverancier, grootboekrekeningen]);
+
   const handleLinkExisting = (id: string) => {
     const l = leveranciers?.find((x) => x.id === id);
     if (!l) return;
