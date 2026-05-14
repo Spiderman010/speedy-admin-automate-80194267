@@ -326,6 +326,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         plaats: supplierForm.plaats.trim() || null,
         land: supplierForm.land.trim() || "NL",
         iban: supplierForm.iban.trim() || null,
+        standaard_grootboekrekening_id: supplierForm.standaard_grootboekrekening_id || null,
         actief: true,
       });
       setLeverancierId(created.id);
