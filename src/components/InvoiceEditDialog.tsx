@@ -129,6 +129,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
   const [supplierForm, setSupplierForm] = useState({
     naam: "", btw_nummer: "", kvk_nummer: "", adres: "", postcode: "", plaats: "", land: "NL", iban: "",
+    standaard_grootboekrekening_id: "",
   });
   const [editSupplierOpen, setEditSupplierOpen] = useState(false);
   const [editSupplierForm, setEditSupplierForm] = useState({
