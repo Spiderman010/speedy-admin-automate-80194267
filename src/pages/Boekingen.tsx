@@ -76,7 +76,9 @@ export default function Boekingen() {
       await addEntry.mutateAsync({
         client_id: form.client_id,
         entry_date: form.entry_date,
-        ledger_account_id: form.ledger_account_id || null,
+        // FK journal_entries.ledger_account_id verwijst naar ledger_accounts (niet grootboekrekeningen).
+        // We slaan daarom alleen de leesbare tekst op en laten id leeg om FK-fouten te voorkomen.
+        ledger_account_id: null,
         ledger_account_text: form.ledger_account_text,
         btw_percentage: form.btw_percentage,
         amount: amountIncl,
