@@ -378,6 +378,7 @@ export default function Facturen() {
                       <TableHead>Grootboek</TableHead>
                       <TableHead>Route</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
+                      <TableHead className="w-10"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
