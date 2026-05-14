@@ -129,6 +129,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
   const [supplierForm, setSupplierForm] = useState({
     naam: "", btw_nummer: "", kvk_nummer: "", adres: "", postcode: "", plaats: "", land: "NL", iban: "",
+    standaard_grootboekrekening_id: "",
   });
   const [editSupplierOpen, setEditSupplierOpen] = useState(false);
   const [editSupplierForm, setEditSupplierForm] = useState({
@@ -303,6 +304,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       plaats: ocr.supplier_city ?? "",
       land: "NL",
       iban: ocr.supplier_iban ?? "",
+      standaard_grootboekrekening_id: "",
     });
     setCreateSupplierOpen(true);
   };
@@ -324,6 +326,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         plaats: supplierForm.plaats.trim() || null,
         land: supplierForm.land.trim() || "NL",
         iban: supplierForm.iban.trim() || null,
+        standaard_grootboekrekening_id: supplierForm.standaard_grootboekrekening_id || null,
         actief: true,
       });
       setLeverancierId(created.id);
@@ -892,6 +895,23 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             <div>
               <Label>IBAN</Label>
               <Input value={supplierForm.iban} onChange={(e) => setSupplierForm((f) => ({ ...f, iban: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Standaard grootboekrekening</Label>
+              <GrootboekCombobox
+                value={
+                  supplierForm.standaard_grootboekrekening_id
+                    ? (() => {
+                        const gb = grootboekrekeningen?.find((g) => g.id === supplierForm.standaard_grootboekrekening_id);
+                        return gb ? `${gb.nummer} - ${gb.omschrijving}` : "";
+                      })()
+                    : ""
+                }
+                onValueChange={() => {}}
+                onIdChange={(id) => setSupplierForm((f) => ({ ...f, standaard_grootboekrekening_id: id || "" }))}
+                noneOption
+                placeholder="Geen"
+              />
             </div>
           </div>
           <DialogFooter>
