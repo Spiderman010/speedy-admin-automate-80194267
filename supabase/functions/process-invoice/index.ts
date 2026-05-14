@@ -102,7 +102,19 @@ serve(async (req) => {
             },
             {
               type: "text",
-              text: "Analyseer deze factuur en extraheer: leverancier, factuurnummer, factuurdatum, bedrag exclusief BTW, BTW-bedrag, bedrag inclusief BTW, en BTW-percentage.",
+              text: `Analyseer deze Nederlandse inkoopfactuur en extraheer de volgende velden van de LEVERANCIER (= verkoper/uitgever van de factuur, NIET de klant/koper):
+- leverancier (naam)
+- factuurnummer, factuurdatum
+- bedragen: excl BTW, BTW-bedrag, incl BTW, BTW-percentage
+- supplier_btw_number (BTW-nummer leverancier, bv. NL807936494B01)
+- supplier_kvk (KvK-nummer leverancier, meestal 8 cijfers)
+- supplier_address (straat + huisnummer van de leverancier)
+- supplier_postal_code (postcode leverancier, bv. 1234 AB)
+- supplier_city (plaats leverancier)
+- supplier_country (land leverancier, alleen als duidelijk zichtbaar)
+- supplier_iban (IBAN leverancier indien zichtbaar)
+
+BELANGRIJK: gebruik NOOIT het adres of de gegevens van de klant/koper als leveranciersgegevens. Laat velden leeg/null als ze niet zichtbaar zijn op de factuur.`,
             },
           ],
         },
