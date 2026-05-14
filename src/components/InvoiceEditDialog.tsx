@@ -900,6 +900,80 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={editSupplierOpen} onOpenChange={setEditSupplierOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Leverancier bewerken</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Naam *</Label>
+              <Input value={editSupplierForm.naam} onChange={(e) => setEditSupplierForm((f) => ({ ...f, naam: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>BTW-nummer</Label>
+                <Input value={editSupplierForm.btw_nummer} onChange={(e) => setEditSupplierForm((f) => ({ ...f, btw_nummer: e.target.value }))} placeholder="NL123456789B01" />
+              </div>
+              <div>
+                <Label>KvK-nummer</Label>
+                <Input value={editSupplierForm.kvk_nummer} onChange={(e) => setEditSupplierForm((f) => ({ ...f, kvk_nummer: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>Adres</Label>
+              <Input value={editSupplierForm.adres} onChange={(e) => setEditSupplierForm((f) => ({ ...f, adres: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Postcode</Label>
+                <Input value={editSupplierForm.postcode} onChange={(e) => setEditSupplierForm((f) => ({ ...f, postcode: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Plaats</Label>
+                <Input value={editSupplierForm.plaats} onChange={(e) => setEditSupplierForm((f) => ({ ...f, plaats: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Land</Label>
+                <Input value={editSupplierForm.land} onChange={(e) => setEditSupplierForm((f) => ({ ...f, land: e.target.value }))} />
+              </div>
+            </div>
+            <div>
+              <Label>IBAN</Label>
+              <Input value={editSupplierForm.iban} onChange={(e) => setEditSupplierForm((f) => ({ ...f, iban: e.target.value }))} />
+            </div>
+            <div>
+              <Label>Standaard grootboekrekening</Label>
+              <GrootboekCombobox
+                value={
+                  editSupplierForm.standaard_grootboekrekening_id
+                    ? (() => {
+                        const gb = grootboekrekeningen?.find((g) => g.id === editSupplierForm.standaard_grootboekrekening_id);
+                        return gb ? `${gb.nummer} - ${gb.omschrijving}` : "";
+                      })()
+                    : ""
+                }
+                onValueChange={() => {}}
+                onIdChange={(id) => setEditSupplierForm((f) => ({ ...f, standaard_grootboekrekening_id: id || "" }))}
+                noneOption
+                placeholder="Geen"
+              />
+            </div>
+            <div className="flex items-center gap-3 pt-1">
+              <Switch
+                id="edit-supplier-actief"
+                checked={editSupplierForm.actief}
+                onCheckedChange={(v) => setEditSupplierForm((f) => ({ ...f, actief: v }))}
+              />
+              <Label htmlFor="edit-supplier-actief" className="cursor-pointer">Actief</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditSupplierOpen(false)}>Annuleren</Button>
+            <Button onClick={handleUpdateSupplier} disabled={updateLeverancier.isPending}>Opslaan</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }
