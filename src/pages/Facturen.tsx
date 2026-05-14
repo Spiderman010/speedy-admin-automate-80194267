@@ -380,7 +380,16 @@ export default function Facturen() {
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setEditInvoice(inv)}>
                           <TableCell className="font-medium">{inv.supplier}</TableCell>
-                          <TableCell className="font-mono text-sm">{inv.invoice_number || "—"}</TableCell>
+                          <TableCell className="font-mono text-sm">
+                            <div className="flex items-center gap-2">
+                              <span>{inv.invoice_number || "—"}</span>
+                              {duplicateIds.has(inv.id) && (
+                                <Badge variant="outline" className="border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 text-xs font-normal">
+                                  Mogelijk dubbel
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
                           <TableCell>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
                           <TableCell className="text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
