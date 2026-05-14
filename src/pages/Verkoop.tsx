@@ -221,7 +221,7 @@ export default function Verkoop() {
   return (
     <>
       <PageHeader title="Verkoopfacturen" description="Upload, verwerk en beheer verkoopfacturen">
-        <Select value={clientFilter} onValueChange={setClientFilter}>
+        <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
           <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle klanten</SelectItem>
