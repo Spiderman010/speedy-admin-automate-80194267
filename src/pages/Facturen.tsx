@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -57,6 +57,10 @@ export default function Facturen() {
   const updateInvoice = useUpdatePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
+
+  useEffect(() => {
+    setClientFilter(selectedClientId);
+  }, [selectedClientId]);
 
   const handleSaveInvoice = async (id: string, updates: Partial<Tables<"purchase_invoices">>) => {
     await updateInvoice.mutateAsync({ id, ...updates });
