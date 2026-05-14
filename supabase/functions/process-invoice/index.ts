@@ -168,6 +168,30 @@ BELANGRIJK: gebruik NOOIT het adres of de gegevens van de klant/koper als levera
                     type: "string",
                     description: "BTW-nummer van de leverancier (bv. NL807936494B01). Laat leeg indien niet zichtbaar.",
                   },
+                  supplier_kvk: {
+                    type: "string",
+                    description: "KvK-nummer van de leverancier (meestal 8 cijfers). Laat leeg indien niet zichtbaar.",
+                  },
+                  supplier_address: {
+                    type: "string",
+                    description: "Straat + huisnummer van de leverancier. Niet het adres van de klant.",
+                  },
+                  supplier_postal_code: {
+                    type: "string",
+                    description: "Postcode van de leverancier (bv. 1234 AB).",
+                  },
+                  supplier_city: {
+                    type: "string",
+                    description: "Plaats van de leverancier.",
+                  },
+                  supplier_country: {
+                    type: "string",
+                    description: "Land van de leverancier (bv. NL). Alleen invullen indien duidelijk zichtbaar.",
+                  },
+                  supplier_iban: {
+                    type: "string",
+                    description: "IBAN van de leverancier indien zichtbaar op de factuur.",
+                  },
                   raw_text: {
                     type: "string",
                     description: "Volledige ruwe tekst van de factuur, exact zoals zichtbaar (gebruikt voor fallback-extractie).",
