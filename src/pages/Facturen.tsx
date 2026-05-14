@@ -10,10 +10,14 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, Download, CheckCircle2, Clock, AlertCircle, Loader2, ArrowUp, ArrowDown, Search } from "lucide-react";
+import { Upload, FileText, Download, CheckCircle2, Clock, AlertCircle, Loader2, ArrowUp, ArrowDown, Search, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { exportPurchaseInvoicesCSV } from "@/lib/snelstart-export";
 import { useClients } from "@/hooks/useClients";
 import { Skeleton } from "@/components/ui/skeleton";
