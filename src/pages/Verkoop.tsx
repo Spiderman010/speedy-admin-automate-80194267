@@ -22,6 +22,7 @@ import { SalesInvoiceEditDialog } from "@/components/SalesInvoiceEditDialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
+import { useClientContext } from "@/hooks/useClientContext";
 
 const statusConfig: Record<string, { label: string; icon: typeof Clock; variant: "default" | "secondary" | "outline" }> = {
   concept: { label: "Concept", icon: Clock, variant: "secondary" },
@@ -37,7 +38,8 @@ type SortField = "invoice_number" | "client" | "customer_name" | "date" | "due_d
 type SortDir = "asc" | "desc";
 
 export default function Verkoop() {
-  const [clientFilter, setClientFilter] = useState("all");
+  const { selectedClientId, setSelectedClientId } = useClientContext();
+  const [clientFilter, setClientFilter] = useState(selectedClientId);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [uploadClientId, setUploadClientId] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -219,7 +221,7 @@ export default function Verkoop() {
   return (
     <>
       <PageHeader title="Verkoopfacturen" description="Upload, verwerk en beheer verkoopfacturen">
-        <Select value={clientFilter} onValueChange={setClientFilter}>
+        <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
           <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle klanten</SelectItem>
