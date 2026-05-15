@@ -79,6 +79,17 @@ export const VRAAGPOST_CATEGORIE_OPTIONS = Object.entries(VRAAGPOST_CATEGORIE_LA
   ([value, label]) => ({ value, label })
 );
 
+export function useDeleteVraagpost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("vraagposten").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["vraagposten"] }),
+  });
+}
+
 export const VRAAGPOST_SOURCE_LABELS: Record<string, string> = {
   purchase_invoice: "Inkoopfactuur",
   bank_transaction: "Banktransactie",
