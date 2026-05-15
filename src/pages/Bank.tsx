@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -545,6 +545,71 @@ export default function Bank() {
     }
   }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch]);
 
+  const handleRepairAflettering = useCallback(async () => {
+    if (selectedIds.size === 0 || !transactions) return;
+
+    let updated = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const id of Array.from(selectedIds)) {
+      const tx = transactions.find(t => t.id === id);
+      if (!tx || tx.match_status !== "gematcht" || !tx.matched_invoice_id) continue;
+
+      const purchaseInv = invoices?.find(i => i.id === tx.matched_invoice_id);
+      const salesInv = salesInvs?.find(i => i.id === tx.matched_invoice_id);
+      const inv = purchaseInv ?? salesInv;
+      if (!inv) { skipped++; continue; }
+
+      const txAmount = Math.abs(tx.amount);
+      const totalAmount = getInvoiceTotalAmount(inv);
+      const currentRemaining = getInvoiceRemainingAmount(inv);
+      const effectiveRemaining = currentRemaining ?? totalAmount;
+
+      if (totalAmount == null || effectiveRemaining == null) { skipped++; continue; }
+
+      try {
+        if (Math.abs(effectiveRemaining - txAmount) < 0.02) {
+          if (purchaseInv) {
+            await updatePurchase.mutateAsync({ id: inv.id, status: "betaald", remaining_amount: 0 });
+          } else {
+            await updateSales.mutateAsync({ id: inv.id, status: "betaald", remaining_amount: 0 });
+          }
+        } else {
+          const newRemaining = Math.max(0, effectiveRemaining - txAmount);
+          if (purchaseInv) {
+            await updatePurchase.mutateAsync({
+              id: inv.id,
+              remaining_amount: newRemaining,
+              ...(newRemaining === 0 ? { status: "betaald" as const } : {}),
+            });
+          } else {
+            await updateSales.mutateAsync({
+              id: inv.id,
+              remaining_amount: newRemaining,
+              ...(newRemaining === 0 ? { status: "betaald" as const } : {}),
+            });
+          }
+        }
+        updated++;
+      } catch (e: any) {
+        errors.push(e.message || "Onbekende fout");
+      }
+    }
+
+    await refetchPurchase();
+    await refetchSales();
+
+    if (updated > 0) {
+      toast({ title: `${updated} aflettering(en) bijgewerkt${skipped > 0 ? `, ${skipped} overgeslagen` : ""}` });
+    } else if (skipped > 0) {
+      toast({ title: `${skipped} transactie(s) overgeslagen (geen gekoppelde factuur gevonden)` });
+    }
+    if (errors.length > 0) {
+      toast({ title: "Fout bij herberekening", description: errors[0], variant: "destructive" });
+    }
+  }, [selectedIds, transactions, invoices, salesInvs, updatePurchase, updateSales, toast, refetchPurchase, refetchSales]);
+
   const handleBulkConfirmSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions || !invoices || !salesInvs) return;
 
@@ -840,11 +905,35 @@ export default function Bank() {
                           const total = getInvoiceTotalAmount(inv);
                           const remaining = getInvoiceRemainingAmount(inv);
                           if (total == null) return null;
+
                           const fullyPaid = remaining != null && Math.abs(remaining) < 0.01;
+                          const isPartial = remaining != null && remaining > 0.01 && remaining < total - 0.01;
+                          const notAfgeletterd = remaining != null && remaining >= total - 0.01 && !fullyPaid;
+
                           return (
                             <div className="mt-0.5 space-y-0.5">
                               {fullyPaid ? (
                                 <p className="text-xs text-success">Volledig betaald</p>
+                              ) : isPartial ? (
+                                <>
+                                  <p className="text-xs font-medium text-amber-600">Deelbetaling</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Betaald: {formatCurrency(total - remaining)}
+                                  </p>
+                                  <p className="text-xs text-warning font-medium">
+                                    Openstaand: {formatCurrency(remaining)}
+                                  </p>
+                                </>
+                              ) : notAfgeletterd ? (
+                                <>
+                                  <p className="text-xs font-medium text-destructive">Nog niet afgeletterd</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Betaald: {formatCurrency(0)}
+                                  </p>
+                                  <p className="text-xs text-warning font-medium">
+                                    Openstaand: {formatCurrency(remaining ?? total)}
+                                  </p>
+                                </>
                               ) : (
                                 <>
                                   <p className="text-xs text-muted-foreground">
@@ -1010,6 +1099,18 @@ export default function Bank() {
           <div className="w-64">
             <GrootboekCombobox value={bulkLedger} onValueChange={setBulkLedger} onIdChange={setBulkLedgerId} />
           </div>
+          {(() => {
+            const repairCount = Array.from(selectedIds).filter(id => {
+              const tx = transactions?.find(t => t.id === id);
+              return tx?.match_status === "gematcht" && tx.matched_invoice_id != null;
+            }).length;
+            return repairCount > 0 ? (
+              <Button size="sm" variant="outline" onClick={handleRepairAflettering}>
+                <RefreshCw className="mr-1 h-4 w-4" />
+                Herbereken aflettering ({repairCount})
+              </Button>
+            ) : null;
+          })()}
           <Button size="sm" onClick={handleBulkBook} disabled={!bulkLedger}>
             Boek geselecteerde transacties
           </Button>
