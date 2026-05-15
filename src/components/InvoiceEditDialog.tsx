@@ -830,6 +830,23 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   document.body.removeChild(a);
                   URL.revokeObjectURL(url);
                   toast({ title: "SnelStart-pakket gedownload" });
+
+                  // Log download (non-blocking)
+                  try {
+                    const currentCount = ((invoice as any).snelstart_package_download_count ?? 0) as number;
+                    const { error: logErr } = await supabase
+                      .from("purchase_invoices")
+                      .update({
+                        snelstart_package_downloaded_at: new Date().toISOString(),
+                        snelstart_package_download_count: currentCount + 1,
+                      } as any)
+                      .eq("id", invoice.id);
+                    if (logErr) {
+                      toast({ title: "Download geregistreerd niet opgeslagen", description: logErr.message });
+                    }
+                  } catch (logE: any) {
+                    toast({ title: "Download geregistreerd niet opgeslagen", description: logE?.message });
+                  }
                 } catch (e: any) {
                   toast({ title: "Origineel document niet gevonden", description: e?.message, variant: "destructive" });
                 }
@@ -837,6 +854,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             >
               <FileCode2 className="mr-2 h-4 w-4" />Download SnelStart-pakket
             </Button>
+          )}
+          {(invoice as any).snelstart_package_downloaded_at && (
+            <div className="text-xs text-muted-foreground self-center">
+              Pakket gedownload op {new Date((invoice as any).snelstart_package_downloaded_at).toLocaleString("nl-NL")}
+              {((invoice as any).snelstart_package_download_count ?? 0) > 1 && (
+                <> · Aantal downloads: {(invoice as any).snelstart_package_download_count}</>
+              )}
+            </div>
           )}
           <Button variant="outline" onClick={handleSave} disabled={saving || !form.supplier}>
             <Save className="mr-2 h-4 w-4" />Opslaan
