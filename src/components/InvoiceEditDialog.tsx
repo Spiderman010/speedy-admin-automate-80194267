@@ -156,6 +156,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [saving, setSaving] = useState(false);
   const [vraagpostOpen, setVraagpostOpen] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
+  const qc = useQueryClient();
+  const canGenerateUbl = invoice ? ["gecontroleerd", "geexporteerd"].includes(invoice.status) : false;
 
   const normalizeSupplierName = (s: string) =>
     s.toLowerCase().trim().replace(/\s+/g, " ");
