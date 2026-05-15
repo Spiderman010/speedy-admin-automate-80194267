@@ -425,6 +425,10 @@ export default function Facturen() {
                                   </div>
                                 );
                               }
+                              const openstaand = remaining ?? total;
+                              if (openstaand != null) {
+                                return <span className="font-mono text-sm text-amber-600">{formatCurrency(openstaand)}</span>;
+                              }
                               return <span className="text-muted-foreground text-sm">—</span>;
                             })()}
                           </TableCell>
