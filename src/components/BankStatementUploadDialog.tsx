@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -28,6 +28,7 @@ interface Props {
   onImport: (clientId: string, transactions: MatchedTransaction[]) => Promise<void>;
   existingTransactions?: BankTransaction[];
   bookingTemplates?: BookingTemplate[];
+  defaultClientId?: string;
 }
 
 export interface MatchedTransaction extends ParsedTransaction {
@@ -151,8 +152,13 @@ function invoiceLabel(inv: PurchaseInvoice) {
   return `${inv.supplier} - ${inv.invoice_number || "?"}${amt}`;
 }
 
-export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, onImport, existingTransactions, bookingTemplates = [] }: Props) {
-  const [clientId, setClientId] = useState("");
+export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, onImport, existingTransactions, bookingTemplates = [], defaultClientId }: Props) {
+  const [clientId, setClientId] = useState(defaultClientId ?? "");
+
+  // Sync clientId whenever the dialog (re-)opens with a preselected client
+  useEffect(() => {
+    if (open) setClientId(defaultClientId ?? "");
+  }, [open, defaultClientId]);
   const [parsed, setParsed] = useState<MatchedTransaction[] | null>(null);
   const [duplicateInfos, setDuplicateInfos] = useState<DuplicateInfo[]>([]);
   const [selected, setSelected] = useState<boolean[]>([]);
@@ -176,7 +182,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     setOpeningBalance(statement.openingBalance);
     setClosingBalance(statement.closingBalance);
 
-    const matched = autoMatch(statement.transactions, invoices);
+    // Only match against invoices for the selected client
+    const clientInvoices = clientId ? invoices.filter(i => i.client_id === clientId) : invoices;
+    const matched = autoMatch(statement.transactions, clientInvoices);
     const withTemplates = applyTemplates(matched, bookingTemplates, clientId);
     setParsed(withTemplates);
 
@@ -192,7 +200,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     );
     setDuplicateInfos(dupInfos);
     setSelected(dupInfos.map(d => !d.isDuplicate));
-  }, [invoices, existingTransactions]);
+  }, [invoices, existingTransactions, clientId, bookingTemplates]);
 
   const handleFile = useCallback(async (file: File) => {
     setError(null);
@@ -419,7 +427,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="none">— Geen match —</SelectItem>
-                                  {invoices.map(inv => (
+                                  {invoices.filter(i => !clientId || i.client_id === clientId).map(inv => (
                                     <SelectItem key={inv.id} value={inv.id}>
                                       {invoiceLabel(inv)}
                                     </SelectItem>

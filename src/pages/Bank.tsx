@@ -615,12 +615,12 @@ export default function Bank() {
     }
   }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
 
-  const handleImport = useCallback(async (clientId: string, txs: MatchedTransaction[]) => {
+  const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
     for (const tx of txs) {
       try {
         await addTx.mutateAsync({
-          client_id: clientId,
+          client_id: importClientId,
           transaction_date: tx.date,
           amount: tx.amount,
           description: tx.description,
@@ -631,13 +631,33 @@ export default function Bank() {
           matched_invoice_id: tx.matchedInvoiceId,
           grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
         });
+
+        // Aflettering: update the linked purchase invoice after a confirmed match
+        if (tx.matchedInvoiceId && tx.matchStatus === "gematcht") {
+          const purchaseInv = invoices?.find(i => i.id === tx.matchedInvoiceId);
+          if (purchaseInv && purchaseInv.status !== "betaald") {
+            const txAmount = Math.abs(tx.amount);
+            const totalAmount = getInvoiceTotalAmount(purchaseInv);
+            const remainingAmount = getInvoiceRemainingAmount(purchaseInv);
+            const effectiveRemaining = remainingAmount ?? totalAmount ?? txAmount;
+            const isExact = Math.abs(effectiveRemaining - txAmount) < 0.02;
+            if (isExact) {
+              await updatePurchase.mutateAsync({ id: purchaseInv.id, status: "betaald", remaining_amount: 0 });
+            } else if (totalAmount != null) {
+              const newRemaining = Math.max(0, effectiveRemaining - txAmount);
+              await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: newRemaining });
+            }
+          }
+        }
+
         success++;
       } catch (e: any) {
         console.error("Import error:", e);
       }
     }
+    await refetchPurchase();
     toast({ title: `${success} van ${txs.length} transacties geïmporteerd` });
-  }, [addTx, toast]);
+  }, [addTx, invoices, updatePurchase, refetchPurchase, toast]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -1069,6 +1089,7 @@ export default function Bank() {
         onImport={handleImport}
         existingTransactions={transactions ?? []}
         bookingTemplates={bookingTemplates ?? []}
+        defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
       />
 
       <BankMatchDialog
