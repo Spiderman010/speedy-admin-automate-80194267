@@ -588,6 +588,8 @@ export type Database = {
           original_ubl_path: string | null
           remaining_amount: number | null
           route_reason: string | null
+          snelstart_package_download_count: number
+          snelstart_package_downloaded_at: string | null
           status: string
           supplier: string
           supplier_btw_number: string | null
@@ -615,6 +617,8 @@ export type Database = {
           original_ubl_path?: string | null
           remaining_amount?: number | null
           route_reason?: string | null
+          snelstart_package_download_count?: number
+          snelstart_package_downloaded_at?: string | null
           status?: string
           supplier: string
           supplier_btw_number?: string | null
@@ -642,6 +646,8 @@ export type Database = {
           original_ubl_path?: string | null
           remaining_amount?: number | null
           route_reason?: string | null
+          snelstart_package_download_count?: number
+          snelstart_package_downloaded_at?: string | null
           status?: string
           supplier?: string
           supplier_btw_number?: string | null
