@@ -940,6 +940,7 @@ export default function Bank() {
                           const fullyPaid = remaining != null && Math.abs(remaining) < 0.01;
                           const isPartial = remaining != null && remaining > 0.01 && remaining < total - 0.01;
                           const notAfgeletterd = remaining != null && remaining >= total - 0.01 && !fullyPaid;
+                          const paidAmount = remaining != null ? Math.max(0, total - remaining) : 0;
 
                           return (
                             <div className="mt-0.5 space-y-0.5">
@@ -949,7 +950,7 @@ export default function Bank() {
                                 <>
                                   <p className="text-xs font-medium text-amber-600">Deelbetaling</p>
                                   <p className="text-xs text-muted-foreground">
-                                    Betaald: {formatCurrency(total - remaining)}
+                                    Betaald: {formatCurrency(paidAmount)}
                                   </p>
                                   <p className="text-xs text-warning font-medium">
                                     Openstaand: {formatCurrency(remaining)}
