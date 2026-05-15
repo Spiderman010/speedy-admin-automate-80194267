@@ -338,11 +338,10 @@ export default function Bank() {
 
         if (purchaseInv) {
           const totalAmount = getInvoiceTotalAmount(purchaseInv);
-          const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
-          if (purchaseInv.status === "betaald") {
-            await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-          } else if (totalAmount != null) {
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+          if (totalAmount != null) {
+            const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
+            const restoredRemaining = Math.min(totalAmount, currentRemaining + txAmount);
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: restoredRemaining });
           }
         } else if (salesInv) {
           const totalAmount = getInvoiceTotalAmount(salesInv);
@@ -355,11 +354,13 @@ export default function Bank() {
         }
       }
 
+      await refetchPurchase();
+      await refetchSales();
       toast({ title: "Koppeling verwijderd", description: "Transactie is weer open." });
     } catch (e: any) {
       toast({ title: "Fout bij ontkoppelen", description: e.message, variant: "destructive" });
     }
-  }, [updateTx, updatePurchase, updateSales, invoices, salesInvs, toast]);
+  }, [updateTx, updatePurchase, updateSales, invoices, salesInvs, refetchPurchase, refetchSales, toast]);
 
   const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => {
     try {
@@ -437,11 +438,10 @@ export default function Bank() {
 
           if (purchaseInv) {
             const totalAmount = getInvoiceTotalAmount(purchaseInv);
-            const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
-            if (purchaseInv.status === "betaald") {
-              await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-            } else if (totalAmount != null) {
-              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            if (totalAmount != null) {
+              const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
+              const restoredRemaining = Math.min(totalAmount, currentRemaining + txAmount);
+              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: restoredRemaining });
             }
           } else if (salesInv) {
             const totalAmount = getInvoiceTotalAmount(salesInv);
@@ -472,6 +472,8 @@ export default function Bank() {
     setBulkLedger("");
     setBulkLedgerId("");
     await refetch();
+    await refetchPurchase();
+    await refetchSales();
 
     if (success > 0) {
       toast({ title: `${success} transactie(s) geboekt naar ${bulkLedger}` });
@@ -479,7 +481,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
     }
-  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleBulkUnlink = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -510,11 +512,10 @@ export default function Bank() {
 
           if (purchaseInv) {
             const totalAmount = getInvoiceTotalAmount(purchaseInv);
-            const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
-            if (purchaseInv.status === "betaald") {
-              await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-            } else if (totalAmount != null) {
-              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            if (totalAmount != null) {
+              const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
+              const restoredRemaining = Math.min(totalAmount, currentRemaining + txAmount);
+              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: restoredRemaining });
             }
           } else if (salesInv) {
             const totalAmount = getInvoiceTotalAmount(salesInv);
@@ -536,6 +537,8 @@ export default function Bank() {
     setSelectedIds(new Set());
     setConfirmUnlinkOpen(false);
     await refetch();
+    await refetchPurchase();
+    await refetchSales();
 
     if (success > 0) {
       toast({ title: `${success} transactie(s) ontkoppeld` });
@@ -543,7 +546,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij ontkoppelen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch]);
+  }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleRepairAflettering = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
