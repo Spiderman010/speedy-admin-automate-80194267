@@ -691,15 +691,32 @@ export default function Bank() {
                             if (gb) label = `${gb.nummer} - ${gb.omschrijving}`;
                           }
                           const vp = vraagpostByBankTransactionId.get(t.id);
-                          const vpResolved = vp && (vp.status === "opgelost" || vp.status === "genegeerd");
+                          const vpBadge = (() => {
+                            if (!vp) return null;
+                            if (vp.status === "opgelost") {
+                              return (
+                                <Badge variant="outline" className="text-xs w-fit border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
+                                  Vraagpost opgelost
+                                </Badge>
+                              );
+                            }
+                            if (vp.status === "genegeerd") {
+                              return (
+                                <Badge variant="secondary" className="text-xs w-fit">
+                                  Vraagpost genegeerd
+                                </Badge>
+                              );
+                            }
+                            return (
+                              <Badge variant="outline" className="text-xs w-fit border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                                Vraagpost open
+                              </Badge>
+                            );
+                          })();
                           return (
                             <div className="flex flex-col gap-1 min-w-0">
                               <span className="text-sm truncate max-w-[200px] block" title={label}>{label}</span>
-                              {vp && (
-                                <Badge variant={vpResolved ? "secondary" : "outline"} className="text-xs w-fit">
-                                  {vpResolved ? "Vraagpost opgelost" : "Vraagpost open"}
-                                </Badge>
-                              )}
+                              {vpBadge}
                             </div>
                           );
                         })()}
