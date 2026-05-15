@@ -394,6 +394,23 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   };
 
+  const handleFillFromOcr = () => {
+    const ocr: any = invoice?.ocr_data ?? {};
+    const patch: Partial<typeof editSupplierForm> = {};
+    if (!editSupplierForm.kvk_nummer && ocr.supplier_kvk) patch.kvk_nummer = ocr.supplier_kvk;
+    if (!editSupplierForm.adres && ocr.supplier_address) patch.adres = ocr.supplier_address;
+    if (!editSupplierForm.postcode && ocr.supplier_postal_code) patch.postcode = ocr.supplier_postal_code;
+    if (!editSupplierForm.plaats && ocr.supplier_city) patch.plaats = ocr.supplier_city;
+    if (!editSupplierForm.land && ocr.supplier_country) patch.land = ocr.supplier_country;
+    if (!editSupplierForm.iban && ocr.supplier_iban) patch.iban = ocr.supplier_iban;
+    if (Object.keys(patch).length === 0) {
+      toast({ title: "Geen ontbrekende velden om aan te vullen" });
+      return;
+    }
+    setEditSupplierForm((f) => ({ ...f, ...patch }));
+    toast({ title: "Ontbrekende velden aangevuld uit OCR" });
+  };
+
   useEffect(() => {
     setLines(
       (existingLines ?? []).map((l) => ({
@@ -1021,6 +1038,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             </div>
           </div>
           <DialogFooter>
+            {invoice?.ocr_data && (
+              <Button type="button" variant="outline" onClick={handleFillFromOcr} className="mr-auto">
+                Vul ontbrekende velden uit OCR
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setEditSupplierOpen(false)}>Annuleren</Button>
             <Button onClick={handleUpdateSupplier} disabled={updateLeverancier.isPending}>Opslaan</Button>
           </DialogFooter>
