@@ -552,48 +552,76 @@ export default function Bank() {
     let skipped = 0;
     const errors: string[] = [];
 
+    // Step 1: collect eligible tx ids — gematcht, has matched_invoice_id,
+    // and the linked invoice still appears unreconciled (remaining ≈ total or null).
+    // Group them by matched_invoice_id so each invoice is written only once.
+    const groups = new Map<string, { invoiceId: string; txIds: string[] }>();
+
     for (const id of Array.from(selectedIds)) {
       const tx = transactions.find(t => t.id === id);
       if (!tx || tx.match_status !== "gematcht" || !tx.matched_invoice_id) continue;
 
-      const purchaseInv = invoices?.find(i => i.id === tx.matched_invoice_id);
-      const salesInv = salesInvs?.find(i => i.id === tx.matched_invoice_id);
-      const inv = purchaseInv ?? salesInv;
+      const inv =
+        invoices?.find(i => i.id === tx.matched_invoice_id) ??
+        salesInvs?.find(i => i.id === tx.matched_invoice_id);
       if (!inv) { skipped++; continue; }
 
-      const txAmount = Math.abs(tx.amount);
       const totalAmount = getInvoiceTotalAmount(inv);
-      const currentRemaining = getInvoiceRemainingAmount(inv);
-      const effectiveRemaining = currentRemaining ?? totalAmount;
+      if (totalAmount == null) { skipped++; continue; }
 
-      if (totalAmount == null || effectiveRemaining == null) { skipped++; continue; }
+      // Only eligible when remaining_amount is null (never set) or ≈ total (never subtracted)
+      const isUnreconciled =
+        inv.remaining_amount == null ||
+        Math.abs((inv.remaining_amount) - totalAmount) < 0.02;
+
+      if (!isUnreconciled) { skipped++; continue; }
+
+      const existing = groups.get(tx.matched_invoice_id);
+      if (existing) {
+        existing.txIds.push(id);
+      } else {
+        groups.set(tx.matched_invoice_id, { invoiceId: tx.matched_invoice_id, txIds: [id] });
+      }
+    }
+
+    // Step 2: process each invoice group with a single write.
+    for (const { invoiceId, txIds } of groups.values()) {
+      const purchaseInv = invoices?.find(i => i.id === invoiceId);
+      const salesInv = salesInvs?.find(i => i.id === invoiceId);
+      const inv = purchaseInv ?? salesInv;
+      if (!inv) { skipped += txIds.length; continue; }
+
+      const totalAmount = getInvoiceTotalAmount(inv);
+      if (totalAmount == null) { skipped += txIds.length; continue; }
+
+      const startingRemaining = inv.remaining_amount ?? totalAmount;
+
+      // Sum all selected payment amounts for this invoice in one pass
+      const totalPayment = txIds.reduce((sum, id) => {
+        const tx = transactions.find(t => t.id === id);
+        return sum + (tx ? Math.abs(tx.amount) : 0);
+      }, 0);
+
+      const newRemaining = Math.max(0, startingRemaining - totalPayment);
 
       try {
-        if (Math.abs(effectiveRemaining - txAmount) < 0.02) {
+        if (newRemaining < 0.02) {
           if (purchaseInv) {
-            await updatePurchase.mutateAsync({ id: inv.id, status: "betaald", remaining_amount: 0 });
+            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
           } else {
-            await updateSales.mutateAsync({ id: inv.id, status: "betaald", remaining_amount: 0 });
+            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
           }
         } else {
-          const newRemaining = Math.max(0, effectiveRemaining - txAmount);
           if (purchaseInv) {
-            await updatePurchase.mutateAsync({
-              id: inv.id,
-              remaining_amount: newRemaining,
-              ...(newRemaining === 0 ? { status: "betaald" as const } : {}),
-            });
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
           } else {
-            await updateSales.mutateAsync({
-              id: inv.id,
-              remaining_amount: newRemaining,
-              ...(newRemaining === 0 ? { status: "betaald" as const } : {}),
-            });
+            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
           }
         }
-        updated++;
+        updated += txIds.length;
       } catch (e: any) {
         errors.push(e.message || "Onbekende fout");
+        skipped += txIds.length;
       }
     }
 
@@ -603,7 +631,7 @@ export default function Bank() {
     if (updated > 0) {
       toast({ title: `${updated} aflettering(en) bijgewerkt${skipped > 0 ? `, ${skipped} overgeslagen` : ""}` });
     } else if (skipped > 0) {
-      toast({ title: `${skipped} transactie(s) overgeslagen (geen gekoppelde factuur gevonden)` });
+      toast({ title: `${skipped} transactie(s) overgeslagen (al afgeletterd of factuur niet gevonden)` });
     }
     if (errors.length > 0) {
       toast({ title: "Fout bij herberekening", description: errors[0], variant: "destructive" });
