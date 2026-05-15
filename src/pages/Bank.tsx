@@ -95,7 +95,11 @@ export default function Bank() {
 
       if (!invoices || !salesInvs) continue;
       if (t.match_status !== "niet_gematcht") continue;
-      const candidates = rankCandidates(t, invoices, salesInvs);
+      const candidates = rankCandidates(
+        t,
+        invoices.filter(i => i.client_id === t.client_id),
+        salesInvs.filter(i => i.client_id === t.client_id),
+      );
       if (candidates.some(c => c.score > 0)) {
         ids.add(t.id);
       }
@@ -206,7 +210,13 @@ export default function Bank() {
 
       // No existing link — try to rank candidates and use the best scoring one.
       const candidates =
-        invoices && salesInvs ? rankCandidates(tx, invoices, salesInvs) : [];
+        invoices && salesInvs
+          ? rankCandidates(
+              tx,
+              invoices.filter(i => i.client_id === tx.client_id),
+              salesInvs.filter(i => i.client_id === tx.client_id),
+            )
+          : [];
       const best = candidates.find(c => c.score > 0);
 
       if (best) {
@@ -429,7 +439,11 @@ export default function Bank() {
         continue;
       }
 
-      const candidates = rankCandidates(tx, invoices, salesInvs);
+      const candidates = rankCandidates(
+        tx,
+        invoices.filter(i => i.client_id === tx.client_id),
+        salesInvs.filter(i => i.client_id === tx.client_id),
+      );
       const best = candidates.find(c => c.score > 0);
       if (!best) {
         skipped++;
