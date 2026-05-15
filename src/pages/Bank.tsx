@@ -257,7 +257,7 @@ export default function Bank() {
         });
         if (exactMatch && !best.isPartialPayment) {
           if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
           } else {
             await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
           }
@@ -298,7 +298,7 @@ export default function Bank() {
 
       if (exactMatch && !isPartialPayment) {
         if (invoiceType === "inkoop") {
-          await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
         } else {
           await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
         }
@@ -607,7 +607,7 @@ export default function Bank() {
       try {
         if (newRemaining < 0.02) {
           if (purchaseInv) {
-            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
           } else {
             await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
           }
@@ -675,7 +675,7 @@ export default function Bank() {
 
         if (exactMatch && !best.isPartialPayment) {
           if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
           } else {
             await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
           }
@@ -728,14 +728,14 @@ export default function Bank() {
         // Aflettering: update the linked purchase invoice after a confirmed match
         if (tx.matchedInvoiceId && tx.matchStatus === "gematcht") {
           const purchaseInv = invoices?.find(i => i.id === tx.matchedInvoiceId);
-          if (purchaseInv && purchaseInv.status !== "betaald") {
+          if (purchaseInv) {
             const txAmount = Math.abs(tx.amount);
             const totalAmount = getInvoiceTotalAmount(purchaseInv);
             const remainingAmount = getInvoiceRemainingAmount(purchaseInv);
             const effectiveRemaining = remainingAmount ?? totalAmount ?? txAmount;
             const isExact = Math.abs(effectiveRemaining - txAmount) < 0.02;
             if (isExact) {
-              await updatePurchase.mutateAsync({ id: purchaseInv.id, status: "betaald", remaining_amount: 0 });
+              await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: 0 });
             } else if (totalAmount != null) {
               const newRemaining = Math.max(0, effectiveRemaining - txAmount);
               await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: newRemaining });
@@ -1196,7 +1196,7 @@ export default function Bank() {
         onMatchInvoice={async (id, invoiceId, invoiceType) => {
           await updateTx.mutateAsync({ id, match_status: "gematcht", matched_invoice_id: invoiceId, match_confidence: 100 });
           if (invoiceType === "inkoop") {
-            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
           } else {
             await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
           }
