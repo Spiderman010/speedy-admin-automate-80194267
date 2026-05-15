@@ -14,6 +14,16 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
@@ -60,6 +70,7 @@ export default function Bank() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLedger, setBulkLedger] = useState("");
   const [bulkLedgerId, setBulkLedgerId] = useState("");
+  const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
@@ -393,17 +404,48 @@ export default function Bank() {
 
   const handleBulkBook = useCallback(async () => {
     if (selectedIds.size === 0 || !bulkLedger) return;
-    
+
     const ids = Array.from(selectedIds);
     let success = 0;
     const errors: string[] = [];
-    
+
     for (const id of ids) {
+      const tx = transactions?.find(t => t.id === id);
+      if (!tx) continue;
+
       try {
+        // Reverse invoice side effects before overwriting the link
+        const invoiceId = tx.matched_invoice_id;
+        if (invoiceId) {
+          const txAmount = Math.abs(tx.amount);
+          const purchaseInv = invoices?.find(i => i.id === invoiceId);
+          const salesInv = salesInvs?.find(i => i.id === invoiceId);
+
+          if (purchaseInv) {
+            const totalAmount = getInvoiceTotalAmount(purchaseInv);
+            const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
+            if (purchaseInv.status === "betaald") {
+              await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+            } else if (totalAmount != null) {
+              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            }
+          } else if (salesInv) {
+            const totalAmount = getInvoiceTotalAmount(salesInv);
+            const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
+            if (salesInv.status === "betaald") {
+              await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+            } else if (totalAmount != null) {
+              await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            }
+          }
+        }
+
         await updateTx.mutateAsync({
           id,
           match_status: "handmatig_geboekt",
           grootboekrekening_id: bulkLedgerId || undefined,
+          matched_invoice_id: null,
+          match_confidence: null,
         });
         success++;
       } catch (e: any) {
@@ -411,19 +453,83 @@ export default function Bank() {
         errors.push(e.message || "Onbekende fout");
       }
     }
-    
+
     setSelectedIds(new Set());
     setBulkLedger("");
     setBulkLedgerId("");
     await refetch();
-    
+
     if (success > 0) {
       toast({ title: `${success} transactie(s) geboekt naar ${bulkLedger}` });
     }
     if (errors.length > 0) {
       toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
     }
-  }, [selectedIds, bulkLedger, updateTx, toast, refetch]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch]);
+
+  const handleBulkUnlink = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+
+    const ids = Array.from(selectedIds);
+    let success = 0;
+    const errors: string[] = [];
+
+    for (const id of ids) {
+      const tx = transactions?.find(t => t.id === id);
+      if (!tx) continue;
+
+      try {
+        const invoiceId = tx.matched_invoice_id;
+        const txAmount = Math.abs(tx.amount);
+
+        await updateTx.mutateAsync({
+          id: tx.id,
+          match_status: "niet_gematcht",
+          matched_invoice_id: null,
+          match_confidence: null,
+          grootboekrekening_id: null,
+        });
+
+        if (invoiceId) {
+          const purchaseInv = invoices?.find(i => i.id === invoiceId);
+          const salesInv = salesInvs?.find(i => i.id === invoiceId);
+
+          if (purchaseInv) {
+            const totalAmount = getInvoiceTotalAmount(purchaseInv);
+            const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
+            if (purchaseInv.status === "betaald") {
+              await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+            } else if (totalAmount != null) {
+              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            }
+          } else if (salesInv) {
+            const totalAmount = getInvoiceTotalAmount(salesInv);
+            const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
+            if (salesInv.status === "betaald") {
+              await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+            } else if (totalAmount != null) {
+              await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            }
+          }
+        }
+
+        success++;
+      } catch (e: any) {
+        errors.push(e.message || "Onbekende fout");
+      }
+    }
+
+    setSelectedIds(new Set());
+    setConfirmUnlinkOpen(false);
+    await refetch();
+
+    if (success > 0) {
+      toast({ title: `${success} transactie(s) ontkoppeld` });
+    }
+    if (errors.length > 0) {
+      toast({ title: "Fout bij ontkoppelen", description: errors[0], variant: "destructive" });
+    }
+  }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch]);
 
   const handleBulkConfirmSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions || !invoices || !salesInvs) return;
@@ -529,10 +635,10 @@ export default function Bank() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === openTransactions.length) {
+    if (selectedIds.size === filteredSorted.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(openTransactions.map(t => t.id)));
+      setSelectedIds(new Set(filteredSorted.map(t => t.id)));
     }
   };
 
@@ -628,7 +734,7 @@ export default function Bank() {
                 <TableRow>
                   <TableHead className="w-10">
                     <Checkbox
-                      checked={openTransactions.length > 0 && selectedIds.size === openTransactions.length}
+                      checked={filteredSorted.length > 0 && selectedIds.size === filteredSorted.length}
                       onCheckedChange={toggleSelectAll}
                     />
                   </TableHead>
@@ -648,12 +754,10 @@ export default function Bank() {
                   return (
                     <TableRow key={t.id}>
                       <TableCell>
-                        {isOpen ? (
-                          <Checkbox
-                            checked={selectedIds.has(t.id)}
-                            onCheckedChange={() => toggleSelect(t.id)}
-                          />
-                        ) : null}
+                        <Checkbox
+                          checked={selectedIds.has(t.id)}
+                          onCheckedChange={() => toggleSelect(t.id)}
+                        />
                       </TableCell>
                       <TableCell>{new Date(t.transaction_date).toLocaleDateString("nl-NL")}</TableCell>
                       <TableCell className="max-w-xs">
@@ -864,11 +968,40 @@ export default function Bank() {
           <Button size="sm" onClick={handleBulkBook} disabled={!bulkLedger}>
             Boek geselecteerde transacties
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              if (selectedIds.size > 1) {
+                setConfirmUnlinkOpen(true);
+              } else {
+                handleBulkUnlink();
+              }
+            }}
+          >
+            <Unlink className="mr-1 h-4 w-4" />
+            Ontkoppel geselecteerde
+          </Button>
           <Button size="sm" variant="ghost" onClick={() => { setSelectedIds(new Set()); setBulkLedger(""); setBulkLedgerId(""); }}>
             Annuleren
           </Button>
         </div>
       )}
+
+      <AlertDialog open={confirmUnlinkOpen} onOpenChange={setConfirmUnlinkOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Transacties ontkoppelen</AlertDialogTitle>
+            <AlertDialogDescription>
+              Weet je zeker dat je {selectedIds.size} transacties wilt ontkoppelen? Dit reset ze naar "Niet gematcht" en keert eventuele factuurwijzigingen terug.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuleren</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBulkUnlink}>Ontkoppelen</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <VerwerkingsScherm
         open={verwerkingOpen}
