@@ -61,6 +61,7 @@ export default function Bank() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const [clientFilter, setClientFilter] = useState(() => searchParams.get("client") ?? selectedClientId);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [vraagpostFilter, setVraagpostFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -176,6 +177,19 @@ export default function Bank() {
     else if (statusFilter === "gematcht") result = result.filter(t => t.match_status === "gematcht");
     else if (statusFilter === "handmatig") result = result.filter(t => t.match_status === "handmatig_geboekt");
 
+    // Vraagpost filter
+    if (vraagpostFilter !== "all") {
+      result = result.filter(t => {
+        const vp = vraagpostByBankTransactionId.get(t.id);
+        if (vraagpostFilter === "without") return !vp;
+        if (vraagpostFilter === "with") return !!vp;
+        if (vraagpostFilter === "open") return !!vp && (vp.status === "open" || vp.status === "in_behandeling");
+        if (vraagpostFilter === "opgelost") return !!vp && vp.status === "opgelost";
+        if (vraagpostFilter === "genegeerd") return !!vp && vp.status === "genegeerd";
+        return true;
+      });
+    }
+
     // Search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -202,7 +216,7 @@ export default function Bank() {
     });
 
     return result;
-  }, [transactions, statusFilter, searchQuery, sortField, sortDir]);
+  }, [transactions, statusFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir]);
 
   const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
 
@@ -716,6 +730,17 @@ export default function Bank() {
             <SelectItem value="open">Open</SelectItem>
             <SelectItem value="gematcht">Gematcht</SelectItem>
             <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
+          <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Alle vraagposten</SelectItem>
+            <SelectItem value="with">Met vraagpost</SelectItem>
+            <SelectItem value="open">Vraagpost open</SelectItem>
+            <SelectItem value="opgelost">Vraagpost opgelost</SelectItem>
+            <SelectItem value="genegeerd">Vraagpost genegeerd</SelectItem>
+            <SelectItem value="without">Zonder vraagpost</SelectItem>
           </SelectContent>
         </Select>
       </div>
