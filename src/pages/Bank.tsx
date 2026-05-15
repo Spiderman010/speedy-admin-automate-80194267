@@ -410,7 +410,36 @@ export default function Bank() {
     const errors: string[] = [];
 
     for (const id of ids) {
+      const tx = transactions?.find(t => t.id === id);
+      if (!tx) continue;
+
       try {
+        // Reverse invoice side effects before overwriting the link
+        const invoiceId = tx.matched_invoice_id;
+        if (invoiceId) {
+          const txAmount = Math.abs(tx.amount);
+          const purchaseInv = invoices?.find(i => i.id === invoiceId);
+          const salesInv = salesInvs?.find(i => i.id === invoiceId);
+
+          if (purchaseInv) {
+            const totalAmount = getInvoiceTotalAmount(purchaseInv);
+            const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? 0;
+            if (purchaseInv.status === "betaald") {
+              await updatePurchase.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+            } else if (totalAmount != null) {
+              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            }
+          } else if (salesInv) {
+            const totalAmount = getInvoiceTotalAmount(salesInv);
+            const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
+            if (salesInv.status === "betaald") {
+              await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+            } else if (totalAmount != null) {
+              await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+            }
+          }
+        }
+
         await updateTx.mutateAsync({
           id,
           match_status: "handmatig_geboekt",
@@ -436,7 +465,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
     }
-  }, [selectedIds, bulkLedger, bulkLedgerId, updateTx, toast, refetch]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch]);
 
   const handleBulkUnlink = useCallback(async () => {
     if (selectedIds.size === 0) return;
