@@ -861,12 +861,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             </Button>
           )}
           {(invoice as any).snelstart_package_downloaded_at && (
-            <div className="text-xs text-muted-foreground self-center">
-              Pakket gedownload op {new Date((invoice as any).snelstart_package_downloaded_at).toLocaleString("nl-NL")}
-              {((invoice as any).snelstart_package_download_count ?? 0) > 1 && (
-                <> · Aantal downloads: {(invoice as any).snelstart_package_download_count}</>
-              )}
-            </div>
+            <span
+              className="self-center"
+              title={`Laatste download: ${new Date((invoice as any).snelstart_package_downloaded_at).toLocaleString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}`}
+            >
+              <Badge variant="secondary" className="text-xs font-normal whitespace-nowrap">
+                Pakket gedownload{((invoice as any).snelstart_package_download_count ?? 1) > 1 ? ` · ${(invoice as any).snelstart_package_download_count}×` : ""}
+              </Badge>
+            </span>
           )}
           <Button variant="outline" onClick={handleSave} disabled={saving || !form.supplier}>
             <Save className="mr-2 h-4 w-4" />Opslaan
