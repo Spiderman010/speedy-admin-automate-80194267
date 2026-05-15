@@ -388,11 +388,16 @@ export default function Facturen() {
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setEditInvoice(inv)}>
                           <TableCell className="font-medium">{inv.supplier}</TableCell>
                           <TableCell className="font-mono text-sm">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span>{inv.invoice_number || "—"}</span>
                               {duplicateIds.has(inv.id) && (
                                 <Badge variant="outline" className="border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 text-xs font-normal">
                                   Mogelijk dubbel
+                                </Badge>
+                              )}
+                              {(inv as any).snelstart_package_downloaded_at && (
+                                <Badge variant="outline" className="text-xs font-normal">
+                                  Pakket gedownload{((inv as any).snelstart_package_download_count ?? 0) > 1 ? ` (${(inv as any).snelstart_package_download_count}×)` : ""}
                                 </Badge>
                               )}
                             </div>
