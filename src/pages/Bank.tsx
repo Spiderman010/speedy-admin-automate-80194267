@@ -25,6 +25,8 @@ import { exportBankTransactionsCSV } from "@/lib/snelstart-export";
 import { useClients } from "@/hooks/useClients";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useBookingTemplates } from "@/hooks/useBookingTemplates";
+import { useCreateVraagpost } from "@/hooks/useVraagposten";
+import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
 import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
@@ -74,6 +76,7 @@ export default function Bank() {
   const updateTx = useUpdateBankTransaction();
   const updatePurchase = useUpdatePurchaseInvoice();
   const updateSales = useUpdateSalesInvoice();
+  const createVraagpost = useCreateVraagpost();
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
@@ -262,6 +265,46 @@ export default function Bank() {
       toast({ title: "Fout bij boeken", description: e.message, variant: "destructive" });
     }
   }, [updateTx, toast]);
+
+  const handleMaakVraagpost = useCallback(async (tx: Tables<"bank_transactions">) => {
+    try {
+      const { data: existing } = await supabase
+        .from("vraagposten")
+        .select("id")
+        .eq("source_type", "bank_transaction")
+        .eq("source_id", tx.id)
+        .maybeSingle();
+
+      if (!existing) {
+        const [y, m, d] = tx.transaction_date.split("-");
+        const formattedDate = y && m && d ? `${d}-${m}-${y}` : tx.transaction_date;
+        const formattedAmount = new Intl.NumberFormat("nl-NL", {
+          style: "currency",
+          currency: "EUR",
+        }).format(tx.amount);
+
+        await createVraagpost.mutateAsync({
+          source_type: "bank_transaction",
+          source_id: tx.id,
+          client_id: tx.client_id,
+          titel: tx.description || "Banktransactie zonder factuur",
+          omschrijving: `${formattedDate} · ${formattedAmount}`,
+          categorie: "bank_zonder_factuur",
+        });
+      }
+
+      const account1605 = grootboekrekeningen?.find(a => a.nummer === 1605);
+      await updateTx.mutateAsync({
+        id: tx.id,
+        match_status: "handmatig_geboekt",
+        grootboekrekening_id: account1605?.id ?? undefined,
+      });
+
+      toast({ title: existing ? "Vraagpost bestaat al" : "Vraagpost aangemaakt" });
+    } catch (e: any) {
+      toast({ title: "Fout", description: e.message, variant: "destructive" });
+    }
+  }, [createVraagpost, updateTx, grootboekrekeningen, toast]);
 
   const handleBulkBook = useCallback(async () => {
     if (selectedIds.size === 0 || !bulkLedger) return;
@@ -633,6 +676,18 @@ export default function Bank() {
                             <Button size="sm" variant="outline" onClick={() => setMatchTx(t)}>
                               Koppel
                             </Button>
+                          )}
+                          {isOpen && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button size="sm" variant="ghost" onClick={() => handleMaakVraagpost(t)}>
+                                    <HelpCircle className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Maak vraagpost</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
                       </TableCell>
