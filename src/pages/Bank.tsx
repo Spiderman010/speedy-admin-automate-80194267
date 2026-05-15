@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -545,6 +545,99 @@ export default function Bank() {
     }
   }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch]);
 
+  const handleRepairAflettering = useCallback(async () => {
+    if (selectedIds.size === 0 || !transactions) return;
+
+    let updated = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    // Step 1: collect eligible tx ids — gematcht, has matched_invoice_id,
+    // and the linked invoice still appears unreconciled (remaining ≈ total or null).
+    // Group them by matched_invoice_id so each invoice is written only once.
+    const groups = new Map<string, { invoiceId: string; txIds: string[] }>();
+
+    for (const id of Array.from(selectedIds)) {
+      const tx = transactions.find(t => t.id === id);
+      if (!tx || tx.match_status !== "gematcht" || !tx.matched_invoice_id) continue;
+
+      const inv =
+        invoices?.find(i => i.id === tx.matched_invoice_id) ??
+        salesInvs?.find(i => i.id === tx.matched_invoice_id);
+      if (!inv) { skipped++; continue; }
+
+      const totalAmount = getInvoiceTotalAmount(inv);
+      if (totalAmount == null) { skipped++; continue; }
+
+      // Only eligible when remaining_amount is null (never set) or ≈ total (never subtracted)
+      const isUnreconciled =
+        inv.remaining_amount == null ||
+        Math.abs((inv.remaining_amount) - totalAmount) < 0.02;
+
+      if (!isUnreconciled) { skipped++; continue; }
+
+      const existing = groups.get(tx.matched_invoice_id);
+      if (existing) {
+        existing.txIds.push(id);
+      } else {
+        groups.set(tx.matched_invoice_id, { invoiceId: tx.matched_invoice_id, txIds: [id] });
+      }
+    }
+
+    // Step 2: process each invoice group with a single write.
+    for (const { invoiceId, txIds } of groups.values()) {
+      const purchaseInv = invoices?.find(i => i.id === invoiceId);
+      const salesInv = salesInvs?.find(i => i.id === invoiceId);
+      const inv = purchaseInv ?? salesInv;
+      if (!inv) { skipped += txIds.length; continue; }
+
+      const totalAmount = getInvoiceTotalAmount(inv);
+      if (totalAmount == null) { skipped += txIds.length; continue; }
+
+      const startingRemaining = inv.remaining_amount ?? totalAmount;
+
+      // Sum all selected payment amounts for this invoice in one pass
+      const totalPayment = txIds.reduce((sum, id) => {
+        const tx = transactions.find(t => t.id === id);
+        return sum + (tx ? Math.abs(tx.amount) : 0);
+      }, 0);
+
+      const newRemaining = Math.max(0, startingRemaining - totalPayment);
+
+      try {
+        if (newRemaining < 0.02) {
+          if (purchaseInv) {
+            await updatePurchase.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+          } else {
+            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+          }
+        } else {
+          if (purchaseInv) {
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+          } else {
+            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+          }
+        }
+        updated += txIds.length;
+      } catch (e: any) {
+        errors.push(e.message || "Onbekende fout");
+        skipped += txIds.length;
+      }
+    }
+
+    await refetchPurchase();
+    await refetchSales();
+
+    if (updated > 0) {
+      toast({ title: `${updated} aflettering(en) bijgewerkt${skipped > 0 ? `, ${skipped} overgeslagen` : ""}` });
+    } else if (skipped > 0) {
+      toast({ title: `${skipped} transactie(s) overgeslagen (al afgeletterd of factuur niet gevonden)` });
+    }
+    if (errors.length > 0) {
+      toast({ title: "Fout bij herberekening", description: errors[0], variant: "destructive" });
+    }
+  }, [selectedIds, transactions, invoices, salesInvs, updatePurchase, updateSales, toast, refetchPurchase, refetchSales]);
+
   const handleBulkConfirmSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions || !invoices || !salesInvs) return;
 
@@ -840,11 +933,35 @@ export default function Bank() {
                           const total = getInvoiceTotalAmount(inv);
                           const remaining = getInvoiceRemainingAmount(inv);
                           if (total == null) return null;
+
                           const fullyPaid = remaining != null && Math.abs(remaining) < 0.01;
+                          const isPartial = remaining != null && remaining > 0.01 && remaining < total - 0.01;
+                          const notAfgeletterd = remaining != null && remaining >= total - 0.01 && !fullyPaid;
+
                           return (
                             <div className="mt-0.5 space-y-0.5">
                               {fullyPaid ? (
                                 <p className="text-xs text-success">Volledig betaald</p>
+                              ) : isPartial ? (
+                                <>
+                                  <p className="text-xs font-medium text-amber-600">Deelbetaling</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Betaald: {formatCurrency(total - remaining)}
+                                  </p>
+                                  <p className="text-xs text-warning font-medium">
+                                    Openstaand: {formatCurrency(remaining)}
+                                  </p>
+                                </>
+                              ) : notAfgeletterd ? (
+                                <>
+                                  <p className="text-xs font-medium text-destructive">Nog niet afgeletterd</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Betaald: {formatCurrency(0)}
+                                  </p>
+                                  <p className="text-xs text-warning font-medium">
+                                    Openstaand: {formatCurrency(remaining ?? total)}
+                                  </p>
+                                </>
                               ) : (
                                 <>
                                   <p className="text-xs text-muted-foreground">
@@ -1010,6 +1127,18 @@ export default function Bank() {
           <div className="w-64">
             <GrootboekCombobox value={bulkLedger} onValueChange={setBulkLedger} onIdChange={setBulkLedgerId} />
           </div>
+          {(() => {
+            const repairCount = Array.from(selectedIds).filter(id => {
+              const tx = transactions?.find(t => t.id === id);
+              return tx?.match_status === "gematcht" && tx.matched_invoice_id != null;
+            }).length;
+            return repairCount > 0 ? (
+              <Button size="sm" variant="outline" onClick={handleRepairAflettering}>
+                <RefreshCw className="mr-1 h-4 w-4" />
+                Herbereken aflettering ({repairCount})
+              </Button>
+            ) : null;
+          })()}
           <Button size="sm" onClick={handleBulkBook} disabled={!bulkLedger}>
             Boek geselecteerde transacties
           </Button>
