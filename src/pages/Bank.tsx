@@ -191,14 +191,59 @@ export default function Bank() {
 
   const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
 
-  const handleConfirm = async (id: string) => {
+  const handleConfirm = useCallback(async (id: string) => {
     try {
-      await updateTx.mutateAsync({ id, match_status: "gematcht" });
-      toast({ title: "Transactie bevestigd" });
+      const tx = transactions?.find(t => t.id === id);
+      if (!tx) return;
+
+      // If the transaction already carries a matched_invoice_id (set during import),
+      // simply promote the status — do not lose the existing link.
+      if (tx.matched_invoice_id) {
+        await updateTx.mutateAsync({ id, match_status: "gematcht" });
+        toast({ title: "Transactie bevestigd" });
+        return;
+      }
+
+      // No existing link — try to rank candidates and use the best scoring one.
+      const candidates =
+        invoices && salesInvs ? rankCandidates(tx, invoices, salesInvs) : [];
+      const best = candidates.find(c => c.score > 0);
+
+      if (best) {
+        const exactMatch =
+          best.reasons.includes("Exact bedrag") ||
+          best.reasons.includes("Bedrag ≈ gelijk (≤€0,50)");
+        await updateTx.mutateAsync({
+          id,
+          match_status: "gematcht",
+          matched_invoice_id: best.id,
+          match_confidence:
+            exactMatch && !best.isPartialPayment ? 100 : best.isPartialPayment ? 60 : 80,
+        });
+        if (exactMatch && !best.isPartialPayment) {
+          if (best.type === "inkoop") {
+            await updatePurchase.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+          } else {
+            await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+          }
+          toast({ title: "Transactie bevestigd", description: "Factuur status → Betaald" });
+        } else {
+          toast({ title: "Transactie bevestigd" });
+        }
+        return;
+      }
+
+      // No scoreable candidate — open BankMatchDialog so the user picks manually.
+      setMatchTx(tx);
+      toast({
+        title: "Geen automatische factuurkoppeling",
+        description: "Selecteer een factuur of boek handmatig.",
+        variant: "destructive",
+      });
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  };
+  }, [transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast]);
 
   const handleMatch = useCallback(async (
     transactionId: string,
@@ -678,6 +723,7 @@ export default function Bank() {
                         {(() => {
                           // Determine the booking/link label
                           let label = "—";
+                          let isOrphanMatch = false;
                           if (t.matched_invoice_id) {
                             const pi = purchaseInvoiceById.get(t.matched_invoice_id);
                             if (pi) {
@@ -686,6 +732,10 @@ export default function Bank() {
                               const si = salesInvoiceById.get(t.matched_invoice_id);
                               if (si) label = `Verkoopfactuur: ${si.customer_name} · ${si.invoice_number}`;
                             }
+                          } else if (t.match_status === "gematcht") {
+                            // Gematcht but no invoice id stored — flag as orphan so user knows
+                            label = "Gematcht zonder factuurkoppeling";
+                            isOrphanMatch = true;
                           } else if (t.match_status === "handmatig_geboekt" && t.grootboekrekening_id) {
                             const gb = grootboekrekeningById.get(t.grootboekrekening_id);
                             if (gb) label = `${gb.nummer} - ${gb.omschrijving}`;
@@ -715,7 +765,10 @@ export default function Bank() {
                           })();
                           return (
                             <div className="flex flex-col gap-1 min-w-0">
-                              <span className="text-sm truncate max-w-[200px] block" title={label}>{label}</span>
+                              <span
+                                className={`text-sm truncate max-w-[200px] block ${isOrphanMatch ? "text-amber-600 dark:text-amber-400" : ""}`}
+                                title={label}
+                              >{label}</span>
                               {vpBadge}
                             </div>
                           );
