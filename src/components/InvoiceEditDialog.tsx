@@ -846,6 +846,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                       .eq("id", invoice.id);
                     if (logErr) {
                       toast({ title: "Download geregistreerd niet opgeslagen", description: logErr.message });
+                    } else {
+                      qc.invalidateQueries({ queryKey: ["purchase_invoices"] });
                     }
                   } catch (logE: any) {
                     toast({ title: "Download geregistreerd niet opgeslagen", description: logE?.message });
