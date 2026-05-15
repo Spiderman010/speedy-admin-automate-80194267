@@ -769,7 +769,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
             <HelpCircle className="mr-2 h-4 w-4" />Maak vraagpost
           </Button>
-          {invoice.status === "gecontroleerd" && documentRoute === "boekassist_ubl" && (
+          {canGenerateUbl && documentRoute === "boekassist_ubl" && (
             <Button
               variant="outline"
               onClick={() => {
@@ -789,7 +789,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               <FileCode2 className="mr-2 h-4 w-4" />Genereer UBL
             </Button>
           )}
-          {invoice.status === "gecontroleerd" && documentRoute === "boekassist_ubl" && invoice.file_path && (
+          {canGenerateUbl && documentRoute === "boekassist_ubl" && invoice.file_path && (
             <Button
               variant="outline"
               onClick={async () => {
