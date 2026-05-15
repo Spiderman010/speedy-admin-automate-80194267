@@ -1,17 +1,28 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CheckCircle2, RotateCcw, XCircle } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { CheckCircle2, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import {
   useVraagposten,
   useUpdateVraagpostStatus,
+  useDeleteVraagpost,
   VRAAGPOST_CATEGORIE_LABELS,
   VRAAGPOST_SOURCE_LABELS,
   type VraagpostStatus,
@@ -38,6 +49,8 @@ export default function Vraagposten() {
   const { data: clients } = useClients();
   const { data: vraagposten, isLoading } = useVraagposten(selectedClientId);
   const updateStatus = useUpdateVraagpostStatus();
+  const deleteVraagpost = useDeleteVraagpost();
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   const getClientName = (id: string | null) =>
     id ? clients?.find(c => c.id === id)?.name ?? "—" : "—";
@@ -51,6 +64,18 @@ export default function Vraagposten() {
       return (b.created_at || "").localeCompare(a.created_at || "");
     });
   }, [vraagposten]);
+
+  const handleDelete = async () => {
+    if (!pendingDeleteId) return;
+    try {
+      await deleteVraagpost.mutateAsync(pendingDeleteId);
+      toast({ title: "Vraagpost verwijderd" });
+    } catch (e: any) {
+      toast({ title: "Fout bij verwijderen", description: e.message, variant: "destructive" });
+    } finally {
+      setPendingDeleteId(null);
+    }
+  };
 
   const handleStatus = async (id: string, status: VraagpostStatus) => {
     await updateStatus.mutateAsync({ id, status });
@@ -103,21 +128,31 @@ export default function Vraagposten() {
                       {vp.created_at ? new Date(vp.created_at).toLocaleDateString("nl-NL") : "—"}
                     </TableCell>
                     <TableCell className="text-right">
-                      {(vp.status === "open" || vp.status === "in_behandeling") && (
-                        <div className="inline-flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => handleStatus(vp.id, "opgelost")}>
-                            <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Opgelost
+                      <div className="inline-flex gap-2 items-center">
+                        {(vp.status === "open" || vp.status === "in_behandeling") && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => handleStatus(vp.id, "opgelost")}>
+                              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Opgelost
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "genegeerd")}>
+                              <XCircle className="h-3.5 w-3.5 mr-1" />Negeren
+                            </Button>
+                          </>
+                        )}
+                        {(vp.status === "opgelost" || vp.status === "genegeerd") && (
+                          <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "open")}>
+                            <RotateCcw className="h-3.5 w-3.5 mr-1" />Heropenen
                           </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "genegeerd")}>
-                            <XCircle className="h-3.5 w-3.5 mr-1" />Negeren
-                          </Button>
-                        </div>
-                      )}
-                      {(vp.status === "opgelost" || vp.status === "genegeerd") && (
-                        <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "open")}>
-                          <RotateCcw className="h-3.5 w-3.5 mr-1" />Heropenen
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => setPendingDeleteId(vp.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
-                      )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -126,6 +161,25 @@ export default function Vraagposten() {
           )}
         </CardContent>
       </Card>
+      <AlertDialog open={!!pendingDeleteId} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Vraagpost verwijderen</AlertDialogTitle>
+            <AlertDialogDescription>
+              Weet je zeker dat je deze vraagpost wilt verwijderen? Dit kan niet ongedaan worden gemaakt. De gekoppelde banktransactie of factuur blijft ongewijzigd.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDelete}
+            >
+              Verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
