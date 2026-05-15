@@ -26,6 +26,7 @@ import { useClients } from "@/hooks/useClients";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useBookingTemplates } from "@/hooks/useBookingTemplates";
 import { useCreateVraagpost } from "@/hooks/useVraagposten";
+import { useVraagposten } from "@/hooks/useVraagposten";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
@@ -77,6 +78,7 @@ export default function Bank() {
   const updatePurchase = useUpdatePurchaseInvoice();
   const updateSales = useUpdateSalesInvoice();
   const createVraagpost = useCreateVraagpost();
+  const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
@@ -107,6 +109,34 @@ export default function Bank() {
 
   // Alle openstaande transacties (niet_gematcht + suggesties) voor de verwerkingsknop
   const openCount = transactions?.filter((t) => isOpenTransactionStatus(t.match_status)).length ?? 0;
+
+  const grootboekrekeningById = useMemo(() => {
+    const m = new Map<string, { nummer: number; omschrijving: string }>();
+    for (const g of grootboekrekeningen ?? []) m.set(g.id, g);
+    return m;
+  }, [grootboekrekeningen]);
+
+  const purchaseInvoiceById = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof invoices>[number]>();
+    for (const i of invoices ?? []) m.set(i.id, i);
+    return m;
+  }, [invoices]);
+
+  const salesInvoiceById = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof salesInvs>[number]>();
+    for (const i of salesInvs ?? []) m.set(i.id, i);
+    return m;
+  }, [salesInvs]);
+
+  const vraagpostByBankTransactionId = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof vraagposten>[number]>();
+    for (const vp of vraagposten ?? []) {
+      if (vp.source_type === "bank_transaction" && vp.source_id) {
+        m.set(vp.source_id, vp);
+      }
+    }
+    return m;
+  }, [vraagposten]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -548,6 +578,7 @@ export default function Bank() {
                   <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
                   <TableHead>Betrouwbaarheid</TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => handleSort("status")}>Status<SortIcon field="status" /></TableHead>
+                  <TableHead>Gekoppeld aan</TableHead>
                   <TableHead className="w-32"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -642,6 +673,36 @@ export default function Bank() {
                            : isSuggestion ? "Suggestie" 
                            : "Open"}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          // Determine the booking/link label
+                          let label = "—";
+                          if (t.matched_invoice_id) {
+                            const pi = purchaseInvoiceById.get(t.matched_invoice_id);
+                            if (pi) {
+                              label = `Inkoopfactuur: ${pi.supplier}${pi.invoice_number ? ` · ${pi.invoice_number}` : ""}`;
+                            } else {
+                              const si = salesInvoiceById.get(t.matched_invoice_id);
+                              if (si) label = `Verkoopfactuur: ${si.customer_name} · ${si.invoice_number}`;
+                            }
+                          } else if (t.match_status === "handmatig_geboekt" && t.grootboekrekening_id) {
+                            const gb = grootboekrekeningById.get(t.grootboekrekening_id);
+                            if (gb) label = `${gb.nummer} - ${gb.omschrijving}`;
+                          }
+                          const vp = vraagpostByBankTransactionId.get(t.id);
+                          const vpResolved = vp && (vp.status === "opgelost" || vp.status === "genegeerd");
+                          return (
+                            <div className="flex flex-col gap-1 min-w-0">
+                              <span className="text-sm truncate max-w-[200px] block" title={label}>{label}</span>
+                              {vp && (
+                                <Badge variant={vpResolved ? "secondary" : "outline"} className="text-xs w-fit">
+                                  {vpResolved ? "Vraagpost opgelost" : "Vraagpost open"}
+                                </Badge>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
