@@ -14,6 +14,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { useAppSettings, useSaveAppSetting } from "@/hooks/useAppSettings";
 import { useBookingTemplates, useAddBookingTemplate, useUpdateBookingTemplate, useDeleteBookingTemplate } from "@/hooks/useBookingTemplates";
+import { useCreateVraagpost } from "@/hooks/useVraagposten";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useClients } from "@/hooks/useClients";
 import { useAuth } from "@/hooks/useAuth";
@@ -230,6 +231,7 @@ function HerkenningsregelsTab() {
   const addMut = useAddBookingTemplate();
   const updateMut = useUpdateBookingTemplate();
   const deleteMut = useDeleteBookingTemplate();
+  const createVraagpost = useCreateVraagpost();
   const { data: accounts } = useActiveGrootboekrekeningen();
   const { data: clients } = useClients();
   const { user } = useAuth();
@@ -290,9 +292,38 @@ function HerkenningsregelsTab() {
             } else if (rule.actie === "inkoopfactuur") {
               updates.match_status = "wacht_op_factuur";
             } else if (rule.actie === "vraagpost") {
+              // Prevent duplicates: skip creation if a vraagpost for this tx already exists
+              const { data: existing } = await supabase
+                .from("vraagposten")
+                .select("id")
+                .eq("source_type", "bank_transaction")
+                .eq("source_id", tx.id)
+                .maybeSingle();
+
+              if (!existing) {
+                const [y, m, d] = tx.transaction_date.split("-");
+                const formattedDate = y && m && d ? `${d}-${m}-${y}` : tx.transaction_date;
+                const formattedAmount = new Intl.NumberFormat("nl-NL", {
+                  style: "currency",
+                  currency: "EUR",
+                }).format(tx.amount);
+
+                // Create vraagpost first — if this throws, updates stays empty
+                // and the bank transaction is NOT marked handmatig_geboekt
+                await createVraagpost.mutateAsync({
+                  source_type: "bank_transaction",
+                  source_id: tx.id,
+                  client_id: tx.client_id,
+                  titel: tx.description || "Banktransactie zonder factuur",
+                  omschrijving: `${formattedDate} · ${formattedAmount}`,
+                  categorie: "bank_zonder_factuur",
+                });
+              }
+
+              // Only reached when vraagpost was created or already existed
               updates.match_status = "handmatig_geboekt";
-              const vraagpost = accounts?.find(a => a.nummer === 1605);
-              if (vraagpost) updates.grootboekrekening_id = vraagpost.id;
+              const vraagpostAccount = accounts?.find(a => a.nummer === 1605);
+              if (vraagpostAccount) updates.grootboekrekening_id = vraagpostAccount.id;
             }
             if (Object.keys(updates).length > 0) {
               await supabase.from("bank_transactions").update(updates).eq("id", tx.id);
