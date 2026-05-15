@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { TrendingUp, TrendingDown, Minus, Download, Loader2 } from "lucide-react";
 import { useClients } from "@/hooks/useClients";
+import { useClientContext } from "@/hooks/useClientContext";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { useJournalEntries } from "@/hooks/useJournalEntries";
 import { useBankTransactions } from "@/hooks/useBankTransactions";
@@ -29,10 +30,17 @@ const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
 
 export default function Overzichten() {
+  const { selectedClientId, setSelectedClientId } = useClientContext();
   const { data: clients } = useClients();
-  const [selectedClient, setSelectedClient] = useState<string>("");
+  const [selectedClient, setSelectedClient] = useState<string>(
+    selectedClientId !== "all" ? selectedClientId : ""
+  );
   const [exporting, setExporting] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    setSelectedClient(selectedClientId !== "all" ? selectedClientId : "");
+  }, [selectedClientId]);
 
   const { data: invoices } = usePurchaseInvoices(selectedClient || undefined);
   const { data: entries } = useJournalEntries(selectedClient || undefined);
@@ -67,7 +75,7 @@ export default function Overzichten() {
   return (
     <>
       <PageHeader title="Overzichten" description="Financiële rapportages per klant">
-        <Select value={selectedClient} onValueChange={setSelectedClient}>
+        <Select value={selectedClient} onValueChange={(v) => { setSelectedClient(v); setSelectedClientId(v); }}>
           <SelectTrigger className="w-56">
             <SelectValue placeholder="Selecteer klant" />
           </SelectTrigger>

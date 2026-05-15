@@ -45,7 +45,9 @@ import { useClientContext } from "@/hooks/useClientContext";
 export default function Facturen() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const [clientFilter, setClientFilter] = useState(selectedClientId);
-  const [uploadClientId, setUploadClientId] = useState<string>("");
+  const [uploadClientId, setUploadClientId] = useState<string>(
+    selectedClientId !== "all" ? selectedClientId : ""
+  );
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -66,6 +68,7 @@ export default function Facturen() {
 
   useEffect(() => {
     setClientFilter(selectedClientId);
+    setUploadClientId(selectedClientId !== "all" ? selectedClientId : "");
   }, [selectedClientId]);
 
   const handleSaveInvoice = async (id: string, updates: Partial<Tables<"purchase_invoices">>) => {
@@ -285,7 +288,7 @@ export default function Facturen() {
             <CardContent className="p-6">
               <div className="mb-4">
                 <label className="text-sm font-medium mb-2 block">Klant selecteren *</label>
-                <Select value={uploadClientId} onValueChange={setUploadClientId}>
+                <Select value={uploadClientId} onValueChange={(v) => { setUploadClientId(v); setSelectedClientId(v); }}>
                   <SelectTrigger className="w-64"><SelectValue placeholder="Kies klant voor upload" /></SelectTrigger>
                   <SelectContent>
                     {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
