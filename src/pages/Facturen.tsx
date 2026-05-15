@@ -26,6 +26,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel } from "@/lib/document-route";
+import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 
 const statusConfig = {
   te_controleren: { label: "Te controleren", icon: Clock, variant: "secondary" as const },
@@ -377,6 +378,7 @@ export default function Facturen() {
                       <TableHead>Klant</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("date")}>Datum<SortIcon field="date" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
+                      <TableHead className="text-right">Openstaand</TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
                       <TableHead>Grootboek</TableHead>
                       <TableHead>Route</TableHead>
@@ -408,6 +410,28 @@ export default function Facturen() {
                           <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
                           <TableCell>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
                           <TableCell className="text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
+                          <TableCell className="text-right">
+                            {(() => {
+                              const total = getInvoiceTotalAmount(inv);
+                              const remaining = getInvoiceRemainingAmount(inv);
+                              if (remaining === 0 || inv.status === "betaald") {
+                                return <span className="font-mono text-sm text-green-600">€0,00</span>;
+                              }
+                              if (total != null && remaining != null && remaining < total) {
+                                return (
+                                  <div>
+                                    <Badge variant="secondary" className="text-[10px] mb-0.5">Deelbetaling</Badge>
+                                    <div className="font-mono text-sm text-amber-600">{formatCurrency(remaining)}</div>
+                                  </div>
+                                );
+                              }
+                              const openstaand = remaining ?? total;
+                              if (openstaand != null) {
+                                return <span className="font-mono text-sm text-amber-600">{formatCurrency(openstaand)}</span>;
+                              }
+                              return <span className="text-muted-foreground text-sm">—</span>;
+                            })()}
+                          </TableCell>
                           <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell className="text-sm">{inv.ledger_account_text || "—"}</TableCell>
                           <TableCell>
