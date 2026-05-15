@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -155,6 +156,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [saving, setSaving] = useState(false);
   const [vraagpostOpen, setVraagpostOpen] = useState(false);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
+  const qc = useQueryClient();
+  const canGenerateUbl = invoice ? ["gecontroleerd", "geexporteerd"].includes(invoice.status) : false;
 
   const normalizeSupplierName = (s: string) =>
     s.toLowerCase().trim().replace(/\s+/g, " ");
@@ -766,7 +769,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
             <HelpCircle className="mr-2 h-4 w-4" />Maak vraagpost
           </Button>
-          {invoice.status === "gecontroleerd" && documentRoute === "boekassist_ubl" && (
+          {canGenerateUbl && documentRoute === "boekassist_ubl" && (
             <Button
               variant="outline"
               onClick={() => {
@@ -786,7 +789,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               <FileCode2 className="mr-2 h-4 w-4" />Genereer UBL
             </Button>
           )}
-          {invoice.status === "gecontroleerd" && documentRoute === "boekassist_ubl" && invoice.file_path && (
+          {canGenerateUbl && documentRoute === "boekassist_ubl" && invoice.file_path && (
             <Button
               variant="outline"
               onClick={async () => {
@@ -843,6 +846,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                       .eq("id", invoice.id);
                     if (logErr) {
                       toast({ title: "Download geregistreerd niet opgeslagen", description: logErr.message });
+                    } else {
+                      qc.invalidateQueries({ queryKey: ["purchase_invoices"] });
                     }
                   } catch (logE: any) {
                     toast({ title: "Download geregistreerd niet opgeslagen", description: logE?.message });
