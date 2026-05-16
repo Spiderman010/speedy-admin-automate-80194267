@@ -44,6 +44,7 @@ import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
+import { useBankTransactionAllocations, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -91,6 +92,7 @@ export default function Bank() {
   const updateSales = useUpdateSalesInvoice();
   const createVraagpost = useCreateVraagpost();
   const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: allocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
@@ -153,6 +155,16 @@ export default function Bank() {
     }
     return m;
   }, [vraagposten]);
+
+  const allocationsByTransactionId = useMemo(() => {
+    const m = new Map<string, BankTransactionAllocation[]>();
+    for (const a of allocations ?? []) {
+      const existing = m.get(a.bank_transaction_id) ?? [];
+      existing.push(a);
+      m.set(a.bank_transaction_id, existing);
+    }
+    return m;
+  }, [allocations]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -928,7 +940,29 @@ export default function Bank() {
                         <span className={`font-mono ${t.amount < 0 ? "text-destructive" : "text-success"}`}>
                           {formatCurrency(t.amount)}
                         </span>
-                        {t.matched_invoice_id && (() => {
+                        {(() => {
+                          const txAllocs = allocationsByTransactionId.get(t.id) ?? [];
+                          if (txAllocs.length > 0) {
+                            const allocatedTotal = txAllocs.reduce((s, a) => s + a.amount, 0);
+                            const transactionTotal = Math.abs(t.amount);
+                            const unallocated = Math.max(0, transactionTotal - allocatedTotal);
+                            const fullyAllocated = Math.abs(allocatedTotal - transactionTotal) < 0.01;
+                            return (
+                              <div className="mt-0.5 space-y-0.5">
+                                {fullyAllocated ? (
+                                  <p className="text-xs text-success">Volledig gealloceerd</p>
+                                ) : (
+                                  <>
+                                    <p className="text-xs font-medium text-amber-600">Deelallocatie</p>
+                                    <p className="text-xs text-muted-foreground">Gealloceerd: {formatCurrency(allocatedTotal)}</p>
+                                    <p className="text-xs text-warning font-medium">Restant: {formatCurrency(unallocated)}</p>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          }
+                          // Legacy: matched_invoice_id fallback
+                          if (!t.matched_invoice_id) return null;
                           const inv =
                             invoices?.find(i => i.id === t.matched_invoice_id) ??
                             salesInvs?.find(i => i.id === t.matched_invoice_id);
@@ -1005,25 +1039,7 @@ export default function Bank() {
                       </TableCell>
                       <TableCell>
                         {(() => {
-                          // Determine the booking/link label
-                          let label = "—";
-                          let isOrphanMatch = false;
-                          if (t.matched_invoice_id) {
-                            const pi = purchaseInvoiceById.get(t.matched_invoice_id);
-                            if (pi) {
-                              label = `Inkoopfactuur: ${pi.supplier}${pi.invoice_number ? ` · ${pi.invoice_number}` : ""}`;
-                            } else {
-                              const si = salesInvoiceById.get(t.matched_invoice_id);
-                              if (si) label = `Verkoopfactuur: ${si.customer_name} · ${si.invoice_number}`;
-                            }
-                          } else if (t.match_status === "gematcht") {
-                            // Gematcht but no invoice id stored — flag as orphan so user knows
-                            label = "Gematcht zonder factuurkoppeling";
-                            isOrphanMatch = true;
-                          } else if (t.match_status === "handmatig_geboekt" && t.grootboekrekening_id) {
-                            const gb = grootboekrekeningById.get(t.grootboekrekening_id);
-                            if (gb) label = `${gb.nummer} - ${gb.omschrijving}`;
-                          }
+                          const txAllocs = allocationsByTransactionId.get(t.id) ?? [];
                           const vp = vraagpostByBankTransactionId.get(t.id);
                           const vpBadge = (() => {
                             if (!vp) return null;
@@ -1047,6 +1063,67 @@ export default function Bank() {
                               </Badge>
                             );
                           })();
+
+                          if (txAllocs.length > 0) {
+                            const first = txAllocs[0];
+                            let firstLabel: string;
+                            if (first.invoice_type === "inkoop") {
+                              const pi = purchaseInvoiceById.get(first.invoice_id);
+                              firstLabel = pi
+                                ? `Inkoopfactuur: ${pi.supplier}${pi.invoice_number ? ` · ${pi.invoice_number}` : ""}`
+                                : "Factuur niet gevonden";
+                            } else {
+                              const si = salesInvoiceById.get(first.invoice_id);
+                              firstLabel = si
+                                ? `Verkoopfactuur: ${si.customer_name} · ${si.invoice_number}`
+                                : "Factuur niet gevonden";
+                            }
+                            const extraCount = txAllocs.length - 1;
+                            const allLabelsTooltip = txAllocs.map(a => {
+                              if (a.invoice_type === "inkoop") {
+                                const pi = purchaseInvoiceById.get(a.invoice_id);
+                                return pi
+                                  ? `Inkoopfactuur: ${pi.supplier}${pi.invoice_number ? ` · ${pi.invoice_number}` : ""}`
+                                  : "Factuur niet gevonden";
+                              }
+                              const si = salesInvoiceById.get(a.invoice_id);
+                              return si
+                                ? `Verkoopfactuur: ${si.customer_name} · ${si.invoice_number}`
+                                : "Factuur niet gevonden";
+                            }).join("\n");
+                            return (
+                              <div className="flex flex-col gap-1 min-w-0">
+                                <div className="flex items-center gap-1 min-w-0">
+                                  <span className="text-sm truncate max-w-[200px] block" title={firstLabel}>{firstLabel}</span>
+                                  {extraCount > 0 && (
+                                    <Badge variant="outline" className="text-[10px] shrink-0" title={allLabelsTooltip}>
+                                      +{extraCount} meer
+                                    </Badge>
+                                  )}
+                                </div>
+                                {vpBadge}
+                              </div>
+                            );
+                          }
+
+                          // Legacy path: matched_invoice_id / grootboek / orphan
+                          let label = "—";
+                          let isOrphanMatch = false;
+                          if (t.matched_invoice_id) {
+                            const pi = purchaseInvoiceById.get(t.matched_invoice_id);
+                            if (pi) {
+                              label = `Inkoopfactuur: ${pi.supplier}${pi.invoice_number ? ` · ${pi.invoice_number}` : ""}`;
+                            } else {
+                              const si = salesInvoiceById.get(t.matched_invoice_id);
+                              if (si) label = `Verkoopfactuur: ${si.customer_name} · ${si.invoice_number}`;
+                            }
+                          } else if (t.match_status === "gematcht") {
+                            label = "Gematcht zonder factuurkoppeling";
+                            isOrphanMatch = true;
+                          } else if (t.match_status === "handmatig_geboekt" && t.grootboekrekening_id) {
+                            const gb = grootboekrekeningById.get(t.grootboekrekening_id);
+                            if (gb) label = `${gb.nummer} - ${gb.omschrijving}`;
+                          }
                           return (
                             <div className="flex flex-col gap-1 min-w-0">
                               <span
