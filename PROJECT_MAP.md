@@ -46,7 +46,7 @@ The following Supabase project refs **must not** be used for BoekAssist producti
 
 | Ref | Reason |
 |---|---|
-| `olumcwneiejjefhkzgmv` | Not the database used by the running BoekAssist app |
+| `olumcwneiejjefhkzgmz` | Not the database used by the running BoekAssist app |
 | `ycuofllsdssoezwwpqmv` | Not the database used by the running BoekAssist app |
 
 Also: the Vercel Supabase Marketplace database (separate from the Lovable Cloud backend) must not receive BoekAssist migrations.
