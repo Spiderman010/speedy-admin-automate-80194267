@@ -421,7 +421,32 @@ export default function Bank() {
         match_confidence: exactMatch ? 100 : isPartialPayment ? 60 : 80,
       });
 
-      if (exactMatch && !isPartialPayment) {
+      if (tx) await upsertSingleAllocationForMatch(tx, invoiceId, allocationAmount);
+
+      // Update the invoice's remaining_amount.
+      // When the user entered an explicit allocationAmount, derive newRemaining from it
+      // so the stored value matches the actual allocation, not the full tx amount.
+      // Fall back to candidate-derived values only when no explicit amount is given.
+      let toastRemaining: number | null = remainingAmount;
+      if (allocationAmount != null) {
+        const purchaseInv = invoices?.find(i => i.id === invoiceId);
+        const salesInv = salesInvs?.find(i => i.id === invoiceId);
+        if (purchaseInv) {
+          const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? getInvoiceTotalAmount(purchaseInv) ?? 0;
+          const newRemaining = Math.max(0, currentRemaining - allocationAmount);
+          toastRemaining = newRemaining;
+          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+        } else if (salesInv) {
+          const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? getInvoiceTotalAmount(salesInv) ?? 0;
+          const newRemaining = Math.max(0, currentRemaining - allocationAmount);
+          toastRemaining = newRemaining;
+          if (newRemaining < 0.01) {
+            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+          } else {
+            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+          }
+        }
+      } else if (exactMatch && !isPartialPayment) {
         if (invoiceType === "inkoop") {
           await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
         } else {
@@ -435,12 +460,12 @@ export default function Bank() {
         }
       }
 
-      if (tx) await upsertSingleAllocationForMatch(tx, invoiceId, allocationAmount);
-
-      if (exactMatch && !isPartialPayment) {
+      if (toastRemaining != null && toastRemaining >= 0.01) {
+        toast({ title: "Deelbetaling gekoppeld", description: `Resterend: ${formatCurrency(toastRemaining)}` });
+      } else if (allocationAmount == null && exactMatch && !isPartialPayment) {
         toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
-      } else if (isPartialPayment && remainingAmount != null) {
-        toast({ title: "Deelbetaling gekoppeld", description: `Resterend: ${formatCurrency(remainingAmount)}` });
+      } else if (allocationAmount != null && (toastRemaining == null || toastRemaining < 0.01)) {
+        toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
       } else {
         toast({ title: "Transactie gekoppeld" });
       }
