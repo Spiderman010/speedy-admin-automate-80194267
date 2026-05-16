@@ -44,6 +44,7 @@ import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
+import { useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -91,6 +92,8 @@ export default function Bank() {
   const updateSales = useUpdateSalesInvoice();
   const createVraagpost = useCreateVraagpost();
   const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
+  const upsertAllocation = useUpsertBankTransactionAllocation();
+  const deleteAllocationsForTx = useDeleteAllocationsForTransaction();
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
@@ -153,6 +156,37 @@ export default function Bank() {
     }
     return m;
   }, [vraagposten]);
+
+  // Resolves invoice, checks client consistency, computes capped amount, and upserts one
+  // allocation row. Throws on any error so callers can surface it via toast.
+  const upsertSingleAllocationForMatch = useCallback(async (
+    tx: Tables<"bank_transactions">,
+    invoiceId: string,
+  ) => {
+    const purchaseInv = invoices?.find(i => i.id === invoiceId);
+    const salesInv = salesInvs?.find(i => i.id === invoiceId);
+    const inv = purchaseInv ?? salesInv;
+    if (!inv) throw new Error(`Factuur ${invoiceId} niet gevonden voor allocatie`);
+
+    if (inv.client_id !== tx.client_id) {
+      throw new Error("Factuur en transactie hebben verschillende klanten; allocatie geweigerd");
+    }
+
+    const invoiceType: "inkoop" | "verkoop" = purchaseInv ? "inkoop" : "verkoop";
+    const txAmount = Math.abs(tx.amount);
+    const invoiceOpen = Math.abs(getInvoiceRemainingAmount(inv) ?? getInvoiceTotalAmount(inv) ?? txAmount);
+    const allocationAmount = Math.min(txAmount, invoiceOpen);
+
+    if (allocationAmount <= 0) return;
+
+    await upsertAllocation.mutateAsync({
+      bank_transaction_id: tx.id,
+      invoice_type: invoiceType,
+      invoice_id: invoiceId,
+      client_id: tx.client_id,
+      amount: allocationAmount,
+    });
+  }, [invoices, salesInvs, upsertAllocation]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -229,6 +263,7 @@ export default function Bank() {
       // simply promote the status — do not lose the existing link.
       if (tx.matched_invoice_id) {
         await updateTx.mutateAsync({ id, match_status: "gematcht" });
+        await upsertSingleAllocationForMatch(tx, tx.matched_invoice_id);
         toast({ title: "Transactie bevestigd" });
         return;
       }
@@ -261,8 +296,10 @@ export default function Bank() {
           } else {
             await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
           }
+          await upsertSingleAllocationForMatch(tx, best.id);
           toast({ title: "Transactie bevestigd", description: "Factuur status → Betaald" });
         } else {
+          await upsertSingleAllocationForMatch(tx, best.id);
           toast({ title: "Transactie bevestigd" });
         }
         return;
@@ -278,7 +315,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast]);
+  }, [transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const handleMatch = useCallback(async (
     transactionId: string,
@@ -289,6 +326,8 @@ export default function Bank() {
     remainingAmount: number | null
   ) => {
     try {
+      const tx = transactions?.find(t => t.id === transactionId);
+
       await updateTx.mutateAsync({
         id: transactionId,
         match_status: "gematcht",
@@ -302,13 +341,19 @@ export default function Bank() {
         } else {
           await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
         }
-        toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
       } else if (isPartialPayment && remainingAmount != null) {
         if (invoiceType === "inkoop") {
           await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
         } else {
           await updateSales.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
         }
+      }
+
+      if (tx) await upsertSingleAllocationForMatch(tx, invoiceId);
+
+      if (exactMatch && !isPartialPayment) {
+        toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
+      } else if (isPartialPayment && remainingAmount != null) {
         toast({ title: "Deelbetaling gekoppeld", description: `Resterend: ${formatCurrency(remainingAmount)}` });
       } else {
         toast({ title: "Transactie gekoppeld" });
@@ -318,12 +363,14 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij koppelen", description: e.message, variant: "destructive" });
     }
-  }, [updateTx, updatePurchase, updateSales, toast]);
+  }, [transactions, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
       const invoiceId = tx.matched_invoice_id;
       const txAmount = Math.abs(tx.amount);
+
+      await deleteAllocationsForTx.mutateAsync(tx.id);
 
       await updateTx.mutateAsync({
         id: tx.id,
@@ -360,7 +407,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij ontkoppelen", description: e.message, variant: "destructive" });
     }
-  }, [updateTx, updatePurchase, updateSales, invoices, salesInvs, refetchPurchase, refetchSales, toast]);
+  }, [deleteAllocationsForTx, updateTx, updatePurchase, updateSales, invoices, salesInvs, refetchPurchase, refetchSales, toast]);
 
   const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => {
     try {
@@ -432,6 +479,7 @@ export default function Bank() {
         // Reverse invoice side effects before overwriting the link
         const invoiceId = tx.matched_invoice_id;
         if (invoiceId) {
+          await deleteAllocationsForTx.mutateAsync(id);
           const txAmount = Math.abs(tx.amount);
           const purchaseInv = invoices?.find(i => i.id === invoiceId);
           const salesInv = salesInvs?.find(i => i.id === invoiceId);
@@ -481,7 +529,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
     }
-  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleBulkUnlink = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -497,6 +545,8 @@ export default function Bank() {
       try {
         const invoiceId = tx.matched_invoice_id;
         const txAmount = Math.abs(tx.amount);
+
+        await deleteAllocationsForTx.mutateAsync(tx.id);
 
         await updateTx.mutateAsync({
           id: tx.id,
@@ -546,7 +596,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij ontkoppelen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleRepairAflettering = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
@@ -689,6 +739,7 @@ export default function Bank() {
             await updateSales.mutateAsync({ id: best.id, remaining_amount: best.remainingAmount });
           }
         }
+        await upsertSingleAllocationForMatch(tx, best.id);
         confirmed++;
       } catch (e: any) {
         errors.push(e.message || "Onbekende fout");
@@ -709,13 +760,13 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
     for (const tx of txs) {
       try {
-        await addTx.mutateAsync({
+        const newTx = await addTx.mutateAsync({
           client_id: importClientId,
           transaction_date: tx.date,
           amount: tx.amount,
@@ -744,6 +795,14 @@ export default function Bank() {
               await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: newRemaining });
             }
           }
+          // Mirror match into allocation table; errors are non-fatal for import
+          if (newTx) {
+            try {
+              await upsertSingleAllocationForMatch(newTx, tx.matchedInvoiceId);
+            } catch (allocErr) {
+              console.error("Allocation write failed during import:", allocErr);
+            }
+          }
         }
 
         success++;
@@ -753,7 +812,7 @@ export default function Bank() {
     }
     await refetchPurchase();
     toast({ title: `${success} van ${txs.length} transacties geïmporteerd` });
-  }, [addTx, invoices, updatePurchase, refetchPurchase, toast]);
+  }, [addTx, invoices, salesInvs, updatePurchase, upsertSingleAllocationForMatch, refetchPurchase, toast]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -1203,6 +1262,14 @@ export default function Bank() {
             await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
           } else {
             await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+          }
+          const matchedTx = transactions?.find(t => t.id === id);
+          if (matchedTx) {
+            try {
+              await upsertSingleAllocationForMatch(matchedTx, invoiceId);
+            } catch (e: any) {
+              toast({ title: "Allocatierij niet aangemaakt", description: e.message, variant: "destructive" });
+            }
           }
           toast({ title: "Factuur gekoppeld" });
           refetch();
