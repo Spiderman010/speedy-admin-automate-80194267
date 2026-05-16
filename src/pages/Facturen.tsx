@@ -25,7 +25,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
 import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import type { Tables } from "@/integrations/supabase/types";
-import { getDocumentRouteLabel } from "@/lib/document-route";
+import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 
 const statusConfig = {
@@ -60,6 +60,9 @@ export default function Facturen() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [workflowFilter, setWorkflowFilter] = useState("all");
+  const [paymentFilter, setPaymentFilter] = useState("all");
+  const [routeFilter, setRouteFilter] = useState("all");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const { toast } = useToast();
@@ -115,6 +118,20 @@ export default function Facturen() {
         (inv.ledger_account_text || "").toLowerCase().includes(q)
       );
     }
+    if (workflowFilter !== "all") {
+      list = list.filter(inv => inv.status === workflowFilter);
+    }
+    if (paymentFilter !== "all") {
+      list = list.filter(inv => {
+        const ds = getPurchaseInvoiceDisplayStatus(inv);
+        if (paymentFilter === "paid") return ds === "betaald";
+        if (paymentFilter === "partial") return ds === "deelbetaling";
+        return ds !== "betaald" && ds !== "deelbetaling";
+      });
+    }
+    if (routeFilter !== "all") {
+      list = list.filter(inv => (inv as any).document_route === routeFilter);
+    }
     list.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -128,7 +145,7 @@ export default function Facturen() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [invoices, searchQuery, sortField, sortDir]);
+  }, [invoices, searchQuery, workflowFilter, paymentFilter, routeFilter, sortField, sortDir]);
 
   const duplicateIds = useMemo(() => {
     const result = new Set<string>();
@@ -360,14 +377,43 @@ export default function Facturen() {
         </TabsContent>
 
         <TabsContent value="overview" className="mt-6">
-          <div className="mb-4 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 max-w-md"
-            />
+          <div className="mb-4 flex flex-wrap gap-2 items-center">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 w-72"
+              />
+            </div>
+            <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle workflowstatussen</SelectItem>
+                <SelectItem value="te_controleren">Te controleren</SelectItem>
+                <SelectItem value="gecontroleerd">Gecontroleerd</SelectItem>
+                <SelectItem value="geexporteerd">Geëxporteerd</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle betaalstatussen</SelectItem>
+                <SelectItem value="open">Openstaand</SelectItem>
+                <SelectItem value="partial">Deelbetaling</SelectItem>
+                <SelectItem value="paid">Betaald</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={routeFilter} onValueChange={setRouteFilter}>
+              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle routes</SelectItem>
+                {DOCUMENT_ROUTE_OPTIONS.map(opt => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Card>
             <CardContent className="p-6">
