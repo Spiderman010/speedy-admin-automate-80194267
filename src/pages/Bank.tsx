@@ -151,10 +151,12 @@ export default function Bank() {
     return m;
   }, [salesInvs]);
 
-  const allocatedAmountByTxId = useMemo(() => {
-    const m = new Map<string, number>();
+  const allocationsByTxId = useMemo(() => {
+    const m = new Map<string, typeof allAllocations[number][]>();
     for (const a of allAllocations ?? []) {
-      m.set(a.bank_transaction_id, (m.get(a.bank_transaction_id) ?? 0) + a.amount);
+      const existing = m.get(a.bank_transaction_id);
+      if (existing) existing.push(a);
+      else m.set(a.bank_transaction_id, [a]);
     }
     return m;
   }, [allAllocations]);
@@ -447,7 +449,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij koppelen", description: e.message, variant: "destructive" });
     }
-  }, [matchDialogMode, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
+  }, [matchDialogMode, allAllocations, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
 
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
@@ -1047,7 +1049,9 @@ export default function Bank() {
                   const isOpen = isOpenTransactionStatus(t.match_status);
                   const isSuggestion = suggestionIds.has(t.id);
                   const txAbsAmt = Math.abs(t.amount);
-                  const allocatedForTx = allocatedAmountByTxId.get(t.id) ?? 0;
+                  const allocationsForTx = allocationsByTxId.get(t.id) ?? [];
+                  const hasAllocationRows = allocationsForTx.length > 0;
+                  const allocatedForTx = allocationsForTx.reduce((sum, a) => sum + a.amount, 0);
                   const unallocatedAmount = Math.max(0, txAbsAmt - allocatedForTx);
                   return (
                     <TableRow key={t.id}>
@@ -1249,14 +1253,12 @@ export default function Bank() {
                               Koppel
                             </Button>
                           )}
-                          {t.match_status === "gematcht" && unallocatedAmount >= 0.01 && (
+                          {t.match_status === "gematcht" && hasAllocationRows && unallocatedAmount >= 0.01 && (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button size="sm" variant="ghost" onClick={() => {
-                                    const alreadyIds = (allAllocations ?? [])
-                                      .filter(a => a.bank_transaction_id === t.id)
-                                      .map(a => a.invoice_id);
+                                    const alreadyIds = allocationsForTx.map(a => a.invoice_id);
                                     setAdditionalExcludedIds(alreadyIds);
                                     setMatchDialogMode("additional");
                                     setAdditionalMaxAmount(unallocatedAmount);
@@ -1420,7 +1422,9 @@ export default function Bank() {
         onManualBook={handleManualBook}
         onRefresh={handleRefreshMatching}
         maxAllocationAmount={matchDialogMode === "additional" ? additionalMaxAmount : undefined}
-        alreadyAllocatedAmount={matchDialogMode === "additional" && matchTx ? allocatedAmountByTxId.get(matchTx.id) : undefined}
+        alreadyAllocatedAmount={matchDialogMode === "additional" && matchTx
+          ? (allocationsByTxId.get(matchTx.id) ?? []).reduce((s, a) => s + a.amount, 0)
+          : undefined}
         excludedInvoiceIds={matchDialogMode === "additional" ? additionalExcludedIds : undefined}
       />
     </>
