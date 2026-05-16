@@ -25,6 +25,30 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useClientContext } from "@/hooks/useClientContext";
 import { getInvoicePaymentState } from "@/lib/invoice-balances";
 
+function Chip({
+  label, active, count, onClick, activeClassName,
+}: {
+  label: string; active: boolean; count: number;
+  onClick: () => void; activeClassName?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+        active
+          ? (activeClassName ?? "border-primary bg-primary text-primary-foreground")
+          : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      {label}
+      <span className={`rounded-full px-1.5 text-[10px] font-semibold leading-tight ${active ? "bg-black/15" : "bg-muted"}`}>
+        {count}
+      </span>
+    </button>
+  );
+}
+
 const statusConfig: Record<string, { label: string; icon: typeof Clock; variant: "default" | "secondary" | "outline" }> = {
   concept: { label: "Concept", icon: Clock, variant: "secondary" },
   verzonden: { label: "Verzonden", icon: Send, variant: "default" },
@@ -82,28 +106,42 @@ export default function Verkoop() {
     return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
   };
 
-  const filteredSorted = useMemo(() => {
+  const searchFiltered = useMemo(() => {
     if (!invoices) return [];
-    let list = [...invoices];
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(inv =>
-        (inv.invoice_number || "").toLowerCase().includes(q) ||
-        (inv.customer_name || "").toLowerCase().includes(q) ||
-        (inv.status || "").toLowerCase().includes(q)
-      );
-    }
-    if (workflowFilter !== "all") {
-      list = list.filter(inv => inv.status === workflowFilter);
-    }
-    if (paymentFilter !== "all") {
-      list = list.filter(inv => {
-        const state = getInvoicePaymentState(inv);
-        if (paymentFilter === "paid") return state === "paid";
-        if (paymentFilter === "partial") return state === "partial";
-        return state === "open" || state === "unknown";
-      });
-    }
+    if (!searchQuery.trim()) return invoices;
+    const q = searchQuery.toLowerCase();
+    return invoices.filter(inv =>
+      (inv.invoice_number || "").toLowerCase().includes(q) ||
+      (inv.customer_name || "").toLowerCase().includes(q) ||
+      (inv.status || "").toLowerCase().includes(q)
+    );
+  }, [invoices, searchQuery]);
+
+  // Each count-base applies all OTHER active filters so chip numbers show "what you'd see if you clicked this"
+  const forPaymentCounts = useMemo(() => {
+    if (workflowFilter === "all") return searchFiltered;
+    return searchFiltered.filter(inv => inv.status === workflowFilter);
+  }, [searchFiltered, workflowFilter]);
+
+  const forWorkflowCounts = useMemo(() => {
+    if (paymentFilter === "all") return searchFiltered;
+    return searchFiltered.filter(inv => {
+      const state = getInvoicePaymentState(inv);
+      if (paymentFilter === "paid") return state === "paid";
+      if (paymentFilter === "partial") return state === "partial";
+      return state === "open" || state === "unknown";
+    });
+  }, [searchFiltered, paymentFilter]);
+
+  const filteredSorted = useMemo(() => {
+    let list = [...searchFiltered];
+    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
+    if (paymentFilter !== "all") list = list.filter(inv => {
+      const state = getInvoicePaymentState(inv);
+      if (paymentFilter === "paid") return state === "paid";
+      if (paymentFilter === "partial") return state === "partial";
+      return state === "open" || state === "unknown";
+    });
     list.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -119,7 +157,7 @@ export default function Verkoop() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [invoices, searchQuery, workflowFilter, paymentFilter, sortField, sortDir, clients]);
+  }, [searchFiltered, workflowFilter, paymentFilter, sortField, sortDir, clients]);
 
   const handleManualSave = async (form: SalesInvoiceFormData, file: File | null) => {
     let pdfPath: string | null = null;
@@ -322,35 +360,50 @@ export default function Verkoop() {
         </TabsContent>
 
         <TabsContent value="overview" className="mt-6">
-          <div className="mb-4 flex flex-wrap gap-2 items-center">
-            <div className="relative">
+          <div className="mb-5 space-y-2.5">
+            <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Zoeken op factuurnummer, klantnaam of status..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 w-72"
+                className="pl-10"
               />
             </div>
-            <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
-              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle workflowstatussen</SelectItem>
-                <SelectItem value="concept">Concept</SelectItem>
-                <SelectItem value="verzonden">Verzonden</SelectItem>
-                <SelectItem value="gecontroleerd">Gecontroleerd</SelectItem>
-                <SelectItem value="betaald">Betaald</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle betaalstatussen</SelectItem>
-                <SelectItem value="open">Openstaand</SelectItem>
-                <SelectItem value="partial">Deelbetaling</SelectItem>
-                <SelectItem value="paid">Betaald</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
+              <Chip label="Alle" active={paymentFilter === "all"} count={forPaymentCounts.length}
+                onClick={() => setPaymentFilter("all")} />
+              <Chip label="Openstaand" active={paymentFilter === "open"}
+                count={forPaymentCounts.filter(inv => { const s = getInvoicePaymentState(inv); return s === "open" || s === "unknown"; }).length}
+                onClick={() => setPaymentFilter(paymentFilter === "open" ? "all" : "open")}
+                activeClassName="border-orange-400 bg-orange-50 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200" />
+              <Chip label="Deelbetaling" active={paymentFilter === "partial"}
+                count={forPaymentCounts.filter(inv => getInvoicePaymentState(inv) === "partial").length}
+                onClick={() => setPaymentFilter(paymentFilter === "partial" ? "all" : "partial")}
+                activeClassName="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" />
+              <Chip label="Betaald" active={paymentFilter === "paid"}
+                count={forPaymentCounts.filter(inv => getInvoicePaymentState(inv) === "paid").length}
+                onClick={() => setPaymentFilter(paymentFilter === "paid" ? "all" : "paid")}
+                activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Workflow</span>
+              <Chip label="Alle" active={workflowFilter === "all"} count={forWorkflowCounts.length}
+                onClick={() => setWorkflowFilter("all")} />
+              <Chip label="Concept" active={workflowFilter === "concept"}
+                count={forWorkflowCounts.filter(inv => inv.status === "concept").length}
+                onClick={() => setWorkflowFilter(workflowFilter === "concept" ? "all" : "concept")} />
+              <Chip label="Verzonden" active={workflowFilter === "verzonden"}
+                count={forWorkflowCounts.filter(inv => inv.status === "verzonden").length}
+                onClick={() => setWorkflowFilter(workflowFilter === "verzonden" ? "all" : "verzonden")} />
+              <Chip label="Gecontroleerd" active={workflowFilter === "gecontroleerd"}
+                count={forWorkflowCounts.filter(inv => inv.status === "gecontroleerd").length}
+                onClick={() => setWorkflowFilter(workflowFilter === "gecontroleerd" ? "all" : "gecontroleerd")} />
+              <Chip label="Betaald" active={workflowFilter === "betaald"}
+                count={forWorkflowCounts.filter(inv => inv.status === "betaald").length}
+                onClick={() => setWorkflowFilter(workflowFilter === "betaald" ? "all" : "betaald")} />
+            </div>
           </div>
           <Card>
             <CardContent className="p-6">

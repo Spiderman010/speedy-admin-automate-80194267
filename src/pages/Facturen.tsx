@@ -10,7 +10,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, Download, CheckCircle2, Clock, AlertCircle, Loader2, ArrowUp, ArrowDown, Search, Trash2 } from "lucide-react";
+import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
@@ -27,6 +27,30 @@ import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
+
+function Chip({
+  label, active, count, onClick, activeClassName,
+}: {
+  label: string; active: boolean; count: number;
+  onClick: () => void; activeClassName?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+        active
+          ? (activeClassName ?? "border-primary bg-primary text-primary-foreground")
+          : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      {label}
+      <span className={`rounded-full px-1.5 text-[10px] font-semibold leading-tight ${active ? "bg-black/15" : "bg-muted"}`}>
+        {count}
+      </span>
+    </button>
+  );
+}
 
 const statusConfig = {
   te_controleren: { label: "Te controleren", icon: Clock, variant: "secondary" as const },
@@ -107,31 +131,59 @@ export default function Facturen() {
     return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
   };
 
-  const filteredSorted = useMemo(() => {
+  const searchFiltered = useMemo(() => {
     if (!invoices) return [];
-    let list = [...invoices];
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(inv =>
-        (inv.supplier || "").toLowerCase().includes(q) ||
-        (inv.invoice_number || "").toLowerCase().includes(q) ||
-        (inv.ledger_account_text || "").toLowerCase().includes(q)
-      );
-    }
-    if (workflowFilter !== "all") {
-      list = list.filter(inv => inv.status === workflowFilter);
-    }
-    if (paymentFilter !== "all") {
-      list = list.filter(inv => {
-        const ds = getPurchaseInvoiceDisplayStatus(inv);
-        if (paymentFilter === "paid") return ds === "betaald";
-        if (paymentFilter === "partial") return ds === "deelbetaling";
-        return ds !== "betaald" && ds !== "deelbetaling";
-      });
-    }
-    if (routeFilter !== "all") {
-      list = list.filter(inv => (inv as any).document_route === routeFilter);
-    }
+    if (!searchQuery.trim()) return invoices;
+    const q = searchQuery.toLowerCase();
+    return invoices.filter(inv =>
+      (inv.supplier || "").toLowerCase().includes(q) ||
+      (inv.invoice_number || "").toLowerCase().includes(q) ||
+      (inv.ledger_account_text || "").toLowerCase().includes(q)
+    );
+  }, [invoices, searchQuery]);
+
+  // Each count-base applies all OTHER active filters so chip numbers show "what you'd see if you clicked this"
+  const forPaymentCounts = useMemo(() => {
+    let list = searchFiltered;
+    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
+    if (routeFilter !== "all") list = list.filter(inv => (inv as any).document_route === routeFilter);
+    return list;
+  }, [searchFiltered, workflowFilter, routeFilter]);
+
+  const forWorkflowCounts = useMemo(() => {
+    let list = searchFiltered;
+    if (paymentFilter !== "all") list = list.filter(inv => {
+      const ds = getPurchaseInvoiceDisplayStatus(inv);
+      if (paymentFilter === "paid") return ds === "betaald";
+      if (paymentFilter === "partial") return ds === "deelbetaling";
+      return ds !== "betaald" && ds !== "deelbetaling";
+    });
+    if (routeFilter !== "all") list = list.filter(inv => (inv as any).document_route === routeFilter);
+    return list;
+  }, [searchFiltered, paymentFilter, routeFilter]);
+
+  const forRouteCounts = useMemo(() => {
+    let list = searchFiltered;
+    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
+    if (paymentFilter !== "all") list = list.filter(inv => {
+      const ds = getPurchaseInvoiceDisplayStatus(inv);
+      if (paymentFilter === "paid") return ds === "betaald";
+      if (paymentFilter === "partial") return ds === "deelbetaling";
+      return ds !== "betaald" && ds !== "deelbetaling";
+    });
+    return list;
+  }, [searchFiltered, workflowFilter, paymentFilter]);
+
+  const filteredSorted = useMemo(() => {
+    let list = [...searchFiltered];
+    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
+    if (paymentFilter !== "all") list = list.filter(inv => {
+      const ds = getPurchaseInvoiceDisplayStatus(inv);
+      if (paymentFilter === "paid") return ds === "betaald";
+      if (paymentFilter === "partial") return ds === "deelbetaling";
+      return ds !== "betaald" && ds !== "deelbetaling";
+    });
+    if (routeFilter !== "all") list = list.filter(inv => (inv as any).document_route === routeFilter);
     list.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -145,7 +197,7 @@ export default function Facturen() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [invoices, searchQuery, workflowFilter, paymentFilter, routeFilter, sortField, sortDir]);
+  }, [searchFiltered, workflowFilter, paymentFilter, routeFilter, sortField, sortDir]);
 
   const duplicateIds = useMemo(() => {
     const result = new Set<string>();
@@ -377,43 +429,57 @@ export default function Facturen() {
         </TabsContent>
 
         <TabsContent value="overview" className="mt-6">
-          <div className="mb-4 flex flex-wrap gap-2 items-center">
-            <div className="relative">
+          <div className="mb-5 space-y-2.5">
+            <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 w-72"
+                className="pl-10"
               />
             </div>
-            <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
-              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle workflowstatussen</SelectItem>
-                <SelectItem value="te_controleren">Te controleren</SelectItem>
-                <SelectItem value="gecontroleerd">Gecontroleerd</SelectItem>
-                <SelectItem value="geexporteerd">Geëxporteerd</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle betaalstatussen</SelectItem>
-                <SelectItem value="open">Openstaand</SelectItem>
-                <SelectItem value="partial">Deelbetaling</SelectItem>
-                <SelectItem value="paid">Betaald</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={routeFilter} onValueChange={setRouteFilter}>
-              <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Alle routes</SelectItem>
-                {DOCUMENT_ROUTE_OPTIONS.map(opt => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
+              <Chip label="Alle" active={paymentFilter === "all"} count={forPaymentCounts.length}
+                onClick={() => setPaymentFilter("all")} />
+              <Chip label="Openstaand" active={paymentFilter === "open"}
+                count={forPaymentCounts.filter(inv => { const ds = getPurchaseInvoiceDisplayStatus(inv); return ds !== "betaald" && ds !== "deelbetaling"; }).length}
+                onClick={() => setPaymentFilter(paymentFilter === "open" ? "all" : "open")}
+                activeClassName="border-orange-400 bg-orange-50 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200" />
+              <Chip label="Deelbetaling" active={paymentFilter === "partial"}
+                count={forPaymentCounts.filter(inv => getPurchaseInvoiceDisplayStatus(inv) === "deelbetaling").length}
+                onClick={() => setPaymentFilter(paymentFilter === "partial" ? "all" : "partial")}
+                activeClassName="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" />
+              <Chip label="Betaald" active={paymentFilter === "paid"}
+                count={forPaymentCounts.filter(inv => getPurchaseInvoiceDisplayStatus(inv) === "betaald").length}
+                onClick={() => setPaymentFilter(paymentFilter === "paid" ? "all" : "paid")}
+                activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Workflow</span>
+              <Chip label="Alle" active={workflowFilter === "all"} count={forWorkflowCounts.length}
+                onClick={() => setWorkflowFilter("all")} />
+              <Chip label="Te controleren" active={workflowFilter === "te_controleren"}
+                count={forWorkflowCounts.filter(inv => inv.status === "te_controleren").length}
+                onClick={() => setWorkflowFilter(workflowFilter === "te_controleren" ? "all" : "te_controleren")} />
+              <Chip label="Gecontroleerd" active={workflowFilter === "gecontroleerd"}
+                count={forWorkflowCounts.filter(inv => inv.status === "gecontroleerd").length}
+                onClick={() => setWorkflowFilter(workflowFilter === "gecontroleerd" ? "all" : "gecontroleerd")} />
+              <Chip label="Geëxporteerd" active={workflowFilter === "geexporteerd"}
+                count={forWorkflowCounts.filter(inv => inv.status === "geexporteerd").length}
+                onClick={() => setWorkflowFilter(workflowFilter === "geexporteerd" ? "all" : "geexporteerd")} />
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Route</span>
+              <Chip label="Alle" active={routeFilter === "all"} count={forRouteCounts.length}
+                onClick={() => setRouteFilter("all")} />
+              {DOCUMENT_ROUTE_OPTIONS.map(opt => (
+                <Chip key={opt.value} label={opt.label} active={routeFilter === opt.value}
+                  count={forRouteCounts.filter(inv => (inv as any).document_route === opt.value).length}
+                  onClick={() => setRouteFilter(routeFilter === opt.value ? "all" : opt.value)} />
+              ))}
+            </div>
           </div>
           <Card>
             <CardContent className="p-6">
