@@ -264,12 +264,13 @@ export function BankMatchDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Transactie koppelen</DialogTitle>
           <DialogDescription>Koppel aan een factuur of boek handmatig.</DialogDescription>
         </DialogHeader>
 
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-4">
         {/* Transaction details */}
         {(() => {
           const parsed = parseMT940Description(transaction.description);
@@ -312,7 +313,6 @@ export function BankMatchDialog({
           );
         })()}
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="w-full">
             <TabsTrigger value="factuur" className="flex-1">Koppel aan factuur</TabsTrigger>
@@ -326,7 +326,7 @@ export function BankMatchDialog({
                 Opnieuw matchen
               </Button>
             </div>
-            <ScrollArea className="h-[220px]">
+            <ScrollArea className="h-[180px]">
               {candidates.length === 0 ? (
                 <p className="py-8 text-center text-muted-foreground text-sm">Geen openstaande facturen gevonden.</p>
               ) : (
@@ -435,7 +435,7 @@ export function BankMatchDialog({
         </Tabs>
         </div>
 
-        <DialogFooter className="shrink-0">
+        <DialogFooter className="shrink-0 border-t pt-3 bg-background">
           <Button variant="outline" onClick={() => handleOpenChange(false)}>Annuleren</Button>
           {tab === "factuur" ? (
             <Button disabled={!selectedId || !!allocError} onClick={handleConfirm}>
