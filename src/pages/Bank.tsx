@@ -778,6 +778,8 @@ export default function Bank() {
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
+    let allocationErrors = 0;
+    let firstAllocationError = "";
     for (const tx of txs) {
       try {
         const newTx = await addTx.mutateAsync({
@@ -809,11 +811,12 @@ export default function Bank() {
               await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: newRemaining });
             }
           }
-          // Mirror match into allocation table; errors are non-fatal for import
           if (newTx) {
             try {
               await upsertSingleAllocationForMatch(newTx, tx.matchedInvoiceId);
-            } catch (allocErr) {
+            } catch (allocErr: any) {
+              allocationErrors++;
+              if (!firstAllocationError) firstAllocationError = allocErr?.message || "Onbekende fout";
               console.error("Allocation write failed during import:", allocErr);
             }
           }
@@ -825,7 +828,15 @@ export default function Bank() {
       }
     }
     await refetchPurchase();
-    toast({ title: `${success} van ${txs.length} transacties geïmporteerd` });
+    if (allocationErrors > 0) {
+      toast({
+        title: `${success} van ${txs.length} transacties geïmporteerd, maar ${allocationErrors} allocatie(s) niet aangemaakt`,
+        description: firstAllocationError,
+        variant: "destructive",
+      });
+    } else {
+      toast({ title: `${success} van ${txs.length} transacties geïmporteerd` });
+    }
   }, [addTx, invoices, salesInvs, updatePurchase, upsertSingleAllocationForMatch, refetchPurchase, toast]);
 
   const toggleSelect = (id: string) => {
