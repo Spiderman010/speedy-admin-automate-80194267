@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -37,7 +37,7 @@ interface BankMatchDialogProps {
   transaction: BankTransaction | null;
   purchaseInvoices: PurchaseInvoice[];
   salesInvoices: SalesInvoice[];
-  onConfirm: (transactionId: string, invoiceId: string, invoiceType: "inkoop" | "verkoop", exactMatch: boolean, isPartialPayment: boolean, remainingAmount: number | null) => void;
+  onConfirm: (transactionId: string, invoiceId: string, invoiceType: "inkoop" | "verkoop", exactMatch: boolean, isPartialPayment: boolean, remainingAmount: number | null, allocationAmount: number) => void;
   onManualBook?: (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => void;
   onRefresh?: () => void;
 }
@@ -186,6 +186,7 @@ export function BankMatchDialog({
   const [ledgerAccountId, setLedgerAccountId] = useState("");
   const [manualDesc, setManualDesc] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [allocationAmountStr, setAllocationAmountStr] = useState("");
 
   const candidates = useMemo(() => {
     if (!transaction) return [];
@@ -196,9 +197,40 @@ export function BankMatchDialog({
   const selected = candidates.find((c) => c.id === selectedId);
   const exactMatch = selected ? (selected.reasons.includes("Exact bedrag") || selected.reasons.includes("Bedrag ≈ gelijk (≤€0,50)")) : false;
 
+  // Reset allocation amount to sensible default whenever the selected candidate changes.
+  useEffect(() => {
+    if (!selected || !transaction) {
+      setAllocationAmountStr("");
+      return;
+    }
+    const txAmt = Math.abs(transaction.amount);
+    const invOpen = selected.amount != null ? Math.abs(selected.amount) : null;
+    const defaultAmt = invOpen != null ? Math.min(txAmt, invOpen) : txAmt;
+    setAllocationAmountStr(defaultAmt.toFixed(2));
+  }, [selectedId]); // intentionally only on selectedId — not on transaction/selected to avoid mid-type resets
+
+  // Derived allocation amount validation
+  const txAbsAmount = transaction ? Math.abs(transaction.amount) : 0;
+  const invoiceOpenAmount = selected?.amount != null ? Math.abs(selected.amount) : null;
+  const parsedAllocationAmount = parseFloat(allocationAmountStr.replace(",", "."));
+  const allocIsNaN = isNaN(parsedAllocationAmount) || parsedAllocationAmount <= 0;
+  const allocExceedsTx = !allocIsNaN && parsedAllocationAmount > txAbsAmount + 0.001;
+  const allocExceedsInvoice = !allocIsNaN && invoiceOpenAmount != null && parsedAllocationAmount > invoiceOpenAmount + 0.001;
+  const allocError: string | null = allocIsNaN
+    ? "Vul een geldig bedrag in"
+    : allocExceedsTx
+    ? `Bedrag mag niet hoger zijn dan banktransactie (${formatCurrency(txAbsAmount)})`
+    : allocExceedsInvoice
+    ? `Bedrag mag niet hoger zijn dan open factuurbedrag (${formatCurrency(invoiceOpenAmount!)})`
+    : null;
+
   const handleConfirm = () => {
-    if (!transaction || !selected) return;
-    onConfirm(transaction.id, selected.id, selected.type, exactMatch && !selected.isPartialPayment, selected.isPartialPayment, selected.remainingAmount);
+    if (!transaction || !selected || allocError) return;
+    onConfirm(
+      transaction.id, selected.id, selected.type,
+      exactMatch && !selected.isPartialPayment, selected.isPartialPayment, selected.remainingAmount,
+      parsedAllocationAmount,
+    );
     resetAndClose();
   };
 
@@ -219,6 +251,7 @@ export function BankMatchDialog({
     setLedgerAccount("");
     setLedgerAccountId("");
     setManualDesc("");
+    setAllocationAmountStr("");
     onOpenChange(false);
   };
 
@@ -350,6 +383,41 @@ export function BankMatchDialog({
                 </div>
               )}
             </ScrollArea>
+
+            {selected && (
+              <div className="mt-3 rounded-lg border bg-muted/40 p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Banktransactie</span>
+                  <span className="font-mono font-medium">{formatCurrency(txAbsAmount)}</span>
+                </div>
+                {invoiceOpenAmount != null && (
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>Open factuurbedrag</span>
+                    <span className="font-mono font-medium">{formatCurrency(invoiceOpenAmount)}</span>
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <Label className="text-xs">Te alloceren bedrag *</Label>
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={allocationAmountStr}
+                    onChange={(e) => setAllocationAmountStr(e.target.value)}
+                    className={`h-8 font-mono text-sm ${allocError ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                    placeholder="0.00"
+                  />
+                  {allocError ? (
+                    <p className="text-xs text-destructive">{allocError}</p>
+                  ) : !allocIsNaN && (
+                    <p className="text-xs text-muted-foreground">
+                      Restant op transactie:{" "}
+                      <span className="font-mono">{formatCurrency(Math.max(0, txAbsAmount - parsedAllocationAmount))}</span>
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="handmatig" className="space-y-4 pt-2">
@@ -368,8 +436,14 @@ export function BankMatchDialog({
         <DialogFooter>
           <Button variant="outline" onClick={() => handleOpenChange(false)}>Annuleren</Button>
           {tab === "factuur" ? (
-            <Button disabled={!selectedId} onClick={handleConfirm}>
-              Koppelen{selected?.isPartialPayment ? " (deelbetaling)" : exactMatch ? " & Betaald" : ""}
+            <Button disabled={!selectedId || !!allocError} onClick={handleConfirm}>
+              Koppelen{
+                selected && !allocIsNaN && parsedAllocationAmount < txAbsAmount - 0.001
+                  ? " (deelallocatie)"
+                  : selected?.isPartialPayment ? " (deelbetaling)"
+                  : exactMatch ? " & Betaald"
+                  : ""
+              }
             </Button>
           ) : (
             <Button disabled={!ledgerAccount} onClick={handleManualBook}>
