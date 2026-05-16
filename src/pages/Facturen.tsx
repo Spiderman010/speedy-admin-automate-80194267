@@ -389,6 +389,12 @@ export default function Facturen() {
                   <TableBody>
                     {filteredSorted.map((inv) => {
                       const sc = statusConfig[inv.status as keyof typeof statusConfig] || statusConfig.te_controleren;
+                      // Derive payment display from remaining_amount — purchase invoices cannot
+                      // hold status = "betaald" due to DB constraint, so we compute this from amounts.
+                      const invTotal = getInvoiceTotalAmount(inv);
+                      const invRemaining = getInvoiceRemainingAmount(inv);
+                      const isPaid = invRemaining === 0;
+                      const isPartiallyPaid = !isPaid && invTotal != null && invRemaining != null && invRemaining < invTotal;
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setEditInvoice(inv)}>
                           <TableCell className="font-medium">{inv.supplier}</TableCell>
@@ -440,9 +446,19 @@ export default function Facturen() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={sc.variant} className="gap-1">
-                              <sc.icon className="h-3 w-3" />{sc.label}
-                            </Badge>
+                            {isPaid ? (
+                              <Badge variant="outline" className="gap-1 border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
+                                <CheckCircle2 className="h-3 w-3" />Betaald
+                              </Badge>
+                            ) : isPartiallyPaid ? (
+                              <Badge variant="secondary" className="gap-1 text-amber-700">
+                                <Clock className="h-3 w-3" />Deelbetaling
+                              </Badge>
+                            ) : (
+                              <Badge variant={sc.variant} className="gap-1">
+                                <sc.icon className="h-3 w-3" />{sc.label}
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <Button
