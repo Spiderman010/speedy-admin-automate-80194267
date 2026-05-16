@@ -38,6 +38,14 @@ const statusConfig = {
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
 
+function getPurchaseInvoiceDisplayStatus(inv: { status: string | null; remaining_amount?: number | null; amount_incl?: number | null; amount_excl?: number | null }): string {
+  const remaining = getInvoiceRemainingAmount(inv as any);
+  if (remaining === 0) return "betaald";
+  const total = getInvoiceTotalAmount(inv as any);
+  if (total != null && remaining != null && remaining < total) return "deelbetaling";
+  return inv.status || "";
+}
+
 type SortField = "supplier" | "invoice_number" | "date" | "amount" | "btw" | "status";
 type SortDir = "asc" | "desc";
 
@@ -115,7 +123,7 @@ export default function Facturen() {
         case "date": cmp = (a.invoice_date || "").localeCompare(b.invoice_date || ""); break;
         case "amount": cmp = (a.amount_incl ?? 0) - (b.amount_incl ?? 0); break;
         case "btw": cmp = (a.btw_amount ?? 0) - (b.btw_amount ?? 0); break;
-        case "status": cmp = (a.status || "").localeCompare(b.status || ""); break;
+        case "status": cmp = getPurchaseInvoiceDisplayStatus(a).localeCompare(getPurchaseInvoiceDisplayStatus(b)); break;
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
@@ -389,6 +397,9 @@ export default function Facturen() {
                   <TableBody>
                     {filteredSorted.map((inv) => {
                       const sc = statusConfig[inv.status as keyof typeof statusConfig] || statusConfig.te_controleren;
+                      const displayStatus = getPurchaseInvoiceDisplayStatus(inv);
+                      const isPaid = displayStatus === "betaald";
+                      const isPartiallyPaid = displayStatus === "deelbetaling";
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setEditInvoice(inv)}>
                           <TableCell className="font-medium">{inv.supplier}</TableCell>
@@ -440,9 +451,19 @@ export default function Facturen() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={sc.variant} className="gap-1">
-                              <sc.icon className="h-3 w-3" />{sc.label}
-                            </Badge>
+                            {isPaid ? (
+                              <Badge variant="outline" className="gap-1 border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
+                                <CheckCircle2 className="h-3 w-3" />Betaald
+                              </Badge>
+                            ) : isPartiallyPaid ? (
+                              <Badge variant="secondary" className="gap-1 text-amber-700">
+                                <Clock className="h-3 w-3" />Deelbetaling
+                              </Badge>
+                            ) : (
+                              <Badge variant={sc.variant} className="gap-1">
+                                <sc.icon className="h-3 w-3" />{sc.label}
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <Button
