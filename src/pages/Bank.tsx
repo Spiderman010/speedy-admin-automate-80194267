@@ -159,9 +159,12 @@ export default function Bank() {
 
   // Resolves invoice, checks client consistency, queries live allocation state, and upserts
   // one allocation row. Throws on any error so callers can surface it via toast.
+  // explicitAllocationAmount — when provided (manual match dialog), bypasses the auto-cap
+  // calculation and uses the user-supplied value, subject to hard safety caps.
   const upsertSingleAllocationForMatch = useCallback(async (
     tx: Tables<"bank_transactions">,
     invoiceId: string,
+    explicitAllocationAmount?: number,
   ) => {
     const purchaseInv = invoices?.find(i => i.id === invoiceId);
     const salesInv = salesInvs?.find(i => i.id === invoiceId);
@@ -189,9 +192,21 @@ export default function Bank() {
       .reduce((sum, r) => sum + (r.amount as number), 0);
     const invoiceTotal = Math.abs(getInvoiceTotalAmount(inv) ?? txAmount);
     const allocationOpen = Math.max(0, invoiceTotal - alreadyAllocated);
-    const allocationAmount = Math.min(txAmount, allocationOpen);
+    const autoAmount = Math.min(txAmount, allocationOpen);
 
-    if (allocationAmount <= 0) return;
+    let allocationAmount: number;
+    if (explicitAllocationAmount !== undefined) {
+      if (explicitAllocationAmount <= 0)
+        throw new Error("Allocatiebedrag moet groter zijn dan 0");
+      if (explicitAllocationAmount > txAmount + 0.001)
+        throw new Error("Allocatiebedrag is hoger dan het banktransactiebedrag");
+      if (explicitAllocationAmount > allocationOpen + 0.001)
+        throw new Error("Allocatiebedrag is hoger dan het openstaande factuurbedrag");
+      allocationAmount = Math.min(explicitAllocationAmount, txAmount, allocationOpen);
+    } else {
+      allocationAmount = autoAmount;
+      if (allocationAmount <= 0) return; // auto mode: nothing to allocate, skip silently
+    }
 
     await upsertAllocation.mutateAsync({
       bank_transaction_id: tx.id,
@@ -337,7 +352,8 @@ export default function Bank() {
     invoiceType: "inkoop" | "verkoop",
     exactMatch: boolean,
     isPartialPayment: boolean,
-    remainingAmount: number | null
+    remainingAmount: number | null,
+    allocationAmount?: number,
   ) => {
     try {
       const tx = transactions?.find(t => t.id === transactionId);
@@ -363,7 +379,7 @@ export default function Bank() {
         }
       }
 
-      if (tx) await upsertSingleAllocationForMatch(tx, invoiceId);
+      if (tx) await upsertSingleAllocationForMatch(tx, invoiceId, allocationAmount);
 
       if (exactMatch && !isPartialPayment) {
         toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
