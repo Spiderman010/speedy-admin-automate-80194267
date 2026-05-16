@@ -264,7 +264,7 @@ export function BankMatchDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>Transactie koppelen</DialogTitle>
           <DialogDescription>Koppel aan een factuur of boek handmatig.</DialogDescription>
@@ -312,6 +312,7 @@ export function BankMatchDialog({
           );
         })()}
 
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="w-full">
             <TabsTrigger value="factuur" className="flex-1">Koppel aan factuur</TabsTrigger>
@@ -325,7 +326,7 @@ export function BankMatchDialog({
                 Opnieuw matchen
               </Button>
             </div>
-            <ScrollArea className="max-h-72 overflow-y-auto">
+            <ScrollArea className="h-[220px]">
               {candidates.length === 0 ? (
                 <p className="py-8 text-center text-muted-foreground text-sm">Geen openstaande facturen gevonden.</p>
               ) : (
@@ -432,8 +433,9 @@ export function BankMatchDialog({
             </div>
           </TabsContent>
         </Tabs>
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => handleOpenChange(false)}>Annuleren</Button>
           {tab === "factuur" ? (
             <Button disabled={!selectedId || !!allocError} onClick={handleConfirm}>
