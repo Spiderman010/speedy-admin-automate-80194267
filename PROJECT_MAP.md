@@ -14,14 +14,42 @@
 
 ---
 
+## Production backend management
+
+The production Supabase project (`alxlbdhpbwlehbdbfejw`) is **managed through Lovable Cloud**, not through the user's personal Supabase dashboard.
+
+- It will **not** appear in the personal Supabase dashboard at `supabase.com/dashboard`.
+- SQL, database tables, RLS policies, users, storage, edge functions, logs, and secrets must be managed via:
+  - **Lovable → Cloud icon** (top toolbar), or
+  - **Cmd/Ctrl+K → "Cloud"**
+
+**Do not** attempt to manage production schema or data from the personal Supabase dashboard.
+
+---
+
+## Vercel clarification
+
+Vercel contains additional Supabase/Postgres environment variables (added 16 Apr). These **likely belong to the Vercel Supabase Marketplace integration**, not the production Lovable Cloud backend, and should not be used for BoekAssist production SQL.
+
+The running frontend uses these two variables, which point to the correct Lovable Cloud backend:
+
+| Variable | Value |
+|---|---|
+| `VITE_SUPABASE_URL` | `https://alxlbdhpbwlehbdbfejw.supabase.co` |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | _(set in Lovable Cloud secrets)_ |
+
+---
+
 ## Do not use
 
 The following Supabase project refs **must not** be used for BoekAssist production SQL or migrations:
 
 | Ref | Reason |
 |---|---|
-| `olumcwneiejjefhkzgmz` | Not the database used by the running BoekAssist app |
+| `olumcwneiejjefhkzgmv` | Not the database used by the running BoekAssist app |
 | `ycuofllsdssoezwwpqmv` | Not the database used by the running BoekAssist app |
+
+Also: the Vercel Supabase Marketplace database (separate from the Lovable Cloud backend) must not receive BoekAssist migrations.
 
 ---
 
@@ -42,11 +70,8 @@ Before running any SQL or migration, complete **all** of the following steps:
    ```
    alxlbdhpbwlehbdbfejw
    ```
-8. Open the Supabase dashboard.
-9. Confirm the browser URL contains:
-   ```
-   /project/alxlbdhpbwlehbdbfejw
-   ```
+8. Open the **Lovable Cloud SQL editor** (Lovable → Cloud icon, or Cmd/Ctrl+K → "Cloud").
+9. Confirm you are working in project `alxlbdhpbwlehbdbfejw`.
 
 Only after all steps confirm `alxlbdhpbwlehbdbfejw` may SQL be run.
 
@@ -54,7 +79,8 @@ Only after all steps confirm `alxlbdhpbwlehbdbfejw` may SQL be run.
 
 ## SQL safety rules
 
-- Never run SQL if the Supabase dashboard project ref is unclear.
+- For production SQL, use the **Lovable Cloud SQL editor** — not the personal Supabase dashboard and not the Vercel Supabase Marketplace database.
+- Never run SQL if the project ref is unclear.
 - Never run SQL in `olumcwneiejjefhkzgmz`.
 - Never run SQL in `ycuofllsdssoezwwpqmv`.
 - Never run a "Combined Fresh Install Schema" on production.
@@ -63,26 +89,27 @@ Only after all steps confirm `alxlbdhpbwlehbdbfejw` may SQL be run.
 
 ---
 
-## Current migration note
+## Current migration status
 
-PR #21 added the migration:
+### PR #21 — `bank_transaction_allocations`
 
+Migration file:
 ```
 supabase/migrations/20260515120000_add-bank-transaction-allocations.sql
 ```
 
 **Purpose:** Adds `bank_transaction_allocations` — the foundation for many-to-many bank transaction / invoice allocations.
 
-**Status:** The migration file exists in `main`, but application to the real production Supabase database `alxlbdhpbwlehbdbfejw` still needs to be verified before building allocation UI.
+**Status: ✅ Applied.**
+The migration has been run in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw`.
+The verification query returned `bank_transaction_allocations`, confirming the table exists in the production database.
 
-**Verification query** (run in the SQL editor of project `alxlbdhpbwlehbdbfejw`):
-
+Verification query (for future reference):
 ```sql
 select to_regclass('public.bank_transaction_allocations') as allocation_table;
 ```
 
-Expected result if the migration has been applied:
-
+Expected result:
 ```
 allocation_table
 ─────────────────────────────────────
@@ -94,4 +121,4 @@ bank_transaction_allocations
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**
-> Verify the app Network tab and Supabase dashboard project ref first.
+> Open the Lovable Cloud SQL editor and confirm the project ref is `alxlbdhpbwlehbdbfejw` before proceeding.
