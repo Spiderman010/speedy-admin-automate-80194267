@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,7 +44,7 @@ import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
+import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -68,6 +68,9 @@ export default function Bank() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
+  const [matchDialogMode, setMatchDialogMode] = useState<"primary" | "additional">("primary");
+  const [additionalMaxAmount, setAdditionalMaxAmount] = useState<number | undefined>(undefined);
+  const [additionalExcludedIds, setAdditionalExcludedIds] = useState<string[]>([]);
   const [verwerkingOpen, setVerwerkingOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLedger, setBulkLedger] = useState("");
@@ -94,6 +97,7 @@ export default function Bank() {
   const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const deleteAllocationsForTx = useDeleteAllocationsForTransaction();
+  const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
@@ -146,6 +150,16 @@ export default function Bank() {
     for (const i of salesInvs ?? []) m.set(i.id, i);
     return m;
   }, [salesInvs]);
+
+  const allocationsByTxId = useMemo(() => {
+    const m = new Map<string, typeof allAllocations[number][]>();
+    for (const a of allAllocations ?? []) {
+      const existing = m.get(a.bank_transaction_id);
+      if (existing) existing.push(a);
+      else m.set(a.bank_transaction_id, [a]);
+    }
+    return m;
+  }, [allAllocations]);
 
   const vraagpostByBankTransactionId = useMemo(() => {
     const m = new Map<string, NonNullable<typeof vraagposten>[number]>();
@@ -346,6 +360,13 @@ export default function Bank() {
     }
   }, [transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
+  const closeMatchDialog = useCallback(() => {
+    setMatchTx(null);
+    setMatchDialogMode("primary");
+    setAdditionalMaxAmount(undefined);
+    setAdditionalExcludedIds([]);
+  }, []);
+
   const handleMatch = useCallback(async (
     transactionId: string,
     invoiceId: string,
@@ -357,6 +378,41 @@ export default function Bank() {
   ) => {
     try {
       const tx = transactions?.find(t => t.id === transactionId);
+
+      // Additional mode: only write the new allocation row and update the invoice's remaining_amount.
+      // Do NOT overwrite the tx record (matched_invoice_id is already set for the primary invoice).
+      if (matchDialogMode === "additional") {
+        if (tx && allocationAmount != null && allocationAmount > 0) {
+          // Safety guard: block if this invoice is already allocated to the same tx.
+          const alreadyAllocated = (allAllocations ?? []).some(
+            a => a.bank_transaction_id === transactionId && a.invoice_id === invoiceId,
+          );
+          if (alreadyAllocated) {
+            throw new Error("Deze factuur is al gekoppeld aan deze banktransactie");
+          }
+          await upsertSingleAllocationForMatch(tx, invoiceId, allocationAmount);
+
+          const purchaseInv = invoices?.find(i => i.id === invoiceId);
+          const salesInv = salesInvs?.find(i => i.id === invoiceId);
+          if (purchaseInv) {
+            const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? getInvoiceTotalAmount(purchaseInv) ?? 0;
+            const newRemaining = Math.max(0, currentRemaining - allocationAmount);
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+          } else if (salesInv) {
+            const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? getInvoiceTotalAmount(salesInv) ?? 0;
+            const newRemaining = Math.max(0, currentRemaining - allocationAmount);
+            if (newRemaining < 0.01) {
+              await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+            } else {
+              await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+            }
+          }
+
+          toast({ title: "Extra factuur gekoppeld" });
+        }
+        closeMatchDialog();
+        return;
+      }
 
       await updateTx.mutateAsync({
         id: transactionId,
@@ -389,11 +445,11 @@ export default function Bank() {
         toast({ title: "Transactie gekoppeld" });
       }
 
-      setMatchTx(null);
+      closeMatchDialog();
     } catch (e: any) {
       toast({ title: "Fout bij koppelen", description: e.message, variant: "destructive" });
     }
-  }, [transactions, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+  }, [matchDialogMode, allAllocations, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
 
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
@@ -448,11 +504,11 @@ export default function Bank() {
         grootboekrekening_id: grootboekrekeningId || undefined,
       });
       toast({ title: "Transactie geboekt", description: `Grootboek: ${ledgerAccount}` });
-      setMatchTx(null);
+      closeMatchDialog();
     } catch (e: any) {
       toast({ title: "Fout bij boeken", description: e.message, variant: "destructive" });
     }
-  }, [updateTx, toast]);
+  }, [updateTx, closeMatchDialog, toast]);
 
   const handleMaakVraagpost = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
@@ -992,6 +1048,11 @@ export default function Bank() {
                 {filteredSorted.map((t) => {
                   const isOpen = isOpenTransactionStatus(t.match_status);
                   const isSuggestion = suggestionIds.has(t.id);
+                  const txAbsAmt = Math.abs(t.amount);
+                  const allocationsForTx = allocationsByTxId.get(t.id) ?? [];
+                  const hasAllocationRows = allocationsForTx.length > 0;
+                  const allocatedForTx = allocationsForTx.reduce((sum, a) => sum + a.amount, 0);
+                  const unallocatedAmount = Math.max(0, txAbsAmt - allocatedForTx);
                   return (
                     <TableRow key={t.id}>
                       <TableCell>
@@ -1192,6 +1253,24 @@ export default function Bank() {
                               Koppel
                             </Button>
                           )}
+                          {t.match_status === "gematcht" && hasAllocationRows && unallocatedAmount >= 0.01 && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button size="sm" variant="ghost" onClick={() => {
+                                    const alreadyIds = allocationsForTx.map(a => a.invoice_id);
+                                    setAdditionalExcludedIds(alreadyIds);
+                                    setMatchDialogMode("additional");
+                                    setAdditionalMaxAmount(unallocatedAmount);
+                                    setMatchTx(t);
+                                  }}>
+                                    <Plus className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Extra factuur koppelen ({formatCurrency(unallocatedAmount)} resterend)</TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
                           {isOpen && (
                             <TooltipProvider>
                               <Tooltip>
@@ -1335,13 +1414,18 @@ export default function Bank() {
 
       <BankMatchDialog
         open={!!matchTx}
-        onOpenChange={(v) => { if (!v) setMatchTx(null); }}
+        onOpenChange={(v) => { if (!v) closeMatchDialog(); }}
         transaction={matchTx}
         purchaseInvoices={(invoices ?? []).filter(i => matchTx ? i.client_id === matchTx.client_id : true)}
         salesInvoices={(salesInvs ?? []).filter(i => matchTx ? i.client_id === matchTx.client_id : true)}
         onConfirm={handleMatch}
         onManualBook={handleManualBook}
         onRefresh={handleRefreshMatching}
+        maxAllocationAmount={matchDialogMode === "additional" ? additionalMaxAmount : undefined}
+        alreadyAllocatedAmount={matchDialogMode === "additional" && matchTx
+          ? (allocationsByTxId.get(matchTx.id) ?? []).reduce((s, a) => s + a.amount, 0)
+          : undefined}
+        excludedInvoiceIds={matchDialogMode === "additional" ? additionalExcludedIds : undefined}
       />
     </>
   );
