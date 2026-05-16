@@ -23,6 +23,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClientContext } from "@/hooks/useClientContext";
+import { getInvoicePaymentState } from "@/lib/invoice-balances";
 
 const statusConfig: Record<string, { label: string; icon: typeof Clock; variant: "default" | "secondary" | "outline" }> = {
   concept: { label: "Concept", icon: Clock, variant: "secondary" },
@@ -46,6 +47,8 @@ export default function Verkoop() {
   const [uploadProgress, setUploadProgress] = useState<string[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [workflowFilter, setWorkflowFilter] = useState("all");
+  const [paymentFilter, setPaymentFilter] = useState("all");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -90,6 +93,17 @@ export default function Verkoop() {
         (inv.status || "").toLowerCase().includes(q)
       );
     }
+    if (workflowFilter !== "all") {
+      list = list.filter(inv => inv.status === workflowFilter);
+    }
+    if (paymentFilter !== "all") {
+      list = list.filter(inv => {
+        const state = getInvoicePaymentState(inv);
+        if (paymentFilter === "paid") return state === "paid";
+        if (paymentFilter === "partial") return state === "partial";
+        return state === "open" || state === "unknown";
+      });
+    }
     list.sort((a, b) => {
       let cmp = 0;
       switch (sortField) {
@@ -105,7 +119,7 @@ export default function Verkoop() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return list;
-  }, [invoices, searchQuery, sortField, sortDir, clients]);
+  }, [invoices, searchQuery, workflowFilter, paymentFilter, sortField, sortDir, clients]);
 
   const handleManualSave = async (form: SalesInvoiceFormData, file: File | null) => {
     let pdfPath: string | null = null;
@@ -308,14 +322,35 @@ export default function Verkoop() {
         </TabsContent>
 
         <TabsContent value="overview" className="mt-6">
-          <div className="mb-4 relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Zoeken op factuurnummer, klantnaam of status..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 max-w-md"
-            />
+          <div className="mb-4 flex flex-wrap gap-2 items-center">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Zoeken op factuurnummer, klantnaam of status..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 w-72"
+              />
+            </div>
+            <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle workflowstatussen</SelectItem>
+                <SelectItem value="concept">Concept</SelectItem>
+                <SelectItem value="verzonden">Verzonden</SelectItem>
+                <SelectItem value="gecontroleerd">Gecontroleerd</SelectItem>
+                <SelectItem value="betaald">Betaald</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
+              <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle betaalstatussen</SelectItem>
+                <SelectItem value="open">Openstaand</SelectItem>
+                <SelectItem value="partial">Deelbetaling</SelectItem>
+                <SelectItem value="paid">Betaald</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <Card>
             <CardContent className="p-6">

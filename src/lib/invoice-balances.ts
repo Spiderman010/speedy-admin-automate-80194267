@@ -24,3 +24,12 @@ export function shouldSyncRemainingAmount(invoice: InvoiceAmounts) {
   const totalAmount = getInvoiceTotalAmount(invoice);
   return invoice.status !== "betaald" && (invoice.remaining_amount == null || invoice.remaining_amount === totalAmount);
 }
+
+export function getInvoicePaymentState(invoice: InvoiceAmounts): "paid" | "partial" | "open" | "unknown" {
+  const remaining = getInvoiceRemainingAmount(invoice);
+  if (remaining === 0) return "paid";
+  const total = getInvoiceTotalAmount(invoice);
+  if (total != null && remaining != null && remaining > 0 && remaining < total) return "partial";
+  if (total != null || remaining != null) return "open";
+  return "unknown";
+}
