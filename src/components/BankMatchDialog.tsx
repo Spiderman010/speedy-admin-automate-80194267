@@ -44,6 +44,8 @@ interface BankMatchDialogProps {
   maxAllocationAmount?: number;
   /** Total already allocated for this tx (displayed in info panel). */
   alreadyAllocatedAmount?: number;
+  /** Invoice IDs to exclude from the candidate list (already allocated to this tx in additional mode). */
+  excludedInvoiceIds?: string[];
 }
 
 const formatCurrency = (amount: number) =>
@@ -183,7 +185,7 @@ export function rankCandidates(
 
 export function BankMatchDialog({
   open, onOpenChange, transaction, purchaseInvoices, salesInvoices, onConfirm, onManualBook, onRefresh,
-  maxAllocationAmount, alreadyAllocatedAmount,
+  maxAllocationAmount, alreadyAllocatedAmount, excludedInvoiceIds,
 }: BankMatchDialogProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<string>("factuur");
@@ -195,9 +197,12 @@ export function BankMatchDialog({
 
   const candidates = useMemo(() => {
     if (!transaction) return [];
-    return rankCandidates(transaction, purchaseInvoices, salesInvoices);
+    const all = rankCandidates(transaction, purchaseInvoices, salesInvoices);
+    if (!excludedInvoiceIds?.length) return all;
+    const excluded = new Set(excludedInvoiceIds);
+    return all.filter(c => !excluded.has(c.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transaction, purchaseInvoices, salesInvoices, refreshKey]);
+  }, [transaction, purchaseInvoices, salesInvoices, refreshKey, excludedInvoiceIds]);
 
   const selected = candidates.find((c) => c.id === selectedId);
   const exactMatch = selected ? (selected.reasons.includes("Exact bedrag") || selected.reasons.includes("Bedrag ≈ gelijk (≤€0,50)")) : false;

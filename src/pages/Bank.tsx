@@ -70,6 +70,7 @@ export default function Bank() {
   const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
   const [matchDialogMode, setMatchDialogMode] = useState<"primary" | "additional">("primary");
   const [additionalMaxAmount, setAdditionalMaxAmount] = useState<number | undefined>(undefined);
+  const [additionalExcludedIds, setAdditionalExcludedIds] = useState<string[]>([]);
   const [verwerkingOpen, setVerwerkingOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLedger, setBulkLedger] = useState("");
@@ -361,6 +362,7 @@ export default function Bank() {
     setMatchTx(null);
     setMatchDialogMode("primary");
     setAdditionalMaxAmount(undefined);
+    setAdditionalExcludedIds([]);
   }, []);
 
   const handleMatch = useCallback(async (
@@ -379,6 +381,13 @@ export default function Bank() {
       // Do NOT overwrite the tx record (matched_invoice_id is already set for the primary invoice).
       if (matchDialogMode === "additional") {
         if (tx && allocationAmount != null && allocationAmount > 0) {
+          // Safety guard: block if this invoice is already allocated to the same tx.
+          const alreadyAllocated = (allAllocations ?? []).some(
+            a => a.bank_transaction_id === transactionId && a.invoice_id === invoiceId,
+          );
+          if (alreadyAllocated) {
+            throw new Error("Deze factuur is al gekoppeld aan deze banktransactie");
+          }
           await upsertSingleAllocationForMatch(tx, invoiceId, allocationAmount);
 
           const purchaseInv = invoices?.find(i => i.id === invoiceId);
@@ -1245,6 +1254,10 @@ export default function Bank() {
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button size="sm" variant="ghost" onClick={() => {
+                                    const alreadyIds = (allAllocations ?? [])
+                                      .filter(a => a.bank_transaction_id === t.id)
+                                      .map(a => a.invoice_id);
+                                    setAdditionalExcludedIds(alreadyIds);
                                     setMatchDialogMode("additional");
                                     setAdditionalMaxAmount(unallocatedAmount);
                                     setMatchTx(t);
@@ -1408,6 +1421,7 @@ export default function Bank() {
         onRefresh={handleRefreshMatching}
         maxAllocationAmount={matchDialogMode === "additional" ? additionalMaxAmount : undefined}
         alreadyAllocatedAmount={matchDialogMode === "additional" && matchTx ? allocatedAmountByTxId.get(matchTx.id) : undefined}
+        excludedInvoiceIds={matchDialogMode === "additional" ? additionalExcludedIds : undefined}
       />
     </>
   );
