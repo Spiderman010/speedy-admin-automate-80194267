@@ -44,7 +44,7 @@ import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
+import { useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction, useBankTransactionAllocations, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -94,6 +94,7 @@ export default function Bank() {
   const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const deleteAllocationsForTx = useDeleteAllocationsForTransaction();
+  const { data: allocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
@@ -157,6 +158,16 @@ export default function Bank() {
     return m;
   }, [vraagposten]);
 
+  const allocationsByInvoiceId = useMemo(() => {
+    const m = new Map<string, BankTransactionAllocation[]>();
+    for (const a of allocations ?? []) {
+      const existing = m.get(a.invoice_id) ?? [];
+      existing.push(a);
+      m.set(a.invoice_id, existing);
+    }
+    return m;
+  }, [allocations]);
+
   // Resolves invoice, checks client consistency, computes capped amount, and upserts one
   // allocation row. Throws on any error so callers can surface it via toast.
   const upsertSingleAllocationForMatch = useCallback(async (
@@ -174,8 +185,17 @@ export default function Bank() {
 
     const invoiceType: "inkoop" | "verkoop" = purchaseInv ? "inkoop" : "verkoop";
     const txAmount = Math.abs(tx.amount);
-    const invoiceOpen = Math.abs(getInvoiceRemainingAmount(inv) ?? getInvoiceTotalAmount(inv) ?? txAmount);
-    const allocationAmount = Math.min(txAmount, invoiceOpen);
+
+    // Cap using invoice total minus allocations already committed to this invoice by
+    // other transactions. Exclude the current tx's own existing allocation row so
+    // re-matching the same tx/invoice pair correctly recomputes its amount.
+    const invoiceTotal = Math.abs(getInvoiceTotalAmount(inv) ?? txAmount);
+    const existingForInvoice = allocationsByInvoiceId.get(invoiceId) ?? [];
+    const alreadyAllocated = existingForInvoice
+      .filter(a => a.bank_transaction_id !== tx.id)
+      .reduce((sum, a) => sum + a.amount, 0);
+    const allocationOpen = Math.max(0, invoiceTotal - alreadyAllocated);
+    const allocationAmount = Math.min(txAmount, allocationOpen);
 
     if (allocationAmount <= 0) return;
 
@@ -186,7 +206,7 @@ export default function Bank() {
       client_id: tx.client_id,
       amount: allocationAmount,
     });
-  }, [invoices, salesInvs, upsertAllocation]);
+  }, [invoices, salesInvs, allocationsByInvoiceId, upsertAllocation]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
