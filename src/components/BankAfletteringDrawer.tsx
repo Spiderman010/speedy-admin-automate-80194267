@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Sheet,
   SheetContent,
@@ -50,6 +50,11 @@ export function BankAfletteringDrawer({
 }: BankAfletteringDrawerProps) {
   // ── Filter chip state ────────────────────────────────────────────────
   const [suggestionFilter, setSuggestionFilter] = useState<SuggestionFilter>("auto");
+
+  // Reset filter to Auto whenever the active transaction changes.
+  useEffect(() => {
+    setSuggestionFilter("auto");
+  }, [transaction?.id]);
 
   // ── Derived amounts ──────────────────────────────────────────────────
   const txAmount = transaction ? Math.abs(transaction.amount) : 0;
@@ -103,8 +108,7 @@ export function BankAfletteringDrawer({
   const rawSuggestions = useMemo(() => {
     if (!showSuggestions || !transaction) return [];
     return rankCandidates(transaction, purchaseInvoices, salesInvoices)
-      .filter(c => c.score > 0 && !coveredInvoiceIds.has(c.id))
-      .slice(0, 16);
+      .filter(c => c.score > 0 && !coveredInvoiceIds.has(c.id));
   }, [showSuggestions, transaction, purchaseInvoices, salesInvoices, coveredInvoiceIds]);
 
   // Apply direction filter and sort same-direction first in "alle" mode.
