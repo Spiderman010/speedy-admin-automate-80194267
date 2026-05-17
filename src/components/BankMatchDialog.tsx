@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { CheckCircle2, RefreshCw } from "lucide-react";
+import { CheckCircle2, RefreshCw, AlertTriangle } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
@@ -183,6 +183,8 @@ export function rankCandidates(
 }
 
 
+type CandidateFilter = "auto" | "verkoop" | "inkoop" | "alle";
+
 export function BankMatchDialog({
   open, onOpenChange, transaction, purchaseInvoices, salesInvoices, onConfirm, onManualBook, onRefresh,
   maxAllocationAmount, alreadyAllocatedAmount, excludedInvoiceIds,
@@ -194,6 +196,7 @@ export function BankMatchDialog({
   const [manualDesc, setManualDesc] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [allocationAmountStr, setAllocationAmountStr] = useState("");
+  const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>("auto");
 
   const candidates = useMemo(() => {
     if (!transaction) return [];
@@ -203,6 +206,24 @@ export function BankMatchDialog({
     return all.filter(c => !excluded.has(c.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transaction, purchaseInvoices, salesInvoices, refreshKey, excludedInvoiceIds]);
+
+  const preferredType: "inkoop" | "verkoop" = transaction?.amount != null
+    ? (transaction.amount >= 0 ? "verkoop" : "inkoop")
+    : "verkoop";
+
+  const displayedCandidates = useMemo(() => {
+    if (candidateFilter === "auto") return candidates.filter(c => c.type === preferredType);
+    if (candidateFilter === "verkoop") return candidates.filter(c => c.type === "verkoop");
+    if (candidateFilter === "inkoop") return candidates.filter(c => c.type === "inkoop");
+    const same = candidates.filter(c => c.type === preferredType);
+    const opposite = candidates.filter(c => c.type !== preferredType);
+    return [...same, ...opposite];
+  }, [candidates, candidateFilter, preferredType]);
+
+  // Reset filter to auto when the transaction changes (dialog re-opens with a different tx)
+  useEffect(() => {
+    setCandidateFilter("auto");
+  }, [transaction?.id]);
 
   const selected = candidates.find((c) => c.id === selectedId);
   const exactMatch = selected ? (selected.reasons.includes("Exact bedrag") || selected.reasons.includes("Bedrag ≈ gelijk (≤€0,50)")) : false;
@@ -345,23 +366,51 @@ export function BankMatchDialog({
                 Opnieuw matchen
               </Button>
             </div>
+            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+              {(["auto", "verkoop", "inkoop", "alle"] as CandidateFilter[]).map(f => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setCandidateFilter(f)}
+                  className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                    candidateFilter === f
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  {f === "auto"
+                    ? `Auto (${preferredType === "verkoop" ? "Verkoop" : "Inkoop"})`
+                    : f.charAt(0).toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
             <ScrollArea className="h-[180px]">
-              {candidates.length === 0 ? (
-                <p className="py-8 text-center text-muted-foreground text-sm">Geen openstaande facturen gevonden.</p>
+              {displayedCandidates.length === 0 ? (
+                <p className="py-8 text-center text-muted-foreground text-sm">
+                  {candidates.length === 0
+                    ? "Geen openstaande facturen gevonden."
+                    : "Geen facturen gevonden voor dit filter."}
+                </p>
               ) : (
                 <div className="space-y-2">
-                  {candidates.map((c) => (
+                  {displayedCandidates.map((c) => {
+                    const isOpposite = c.type !== preferredType;
+                    return (
                     <button
                       key={c.id}
                       type="button"
                       onClick={() => setSelectedId(c.id)}
                       className={`w-full text-left rounded-lg border p-3 transition-colors hover:bg-accent/50 ${
-                        selectedId === c.id ? "border-primary bg-primary/5 ring-1 ring-primary" : ""
+                        selectedId === c.id
+                          ? "border-primary bg-primary/5 ring-1 ring-primary"
+                          : isOpposite
+                          ? "border-amber-300 dark:border-amber-700"
+                          : ""
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-medium truncate">{c.name}</span>
                             <Badge variant="outline" className="text-[10px] shrink-0">
                               {c.type === "inkoop" ? "Inkoop" : "Verkoop"}
@@ -369,6 +418,12 @@ export function BankMatchDialog({
                             {c.isPartialPayment && (
                               <Badge variant="secondary" className="text-[10px] shrink-0 bg-warning/20 text-warning-foreground">
                                 Deelbetaling
+                              </Badge>
+                            )}
+                            {isOpposite && (
+                              <Badge variant="outline" className="text-[10px] shrink-0 border-amber-500/60 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 flex items-center gap-0.5">
+                                <AlertTriangle className="h-2.5 w-2.5" />
+                                Tegengestelde richting
                               </Badge>
                             )}
                           </div>
@@ -399,7 +454,8 @@ export function BankMatchDialog({
                         </div>
                       </div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </ScrollArea>
