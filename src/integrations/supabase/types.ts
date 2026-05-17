@@ -38,6 +38,57 @@ export type Database = {
         }
         Relationships: []
       }
+      bank_transaction_allocations: {
+        Row: {
+          amount: number
+          bank_transaction_id: string
+          client_id: string
+          created_at: string
+          id: string
+          invoice_id: string
+          invoice_type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          bank_transaction_id: string
+          client_id: string
+          created_at?: string
+          id?: string
+          invoice_id: string
+          invoice_type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          bank_transaction_id?: string
+          client_id?: string
+          created_at?: string
+          id?: string
+          invoice_id?: string
+          invoice_type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_transaction_allocations_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bta_tx_user_client_fk"
+            columns: ["bank_transaction_id", "user_id", "client_id"]
+            isOneToOne: false
+            referencedRelation: "bank_transactions"
+            referencedColumns: ["id", "user_id", "client_id"]
+          },
+        ]
+      }
       bank_transactions: {
         Row: {
           amount: number
