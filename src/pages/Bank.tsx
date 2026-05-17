@@ -231,6 +231,56 @@ export default function Bank() {
     });
   }, [invoices, salesInvs, upsertAllocation]);
 
+  // After deleting allocation rows for one or more bank transactions, recalculate
+  // remaining_amount for every invoice that was affected.
+  // Uses the in-memory allAllocations cache, filtering out rows belonging to the
+  // deleted transaction IDs so the result reflects post-deletion state without
+  // needing an extra round-trip.
+  const recalculateRemainingAfterDeletions = useCallback(async (deletedTxIds: string[]) => {
+    if (deletedTxIds.length === 0) return;
+    const deletedSet = new Set(deletedTxIds);
+
+    // Collect unique (invoiceId → invoiceType) pairs from all deleted txs
+    const affectedInvoices = new Map<string, "inkoop" | "verkoop">();
+    for (const txId of deletedTxIds) {
+      for (const alloc of allocationsByTxId.get(txId) ?? []) {
+        if (!affectedInvoices.has(alloc.invoice_id)) {
+          affectedInvoices.set(alloc.invoice_id, alloc.invoice_type);
+        }
+      }
+    }
+
+    for (const [invoiceId, invoiceType] of affectedInvoices.entries()) {
+      // Sum allocations for this invoice that are NOT from any of the deleted txs
+      const allocatedSum = (allAllocations ?? [])
+        .filter(a => a.invoice_id === invoiceId && !deletedSet.has(a.bank_transaction_id))
+        .reduce((sum, a) => sum + a.amount, 0);
+
+      if (invoiceType === "inkoop") {
+        const inv = invoices?.find(i => i.id === invoiceId);
+        if (!inv) continue;
+        const total = getInvoiceTotalAmount(inv);
+        if (total == null) continue;
+        const newRemaining = Math.max(0, total - allocatedSum);
+        await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+      } else {
+        const inv = salesInvs?.find(i => i.id === invoiceId);
+        if (!inv) continue;
+        const total = getInvoiceTotalAmount(inv);
+        if (total == null) continue;
+        const newRemaining = Math.max(0, total - allocatedSum);
+        if (newRemaining < 0.01) {
+          await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+        } else if (inv.status === "betaald") {
+          // Allocation removed — invoice is no longer fully paid; reset status
+          await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: newRemaining });
+        } else {
+          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
+        }
+      }
+    }
+  }, [allocationsByTxId, allAllocations, invoices, salesInvs, updatePurchase, updateSales]);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -481,8 +531,8 @@ export default function Bank() {
 
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
-      const invoiceId = tx.matched_invoice_id;
-      const txAmount = Math.abs(tx.amount);
+      const affectedAllocations = allocationsByTxId.get(tx.id) ?? [];
+      const hasAllocations = affectedAllocations.length > 0;
 
       await deleteAllocationsForTx.mutateAsync(tx.id);
 
@@ -493,7 +543,13 @@ export default function Bank() {
         match_confidence: null,
       });
 
-      if (invoiceId) {
+      if (hasAllocations) {
+        // Modern path: recalculate each affected invoice from remaining allocation rows
+        await recalculateRemainingAfterDeletions([tx.id]);
+      } else if (tx.matched_invoice_id) {
+        // Legacy path: no allocation rows exist, restore by adding back the tx amount
+        const invoiceId = tx.matched_invoice_id;
+        const txAmount = Math.abs(tx.amount);
         const purchaseInv = invoices?.find(i => i.id === invoiceId);
         const salesInv = salesInvs?.find(i => i.id === invoiceId);
 
@@ -501,8 +557,7 @@ export default function Bank() {
           const totalAmount = getInvoiceTotalAmount(purchaseInv);
           if (totalAmount != null) {
             const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
-            const restoredRemaining = Math.min(totalAmount, currentRemaining + txAmount);
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: restoredRemaining });
+            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
           }
         } else if (salesInv) {
           const totalAmount = getInvoiceTotalAmount(salesInv);
@@ -521,7 +576,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij ontkoppelen", description: e.message, variant: "destructive" });
     }
-  }, [deleteAllocationsForTx, updateTx, updatePurchase, updateSales, invoices, salesInvs, refetchPurchase, refetchSales, toast]);
+  }, [allocationsByTxId, recalculateRemainingAfterDeletions, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, invoices, salesInvs, refetchPurchase, refetchSales, toast]);
 
   const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => {
     try {
@@ -584,6 +639,8 @@ export default function Bank() {
     const ids = Array.from(selectedIds);
     let success = 0;
     const errors: string[] = [];
+    const deletedTxIds: string[] = [];
+    const legacyRestores: Array<{ invoiceId: string; txAmount: number }> = [];
 
     for (const id of ids) {
       const tx = transactions?.find(t => t.id === id);
@@ -593,26 +650,12 @@ export default function Bank() {
         // Reverse invoice side effects before overwriting the link
         const invoiceId = tx.matched_invoice_id;
         if (invoiceId) {
+          const affectedAllocations = allocationsByTxId.get(id) ?? [];
           await deleteAllocationsForTx.mutateAsync(id);
-          const txAmount = Math.abs(tx.amount);
-          const purchaseInv = invoices?.find(i => i.id === invoiceId);
-          const salesInv = salesInvs?.find(i => i.id === invoiceId);
-
-          if (purchaseInv) {
-            const totalAmount = getInvoiceTotalAmount(purchaseInv);
-            if (totalAmount != null) {
-              const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
-              const restoredRemaining = Math.min(totalAmount, currentRemaining + txAmount);
-              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: restoredRemaining });
-            }
-          } else if (salesInv) {
-            const totalAmount = getInvoiceTotalAmount(salesInv);
-            const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
-            if (salesInv.status === "betaald") {
-              await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-            } else if (totalAmount != null) {
-              await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-            }
+          if (affectedAllocations.length > 0) {
+            deletedTxIds.push(id);
+          } else {
+            legacyRestores.push({ invoiceId, txAmount: Math.abs(tx.amount) });
           }
         }
 
@@ -630,6 +673,32 @@ export default function Bank() {
       }
     }
 
+    // Recalculate all affected invoices from remaining allocation rows
+    if (deletedTxIds.length > 0) {
+      await recalculateRemainingAfterDeletions(deletedTxIds);
+    }
+
+    // Legacy path: no allocation rows, restore by adding back tx amount
+    for (const { invoiceId, txAmount } of legacyRestores) {
+      const purchaseInv = invoices?.find(i => i.id === invoiceId);
+      const salesInv = salesInvs?.find(i => i.id === invoiceId);
+      if (purchaseInv) {
+        const totalAmount = getInvoiceTotalAmount(purchaseInv);
+        if (totalAmount != null) {
+          const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
+          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+        }
+      } else if (salesInv) {
+        const totalAmount = getInvoiceTotalAmount(salesInv);
+        const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
+        if (salesInv.status === "betaald") {
+          await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+        } else if (totalAmount != null) {
+          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+        }
+      }
+    }
+
     setSelectedIds(new Set());
     setBulkLedger("");
     setBulkLedgerId("");
@@ -643,7 +712,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
     }
-  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, allocationsByTxId, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleBulkUnlink = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -651,14 +720,15 @@ export default function Bank() {
     const ids = Array.from(selectedIds);
     let success = 0;
     const errors: string[] = [];
+    const deletedTxIds: string[] = [];
+    const legacyRestores: Array<{ invoiceId: string; txAmount: number }> = [];
 
     for (const id of ids) {
       const tx = transactions?.find(t => t.id === id);
       if (!tx) continue;
 
       try {
-        const invoiceId = tx.matched_invoice_id;
-        const txAmount = Math.abs(tx.amount);
+        const affectedAllocations = allocationsByTxId.get(tx.id) ?? [];
 
         await deleteAllocationsForTx.mutateAsync(tx.id);
 
@@ -670,31 +740,41 @@ export default function Bank() {
           grootboekrekening_id: null,
         });
 
-        if (invoiceId) {
-          const purchaseInv = invoices?.find(i => i.id === invoiceId);
-          const salesInv = salesInvs?.find(i => i.id === invoiceId);
-
-          if (purchaseInv) {
-            const totalAmount = getInvoiceTotalAmount(purchaseInv);
-            if (totalAmount != null) {
-              const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
-              const restoredRemaining = Math.min(totalAmount, currentRemaining + txAmount);
-              await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: restoredRemaining });
-            }
-          } else if (salesInv) {
-            const totalAmount = getInvoiceTotalAmount(salesInv);
-            const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
-            if (salesInv.status === "betaald") {
-              await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-            } else if (totalAmount != null) {
-              await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-            }
-          }
+        if (affectedAllocations.length > 0) {
+          deletedTxIds.push(tx.id);
+        } else if (tx.matched_invoice_id) {
+          legacyRestores.push({ invoiceId: tx.matched_invoice_id, txAmount: Math.abs(tx.amount) });
         }
 
         success++;
       } catch (e: any) {
         errors.push(e.message || "Onbekende fout");
+      }
+    }
+
+    // Recalculate all affected invoices from remaining allocation rows in one pass
+    if (deletedTxIds.length > 0) {
+      await recalculateRemainingAfterDeletions(deletedTxIds);
+    }
+
+    // Legacy path: no allocation rows, restore by adding back tx amount
+    for (const { invoiceId, txAmount } of legacyRestores) {
+      const purchaseInv = invoices?.find(i => i.id === invoiceId);
+      const salesInv = salesInvs?.find(i => i.id === invoiceId);
+      if (purchaseInv) {
+        const totalAmount = getInvoiceTotalAmount(purchaseInv);
+        if (totalAmount != null) {
+          const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
+          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+        }
+      } else if (salesInv) {
+        const totalAmount = getInvoiceTotalAmount(salesInv);
+        const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
+        if (salesInv.status === "betaald") {
+          await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
+        } else if (totalAmount != null) {
+          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
+        }
       }
     }
 
@@ -710,7 +790,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij ontkoppelen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, allocationsByTxId, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleRepairAflettering = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
