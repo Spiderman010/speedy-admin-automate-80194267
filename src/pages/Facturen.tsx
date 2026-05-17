@@ -218,11 +218,29 @@ export default function Facturen() {
     if (!afletteringInvoice || !linkTarget) return;
     const amount = parseFloat(linkAmount);
     const inv = afletteringInvoice;
-    const { tx, bankUnallocated } = linkTarget;
+    const { tx } = linkTarget;
+
+    // 1. Duplicate check — abort if this (tx, invoice) pair is already allocated
+    const alreadyLinked = (allAllocations ?? []).some(
+      a => a.bank_transaction_id === tx.id && a.invoice_id === inv.id && a.invoice_type === "inkoop"
+    );
+    if (alreadyLinked) { toast({ title: "Deze banktransactie is al gekoppeld aan deze factuur", variant: "destructive" }); return; }
+
+    // 2. Fresh bank-unallocated from latest local allAllocations
+    const bankAllocatedNow = (allAllocations ?? [])
+      .filter(a => a.bank_transaction_id === tx.id)
+      .reduce((sum, a) => sum + a.amount, 0);
+    const bankUnallocatedNow = Math.abs(tx.amount) - bankAllocatedNow;
+    if (bankUnallocatedNow < 0.01) { toast({ title: "Deze banktransactie is al volledig gealloceerd", variant: "destructive" }); return; }
+
+    // 3. Fresh invoice-open from current state
     const invoiceOpen = getInvoiceRemainingAmount(inv) ?? 0;
+    if (invoiceOpen < 0.01) { toast({ title: "Deze factuur staat niet meer open", variant: "destructive" }); return; }
+
     if (isNaN(amount) || amount <= 0) { toast({ title: "Ongeldig bedrag", variant: "destructive" }); return; }
     if (amount > invoiceOpen + 0.005) { toast({ title: "Bedrag groter dan openstaand factuurbedrag", variant: "destructive" }); return; }
-    if (amount > bankUnallocated + 0.005) { toast({ title: "Bedrag groter dan beschikbaar banksaldo", variant: "destructive" }); return; }
+    if (amount > bankUnallocatedNow + 0.005) { toast({ title: "Bedrag groter dan beschikbaar banksaldo", variant: "destructive" }); return; }
+
     try {
       await upsertAllocation.mutateAsync({ bank_transaction_id: tx.id, invoice_type: "inkoop", invoice_id: inv.id, client_id: inv.client_id, amount });
       const newRemaining = Math.max(0, invoiceOpen - amount);
