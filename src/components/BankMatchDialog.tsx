@@ -224,7 +224,12 @@ export function BankMatchDialog({
   useEffect(() => {
     setCandidateFilter("auto");
   }, [transaction?.id]);
-
+useEffect(() => {
+  if (selectedId && !displayedCandidates.some(c => c.id === selectedId)) {
+    setSelectedId("");
+    setAllocationAmountStr("");
+  }
+}, [displayedCandidates, selectedId]);
   const selected = candidates.find((c) => c.id === selectedId);
   const exactMatch = selected ? (selected.reasons.includes("Exact bedrag") || selected.reasons.includes("Bedrag ≈ gelijk (≤€0,50)")) : false;
 
