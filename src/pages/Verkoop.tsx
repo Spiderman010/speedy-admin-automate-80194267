@@ -10,8 +10,12 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
-import { Plus, Download, FileText, CheckCircle2, Clock, Send, Upload, Loader2, Eye, ArrowUp, ArrowDown, Search } from "lucide-react";
+import { Plus, Download, FileText, CheckCircle2, Clock, Send, Upload, Loader2, Eye, ArrowUp, ArrowDown, Search, Landmark } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useSalesInvoices, useAddSalesInvoice, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
@@ -23,7 +27,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClientContext } from "@/hooks/useClientContext";
-import { getInvoicePaymentState } from "@/lib/invoice-balances";
+import { getInvoicePaymentState, getInvoiceTotalAmount, getInvoiceRemainingAmount } from "@/lib/invoice-balances";
+import { useBankTransactionAllocations } from "@/hooks/useBankTransactionAllocations";
+import { useBankTransactions } from "@/hooks/useBankTransactions";
+import { getDisplayDescription } from "@/lib/mt940-description-parser";
 
 function Chip({
   label, active, count, onClick, activeClassName,
@@ -85,10 +92,31 @@ export default function Verkoop() {
   const updateInvoice = useUpdateSalesInvoice();
   const [editInvoice, setEditInvoice] = useState<any>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [afletteringInvoice, setAfletteringInvoice] = useState<any>(null);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
   }, [selectedClientId]);
+
+  const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: allBankTransactions } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
+
+  const allocationsByInvoiceId = useMemo(() => {
+    const m = new Map<string, typeof allAllocations[number][]>();
+    for (const a of allAllocations ?? []) {
+      if (a.invoice_type !== "verkoop") continue;
+      const existing = m.get(a.invoice_id);
+      if (existing) existing.push(a);
+      else m.set(a.invoice_id, [a]);
+    }
+    return m;
+  }, [allAllocations]);
+
+  const bankTransactionById = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof allBankTransactions>[number]>();
+    for (const tx of allBankTransactions ?? []) m.set(tx.id, tx);
+    return m;
+  }, [allBankTransactions]);
 
   const getClientName = (id: string) => clients?.find(c => c.id === id)?.name ?? "—";
 
@@ -433,7 +461,7 @@ export default function Verkoop() {
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
-                      <TableHead className="w-12"></TableHead>
+                      <TableHead className="w-20"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -454,9 +482,23 @@ export default function Verkoop() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setEditInvoice(inv); setEditOpen(true); }}>
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              {allocationsByInvoiceId.has(inv.id) && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setAfletteringInvoice(inv); }}>
+                                        <Landmark className="h-4 w-4" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Bekijk aflettering</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setEditInvoice(inv); setEditOpen(true); }}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -499,6 +541,82 @@ export default function Verkoop() {
           }
         }}
       />
+
+      {/* Read-only allocation details dialog */}
+      {afletteringInvoice && (() => {
+        const allocations = allocationsByInvoiceId.get(afletteringInvoice.id) ?? [];
+        const totalAllocated = allocations.reduce((s, a) => s + a.amount, 0);
+        const invoiceTotal = getInvoiceTotalAmount(afletteringInvoice) ?? 0;
+        const openRemaining = getInvoiceRemainingAmount(afletteringInvoice) ?? Math.max(0, invoiceTotal - totalAllocated);
+        return (
+          <Dialog open={!!afletteringInvoice} onOpenChange={(v) => { if (!v) setAfletteringInvoice(null); }}>
+            <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+              <DialogHeader className="shrink-0">
+                <DialogTitle>Aflettering factuur {afletteringInvoice.invoice_number}</DialogTitle>
+                <DialogDescription>{afletteringInvoice.customer_name}</DialogDescription>
+              </DialogHeader>
+              <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-4">
+                {/* Invoice summary */}
+                <div className="rounded-lg border bg-muted/50 p-4 space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Totaalbedrag factuur</span>
+                    <span className="font-mono font-medium">{formatCurrency(invoiceTotal)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Totaal gealloceerd</span>
+                    <span className="font-mono font-medium text-green-700 dark:text-green-400">{formatCurrency(totalAllocated)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Openstaand</span>
+                    <span className={`font-mono font-medium ${openRemaining > 0.005 ? "text-amber-700 dark:text-amber-400" : "text-green-700 dark:text-green-400"}`}>
+                      {formatCurrency(openRemaining)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Allocation rows */}
+                {allocations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">Geen afletterings gevonden.</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Datum</TableHead>
+                        <TableHead>Omschrijving</TableHead>
+                        <TableHead className="text-right">Banktransactie</TableHead>
+                        <TableHead className="text-right">Gealloceerd</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {allocations.map((alloc) => {
+                        const tx = bankTransactionById.get(alloc.bank_transaction_id);
+                        return (
+                          <TableRow key={alloc.id}>
+                            <TableCell className="text-sm whitespace-nowrap">
+                              {tx ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground max-w-[220px] truncate">
+                              {tx
+                                ? getDisplayDescription(tx.description)
+                                : <span className="italic">Banktransactie niet gevonden</span>}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm">
+                              {tx ? formatCurrency(tx.amount) : "—"}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm font-medium">
+                              {formatCurrency(alloc.amount)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </>
   );
 }
