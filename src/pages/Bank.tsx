@@ -232,15 +232,24 @@ export default function Bank() {
   }, [invoices, salesInvs, upsertAllocation]);
 
   // After deleting allocation rows for one or more bank transactions, recalculate
-  // remaining_amount for every invoice that was affected.
-  // Uses the in-memory allAllocations cache, filtering out rows belonging to the
-  // deleted transaction IDs so the result reflects post-deletion state without
-  // needing an extra round-trip.
-  const recalculateRemainingAfterDeletions = useCallback(async (deletedTxIds: string[]) => {
-    if (deletedTxIds.length === 0) return;
+  // remaining_amount for every affected invoice.
+  //
+  // deletedTxIds  — IDs of bank transactions whose allocation rows were just deleted.
+  //                 Their rows are filtered out of allAllocations when summing survivors.
+  // extraInvoiceIds — additional invoice IDs to include (e.g. tx.matched_invoice_id) that
+  //                   may not appear in bank_transaction_allocations for the deleted txs.
+  //                   Invoice type is resolved via purchaseInvoiceById / salesInvoiceById.
+  //
+  // Uses the in-memory allAllocations cache with the deleted tx IDs filtered out,
+  // so no extra round-trip is needed and bulk deletions are handled correctly in one pass.
+  const recalculateRemainingAfterDeletions = useCallback(async (
+    deletedTxIds: string[],
+    extraInvoiceIds: string[] = [],
+  ) => {
+    if (deletedTxIds.length === 0 && extraInvoiceIds.length === 0) return;
     const deletedSet = new Set(deletedTxIds);
 
-    // Collect unique (invoiceId → invoiceType) pairs from all deleted txs
+    // Collect unique (invoiceId → invoiceType) from allocation rows of deleted txs
     const affectedInvoices = new Map<string, "inkoop" | "verkoop">();
     for (const txId of deletedTxIds) {
       for (const alloc of allocationsByTxId.get(txId) ?? []) {
@@ -250,8 +259,18 @@ export default function Bank() {
       }
     }
 
+    // Also include extra invoice IDs (e.g. matched_invoice_id); determine type by lookup
+    for (const invoiceId of extraInvoiceIds) {
+      if (affectedInvoices.has(invoiceId)) continue; // already covered by allocation rows
+      if (purchaseInvoiceById.has(invoiceId)) {
+        affectedInvoices.set(invoiceId, "inkoop");
+      } else if (salesInvoiceById.has(invoiceId)) {
+        affectedInvoices.set(invoiceId, "verkoop");
+      }
+    }
+
     for (const [invoiceId, invoiceType] of affectedInvoices.entries()) {
-      // Sum allocations for this invoice that are NOT from any of the deleted txs
+      // Sum surviving allocations for this invoice, excluding all deleted txs
       const allocatedSum = (allAllocations ?? [])
         .filter(a => a.invoice_id === invoiceId && !deletedSet.has(a.bank_transaction_id))
         .reduce((sum, a) => sum + a.amount, 0);
@@ -279,7 +298,7 @@ export default function Bank() {
         }
       }
     }
-  }, [allocationsByTxId, allAllocations, invoices, salesInvs, updatePurchase, updateSales]);
+  }, [allocationsByTxId, allAllocations, purchaseInvoiceById, salesInvoiceById, invoices, salesInvs, updatePurchase, updateSales]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -531,8 +550,10 @@ export default function Bank() {
 
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
-      const affectedAllocations = allocationsByTxId.get(tx.id) ?? [];
-      const hasAllocations = affectedAllocations.length > 0;
+      // Always include matched_invoice_id as an extra affected invoice so mixed
+      // legacy+modern cases (primary via matched_invoice_id, extras via allocation rows)
+      // are all recalculated — not just the ones found in allocation rows.
+      const extraIds = tx.matched_invoice_id ? [tx.matched_invoice_id] : [];
 
       await deleteAllocationsForTx.mutateAsync(tx.id);
 
@@ -543,32 +564,7 @@ export default function Bank() {
         match_confidence: null,
       });
 
-      if (hasAllocations) {
-        // Modern path: recalculate each affected invoice from remaining allocation rows
-        await recalculateRemainingAfterDeletions([tx.id]);
-      } else if (tx.matched_invoice_id) {
-        // Legacy path: no allocation rows exist, restore by adding back the tx amount
-        const invoiceId = tx.matched_invoice_id;
-        const txAmount = Math.abs(tx.amount);
-        const purchaseInv = invoices?.find(i => i.id === invoiceId);
-        const salesInv = salesInvs?.find(i => i.id === invoiceId);
-
-        if (purchaseInv) {
-          const totalAmount = getInvoiceTotalAmount(purchaseInv);
-          if (totalAmount != null) {
-            const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-          }
-        } else if (salesInv) {
-          const totalAmount = getInvoiceTotalAmount(salesInv);
-          const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
-          if (salesInv.status === "betaald") {
-            await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-          } else if (totalAmount != null) {
-            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-          }
-        }
-      }
+      await recalculateRemainingAfterDeletions([tx.id], extraIds);
 
       await refetchPurchase();
       await refetchSales();
@@ -576,7 +572,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij ontkoppelen", description: e.message, variant: "destructive" });
     }
-  }, [allocationsByTxId, recalculateRemainingAfterDeletions, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, invoices, salesInvs, refetchPurchase, refetchSales, toast]);
+  }, [recalculateRemainingAfterDeletions, deleteAllocationsForTx, updateTx, refetchPurchase, refetchSales, toast]);
 
   const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => {
     try {
@@ -640,23 +636,18 @@ export default function Bank() {
     let success = 0;
     const errors: string[] = [];
     const deletedTxIds: string[] = [];
-    const legacyRestores: Array<{ invoiceId: string; txAmount: number }> = [];
+    const extraInvoiceIds: string[] = [];
 
     for (const id of ids) {
       const tx = transactions?.find(t => t.id === id);
       if (!tx) continue;
 
       try {
-        // Reverse invoice side effects before overwriting the link
-        const invoiceId = tx.matched_invoice_id;
-        if (invoiceId) {
-          const affectedAllocations = allocationsByTxId.get(id) ?? [];
+        // Delete allocation rows before overwriting the link; collect affected invoice IDs
+        if (tx.matched_invoice_id) {
           await deleteAllocationsForTx.mutateAsync(id);
-          if (affectedAllocations.length > 0) {
-            deletedTxIds.push(id);
-          } else {
-            legacyRestores.push({ invoiceId, txAmount: Math.abs(tx.amount) });
-          }
+          deletedTxIds.push(id);
+          extraInvoiceIds.push(tx.matched_invoice_id);
         }
 
         await updateTx.mutateAsync({
@@ -673,30 +664,11 @@ export default function Bank() {
       }
     }
 
-    // Recalculate all affected invoices from remaining allocation rows
-    if (deletedTxIds.length > 0) {
-      await recalculateRemainingAfterDeletions(deletedTxIds);
-    }
-
-    // Legacy path: no allocation rows, restore by adding back tx amount
-    for (const { invoiceId, txAmount } of legacyRestores) {
-      const purchaseInv = invoices?.find(i => i.id === invoiceId);
-      const salesInv = salesInvs?.find(i => i.id === invoiceId);
-      if (purchaseInv) {
-        const totalAmount = getInvoiceTotalAmount(purchaseInv);
-        if (totalAmount != null) {
-          const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
-          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-        }
-      } else if (salesInv) {
-        const totalAmount = getInvoiceTotalAmount(salesInv);
-        const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
-        if (salesInv.status === "betaald") {
-          await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-        } else if (totalAmount != null) {
-          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-        }
-      }
+    // Recalculate all affected invoices; wrapped so cleanup always runs
+    try {
+      await recalculateRemainingAfterDeletions(deletedTxIds, extraInvoiceIds);
+    } catch (e: any) {
+      errors.push(e.message || "Fout bij herberekenen openstaand bedrag");
     }
 
     setSelectedIds(new Set());
@@ -712,7 +684,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
     }
-  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, allocationsByTxId, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleBulkUnlink = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -721,15 +693,13 @@ export default function Bank() {
     let success = 0;
     const errors: string[] = [];
     const deletedTxIds: string[] = [];
-    const legacyRestores: Array<{ invoiceId: string; txAmount: number }> = [];
+    const extraInvoiceIds: string[] = [];
 
     for (const id of ids) {
       const tx = transactions?.find(t => t.id === id);
       if (!tx) continue;
 
       try {
-        const affectedAllocations = allocationsByTxId.get(tx.id) ?? [];
-
         await deleteAllocationsForTx.mutateAsync(tx.id);
 
         await updateTx.mutateAsync({
@@ -740,11 +710,10 @@ export default function Bank() {
           grootboekrekening_id: null,
         });
 
-        if (affectedAllocations.length > 0) {
-          deletedTxIds.push(tx.id);
-        } else if (tx.matched_invoice_id) {
-          legacyRestores.push({ invoiceId: tx.matched_invoice_id, txAmount: Math.abs(tx.amount) });
-        }
+        // Always collect the tx ID and its primary invoice so both allocation-backed
+        // and legacy-primary invoices are recalculated in the single pass below.
+        deletedTxIds.push(tx.id);
+        if (tx.matched_invoice_id) extraInvoiceIds.push(tx.matched_invoice_id);
 
         success++;
       } catch (e: any) {
@@ -752,30 +721,11 @@ export default function Bank() {
       }
     }
 
-    // Recalculate all affected invoices from remaining allocation rows in one pass
-    if (deletedTxIds.length > 0) {
-      await recalculateRemainingAfterDeletions(deletedTxIds);
-    }
-
-    // Legacy path: no allocation rows, restore by adding back tx amount
-    for (const { invoiceId, txAmount } of legacyRestores) {
-      const purchaseInv = invoices?.find(i => i.id === invoiceId);
-      const salesInv = salesInvs?.find(i => i.id === invoiceId);
-      if (purchaseInv) {
-        const totalAmount = getInvoiceTotalAmount(purchaseInv);
-        if (totalAmount != null) {
-          const currentRemaining = purchaseInv.remaining_amount ?? getInvoiceRemainingAmount(purchaseInv) ?? 0;
-          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-        }
-      } else if (salesInv) {
-        const totalAmount = getInvoiceTotalAmount(salesInv);
-        const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? 0;
-        if (salesInv.status === "betaald") {
-          await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: totalAmount });
-        } else if (totalAmount != null) {
-          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: Math.min(totalAmount, currentRemaining + txAmount) });
-        }
-      }
+    // Recalculate all affected invoices in one pass; wrapped so cleanup always runs
+    try {
+      await recalculateRemainingAfterDeletions(deletedTxIds, extraInvoiceIds);
+    } catch (e: any) {
+      errors.push(e.message || "Fout bij herberekenen openstaand bedrag");
     }
 
     setSelectedIds(new Set());
@@ -790,7 +740,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij ontkoppelen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, allocationsByTxId, invoices, salesInvs, deleteAllocationsForTx, updateTx, updatePurchase, updateSales, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleRepairAflettering = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
