@@ -58,6 +58,10 @@ import { useClientContext } from "@/hooks/useClientContext";
 const isOpenTransactionStatus = (matchStatus: string) =>
   matchStatus === "niet_gematcht" || matchStatus === "suggestie";
 
+function expectedInvoiceTypeForTx(tx: Tables<"bank_transactions">): "inkoop" | "verkoop" {
+  return tx.amount >= 0 ? "verkoop" : "inkoop";
+}
+
 export default function Bank() {
   const [searchParams] = useSearchParams();
   const { selectedClientId, setSelectedClientId } = useClientContext();
@@ -391,7 +395,8 @@ export default function Bank() {
               salesInvs.filter(i => i.client_id === tx.client_id),
             )
           : [];
-      const best = candidates.find(c => c.score > 0);
+      const expectedType = expectedInvoiceTypeForTx(tx);
+      const best = candidates.find(c => c.score > 0 && c.type === expectedType);
 
       if (best) {
         const exactMatch =
@@ -419,13 +424,21 @@ export default function Bank() {
         return;
       }
 
-      // No scoreable candidate — open BankMatchDialog so the user picks manually.
+      // Open BankMatchDialog so the user picks manually.
       setMatchTx(tx);
-      toast({
-        title: "Geen automatische factuurkoppeling",
-        description: "Selecteer een factuur of boek handmatig.",
-        variant: "destructive",
-      });
+      if (candidates.some(c => c.score > 0)) {
+        toast({
+          title: "Geen veilige match gevonden",
+          description: "Alle gevonden matches hebben tegengestelde richting. Koppel handmatig als dit klopt.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Geen automatische factuurkoppeling",
+          description: "Selecteer een factuur of boek handmatig.",
+          variant: "destructive",
+        });
+      }
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
@@ -856,7 +869,8 @@ export default function Bank() {
         invoices.filter(i => i.client_id === tx.client_id),
         salesInvs.filter(i => i.client_id === tx.client_id),
       );
-      const best = candidates.find(c => c.score > 0);
+      const expectedType = expectedInvoiceTypeForTx(tx);
+      const best = candidates.find(c => c.score > 0 && c.type === expectedType);
       if (!best) {
         skipped++;
         continue;
