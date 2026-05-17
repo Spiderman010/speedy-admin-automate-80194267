@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,6 +41,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
 import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
+import { BankAfletteringDrawer } from "@/components/BankAfletteringDrawer";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
@@ -76,6 +77,7 @@ export default function Bank() {
   const [bulkLedger, setBulkLedger] = useState("");
   const [bulkLedgerId, setBulkLedgerId] = useState("");
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
+  const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
@@ -1279,6 +1281,16 @@ export default function Bank() {
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="sm" variant="ghost" onClick={() => setAfletteringTx(t)}>
+                                  <FileSearch className="h-4 w-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Bekijk aflettering</TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           {t.match_status === "gematcht" || t.match_status === "handmatig_geboekt" ? (
                             <TooltipProvider>
                               <Tooltip>
@@ -1468,6 +1480,16 @@ export default function Bank() {
         existingTransactions={transactions ?? []}
         bookingTemplates={bookingTemplates ?? []}
         defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
+      />
+
+      <BankAfletteringDrawer
+        open={!!afletteringTx}
+        onOpenChange={(v) => { if (!v) setAfletteringTx(null); }}
+        transaction={afletteringTx}
+        allocations={afletteringTx ? (allocationsByTxId.get(afletteringTx.id) ?? []) : []}
+        allAllocations={allAllocations ?? []}
+        purchaseInvoices={invoices ?? []}
+        salesInvoices={salesInvs ?? []}
       />
 
       <BankMatchDialog
