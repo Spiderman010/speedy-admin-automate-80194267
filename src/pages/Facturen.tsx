@@ -32,8 +32,8 @@ import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { useBankTransactionAllocations } from "@/hooks/useBankTransactionAllocations";
-import { useBankTransactions } from "@/hooks/useBankTransactions";
+import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
+import { useBankTransactions, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
 import { getDisplayDescription } from "@/lib/mt940-description-parser";
 
 function Chip({
@@ -83,6 +83,68 @@ type SortDir = "asc" | "desc";
 
 import { useClientContext } from "@/hooks/useClientContext";
 
+type PurchaseTxCandidate = {
+  tx: Tables<"bank_transactions">;
+  bankAllocated: number;
+  bankUnallocated: number;
+  suggestedAmount: number;
+  score: number;
+  reasons: string[];
+};
+
+function scorePurchaseCandidates(
+  transactions: Tables<"bank_transactions">[],
+  allAllocations: BankTransactionAllocation[],
+  invoiceId: string,
+  invoiceNumber: string | null,
+  invoiceOpen: number,
+  supplierName: string | null,
+  invoiceDate: string | null,
+  searchQ: string,
+): PurchaseTxCandidate[] {
+  const allocByTxId = new Map<string, number>();
+  for (const a of allAllocations) {
+    allocByTxId.set(a.bank_transaction_id, (allocByTxId.get(a.bank_transaction_id) ?? 0) + a.amount);
+  }
+  const linkedTxIds = new Set(
+    allAllocations.filter(a => a.invoice_id === invoiceId).map(a => a.bank_transaction_id)
+  );
+  const q = searchQ.trim().toLowerCase();
+  const results: PurchaseTxCandidate[] = [];
+  for (const tx of transactions) {
+    if (tx.amount >= 0) continue;
+    if (linkedTxIds.has(tx.id)) continue;
+    const bankAllocated = allocByTxId.get(tx.id) ?? 0;
+    const bankUnallocated = Math.abs(tx.amount) - bankAllocated;
+    if (bankUnallocated < 0.01) continue;
+    const suggestedAmount = Math.min(invoiceOpen, bankUnallocated);
+    const displayDesc = getDisplayDescription(tx.description);
+    const rawDesc = tx.description ?? "";
+    let score = 0;
+    const reasons: string[] = [];
+    if (Math.abs(bankUnallocated - invoiceOpen) < 0.01) { score += 50; reasons.push("Exact bedrag"); }
+    if (invoiceNumber) {
+      const n = invoiceNumber.toLowerCase();
+      if (rawDesc.toLowerCase().includes(n) || displayDesc.toLowerCase().includes(n)) { score += 25; reasons.push("Factuurnummer gevonden"); }
+    }
+    if (supplierName) {
+      const parts = supplierName.toLowerCase().split(/\s+/).filter(p => p.length > 3);
+      if (parts.some(p => rawDesc.toLowerCase().includes(p) || displayDesc.toLowerCase().includes(p))) { score += 20; reasons.push("Naam gevonden"); }
+    }
+    if (invoiceDate && tx.transaction_date) {
+      const diff = Math.abs(new Date(tx.transaction_date).getTime() - new Date(invoiceDate).getTime()) / 86400000;
+      if (diff <= 30) { score += 10; reasons.push("Datum dichtbij"); }
+    }
+    if (q) {
+      const dateStr = tx.transaction_date ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "";
+      const amtStr = Math.abs(tx.amount).toFixed(2);
+      if (rawDesc.toLowerCase().includes(q) || displayDesc.toLowerCase().includes(q) || dateStr.includes(q) || amtStr.includes(q)) { score += 5; reasons.push("Zoekmatch"); }
+    }
+    results.push({ tx, bankAllocated, bankUnallocated, suggestedAmount, score, reasons });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
 export default function Facturen() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const [clientFilter, setClientFilter] = useState(selectedClientId);
@@ -110,6 +172,12 @@ export default function Facturen() {
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
   const [afletteringInvoice, setAfletteringInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
+  const [bankSearchQuery, setBankSearchQuery] = useState("");
+  const [linkTarget, setLinkTarget] = useState<PurchaseTxCandidate | null>(null);
+  const [linkAmount, setLinkAmount] = useState("");
+
+  const upsertAllocation = useUpsertBankTransactionAllocation();
+  const updateBankTx = useUpdateBankTransaction();
 
   const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
   const { data: allBankTransactions } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
@@ -144,6 +212,31 @@ export default function Facturen() {
   const handleApproveInvoice = async (id: string, updates: Partial<Tables<"purchase_invoices">>) => {
     await updateInvoice.mutateAsync({ id, ...updates });
     toast({ title: "Factuur goedgekeurd" });
+  };
+
+  const handlePurchaseLink = async () => {
+    if (!afletteringInvoice || !linkTarget) return;
+    const amount = parseFloat(linkAmount);
+    const inv = afletteringInvoice;
+    const { tx, bankUnallocated } = linkTarget;
+    const invoiceOpen = getInvoiceRemainingAmount(inv) ?? 0;
+    if (isNaN(amount) || amount <= 0) { toast({ title: "Ongeldig bedrag", variant: "destructive" }); return; }
+    if (amount > invoiceOpen + 0.005) { toast({ title: "Bedrag groter dan openstaand factuurbedrag", variant: "destructive" }); return; }
+    if (amount > bankUnallocated + 0.005) { toast({ title: "Bedrag groter dan beschikbaar banksaldo", variant: "destructive" }); return; }
+    try {
+      await upsertAllocation.mutateAsync({ bank_transaction_id: tx.id, invoice_type: "inkoop", invoice_id: inv.id, client_id: inv.client_id, amount });
+      const newRemaining = Math.max(0, invoiceOpen - amount);
+      await updateInvoice.mutateAsync({ id: inv.id, remaining_amount: newRemaining });
+      const bankUpdates: { id: string; match_status: string; matched_invoice_id?: string } = { id: tx.id, match_status: "gematcht" };
+      if (!tx.matched_invoice_id) bankUpdates.matched_invoice_id = inv.id;
+      await updateBankTx.mutateAsync(bankUpdates);
+      setAfletteringInvoice({ ...inv, remaining_amount: newRemaining });
+      setLinkTarget(null);
+      setLinkAmount("");
+      toast({ title: "Koppeling aangemaakt" });
+    } catch (e: any) {
+      toast({ title: "Koppelen mislukt", description: e.message, variant: "destructive" });
+    }
   };
 
   const toggleSort = (field: SortField) => {
@@ -696,52 +789,140 @@ export default function Facturen() {
         const allocated = allocations.reduce((sum, a) => sum + a.amount, 0);
         const remaining = getInvoiceRemainingAmount(inv);
         const open = remaining ?? (total != null ? Math.max(0, total - allocated) : null);
+        const invoiceOpen = open ?? 0;
+        const candidates = scorePurchaseCandidates(
+          allBankTransactions ?? [], allAllocations ?? [],
+          inv.id, inv.invoice_number, invoiceOpen, inv.supplier, inv.invoice_date, bankSearchQuery,
+        );
         return (
-          <Dialog open={!!afletteringInvoice} onOpenChange={(o) => !o && setAfletteringInvoice(null)}>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
+          <Dialog open={!!afletteringInvoice} onOpenChange={(o) => { if (!o) { setAfletteringInvoice(null); setBankSearchQuery(""); } }}>
+            <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+              <DialogHeader className="shrink-0">
                 <DialogTitle>Aflettering factuur {inv.invoice_number || "—"}</DialogTitle>
                 <DialogDescription>{inv.supplier || "Onbekende leverancier"}</DialogDescription>
               </DialogHeader>
-              <div className="rounded-lg border bg-muted/40 p-4 grid grid-cols-3 gap-3 text-center text-sm mt-1">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Totaal</div>
-                  <div className="font-mono font-semibold">{formatCurrency(total)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Vereffend</div>
-                  <div className="font-mono font-semibold text-green-600">{formatCurrency(allocated)}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Openstaand</div>
-                  <div className={`font-mono font-semibold ${open === 0 ? "text-green-600" : "text-amber-600"}`}>
-                    {formatCurrency(open)}
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-4">
+                <div className="rounded-lg border bg-muted/40 p-4 grid grid-cols-3 gap-3 text-center text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Totaal</div>
+                    <div className="font-mono font-semibold">{formatCurrency(total)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Vereffend</div>
+                    <div className="font-mono font-semibold text-green-600">{formatCurrency(allocated)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground mb-1">Openstaand</div>
+                    <div className={`font-mono font-semibold ${open === 0 ? "text-green-600" : "text-amber-600"}`}>
+                      {formatCurrency(open)}
+                    </div>
                   </div>
                 </div>
-              </div>
-              <Separator />
-              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                 {allocations.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-4">Geen afletteringen gevonden.</p>
-                ) : allocations.map((a) => {
-                  const tx = bankTransactionById.get(a.bank_transaction_id);
-                  return (
-                    <div key={a.id} className="flex items-center justify-between gap-3 text-sm rounded-md border px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="font-mono text-xs text-muted-foreground">
-                          {tx?.transaction_date ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
+                  <p className="text-sm text-muted-foreground text-center py-2">Geen afletteringen gevonden.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {allocations.map((a) => {
+                      const tx = bankTransactionById.get(a.bank_transaction_id);
+                      return (
+                        <div key={a.id} className="flex items-center justify-between gap-3 text-sm rounded-md border px-3 py-2">
+                          <div className="min-w-0">
+                            <div className="font-mono text-xs text-muted-foreground">
+                              {tx?.transaction_date ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
+                            </div>
+                            <div className="truncate">{tx ? getDisplayDescription(tx.description) : "—"}</div>
+                          </div>
+                          <div className="font-mono font-medium shrink-0">{formatCurrency(a.amount)}</div>
                         </div>
-                        <div className="truncate">{tx ? getDisplayDescription(tx.description) : "—"}</div>
+                      );
+                    })}
+                  </div>
+                )}
+                <Separator />
+                <div>
+                  <h3 className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                    <Search className="h-3.5 w-3.5" />Bankbetaling zoeken
+                  </h3>
+                  <Input
+                    placeholder="Zoek op datum, omschrijving, bedrag of tegenpartij"
+                    value={bankSearchQuery}
+                    onChange={e => setBankSearchQuery(e.target.value)}
+                    className="mb-3"
+                  />
+                  {candidates.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-3">
+                      {bankSearchQuery ? "Geen resultaten gevonden." : "Geen kandidaat-transacties beschikbaar."}
+                    </p>
+                  ) : candidates.map((c) => (
+                    <div key={c.tx.id} className="rounded-md border px-3 py-2 mb-2 text-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-muted-foreground">
+                            {c.tx.transaction_date ? new Date(c.tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
+                          </div>
+                          <div className="truncate font-medium">{getDisplayDescription(c.tx.description)}</div>
+                          {c.reasons.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {c.reasons.map(r => <Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">{r}</Badge>)}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0 text-xs font-mono">
+                          <div className="text-muted-foreground">{formatCurrency(Math.abs(c.tx.amount))}</div>
+                          {c.bankAllocated > 0 && <div className="text-amber-600">−{formatCurrency(c.bankAllocated)}</div>}
+                          <div className="font-semibold">{formatCurrency(c.bankUnallocated)}</div>
+                        </div>
                       </div>
-                      <div className="font-mono font-medium shrink-0">{formatCurrency(a.amount)}</div>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t">
+                        <span className="text-xs text-muted-foreground">
+                          Kan koppelen: <span className="font-mono font-medium">{formatCurrency(c.suggestedAmount)}</span>
+                        </span>
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={() => { setLinkTarget(c); setLinkAmount(c.suggestedAmount.toFixed(2)); }}>
+                          Koppel
+                        </Button>
+                      </div>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
             </DialogContent>
           </Dialog>
         );
       })()}
+
+      {linkTarget && (
+        <Dialog open={!!linkTarget} onOpenChange={(o) => !o && setLinkTarget(null)}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Koppeling bevestigen</DialogTitle>
+              <DialogDescription>
+                {linkTarget.tx.transaction_date ? new Date(linkTarget.tx.transaction_date).toLocaleDateString("nl-NL") : "—"}{" "}
+                — {getDisplayDescription(linkTarget.tx.description)}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="text-sm flex justify-between text-muted-foreground">
+                <span>Beschikbaar bankbedrag</span>
+                <span className="font-mono font-medium text-foreground">{formatCurrency(linkTarget.bankUnallocated)}</span>
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Bedrag koppelen (€)</label>
+                <Input type="number" min="0.01" step="0.01" value={linkAmount} onChange={e => setLinkAmount(e.target.value)} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setLinkTarget(null)}>Annuleren</Button>
+              <Button onClick={handlePurchaseLink}
+                disabled={upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending}>
+                {(upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending)
+                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                Koppelen
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 }
