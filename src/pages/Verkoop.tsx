@@ -13,6 +13,8 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
+import type { Tables } from "@/integrations/supabase/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Plus, Download, FileText, CheckCircle2, Clock, Send, Upload, Loader2, Eye, ArrowUp, ArrowDown, Search, Landmark } from "lucide-react";
@@ -28,8 +30,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClientContext } from "@/hooks/useClientContext";
 import { getInvoicePaymentState, getInvoiceTotalAmount, getInvoiceRemainingAmount } from "@/lib/invoice-balances";
-import { useBankTransactionAllocations } from "@/hooks/useBankTransactionAllocations";
-import { useBankTransactions } from "@/hooks/useBankTransactions";
+import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
+import { useBankTransactions, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
 import { getDisplayDescription } from "@/lib/mt940-description-parser";
 
 function Chip({
@@ -69,6 +71,68 @@ const formatCurrency = (amount: number | null) =>
 type SortField = "invoice_number" | "client" | "customer_name" | "date" | "due_date" | "amount" | "btw" | "status";
 type SortDir = "asc" | "desc";
 
+type SalesTxCandidate = {
+  tx: Tables<"bank_transactions">;
+  bankAllocated: number;
+  bankUnallocated: number;
+  suggestedAmount: number;
+  score: number;
+  reasons: string[];
+};
+
+function scoreSalesCandidates(
+  transactions: Tables<"bank_transactions">[],
+  allAllocations: BankTransactionAllocation[],
+  invoiceId: string,
+  invoiceNumber: string | null,
+  invoiceOpen: number,
+  customerName: string | null,
+  invoiceDate: string | null,
+  searchQ: string,
+): SalesTxCandidate[] {
+  const allocByTxId = new Map<string, number>();
+  for (const a of allAllocations) {
+    allocByTxId.set(a.bank_transaction_id, (allocByTxId.get(a.bank_transaction_id) ?? 0) + a.amount);
+  }
+  const linkedTxIds = new Set(
+    allAllocations.filter(a => a.invoice_id === invoiceId).map(a => a.bank_transaction_id)
+  );
+  const q = searchQ.trim().toLowerCase();
+  const results: SalesTxCandidate[] = [];
+  for (const tx of transactions) {
+    if (tx.amount <= 0) continue;
+    if (linkedTxIds.has(tx.id)) continue;
+    const bankAllocated = allocByTxId.get(tx.id) ?? 0;
+    const bankUnallocated = Math.abs(tx.amount) - bankAllocated;
+    if (bankUnallocated < 0.01) continue;
+    const suggestedAmount = Math.min(invoiceOpen, bankUnallocated);
+    const displayDesc = getDisplayDescription(tx.description);
+    const rawDesc = tx.description ?? "";
+    let score = 0;
+    const reasons: string[] = [];
+    if (Math.abs(bankUnallocated - invoiceOpen) < 0.01) { score += 50; reasons.push("Exact bedrag"); }
+    if (invoiceNumber) {
+      const n = invoiceNumber.toLowerCase();
+      if (rawDesc.toLowerCase().includes(n) || displayDesc.toLowerCase().includes(n)) { score += 25; reasons.push("Factuurnummer gevonden"); }
+    }
+    if (customerName) {
+      const parts = customerName.toLowerCase().split(/\s+/).filter(p => p.length > 3);
+      if (parts.some(p => rawDesc.toLowerCase().includes(p) || displayDesc.toLowerCase().includes(p))) { score += 20; reasons.push("Naam gevonden"); }
+    }
+    if (invoiceDate && tx.transaction_date) {
+      const diff = Math.abs(new Date(tx.transaction_date).getTime() - new Date(invoiceDate).getTime()) / 86400000;
+      if (diff <= 30) { score += 10; reasons.push("Datum dichtbij"); }
+    }
+    if (q) {
+      const dateStr = tx.transaction_date ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "";
+      const amtStr = Math.abs(tx.amount).toFixed(2);
+      if (rawDesc.toLowerCase().includes(q) || displayDesc.toLowerCase().includes(q) || dateStr.includes(q) || amtStr.includes(q)) { score += 5; reasons.push("Zoekmatch"); }
+    }
+    results.push({ tx, bankAllocated, bankUnallocated, suggestedAmount, score, reasons });
+  }
+  return results.sort((a, b) => b.score - a.score);
+}
+
 export default function Verkoop() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const [clientFilter, setClientFilter] = useState(selectedClientId);
@@ -93,6 +157,12 @@ export default function Verkoop() {
   const [editInvoice, setEditInvoice] = useState<any>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [afletteringInvoice, setAfletteringInvoice] = useState<any>(null);
+  const [bankSearchQuery, setBankSearchQuery] = useState("");
+  const [linkTarget, setLinkTarget] = useState<SalesTxCandidate | null>(null);
+  const [linkAmount, setLinkAmount] = useState("");
+
+  const upsertAllocation = useUpsertBankTransactionAllocation();
+  const updateBankTx = useUpdateBankTransaction();
 
   useEffect(() => {
     setClientFilter(selectedClientId);
@@ -301,6 +371,51 @@ export default function Verkoop() {
       e.target.value = "";
     }
   }, [processFiles]);
+
+  const handleSalesLink = async () => {
+    if (!afletteringInvoice || !linkTarget) return;
+    const amount = parseFloat(linkAmount);
+    const inv = afletteringInvoice;
+    const { tx } = linkTarget;
+
+    // 1. Duplicate check — abort if this (tx, invoice) pair is already allocated
+    const alreadyLinked = (allAllocations ?? []).some(
+      a => a.bank_transaction_id === tx.id && a.invoice_id === inv.id && a.invoice_type === "verkoop"
+    );
+    if (alreadyLinked) { toast({ title: "Deze banktransactie is al gekoppeld aan deze factuur", variant: "destructive" }); return; }
+
+    // 2. Fresh bank-unallocated from latest local allAllocations
+    const bankAllocatedNow = (allAllocations ?? [])
+      .filter(a => a.bank_transaction_id === tx.id)
+      .reduce((sum, a) => sum + a.amount, 0);
+    const bankUnallocatedNow = Math.abs(tx.amount) - bankAllocatedNow;
+    if (bankUnallocatedNow < 0.01) { toast({ title: "Deze banktransactie is al volledig gealloceerd", variant: "destructive" }); return; }
+
+    // 3. Fresh invoice-open from current state
+    const invoiceOpen = getInvoiceRemainingAmount(inv) ?? 0;
+    if (invoiceOpen < 0.01) { toast({ title: "Deze factuur staat niet meer open", variant: "destructive" }); return; }
+
+    if (isNaN(amount) || amount <= 0) { toast({ title: "Ongeldig bedrag", variant: "destructive" }); return; }
+    if (amount > invoiceOpen + 0.005) { toast({ title: "Bedrag groter dan openstaand factuurbedrag", variant: "destructive" }); return; }
+    if (amount > bankUnallocatedNow + 0.005) { toast({ title: "Bedrag groter dan beschikbaar banksaldo", variant: "destructive" }); return; }
+
+    try {
+      await upsertAllocation.mutateAsync({ bank_transaction_id: tx.id, invoice_type: "verkoop", invoice_id: inv.id, client_id: inv.client_id, amount });
+      const newRemaining = Math.max(0, invoiceOpen - amount);
+      const invoiceUpdates: { remaining_amount: number; status?: string } = { remaining_amount: newRemaining };
+      if (newRemaining <= 0.01) invoiceUpdates.status = "betaald";
+      await updateInvoice.mutateAsync({ id: inv.id, ...invoiceUpdates } as any);
+      const bankUpdates: { id: string; match_status: string; matched_invoice_id?: string } = { id: tx.id, match_status: "gematcht" };
+      if (!tx.matched_invoice_id) bankUpdates.matched_invoice_id = inv.id;
+      await updateBankTx.mutateAsync(bankUpdates);
+      setAfletteringInvoice({ ...inv, remaining_amount: newRemaining, ...(newRemaining <= 0.01 ? { status: "betaald" } : {}) });
+      setLinkTarget(null);
+      setLinkAmount("");
+      toast({ title: "Koppeling aangemaakt" });
+    } catch (e: any) {
+      toast({ title: "Koppelen mislukt", description: e.message, variant: "destructive" });
+    }
+  };
 
   return (
     <>
@@ -565,21 +680,24 @@ export default function Verkoop() {
         }}
       />
 
-      {/* Read-only allocation details dialog */}
       {afletteringInvoice && (() => {
-        const allocations = allocationsByInvoiceId.get(afletteringInvoice.id) ?? [];
+        const inv = afletteringInvoice;
+        const allocations = allocationsByInvoiceId.get(inv.id) ?? [];
         const totalAllocated = allocations.reduce((s, a) => s + a.amount, 0);
-        const invoiceTotal = getInvoiceTotalAmount(afletteringInvoice) ?? 0;
-        const openRemaining = getInvoiceRemainingAmount(afletteringInvoice) ?? Math.max(0, invoiceTotal - totalAllocated);
+        const invoiceTotal = getInvoiceTotalAmount(inv) ?? 0;
+        const openRemaining = getInvoiceRemainingAmount(inv) ?? Math.max(0, invoiceTotal - totalAllocated);
+        const candidates = scoreSalesCandidates(
+          allBankTransactions ?? [], allAllocations ?? [],
+          inv.id, inv.invoice_number, openRemaining, inv.customer_name, inv.invoice_date, bankSearchQuery,
+        );
         return (
-          <Dialog open={!!afletteringInvoice} onOpenChange={(v) => { if (!v) setAfletteringInvoice(null); }}>
+          <Dialog open={!!afletteringInvoice} onOpenChange={(v) => { if (!v) { setAfletteringInvoice(null); setBankSearchQuery(""); } }}>
             <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
               <DialogHeader className="shrink-0">
-                <DialogTitle>Aflettering factuur {afletteringInvoice.invoice_number}</DialogTitle>
-                <DialogDescription>{afletteringInvoice.customer_name}</DialogDescription>
+                <DialogTitle>Aflettering factuur {inv.invoice_number}</DialogTitle>
+                <DialogDescription>{inv.customer_name}</DialogDescription>
               </DialogHeader>
               <div className="min-h-0 flex-1 overflow-y-auto pr-1 space-y-4">
-                {/* Invoice summary */}
                 <div className="rounded-lg border bg-muted/50 p-4 space-y-1 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Totaalbedrag factuur</span>
@@ -597,7 +715,6 @@ export default function Verkoop() {
                   </div>
                 </div>
 
-                {/* Allocation rows */}
                 {allocations.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-6">Geen afletterings gevonden.</p>
                 ) : (
@@ -619,9 +736,7 @@ export default function Verkoop() {
                               {tx ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground max-w-[220px] truncate">
-                              {tx
-                                ? getDisplayDescription(tx.description)
-                                : <span className="italic">Banktransactie niet gevonden</span>}
+                              {tx ? getDisplayDescription(tx.description) : <span className="italic">Banktransactie niet gevonden</span>}
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm">
                               {tx ? formatCurrency(tx.amount) : "—"}
@@ -635,11 +750,93 @@ export default function Verkoop() {
                     </TableBody>
                   </Table>
                 )}
+
+                <Separator />
+
+                <div>
+                  <h3 className="text-sm font-semibold mb-2 flex items-center gap-1.5">
+                    <Search className="h-3.5 w-3.5" />Bankbetaling zoeken
+                  </h3>
+                  <Input
+                    placeholder="Zoek op datum, omschrijving, bedrag of tegenpartij"
+                    value={bankSearchQuery}
+                    onChange={e => setBankSearchQuery(e.target.value)}
+                    className="mb-3"
+                  />
+                  {candidates.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-3">
+                      {bankSearchQuery ? "Geen resultaten gevonden." : "Geen kandidaat-transacties beschikbaar."}
+                    </p>
+                  ) : candidates.map((c) => (
+                    <div key={c.tx.id} className="rounded-md border px-3 py-2 mb-2 text-sm">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-muted-foreground">
+                            {c.tx.transaction_date ? new Date(c.tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
+                          </div>
+                          <div className="truncate font-medium">{getDisplayDescription(c.tx.description)}</div>
+                          {c.reasons.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {c.reasons.map(r => <Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">{r}</Badge>)}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0 text-xs font-mono">
+                          <div className="text-muted-foreground">{formatCurrency(Math.abs(c.tx.amount))}</div>
+                          {c.bankAllocated > 0 && <div className="text-amber-600">−{formatCurrency(c.bankAllocated)}</div>}
+                          <div className="font-semibold">{formatCurrency(c.bankUnallocated)}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t">
+                        <span className="text-xs text-muted-foreground">
+                          Kan koppelen: <span className="font-mono font-medium">{formatCurrency(c.suggestedAmount)}</span>
+                        </span>
+                        <Button variant="outline" size="sm" className="h-7 text-xs"
+                          onClick={() => { setLinkTarget(c); setLinkAmount(c.suggestedAmount.toFixed(2)); }}>
+                          Koppel
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </DialogContent>
           </Dialog>
         );
       })()}
+
+      {linkTarget && (
+        <Dialog open={!!linkTarget} onOpenChange={(o) => !o && setLinkTarget(null)}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Koppeling bevestigen</DialogTitle>
+              <DialogDescription>
+                {linkTarget.tx.transaction_date ? new Date(linkTarget.tx.transaction_date).toLocaleDateString("nl-NL") : "—"}{" "}
+                — {getDisplayDescription(linkTarget.tx.description)}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="text-sm flex justify-between text-muted-foreground">
+                <span>Beschikbaar bankbedrag</span>
+                <span className="font-mono font-medium text-foreground">{formatCurrency(linkTarget.bankUnallocated)}</span>
+              </div>
+              <div>
+                <label className="text-sm font-medium block mb-1">Bedrag koppelen (€)</label>
+                <Input type="number" min="0.01" step="0.01" value={linkAmount} onChange={e => setLinkAmount(e.target.value)} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setLinkTarget(null)}>Annuleren</Button>
+              <Button onClick={handleSalesLink}
+                disabled={upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending}>
+                {(upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending)
+                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                Koppelen
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 }
