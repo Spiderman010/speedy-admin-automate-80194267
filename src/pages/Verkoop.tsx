@@ -459,6 +459,7 @@ export default function Verkoop() {
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("date")}>Datum<SortIcon field="date" /></TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("due_date")}>Vervaldatum<SortIcon field="due_date" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
+                      <TableHead className="text-right">Openstaand</TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
                       <TableHead className="w-20"></TableHead>
@@ -475,6 +476,28 @@ export default function Verkoop() {
                           <TableCell>{new Date(inv.invoice_date).toLocaleDateString("nl-NL")}</TableCell>
                           <TableCell>{inv.due_date ? new Date(inv.due_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
                           <TableCell className="text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
+                          <TableCell className="text-right">
+                            {(() => {
+                              const total = getInvoiceTotalAmount(inv);
+                              const remaining = getInvoiceRemainingAmount(inv);
+                              if (remaining === 0 || inv.status === "betaald") {
+                                return <span className="font-mono text-sm text-green-600">€0,00</span>;
+                              }
+                              if (total != null && remaining != null && remaining < total) {
+                                return (
+                                  <div>
+                                    <Badge variant="secondary" className="text-[10px] mb-0.5">Deelbetaling</Badge>
+                                    <div className="font-mono text-sm text-amber-600">{formatCurrency(remaining)}</div>
+                                  </div>
+                                );
+                              }
+                              const openstaand = remaining ?? total;
+                              if (openstaand != null) {
+                                return <span className="font-mono text-sm text-amber-600">{formatCurrency(openstaand)}</span>;
+                              }
+                              return <span className="text-muted-foreground text-sm">—</span>;
+                            })()}
+                          </TableCell>
                           <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell>
                             <Badge variant={sc.variant} className="gap-1">
