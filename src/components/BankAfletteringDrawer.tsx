@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -21,6 +21,13 @@ const fmt = (amount: number | null | undefined): string =>
     ? "—"
     : new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
 
+type SuggestionFilter = "auto" | "verkoop" | "inkoop" | "alle";
+
+// Direction that "makes sense" for a given transaction amount.
+function preferredType(txAmount: number): "inkoop" | "verkoop" {
+  return txAmount < 0 ? "inkoop" : "verkoop";
+}
+
 export interface BankAfletteringDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -41,6 +48,9 @@ export function BankAfletteringDrawer({
   purchaseInvoices,
   salesInvoices,
 }: BankAfletteringDrawerProps) {
+  // ── Filter chip state ────────────────────────────────────────────────
+  const [suggestionFilter, setSuggestionFilter] = useState<SuggestionFilter>("auto");
+
   // ── Derived amounts ──────────────────────────────────────────────────
   const txAmount = transaction ? Math.abs(transaction.amount) : 0;
 
@@ -61,9 +71,6 @@ export function BankAfletteringDrawer({
   );
 
   // ── Legacy matched_invoice_id detection ──────────────────────────────
-  // A transaction is considered "legacy" when matched_invoice_id is set but no
-  // allocation rows exist — this is data from before bank_transaction_allocations
-  // was introduced.
   const hasLegacy = !!transaction?.matched_invoice_id && allocations.length === 0;
 
   const legacyInvoice = useMemo(() => {
@@ -87,25 +94,44 @@ export function BankAfletteringDrawer({
   }, [allocations, transaction?.matched_invoice_id]);
 
   // ── Suggestions ──────────────────────────────────────────────────────
-  // Only shown when there is unallocated remainder and the transaction is not
-  // already booked to a ledger account without an invoice link.
   const showSuggestions =
     !!transaction &&
     transaction.match_status !== "handmatig_geboekt" &&
     !isOverAllocated &&
     remaining >= 0.01;
 
-  const suggestions = useMemo(() => {
+  const rawSuggestions = useMemo(() => {
     if (!showSuggestions || !transaction) return [];
     return rankCandidates(transaction, purchaseInvoices, salesInvoices)
       .filter(c => c.score > 0 && !coveredInvoiceIds.has(c.id))
-      .slice(0, 8);
+      .slice(0, 16);
   }, [showSuggestions, transaction, purchaseInvoices, salesInvoices, coveredInvoiceIds]);
+
+  // Apply direction filter and sort same-direction first in "alle" mode.
+  const suggestions = useMemo(() => {
+    if (!transaction) return [];
+    const pref = preferredType(transaction.amount);
+
+    if (suggestionFilter === "auto") {
+      return rawSuggestions.filter(c => c.type === pref).slice(0, 8);
+    }
+    if (suggestionFilter === "verkoop") {
+      return rawSuggestions.filter(c => c.type === "verkoop").slice(0, 8);
+    }
+    if (suggestionFilter === "inkoop") {
+      return rawSuggestions.filter(c => c.type === "inkoop").slice(0, 8);
+    }
+    // "alle": same-direction first, then opposite; cap at 8 total
+    const same = rawSuggestions.filter(c => c.type === pref);
+    const opposite = rawSuggestions.filter(c => c.type !== pref);
+    return [...same, ...opposite].slice(0, 8);
+  }, [rawSuggestions, suggestionFilter, transaction]);
 
   if (!transaction) return null;
 
   const displayDesc = getDisplayDescription(transaction.description);
   const counterAccount = transaction.counter_account ?? parsed?.iban ?? null;
+  const pref = preferredType(transaction.amount);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -151,7 +177,6 @@ export function BankAfletteringDrawer({
           {/* Allocation summary bar */}
           <div className="px-6 pb-4">
             <div className="rounded-lg border bg-muted/30 p-3 space-y-2.5">
-              {/* Three-column figures */}
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
                 <div>
                   <p className="text-muted-foreground mb-0.5">Bedrag</p>
@@ -179,7 +204,6 @@ export function BankAfletteringDrawer({
                 </div>
               </div>
 
-              {/* Progress bar */}
               <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all ${
@@ -193,20 +217,13 @@ export function BankAfletteringDrawer({
                 />
               </div>
 
-              {/* State badge */}
               <div className="flex justify-center">
                 {isOverAllocated ? (
-                  <Badge variant="destructive" className="text-[11px]">
-                    Overallocatie
-                  </Badge>
+                  <Badge variant="destructive" className="text-[11px]">Overallocatie</Badge>
                 ) : remaining < 0.01 ? (
-                  <Badge className="text-[11px] bg-green-600 hover:bg-green-700">
-                    Volledig gealloceerd
-                  </Badge>
+                  <Badge className="text-[11px] bg-green-600 hover:bg-green-700">Volledig gealloceerd</Badge>
                 ) : allocatedTotal < 0.01 ? (
-                  <Badge variant="secondary" className="text-[11px]">
-                    Niet gealloceerd
-                  </Badge>
+                  <Badge variant="secondary" className="text-[11px]">Niet gealloceerd</Badge>
                 ) : (
                   <Badge
                     variant="secondary"
@@ -296,15 +313,39 @@ export function BankAfletteringDrawer({
               <>
                 <Separator />
                 <section>
-                  <h3 className="text-sm font-semibold mb-1 flex items-baseline gap-2">
-                    Suggesties
-                    <span className="text-xs font-normal text-muted-foreground">
-                      voor resterend {fmt(remaining)}
-                    </span>
-                  </h3>
+                  <div className="flex items-baseline justify-between gap-2 mb-2">
+                    <h3 className="text-sm font-semibold flex items-baseline gap-2">
+                      Suggesties
+                      <span className="text-xs font-normal text-muted-foreground">
+                        voor resterend {fmt(remaining)}
+                      </span>
+                    </h3>
+                  </div>
+
+                  {/* Filter chips */}
+                  <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+                    {(["auto", "verkoop", "inkoop", "alle"] as SuggestionFilter[]).map(f => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setSuggestionFilter(f)}
+                        className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
+                          suggestionFilter === f
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted hover:text-foreground"
+                        }`}
+                      >
+                        {f === "auto"
+                          ? `Auto (${pref === "verkoop" ? "Verkoop" : "Inkoop"})`
+                          : f.charAt(0).toUpperCase() + f.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+
                   <p className="text-xs text-muted-foreground mb-3">
                     Gebruik de koppeldialoog om een factuur te koppelen.
                   </p>
+
                   {suggestions.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       Geen passende openstaande facturen gevonden.
@@ -312,7 +353,11 @@ export function BankAfletteringDrawer({
                   ) : (
                     <div className="space-y-2">
                       {suggestions.map(c => (
-                        <SuggestionCard key={c.id} candidate={c} />
+                        <SuggestionCard
+                          key={c.id}
+                          candidate={c}
+                          oppositeDirection={suggestionFilter === "alle" && c.type !== pref}
+                        />
                       ))}
                     </div>
                   )}
@@ -373,7 +418,6 @@ function AllocationCard({
           : "bg-muted/20"
       }`}
     >
-      {/* Header row: type badge + relation name + allocated amount */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           {warning && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
@@ -387,12 +431,10 @@ function AllocationCard({
         </span>
       </div>
 
-      {/* Invoice number */}
       {invoiceNumber && (
         <div className="text-xs text-muted-foreground">#{invoiceNumber}</div>
       )}
 
-      {/* Invoice total / remaining */}
       {(invoiceTotal != null || invoiceRemaining != null) && (
         <div className="grid grid-cols-2 gap-2 text-xs pt-1.5 border-t border-border/50">
           <div>
@@ -469,20 +511,29 @@ function LegacyCard({ invoiceId, invoice, isPurchase }: LegacyCardProps) {
 
 interface SuggestionCardProps {
   candidate: InvoiceCandidate;
+  oppositeDirection?: boolean;
 }
 
-function SuggestionCard({ candidate: c }: SuggestionCardProps) {
+function SuggestionCard({ candidate: c, oppositeDirection = false }: SuggestionCardProps) {
   const scoreClass =
-    c.score >= 80
+    oppositeDirection
+      ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+      : c.score >= 80
       ? "bg-green-100 text-green-800 dark:bg-green-950/40 dark:text-green-300"
       : c.score >= 50
       ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
       : "bg-muted text-muted-foreground";
 
   return (
-    <div className="rounded-lg border bg-muted/20 p-3 text-sm space-y-2">
+    <div
+      className={`rounded-lg border p-3 text-sm space-y-2 ${
+        oppositeDirection
+          ? "border-amber-400/60 bg-amber-50/60 dark:bg-amber-950/20"
+          : "bg-muted/20"
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span
             className={`text-[10px] font-semibold font-mono px-1.5 py-0.5 rounded shrink-0 ${scoreClass}`}
           >
@@ -491,6 +542,15 @@ function SuggestionCard({ candidate: c }: SuggestionCardProps) {
           <Badge variant="outline" className="text-[10px] shrink-0">
             {c.type === "inkoop" ? "Inkoop" : "Verkoop"}
           </Badge>
+          {oppositeDirection && (
+            <Badge
+              variant="outline"
+              className="text-[10px] shrink-0 border-amber-400/60 text-amber-800 dark:text-amber-300"
+            >
+              <AlertTriangle className="h-2.5 w-2.5 mr-1" />
+              Tegengestelde richting
+            </Badge>
+          )}
           <span className="font-medium truncate">{c.name}</span>
         </div>
         <span className="font-mono text-xs font-medium shrink-0 text-right">{fmt(c.amount)}</span>
