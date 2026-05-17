@@ -10,7 +10,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2 } from "lucide-react";
+import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2, Landmark } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
@@ -18,6 +18,11 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Separator } from "@/components/ui/separator";
 import { exportPurchaseInvoicesCSV } from "@/lib/snelstart-export";
 import { useClients } from "@/hooks/useClients";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,6 +32,9 @@ import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
+import { useBankTransactionAllocations } from "@/hooks/useBankTransactionAllocations";
+import { useBankTransactions } from "@/hooks/useBankTransactions";
+import { getDisplayDescription } from "@/lib/mt940-description-parser";
 
 function Chip({
   label, active, count, onClick, activeClassName,
@@ -101,6 +109,27 @@ export default function Facturen() {
   const [dragActive, setDragActive] = useState(false);
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
+  const [afletteringInvoice, setAfletteringInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
+
+  const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: allBankTransactions } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
+
+  const allocationsByInvoiceId = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof allAllocations>[number][]>();
+    for (const a of allAllocations ?? []) {
+      if (a.invoice_type !== "inkoop") continue;
+      const existing = m.get(a.invoice_id);
+      if (existing) existing.push(a);
+      else m.set(a.invoice_id, [a]);
+    }
+    return m;
+  }, [allAllocations]);
+
+  const bankTransactionById = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof allBankTransactions>[number]>();
+    for (const tx of allBankTransactions ?? []) m.set(tx.id, tx);
+    return m;
+  }, [allBankTransactions]);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
@@ -503,7 +532,7 @@ export default function Facturen() {
                       <TableHead>Grootboek</TableHead>
                       <TableHead>Route</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
-                      <TableHead className="w-10"></TableHead>
+                      <TableHead className="w-20"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -578,15 +607,35 @@ export default function Facturen() {
                             )}
                           </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              onClick={() => setDeleteTarget(inv)}
-                              aria-label="Verwijderen"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <div className="flex items-center gap-1">
+                              {allocationsByInvoiceId.has(inv.id) && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                                        onClick={() => setAfletteringInvoice(inv)}
+                                        aria-label="Aflettering bekijken"
+                                      >
+                                        <Landmark className="h-4 w-4" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Aflettering bekijken</TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeleteTarget(inv)}
+                                aria-label="Verwijderen"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -639,6 +688,59 @@ export default function Facturen() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {afletteringInvoice && (() => {
+        const inv = afletteringInvoice;
+        const allocations = allocationsByInvoiceId.get(inv.id) ?? [];
+        const total = getInvoiceTotalAmount(inv);
+        const allocated = allocations.reduce((sum, a) => sum + a.amount, 0);
+        const open = total != null ? Math.max(0, total - allocated) : null;
+        return (
+          <Dialog open={!!afletteringInvoice} onOpenChange={(o) => !o && setAfletteringInvoice(null)}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Aflettering factuur {inv.invoice_number || "—"}</DialogTitle>
+                <DialogDescription>{inv.supplier || "Onbekende leverancier"}</DialogDescription>
+              </DialogHeader>
+              <div className="rounded-lg border bg-muted/40 p-4 grid grid-cols-3 gap-3 text-center text-sm mt-1">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Totaal</div>
+                  <div className="font-mono font-semibold">{formatCurrency(total)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Vereffend</div>
+                  <div className="font-mono font-semibold text-green-600">{formatCurrency(allocated)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Openstaand</div>
+                  <div className={`font-mono font-semibold ${open === 0 ? "text-green-600" : "text-amber-600"}`}>
+                    {formatCurrency(open)}
+                  </div>
+                </div>
+              </div>
+              <Separator />
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {allocations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">Geen afletteringen gevonden.</p>
+                ) : allocations.map((a) => {
+                  const tx = bankTransactionById.get(a.bank_transaction_id);
+                  return (
+                    <div key={a.id} className="flex items-center justify-between gap-3 text-sm rounded-md border px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="font-mono text-xs text-muted-foreground">
+                          {tx?.transaction_date ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
+                        </div>
+                        <div className="truncate">{tx ? getDisplayDescription(tx.description) : "—"}</div>
+                      </div>
+                      <div className="font-mono font-medium shrink-0">{formatCurrency(a.amount)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </>
   );
 }
