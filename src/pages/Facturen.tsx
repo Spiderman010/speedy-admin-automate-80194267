@@ -694,7 +694,8 @@ export default function Facturen() {
         const allocations = allocationsByInvoiceId.get(inv.id) ?? [];
         const total = getInvoiceTotalAmount(inv);
         const allocated = allocations.reduce((sum, a) => sum + a.amount, 0);
-        const open = total != null ? Math.max(0, total - allocated) : null;
+        const remaining = getInvoiceRemainingAmount(inv);
+        const open = remaining ?? (total != null ? Math.max(0, total - allocated) : null);
         return (
           <Dialog open={!!afletteringInvoice} onOpenChange={(o) => !o && setAfletteringInvoice(null)}>
             <DialogContent className="max-w-lg">
