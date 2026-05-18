@@ -1045,21 +1045,23 @@ export default function Bank() {
             return;
           }
           const resolvableGrootboekIds = new Set((grootboekrekeningen ?? []).map(g => g.id));
+          const has1799 = (grootboekrekeningen ?? []).some(g => g.nummer === 1799);
           const exportedBankRows = exportCandidates.filter(
             t => !!t.grootboekrekening_id && resolvableGrootboekIds.has(t.grootboekrekening_id),
           );
           const unresolvedLedgerRows = exportCandidates.filter(
             t => !!t.grootboekrekening_id && !resolvableGrootboekIds.has(t.grootboekrekening_id),
           );
-          const viaInvoiceRows = exportCandidates.filter(t => t.match_status === "gematcht" && !t.grootboekrekening_id);
+          const naar1799Rows = exportCandidates.filter(t => t.match_status === "gematcht" && !t.grootboekrekening_id);
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
           exportBankTransactionsCSV(exportCandidates, grootboekrekeningen ?? [], clientName);
           const unresolvedNote = unresolvedLedgerRows.length > 0
             ? ` ${unresolvedLedgerRows.length} bankregel(s) hebben een onbekende grootboekrekening en zijn niet geëxporteerd.`
             : "";
-          const description = exportedBankRows.length === 0 && viaInvoiceRows.length > 0
-            ? `Geen losse bankregels geëxporteerd. ${viaInvoiceRows.length} afgeletterde bankregel(s) lopen via factuur-export.${unresolvedNote}`
-            : `${exportedBankRows.length} bankregel(s) geëxporteerd. ${viaInvoiceRows.length} afgeletterde bankregel(s) lopen via factuur-export.${unresolvedNote}`;
+          const missing1799Note = !has1799 && naar1799Rows.length > 0
+            ? ` Let op: 1799 Onbekende betalingen is niet gevonden. ${naar1799Rows.length} afgeletterde regel(s) zijn niet geëxporteerd.`
+            : "";
+          const description = `${exportedBankRows.length} bankregel(s) geëxporteerd. ${naar1799Rows.length} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.${unresolvedNote}${missing1799Note}`;
           toast({ title: "Bankexport aangemaakt", description });
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
@@ -1114,7 +1116,7 @@ export default function Bank() {
             <SelectItem value="gematcht">Gematcht</SelectItem>
             <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
             <SelectItem value="blokkeert_export">Blokkeert export</SelectItem>
-            <SelectItem value="niet_in_bankexport">Niet in bankexport</SelectItem>
+            <SelectItem value="niet_in_bankexport">Naar 1799</SelectItem>
           </SelectContent>
         </Select>
         <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
@@ -1301,11 +1303,11 @@ export default function Bank() {
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Badge variant="outline" className="text-xs w-fit cursor-default">
-                                    Via factuur
+                                    Naar 1799
                                   </Badge>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  Niet opgenomen in bankexport; hoort bij factuur-export
+                                  Opgenomen in bankexport op 1799 Onbekende betalingen. Gebruik het afletterrapport om dit in SnelStart te verwerken.
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
