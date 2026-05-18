@@ -16,8 +16,6 @@ const HEADERS = [
   "Bankdatum",
   "Bankomschrijving",
   "Bankbedrag",
-  "Bank export grootboek",
-  "Bank export grootboek naam",
   "Afletterstatus",
   "Factuurtype",
   "Factuurnummer",
@@ -26,7 +24,6 @@ const HEADERS = [
   "Factuurbedrag",
   "Afgeletterd bedrag",
   "Factuur openstaand",
-  "Allocatiedatum",
   "Opmerking",
 ];
 
@@ -107,10 +104,8 @@ export function exportAfletterrapportCSV(
   for (const { alloc, tx, purchaseInv, salesInv } of reportRows) {
     const inv = (purchaseInv ?? salesInv)!;
 
-    // Bank export grootboek
-    const { grootboek: gb, source } = resolveBankExportGrootboek(tx, grootboekrekeningen);
-    const gbNummer = gb ? String(gb.nummer) : "";
-    const gbNaam = source === "1799" ? "Onbekende betalingen" : (gb?.omschrijving ?? "");
+    // Resolve only for 1799 Opmerking; grootboek columns are not in this report
+    const { source } = resolveBankExportGrootboek(tx, grootboekrekeningen);
 
     // Afletterstatus: multi-invoice takes priority over paid/partial
     const allocCount = allocCountByTxId.get(alloc.bank_transaction_id) ?? 1;
@@ -128,7 +123,6 @@ export function exportAfletterrapportCSV(
     const factuurdatum = formatDate(purchaseInv?.invoice_date ?? salesInv?.invoice_date);
     const factuurbedrag = formatAmount(getInvoiceTotalAmount(inv));
     const openstaand = remaining != null ? formatAmount(remaining) : "";
-    const allocatiedatum = formatDate(alloc.created_at.substring(0, 10));
 
     // Opmerking: collect all applicable notes
     const opmerkingen: string[] = [];
@@ -141,8 +135,6 @@ export function exportAfletterrapportCSV(
       formatDate(tx.transaction_date),
       getDisplayDescription(tx.description),
       formatAmount(tx.amount),
-      gbNummer,
-      gbNaam,
       afletterstatus,
       factuurtype,
       factuurnummer,
@@ -151,7 +143,6 @@ export function exportAfletterrapportCSV(
       factuurbedrag,
       formatAmount(alloc.amount),
       openstaand,
-      allocatiedatum,
       opmerkingen.join(" | "),
     ]));
   }
