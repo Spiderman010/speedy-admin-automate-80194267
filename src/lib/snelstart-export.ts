@@ -125,10 +125,14 @@ export function exportBankTransactionsCSV(
   const rows: string[] = [];
   let boekingcode = 1;
 
+  const fallback1799 = grootboekrekeningen.find(g => g.nummer === 1799) ?? null;
+
   for (const t of transactions) {
-    const gbId = (t as any).grootboekrekening_id;
-    const gb = gbId ? grootboekrekeningen.find(g => g.id === gbId) : null;
-    if (!gb) continue; // Sla over als geen tegenrekening
+    const resolvedGb = t.grootboekrekening_id
+      ? grootboekrekeningen.find(g => g.id === t.grootboekrekening_id)
+      : null;
+    const gb = resolvedGb ?? (t.match_status === "gematcht" ? fallback1799 : null);
+    if (!gb) continue;
 
     const datum = formatDate(t.transaction_date);
     const omschrijving = (t.description ?? "").substring(0, 100).replace(/[\r\n;]/g, " ");
