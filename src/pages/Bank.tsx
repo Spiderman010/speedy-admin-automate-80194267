@@ -336,8 +336,11 @@ export default function Bank() {
     if (statusFilter === "open") result = result.filter(t => t.match_status === "niet_gematcht" || t.match_status === "suggestie");
     else if (statusFilter === "gematcht") result = result.filter(t => t.match_status === "gematcht");
     else if (statusFilter === "handmatig") result = result.filter(t => t.match_status === "handmatig_geboekt");
-    else if (statusFilter === "geen_grootboek") result = result.filter(t =>
-      (t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") && !t.grootboekrekening_id,
+    else if (statusFilter === "blokkeert_export") result = result.filter(t =>
+      t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id,
+    );
+    else if (statusFilter === "niet_in_bankexport") result = result.filter(t =>
+      t.match_status === "gematcht" && !t.grootboekrekening_id,
     );
 
     // Vraagpost filter
@@ -1035,15 +1038,15 @@ export default function Bank() {
           const teSkippen = matched_txs.filter(t => t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id);
           if (teSkippen.length > 0) {
             toast({
-              title: `${teSkippen.length} transactie(s) worden overgeslagen`,
-              description: "Handmatig geboekte transacties zonder grootboekrekening worden niet geëxporteerd. Wijs een grootboekrekening toe via het filter 'Wordt niet geëxporteerd' en probeer opnieuw.",
+              title: "Export geblokkeerd",
+              description: `${teSkippen.length} handmatig geboekte transactie(s) missen een grootboekrekening. Gebruik het filter 'Blokkeert export' om ze te vinden.`,
               variant: "destructive",
             });
             return;
           }
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
           exportBankTransactionsCSV(matched_txs, grootboekrekeningen ?? [], clientName);
-          toast({ title: `${matched_txs.length} transacties geëxporteerd` });
+          toast({ title: "Bankexport aangemaakt" });
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
@@ -1096,7 +1099,8 @@ export default function Bank() {
             <SelectItem value="open">Open</SelectItem>
             <SelectItem value="gematcht">Gematcht</SelectItem>
             <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
-            <SelectItem value="geen_grootboek">Wordt niet geëxporteerd</SelectItem>
+            <SelectItem value="blokkeert_export">Blokkeert export</SelectItem>
+            <SelectItem value="niet_in_bankexport">Niet in bankexport</SelectItem>
           </SelectContent>
         </Select>
         <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
@@ -1117,10 +1121,10 @@ export default function Bank() {
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-              Let op: {handmatigZonderGrootboek.length} banktransactie{handmatigZonderGrootboek.length !== 1 ? "s" : ""} zonder grootboekrekening
+              Let op: {handmatigZonderGrootboek.length} banktransactie{handmatigZonderGrootboek.length !== 1 ? "s" : ""} blokkeren export
             </p>
             <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-              Deze transacties worden mogelijk niet meegenomen in de SnelStart-export.
+              Handmatig geboekte transacties zonder grootboekrekening kunnen niet naar SnelStart worden geëxporteerd.
             </p>
           </div>
         </div>
@@ -1275,8 +1279,22 @@ export default function Bank() {
                           </Badge>
                           {t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id && (
                             <Badge variant="outline" className="text-xs w-fit border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-                              Geen grootboek
+                              Blokkeert export
                             </Badge>
+                          )}
+                          {t.match_status === "gematcht" && !t.grootboekrekening_id && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Badge variant="outline" className="text-xs w-fit cursor-default">
+                                    Via factuur
+                                  </Badge>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  Niet opgenomen in bankexport; hoort bij factuur-export
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
                       </TableCell>
