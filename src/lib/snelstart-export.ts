@@ -6,15 +6,23 @@ type JournalEntry = Tables<"journal_entries">;
 type BankTransaction = Tables<"bank_transactions">;
 type Grootboek = { id: string; nummer: number; omschrijving: string };
 
-export type BankExportResolutionSource = "own" | "1799" | "blocked_or_missing" | "missing";
+export type BankExportResolutionSource =
+  | "own"                    // transaction has a resolvable grootboekrekening_id
+  | "1799"                   // gematcht, no own ledger, 1799 fallback used
+  | "blocked_manual_invalid" // handmatig_geboekt with missing or stale ledger id
+  | "blocked_missing_1799"   // gematcht needing 1799 fallback, but 1799 absent
+  | "blocked_unconfirmed"    // suggestie — not yet confirmed by user
+  | "blocked_unprocessed";   // niet_gematcht / any other unprocessed status
 
 export type BankExportMeta = {
   exportedTransactions: number;
   exportedCsvRows: number;
   bookedTo1799: number;
   skippedTransactions: number;
-  skippedMatchedMissing1799: number;
   skippedManualInvalidLedger: number;
+  skippedMissingFallback1799: number;
+  skippedUnconfirmed: number;
+  skippedUnprocessed: number;
 };
 
 // Tolerant 1799 lookup: handles both number 1799 and string "1799" returned at
@@ -29,12 +37,13 @@ function find1799(grootboekrekeningen: Grootboek[]): Grootboek | null {
  * Single source of truth for resolving which grootboekrekening a bank
  * transaction should be exported to.
  *
- * Rules:
- * - gematcht, own id resolves         → { source: "own" }
- * - gematcht, own id missing/stale    → { source: "1799" } when 1799 exists, else { source: "missing" }
- * - handmatig_geboekt, own id resolves → { source: "own" }
- * - handmatig_geboekt, own id missing/stale → { source: "blocked_or_missing", grootboek: null }
- * - any other status without ledger   → { source: "missing" }
+ * Rules (in priority order):
+ * 1. Any status — own grootboekrekening_id resolves → source "own"
+ * 2. gematcht, no/stale id, 1799 present           → source "1799"
+ * 3. gematcht, no/stale id, 1799 absent            → source "blocked_missing_1799"
+ * 4. handmatig_geboekt, no/stale id               → source "blocked_manual_invalid"
+ * 5. suggestie                                     → source "blocked_unconfirmed"
+ * 6. niet_gematcht / any other status              → source "blocked_unprocessed"
  */
 export function resolveBankExportGrootboek(
   transaction: BankTransaction,
@@ -50,14 +59,18 @@ export function resolveBankExportGrootboek(
     const fallback = find1799(grootboekrekeningen);
     return fallback
       ? { grootboek: fallback, source: "1799" }
-      : { grootboek: null, source: "missing" };
+      : { grootboek: null, source: "blocked_missing_1799" };
   }
 
   if (transaction.match_status === "handmatig_geboekt") {
-    return { grootboek: null, source: "blocked_or_missing" };
+    return { grootboek: null, source: "blocked_manual_invalid" };
   }
 
-  return { grootboek: null, source: "missing" };
+  if (transaction.match_status === "suggestie") {
+    return { grootboek: null, source: "blocked_unconfirmed" };
+  }
+
+  return { grootboek: null, source: "blocked_unprocessed" };
 }
 
 const SEP = ";";
@@ -184,8 +197,10 @@ export function exportBankTransactionsCSV(
     exportedCsvRows: 0,
     bookedTo1799: 0,
     skippedTransactions: 0,
-    skippedMatchedMissing1799: 0,
     skippedManualInvalidLedger: 0,
+    skippedMissingFallback1799: 0,
+    skippedUnconfirmed: 0,
+    skippedUnprocessed: 0,
   };
 
   for (const t of transactions) {
@@ -193,8 +208,10 @@ export function exportBankTransactionsCSV(
 
     if (!gb) {
       meta.skippedTransactions++;
-      if (source === "missing") meta.skippedMatchedMissing1799++;
-      if (source === "blocked_or_missing") meta.skippedManualInvalidLedger++;
+      if (source === "blocked_manual_invalid") meta.skippedManualInvalidLedger++;
+      if (source === "blocked_missing_1799") meta.skippedMissingFallback1799++;
+      if (source === "blocked_unconfirmed") meta.skippedUnconfirmed++;
+      if (source === "blocked_unprocessed") meta.skippedUnprocessed++;
       continue;
     }
 

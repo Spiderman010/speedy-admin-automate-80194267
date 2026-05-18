@@ -320,13 +320,15 @@ export default function Bank() {
     return sortDir === "asc" ? <ArrowUp className="h-3 w-3 inline ml-1" /> : <ArrowDown className="h-3 w-3 inline ml-1" />;
   };
 
-  // handmatig_geboekt transactions without a grootboekrekening_id will be silently
-  // skipped by exportBankTransactionsCSV. Expose them so the user can fix before export.
-  const handmatigZonderGrootboek = useMemo(() =>
-    (transactions ?? []).filter(
-      t => t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id,
-    ),
-  [transactions]);
+  // All transactions that would block a bank export. Used for the warning banner.
+  const exportBlockingRows = useMemo(() => {
+    const gb = grootboekrekeningen ?? [];
+    return (transactions ?? []).filter(t => {
+      const { source } = resolveBankExportGrootboek(t, gb);
+      return source === "blocked_manual_invalid" || source === "blocked_missing_1799" ||
+             source === "blocked_unconfirmed" || source === "blocked_unprocessed";
+    });
+  }, [transactions, grootboekrekeningen]);
 
   const filteredSorted = useMemo(() => {
     if (!transactions) return [];
@@ -336,12 +338,18 @@ export default function Bank() {
     if (statusFilter === "open") result = result.filter(t => t.match_status === "niet_gematcht" || t.match_status === "suggestie");
     else if (statusFilter === "gematcht") result = result.filter(t => t.match_status === "gematcht");
     else if (statusFilter === "handmatig") result = result.filter(t => t.match_status === "handmatig_geboekt");
-    else if (statusFilter === "blokkeert_export") result = result.filter(t =>
-      t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id,
-    );
-    else if (statusFilter === "niet_in_bankexport") result = result.filter(t =>
-      t.match_status === "gematcht" && !t.grootboekrekening_id,
-    );
+    else if (statusFilter === "blokkeert_export") {
+      const gb = grootboekrekeningen ?? [];
+      result = result.filter(t => {
+        const { source } = resolveBankExportGrootboek(t, gb);
+        return source === "blocked_manual_invalid" || source === "blocked_missing_1799" ||
+               source === "blocked_unconfirmed" || source === "blocked_unprocessed";
+      });
+    }
+    else if (statusFilter === "niet_in_bankexport") {
+      const gb = grootboekrekeningen ?? [];
+      result = result.filter(t => resolveBankExportGrootboek(t, gb).source === "1799");
+    }
 
     // Vraagpost filter
     if (vraagpostFilter !== "all") {
@@ -382,7 +390,7 @@ export default function Bank() {
     });
 
     return result;
-  }, [transactions, statusFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir]);
+  }, [transactions, statusFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir, grootboekrekeningen]);
 
   const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
 
@@ -1033,16 +1041,24 @@ export default function Bank() {
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={() => {
-          const exportCandidates = transactions?.filter(t => t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") ?? [];
-          if (!exportCandidates.length) { toast({ title: "Geen verwerkte transacties om te exporteren", variant: "destructive" }); return; }
+          const exportCandidates = transactions ?? [];
+          if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
           const gb = grootboekrekeningen ?? [];
-          const blockingRows = exportCandidates.filter(t =>
-            resolveBankExportGrootboek(t, gb).source === "blocked_or_missing"
-          );
-          if (blockingRows.length > 0) {
+          const resolutions = exportCandidates.map(t => ({ t, source: resolveBankExportGrootboek(t, gb).source }));
+          const blockedManualInvalid  = resolutions.filter(r => r.source === "blocked_manual_invalid");
+          const blockedMissing1799    = resolutions.filter(r => r.source === "blocked_missing_1799");
+          const blockedUnconfirmed    = resolutions.filter(r => r.source === "blocked_unconfirmed");
+          const blockedUnprocessed    = resolutions.filter(r => r.source === "blocked_unprocessed");
+          const totalBlocking = blockedManualInvalid.length + blockedMissing1799.length + blockedUnconfirmed.length + blockedUnprocessed.length;
+          if (totalBlocking > 0) {
+            const parts: string[] = [];
+            if (blockedUnconfirmed.length > 0) parts.push(`${blockedUnconfirmed.length} suggestie(s)`);
+            if (blockedUnprocessed.length > 0) parts.push(`${blockedUnprocessed.length} niet gematcht/open`);
+            if (blockedManualInvalid.length > 0) parts.push(`${blockedManualInvalid.length} handmatig zonder geldige grootboekrekening`);
+            if (blockedMissing1799.length > 0) parts.push(`${blockedMissing1799.length} afgeletterd zonder 1799`);
             toast({
               title: "Export geblokkeerd",
-              description: `${blockingRows.length} handmatig geboekte bankregel(s) missen een geldige grootboekrekening. Gebruik het filter 'Blokkeert export' om ze te vinden.`,
+              description: `${totalBlocking} bankregel(s) zijn nog niet klaar voor export. Bevestig suggesties, koppel bankregels, boek ze handmatig of zet ze op vraagpost. (${parts.join(", ")})`,
               variant: "destructive",
             });
             return;
@@ -1052,9 +1068,6 @@ export default function Bank() {
           let description = `${meta.exportedTransactions} bankregel(s) geëxporteerd.`;
           if (meta.bookedTo1799 > 0) {
             description += ` ${meta.bookedTo1799} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.`;
-          }
-          if (meta.skippedMatchedMissing1799 > 0) {
-            description += ` Let op: ${meta.skippedMatchedMissing1799} afgeletterde bankregel(s) konden niet worden geëxporteerd omdat 1799 Onbekende betalingen ontbreekt.`;
           }
           toast({ title: "Bankexport aangemaakt", description });
         }}>
@@ -1126,15 +1139,15 @@ export default function Bank() {
         </Select>
       </div>
 
-      {handmatigZonderGrootboek.length > 0 && (
+      {exportBlockingRows.length > 0 && (
         <div className="mb-4 rounded-lg border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 p-4 flex items-start gap-3">
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
           <div>
             <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-              Let op: {handmatigZonderGrootboek.length} banktransactie{handmatigZonderGrootboek.length !== 1 ? "s" : ""} blokkeren export
+              Let op: {exportBlockingRows.length} bankregel{exportBlockingRows.length !== 1 ? "s" : ""} blokkeren export
             </p>
             <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-              Handmatig geboekte transacties zonder grootboekrekening kunnen niet naar SnelStart worden geëxporteerd.
+              Gebruik het filter 'Blokkeert export' om ze te bekijken. Bevestig suggesties, koppel of boek openstaande regels, of zet ze op vraagpost.
             </p>
           </div>
         </div>
@@ -1288,6 +1301,11 @@ export default function Bank() {
                              : "Open"}
                           </Badge>
                           {t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id && (
+                            <Badge variant="outline" className="text-xs w-fit border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                              Blokkeert export
+                            </Badge>
+                          )}
+                          {t.match_status === "suggestie" && (
                             <Badge variant="outline" className="text-xs w-fit border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
                               Blokkeert export
                             </Badge>
