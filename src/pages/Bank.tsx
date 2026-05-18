@@ -31,7 +31,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useBankTransactions, useAddBankTransaction, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
-import { exportBankTransactionsCSV } from "@/lib/snelstart-export";
+import { exportBankTransactionsCSV, resolveBankExportGrootboek } from "@/lib/snelstart-export";
 import { useClients } from "@/hooks/useClients";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useBookingTemplates } from "@/hooks/useBookingTemplates";
@@ -1035,10 +1035,9 @@ export default function Bank() {
         <Button variant="outline" onClick={() => {
           const exportCandidates = transactions?.filter(t => t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") ?? [];
           if (!exportCandidates.length) { toast({ title: "Geen verwerkte transacties om te exporteren", variant: "destructive" }); return; }
-          const resolvableGrootboekIds = new Set((grootboekrekeningen ?? []).map(g => g.id));
+          const gb = grootboekrekeningen ?? [];
           const blockingRows = exportCandidates.filter(t =>
-            t.match_status === "handmatig_geboekt" &&
-            (!t.grootboekrekening_id || !resolvableGrootboekIds.has(t.grootboekrekening_id))
+            resolveBankExportGrootboek(t, gb).source === "blocked_or_missing"
           );
           if (blockingRows.length > 0) {
             toast({
@@ -1048,26 +1047,15 @@ export default function Bank() {
             });
             return;
           }
-          const has1799 = (grootboekrekeningen ?? []).some(g => g.nummer === 1799);
-          // gematcht rows without a resolvable own ledger — these go to 1799 in the export function
-          const naar1799Rows = exportCandidates.filter(t =>
-            t.match_status === "gematcht" &&
-            (!t.grootboekrekening_id || !resolvableGrootboekIds.has(t.grootboekrekening_id))
-          );
-          // total rows that will be written to CSV
-          const exportedBankRows = exportCandidates.filter(t =>
-            (!!t.grootboekrekening_id && resolvableGrootboekIds.has(t.grootboekrekening_id)) ||
-            (t.match_status === "gematcht" && (!t.grootboekrekening_id || !resolvableGrootboekIds.has(t.grootboekrekening_id)) && has1799)
-          );
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-          exportBankTransactionsCSV(exportCandidates, grootboekrekeningen ?? [], clientName);
-          const naar1799Line = has1799 && naar1799Rows.length > 0
-            ? ` ${naar1799Rows.length} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.`
-            : "";
-          const missing1799Note = !has1799 && naar1799Rows.length > 0
-            ? ` Let op: 1799 Onbekende betalingen is niet gevonden. ${naar1799Rows.length} afgeletterde bankregel(s) zijn niet geëxporteerd.`
-            : "";
-          const description = `${exportedBankRows.length} bankregel(s) geëxporteerd.${naar1799Line}${missing1799Note}`;
+          const meta = exportBankTransactionsCSV(exportCandidates, gb, clientName);
+          let description = `${meta.exportedTransactions} bankregel(s) geëxporteerd.`;
+          if (meta.bookedTo1799 > 0) {
+            description += ` ${meta.bookedTo1799} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.`;
+          }
+          if (meta.skippedMatchedMissing1799 > 0) {
+            description += ` Let op: ${meta.skippedMatchedMissing1799} afgeletterde bankregel(s) konden niet worden geëxporteerd omdat 1799 Onbekende betalingen ontbreekt.`;
+          }
           toast({ title: "Bankexport aangemaakt", description });
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart

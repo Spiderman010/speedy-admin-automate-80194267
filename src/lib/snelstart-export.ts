@@ -4,6 +4,61 @@ type PurchaseInvoice = Tables<"purchase_invoices">;
 type SalesInvoice = Tables<"sales_invoices">;
 type JournalEntry = Tables<"journal_entries">;
 type BankTransaction = Tables<"bank_transactions">;
+type Grootboek = { id: string; nummer: number; omschrijving: string };
+
+export type BankExportResolutionSource = "own" | "1799" | "blocked_or_missing" | "missing";
+
+export type BankExportMeta = {
+  exportedTransactions: number;
+  exportedCsvRows: number;
+  bookedTo1799: number;
+  skippedTransactions: number;
+  skippedMatchedMissing1799: number;
+  skippedManualInvalidLedger: number;
+};
+
+// Tolerant 1799 lookup: handles both number 1799 and string "1799" returned at
+// runtime despite the TypeScript type saying nummer is a number.
+function find1799(grootboekrekeningen: Grootboek[]): Grootboek | null {
+  return grootboekrekeningen.find(
+    g => String(g.nummer ?? (g as any).code ?? "").trim() === "1799"
+  ) ?? null;
+}
+
+/**
+ * Single source of truth for resolving which grootboekrekening a bank
+ * transaction should be exported to.
+ *
+ * Rules:
+ * - gematcht, own id resolves         → { source: "own" }
+ * - gematcht, own id missing/stale    → { source: "1799" } when 1799 exists, else { source: "missing" }
+ * - handmatig_geboekt, own id resolves → { source: "own" }
+ * - handmatig_geboekt, own id missing/stale → { source: "blocked_or_missing", grootboek: null }
+ * - any other status without ledger   → { source: "missing" }
+ */
+export function resolveBankExportGrootboek(
+  transaction: BankTransaction,
+  grootboekrekeningen: Grootboek[],
+): { grootboek: Grootboek | null; source: BankExportResolutionSource } {
+  const resolvedGb = transaction.grootboekrekening_id
+    ? (grootboekrekeningen.find(g => g.id === transaction.grootboekrekening_id) ?? null)
+    : null;
+
+  if (resolvedGb) return { grootboek: resolvedGb, source: "own" };
+
+  if (transaction.match_status === "gematcht") {
+    const fallback = find1799(grootboekrekeningen);
+    return fallback
+      ? { grootboek: fallback, source: "1799" }
+      : { grootboek: null, source: "missing" };
+  }
+
+  if (transaction.match_status === "handmatig_geboekt") {
+    return { grootboek: null, source: "blocked_or_missing" };
+  }
+
+  return { grootboek: null, source: "missing" };
+}
 
 const SEP = ";";
 const STANDARD_HEADERS = ["Datum", "Omschrijving", "Grootboekrekening", "Bedrag", "Btw-code"];
@@ -118,21 +173,30 @@ function downloadSnelstartCSV(content: string, filename: string) {
 
 export function exportBankTransactionsCSV(
   transactions: BankTransaction[],
-  grootboekrekeningen: Array<{ id: string; nummer: number; omschrijving: string }>,
+  grootboekrekeningen: Grootboek[],
   clientName?: string,
   bankDagboek: number = 1100
-) {
+): BankExportMeta {
   const rows: string[] = [];
   let boekingcode = 1;
-
-  const fallback1799 = grootboekrekeningen.find(g => g.nummer === 1799) ?? null;
+  const meta: BankExportMeta = {
+    exportedTransactions: 0,
+    exportedCsvRows: 0,
+    bookedTo1799: 0,
+    skippedTransactions: 0,
+    skippedMatchedMissing1799: 0,
+    skippedManualInvalidLedger: 0,
+  };
 
   for (const t of transactions) {
-    const resolvedGb = t.grootboekrekening_id
-      ? grootboekrekeningen.find(g => g.id === t.grootboekrekening_id)
-      : null;
-    const gb = resolvedGb ?? (t.match_status === "gematcht" ? fallback1799 : null);
-    if (!gb) continue;
+    const { grootboek: gb, source } = resolveBankExportGrootboek(t, grootboekrekeningen);
+
+    if (!gb) {
+      meta.skippedTransactions++;
+      if (source === "missing") meta.skippedMatchedMissing1799++;
+      if (source === "blocked_or_missing") meta.skippedManualInvalidLedger++;
+      continue;
+    }
 
     const datum = formatDate(t.transaction_date);
     const omschrijving = (t.description ?? "").substring(0, 100).replace(/[\r\n;]/g, " ");
@@ -163,11 +227,15 @@ export function exportBankTransactionsCSV(
       omschrijving,
     ]));
 
+    meta.exportedTransactions++;
+    meta.exportedCsvRows += 2;
+    if (source === "1799") meta.bookedTo1799++;
     boekingcode++;
   }
 
   const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
   downloadSnelstartCSV(buildSnelstartCSV(rows), `${prefix}banktransacties_snelstart.csv`);
+  return meta;
 }
 
 export async function exportAllForClient(
