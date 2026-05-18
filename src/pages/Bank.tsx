@@ -1578,7 +1578,7 @@ export default function Bank() {
                                   : setMatchTx(t)
                                 }
                               >
-                                {safeSuggestionIds.has(t.id) ? "✓ Bevestig" : "Bevestig"}
+                                {safeSuggestionIds.has(t.id) ? "✓ Bevestig" : "Controleer"}
                               </Button>
                               <Button
                                 size="sm"
