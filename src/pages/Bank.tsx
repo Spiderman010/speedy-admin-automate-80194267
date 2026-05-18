@@ -79,6 +79,7 @@ export default function Bank() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high" | "medium" | "low" | "none">("all");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
   const [matchDialogMode, setMatchDialogMode] = useState<"primary" | "additional">("primary");
@@ -108,6 +109,10 @@ export default function Bank() {
   useEffect(() => {
     setClientFilter(selectedClientId);
   }, [selectedClientId]);
+
+  useEffect(() => {
+    setConfidenceFilter("all");
+  }, [statusFilter]);
 
   const { toast } = useToast();
 
@@ -362,6 +367,29 @@ export default function Bank() {
     return ids;
   }, [transactions, grootboekrekeningen]);
 
+  // IDs of suggestie transactions that are safe for one-click confirm:
+  // confidence ≥ 90, correct direction, exact amount match (diff ≤ €0.01), not a partial payment.
+  const safeSuggestionIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!transactions || !invoices || !salesInvs) return ids;
+    for (const t of transactions) {
+      if (t.match_status !== "suggestie") continue;
+      if ((t.match_confidence ?? 0) < 90) continue;
+      const expectedType: "inkoop" | "verkoop" = t.amount >= 0 ? "verkoop" : "inkoop";
+      const candidates = rankCandidates(
+        t,
+        invoices.filter(i => i.client_id === t.client_id),
+        salesInvs.filter(i => i.client_id === t.client_id),
+      );
+      const best = candidates.find(c => c.score > 0 && c.type === expectedType && !c.isPartialPayment);
+      if (!best) continue;
+      const txAmt = Math.abs(t.amount);
+      const invAmt = best.amount != null ? Math.abs(best.amount) : null;
+      if (invAmt != null && Math.abs(txAmt - invAmt) <= 0.01) ids.add(t.id);
+    }
+    return ids;
+  }, [transactions, invoices, salesInvs]);
+
   const filteredSorted = useMemo(() => {
     if (!transactions) return [];
     let result = [...transactions];
@@ -396,6 +424,20 @@ export default function Bank() {
       });
     }
 
+    // Confidence subfilter (only applies when showing open/suggestie rows)
+    if (statusFilter === "open" && confidenceFilter !== "all") {
+      result = result.filter(t => {
+        if (t.match_status !== "suggestie") {
+          return confidenceFilter === "none";
+        }
+        const conf = t.match_confidence ?? -1;
+        if (confidenceFilter === "high") return conf >= 90;
+        if (confidenceFilter === "medium") return conf >= 60 && conf < 90;
+        if (confidenceFilter === "low") return conf >= 0 && conf < 60;
+        return false; // "none" only shows niet_gematcht, handled above
+      });
+    }
+
     // Search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -412,17 +454,25 @@ export default function Bank() {
     // Sort
     result.sort((a, b) => {
       const dir = sortDir === "asc" ? 1 : -1;
+      let cmp = 0;
       switch (sortField) {
-        case "date": return dir * (new Date(a.transaction_date).getTime() - new Date(b.transaction_date).getTime());
-        case "amount": return dir * (a.amount - b.amount);
-        case "description": return dir * (a.description || "").localeCompare(b.description || "", "nl");
-        case "status": return dir * a.match_status.localeCompare(b.match_status, "nl");
-        default: return 0;
+        case "date": cmp = new Date(a.transaction_date).getTime() - new Date(b.transaction_date).getTime(); break;
+        case "amount": cmp = a.amount - b.amount; break;
+        case "description": cmp = (a.description || "").localeCompare(b.description || "", "nl"); break;
+        case "status": cmp = a.match_status.localeCompare(b.match_status, "nl"); break;
       }
+      if (cmp !== 0) return dir * cmp;
+      // Secondary sort: confidence DESC so high-confidence suggestions surface first
+      if (statusFilter === "open") {
+        const confA = a.match_confidence ?? -1;
+        const confB = b.match_confidence ?? -1;
+        return confB - confA;
+      }
+      return 0;
     });
 
     return result;
-  }, [transactions, statusFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir, grootboekrekeningen]);
+  }, [transactions, statusFilter, confidenceFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir, grootboekrekeningen]);
 
   const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
 
@@ -924,8 +974,15 @@ export default function Bank() {
         salesInvs.filter(i => i.client_id === tx.client_id),
       );
       const expectedType = expectedInvoiceTypeForTx(tx);
-      const best = candidates.find(c => c.score > 0 && c.type === expectedType);
+      const best = candidates.find(c => c.score > 0 && c.type === expectedType && !c.isPartialPayment);
       if (!best) {
+        skipped++;
+        continue;
+      }
+
+      const txAmt = Math.abs(tx.amount);
+      const invAmt = best.amount != null ? Math.abs(best.amount) : null;
+      if (invAmt == null || Math.abs(txAmt - invAmt) > 0.01) {
         skipped++;
         continue;
       }
@@ -965,16 +1022,29 @@ export default function Bank() {
     await refetchPurchase();
     await refetchSales();
 
-    if (confirmed > 0) {
-      toast({ title: `${confirmed} suggestie(s) bevestigd` });
-    }
-    if (skipped > 0) {
-      toast({ title: `${skipped} transactie(s) overgeslagen (geen suggestie)` });
+    if (confirmed > 0 || skipped > 0) {
+      toast({
+        title: `${confirmed} suggestie(s) bevestigd${skipped > 0 ? `. ${skipped} overgeslagen voor handmatige controle.` : ""}`,
+      });
     }
     if (errors.length > 0) {
       toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
     }
   }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
+
+  const handleRejectSuggestion = useCallback(async (t: Tables<"bank_transactions">) => {
+    try {
+      await updateTx.mutateAsync({
+        id: t.id,
+        match_status: "niet_gematcht",
+        matched_invoice_id: null,
+        match_confidence: null,
+      });
+      toast({ title: "Suggestie afgewezen" });
+    } catch (e: any) {
+      toast({ title: "Fout", description: e.message, variant: "destructive" });
+    }
+  }, [updateTx, toast]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
@@ -1177,6 +1247,30 @@ export default function Bank() {
           </SelectContent>
         </Select>
       </div>
+
+      {statusFilter === "open" && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {([
+            ["all", "Alle"],
+            ["high", "≥90%"],
+            ["medium", "60–89%"],
+            ["low", "<60%"],
+            ["none", "Geen suggestie"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setConfidenceFilter(value)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                confidenceFilter === value
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {exportBlockingRows.length > 0 && (
         <div className="mb-4 rounded-lg border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 p-4 flex items-start gap-3">
@@ -1456,9 +1550,23 @@ export default function Bank() {
                               </Tooltip>
                             </TooltipProvider>
                           ) : t.match_status === "suggestie" ? (
-                            <Button size="sm" variant="default" onClick={() => handleConfirm(t.id)}>
-                              Bevestig
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                variant={safeSuggestionIds.has(t.id) ? "default" : "outline"}
+                                onClick={() => handleConfirm(t.id)}
+                              >
+                                {safeSuggestionIds.has(t.id) ? "✓ Bevestig" : "Bevestig"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-muted-foreground text-xs"
+                                onClick={() => handleRejectSuggestion(t)}
+                              >
+                                Afwijzen
+                              </Button>
+                            </>
                           ) : (
                             <Button size="sm" variant="outline" onClick={() => setMatchTx(t)}>
                               Koppel
