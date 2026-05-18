@@ -24,6 +24,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
@@ -83,6 +90,20 @@ export default function Bank() {
   const [bulkLedgerId, setBulkLedgerId] = useState("");
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
   const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
+
+  type ExportPreflightData = {
+    exportCandidates: Tables<"bank_transactions">[];
+    countExported: number;
+    countTo1799: number;
+    countBlocked: number;
+    blockedUnconfirmed: number;
+    blockedUnprocessed: number;
+    blockedManualInvalid: number;
+    blockedMissing1799: number;
+    clientName: string | undefined;
+  };
+  const [exportPreflightOpen, setExportPreflightOpen] = useState(false);
+  const [exportPreflightData, setExportPreflightData] = useState<ExportPreflightData | null>(null);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
@@ -329,6 +350,16 @@ export default function Bank() {
       return source === "blocked_manual_invalid" || source === "blocked_missing_1799" ||
              source === "blocked_unconfirmed" || source === "blocked_unprocessed";
     });
+  }, [transactions, grootboekrekeningen]);
+
+  // IDs of transactions that will be exported to 1799 Onbekende betalingen.
+  const to1799Ids = useMemo(() => {
+    const gb = grootboekrekeningen ?? [];
+    const ids = new Set<string>();
+    for (const t of transactions ?? []) {
+      if (resolveBankExportGrootboek(t, gb).source === "1799") ids.add(t.id);
+    }
+    return ids;
   }, [transactions, grootboekrekeningen]);
 
   const filteredSorted = useMemo(() => {
@@ -1045,32 +1076,17 @@ export default function Bank() {
           const exportCandidates = transactions ?? [];
           if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
           const gb = grootboekrekeningen ?? [];
-          const resolutions = exportCandidates.map(t => ({ t, source: resolveBankExportGrootboek(t, gb).source }));
-          const blockedManualInvalid  = resolutions.filter(r => r.source === "blocked_manual_invalid");
-          const blockedMissing1799    = resolutions.filter(r => r.source === "blocked_missing_1799");
-          const blockedUnconfirmed    = resolutions.filter(r => r.source === "blocked_unconfirmed");
-          const blockedUnprocessed    = resolutions.filter(r => r.source === "blocked_unprocessed");
-          const totalBlocking = blockedManualInvalid.length + blockedMissing1799.length + blockedUnconfirmed.length + blockedUnprocessed.length;
-          if (totalBlocking > 0) {
-            const parts: string[] = [];
-            if (blockedUnconfirmed.length > 0) parts.push(`${blockedUnconfirmed.length} suggestie(s)`);
-            if (blockedUnprocessed.length > 0) parts.push(`${blockedUnprocessed.length} niet gematcht/open`);
-            if (blockedManualInvalid.length > 0) parts.push(`${blockedManualInvalid.length} handmatig zonder geldige grootboekrekening`);
-            if (blockedMissing1799.length > 0) parts.push(`${blockedMissing1799.length} afgeletterd zonder 1799`);
-            toast({
-              title: "Export geblokkeerd",
-              description: `${totalBlocking} bankregel(s) zijn nog niet klaar voor export. Bevestig suggesties, koppel bankregels, boek ze handmatig of zet ze op vraagpost. (${parts.join(", ")})`,
-              variant: "destructive",
-            });
-            return;
-          }
+          const sources = exportCandidates.map(t => resolveBankExportGrootboek(t, gb).source);
+          const countTo1799 = sources.filter(s => s === "1799").length;
+          const countExported = sources.filter(s => s === "own" || s === "1799").length;
+          const blockedUnconfirmed = sources.filter(s => s === "blocked_unconfirmed").length;
+          const blockedUnprocessed = sources.filter(s => s === "blocked_unprocessed").length;
+          const blockedManualInvalid = sources.filter(s => s === "blocked_manual_invalid").length;
+          const blockedMissing1799 = sources.filter(s => s === "blocked_missing_1799").length;
+          const countBlocked = blockedUnconfirmed + blockedUnprocessed + blockedManualInvalid + blockedMissing1799;
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-          const meta = exportBankTransactionsCSV(exportCandidates, gb, clientName);
-          let description = `${meta.exportedTransactions} bankregel(s) geëxporteerd.`;
-          if (meta.bookedTo1799 > 0) {
-            description += ` ${meta.bookedTo1799} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.`;
-          }
-          toast({ title: "Bankexport aangemaakt", description });
+          setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName });
+          setExportPreflightOpen(true);
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
@@ -1146,7 +1162,7 @@ export default function Bank() {
             <SelectItem value="gematcht">Gematcht</SelectItem>
             <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
             <SelectItem value="blokkeert_export">Blokkeert export</SelectItem>
-            <SelectItem value="niet_in_bankexport">Naar 1799</SelectItem>
+            <SelectItem value="niet_in_bankexport">Tijdelijk op 1799</SelectItem>
           </SelectContent>
         </Select>
         <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
@@ -1333,16 +1349,16 @@ export default function Bank() {
                               Blokkeert export
                             </Badge>
                           )}
-                          {t.match_status === "gematcht" && !t.grootboekrekening_id && (
+                          {to1799Ids.has(t.id) && (
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Badge variant="outline" className="text-xs w-fit cursor-default">
-                                    Naar 1799
+                                    → 1799
                                   </Badge>
                                 </TooltipTrigger>
                                 <TooltipContent>
-                                  Opgenomen in bankexport op 1799 Onbekende betalingen. Gebruik het afletterrapport om dit in SnelStart te verwerken.
+                                  Wordt geëxporteerd op 1799 Onbekende betalingen. Gebruik het Afletterrapport CSV om dit in SnelStart af te letteren.
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
@@ -1632,6 +1648,90 @@ export default function Bank() {
           : undefined}
         excludedInvoiceIds={matchDialogMode === "additional" ? additionalExcludedIds : undefined}
       />
+
+      <Dialog open={exportPreflightOpen} onOpenChange={setExportPreflightOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Bankexport controleren</DialogTitle>
+          </DialogHeader>
+          {exportPreflightData && (
+            <div className="space-y-4">
+              <div className="rounded-md border bg-muted/40 p-3 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Wordt geëxporteerd</span>
+                  <span className="font-medium">{exportPreflightData.countExported}</span>
+                </div>
+                {exportPreflightData.countTo1799 > 0 && (
+                  <div className="flex justify-between text-sm text-amber-700 dark:text-amber-400">
+                    <span>Tijdelijk op 1799</span>
+                    <span className="font-medium">{exportPreflightData.countTo1799}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sm">
+                  <span className={exportPreflightData.countBlocked > 0 ? "text-destructive font-medium" : ""}>
+                    Blokkeert export
+                  </span>
+                  <span className={`font-medium ${exportPreflightData.countBlocked > 0 ? "text-destructive" : ""}`}>
+                    {exportPreflightData.countBlocked}
+                  </span>
+                </div>
+              </div>
+
+              {exportPreflightData.countBlocked > 0 && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-2">
+                  <p className="text-sm font-medium text-destructive">
+                    Los eerst de blokkerende bankregels op. Gebruik filter 'Blokkeert export'.
+                  </p>
+                  <ul className="text-xs text-destructive/80 space-y-1">
+                    {exportPreflightData.blockedUnconfirmed > 0 && (
+                      <li>• {exportPreflightData.blockedUnconfirmed} suggestie(s)</li>
+                    )}
+                    {exportPreflightData.blockedUnprocessed > 0 && (
+                      <li>• {exportPreflightData.blockedUnprocessed} niet gematcht/open</li>
+                    )}
+                    {exportPreflightData.blockedManualInvalid > 0 && (
+                      <li>• {exportPreflightData.blockedManualInvalid} handmatig zonder geldige grootboekrekening</li>
+                    )}
+                    {exportPreflightData.blockedMissing1799 > 0 && (
+                      <li>• {exportPreflightData.blockedMissing1799} ontbrekende 1799</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {exportPreflightData.countBlocked === 0 && exportPreflightData.countTo1799 > 0 && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-50 dark:bg-amber-950/30 p-3">
+                  <p className="text-sm text-amber-800 dark:text-amber-300">
+                    Deze bankregels worden tijdelijk geboekt op 1799 Onbekende betalingen. Download ook het Afletterrapport CSV om ze in SnelStart sneller af te letteren.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExportPreflightOpen(false)}>Annuleren</Button>
+            <Button
+              disabled={!exportPreflightData || exportPreflightData.countBlocked > 0}
+              onClick={() => {
+                if (!exportPreflightData) return;
+                const meta = exportBankTransactionsCSV(
+                  exportPreflightData.exportCandidates,
+                  grootboekrekeningen ?? [],
+                  exportPreflightData.clientName,
+                );
+                setExportPreflightOpen(false);
+                let description = `${meta.exportedTransactions} bankregel(s) geëxporteerd.`;
+                if (meta.bookedTo1799 > 0) {
+                  description += ` ${meta.bookedTo1799} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.`;
+                }
+                toast({ title: "Bankexport aangemaakt", description });
+              }}
+            >
+              <Download className="mr-2 h-4 w-4" />Download bankexport
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
