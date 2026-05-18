@@ -32,6 +32,7 @@ import { useBankTransactions, useAddBankTransaction, useUpdateBankTransaction } 
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
 import { exportBankTransactionsCSV, resolveBankExportGrootboek } from "@/lib/snelstart-export";
+import { exportAfletterrapportCSV } from "@/lib/afletterrapport-export";
 import { useClients } from "@/hooks/useClients";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useBookingTemplates } from "@/hooks/useBookingTemplates";
@@ -1072,6 +1073,28 @@ export default function Bank() {
           toast({ title: "Bankexport aangemaakt", description });
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
+        </Button>
+        <Button variant="outline" onClick={() => {
+          const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
+          const rowCount = exportAfletterrapportCSV(
+            allAllocations ?? [],
+            transactions ?? [],
+            invoices ?? [],
+            salesInvs ?? [],
+            grootboekrekeningen ?? [],
+            clientName,
+          );
+          if (rowCount === 0) {
+            toast({
+              title: "Geen afletteringen gevonden",
+              description: "Er zijn geen definitief gekoppelde bankregels om te rapporteren.",
+              variant: "destructive",
+            });
+          } else {
+            toast({ title: "Afletterrapport aangemaakt", description: `${rowCount} regel(s) geëxporteerd.` });
+          }
+        }}>
+          <Download className="mr-2 h-4 w-4" />Afletterrapport CSV
         </Button>
         <Button
           variant="default"
