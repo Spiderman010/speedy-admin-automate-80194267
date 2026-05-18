@@ -37,40 +37,46 @@ function find1799(grootboekrekeningen: Grootboek[]): Grootboek | null {
  * Single source of truth for resolving which grootboekrekening a bank
  * transaction should be exported to.
  *
+ * match_status is checked before grootboekrekening_id so that unconfirmed /
+ * unprocessed statuses always block — even when a ledger id happens to exist.
+ *
  * Rules (in priority order):
- * 1. Any status — own grootboekrekening_id resolves → source "own"
- * 2. gematcht, no/stale id, 1799 present           → source "1799"
- * 3. gematcht, no/stale id, 1799 absent            → source "blocked_missing_1799"
- * 4. handmatig_geboekt, no/stale id               → source "blocked_manual_invalid"
- * 5. suggestie                                     → source "blocked_unconfirmed"
- * 6. niet_gematcht / any other status              → source "blocked_unprocessed"
+ * 1. suggestie                                     → blocked_unconfirmed (always)
+ * 2. niet_gematcht / unknown status                → blocked_unprocessed (always)
+ * 3. handmatig_geboekt, own id resolves            → source "own"
+ * 4. handmatig_geboekt, no/stale id               → blocked_manual_invalid
+ * 5. gematcht, own id resolves                     → source "own"
+ * 6. gematcht, no/stale id, 1799 present           → source "1799"
+ * 7. gematcht, no/stale id, 1799 absent            → blocked_missing_1799
  */
 export function resolveBankExportGrootboek(
   transaction: BankTransaction,
   grootboekrekeningen: Grootboek[],
 ): { grootboek: Grootboek | null; source: BankExportResolutionSource } {
-  const resolvedGb = transaction.grootboekrekening_id
-    ? (grootboekrekeningen.find(g => g.id === transaction.grootboekrekening_id) ?? null)
-    : null;
-
-  if (resolvedGb) return { grootboek: resolvedGb, source: "own" };
-
-  if (transaction.match_status === "gematcht") {
-    const fallback = find1799(grootboekrekeningen);
-    return fallback
-      ? { grootboek: fallback, source: "1799" }
-      : { grootboek: null, source: "blocked_missing_1799" };
-  }
-
-  if (transaction.match_status === "handmatig_geboekt") {
-    return { grootboek: null, source: "blocked_manual_invalid" };
-  }
-
   if (transaction.match_status === "suggestie") {
     return { grootboek: null, source: "blocked_unconfirmed" };
   }
 
-  return { grootboek: null, source: "blocked_unprocessed" };
+  if (transaction.match_status !== "gematcht" && transaction.match_status !== "handmatig_geboekt") {
+    return { grootboek: null, source: "blocked_unprocessed" };
+  }
+
+  const resolvedGb = transaction.grootboekrekening_id
+    ? (grootboekrekeningen.find(g => g.id === transaction.grootboekrekening_id) ?? null)
+    : null;
+
+  if (transaction.match_status === "handmatig_geboekt") {
+    return resolvedGb
+      ? { grootboek: resolvedGb, source: "own" }
+      : { grootboek: null, source: "blocked_manual_invalid" };
+  }
+
+  // gematcht
+  if (resolvedGb) return { grootboek: resolvedGb, source: "own" };
+  const fallback = find1799(grootboekrekeningen);
+  return fallback
+    ? { grootboek: fallback, source: "1799" }
+    : { grootboek: null, source: "blocked_missing_1799" };
 }
 
 const SEP = ";";
