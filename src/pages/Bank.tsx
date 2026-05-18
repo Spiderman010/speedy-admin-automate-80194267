@@ -1033,20 +1033,25 @@ export default function Bank() {
           </SelectContent>
         </Select>
         <Button variant="outline" onClick={() => {
-          const matched_txs = transactions?.filter(t => t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") ?? [];
-          if (!matched_txs.length) { toast({ title: "Geen verwerkte transacties om te exporteren", variant: "destructive" }); return; }
-          const teSkippen = matched_txs.filter(t => t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id);
-          if (teSkippen.length > 0) {
+          const exportCandidates = transactions?.filter(t => t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") ?? [];
+          if (!exportCandidates.length) { toast({ title: "Geen verwerkte transacties om te exporteren", variant: "destructive" }); return; }
+          const blockingRows = exportCandidates.filter(t => t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id);
+          if (blockingRows.length > 0) {
             toast({
               title: "Export geblokkeerd",
-              description: `${teSkippen.length} handmatig geboekte transactie(s) missen een grootboekrekening. Gebruik het filter 'Blokkeert export' om ze te vinden.`,
+              description: `${blockingRows.length} handmatig geboekte bankregel(s) missen een grootboekrekening. Gebruik het filter 'Blokkeert export' om ze te vinden.`,
               variant: "destructive",
             });
             return;
           }
+          const exportedBankRows = exportCandidates.filter(t => !!t.grootboekrekening_id);
+          const viaInvoiceRows = exportCandidates.filter(t => t.match_status === "gematcht" && !t.grootboekrekening_id);
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-          exportBankTransactionsCSV(matched_txs, grootboekrekeningen ?? [], clientName);
-          toast({ title: "Bankexport aangemaakt" });
+          exportBankTransactionsCSV(exportCandidates, grootboekrekeningen ?? [], clientName);
+          const description = exportedBankRows.length === 0 && viaInvoiceRows.length > 0
+            ? `Geen losse bankregels geëxporteerd. ${viaInvoiceRows.length} afgeletterde bankregel(s) lopen via factuur-export.`
+            : `${exportedBankRows.length} bankregel(s) geëxporteerd. ${viaInvoiceRows.length} afgeletterde bankregel(s) lopen via factuur-export.`;
+          toast({ title: "Bankexport aangemaakt", description });
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
