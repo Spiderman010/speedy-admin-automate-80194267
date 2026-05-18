@@ -73,26 +73,39 @@ export function exportAfletterrapportCSV(
   const purchaseById = new Map<string, PurchaseInvoice>(purchaseInvoices.map(i => [i.id, i]));
   const salesById = new Map<string, SalesInvoice>(salesInvoices.map(i => [i.id, i]));
 
-  // Count allocations per bank transaction for status / remarks
-  const allocCountByTxId = new Map<string, number>();
-  for (const a of allocations) {
-    allocCountByTxId.set(a.bank_transaction_id, (allocCountByTxId.get(a.bank_transaction_id) ?? 0) + 1);
-  }
+  // Filter to report-worthy allocations first so that allocCountByTxId only
+  // counts rows that actually appear in the report. An excluded/stale allocation
+  // (missing tx, wrong status, or unresolvable invoice) must not inflate the
+  // count and incorrectly trigger "Meerdere facturen".
+  type ReportAlloc = {
+    alloc: BankTransactionAllocation;
+    tx: BankTransaction;
+    purchaseInv: PurchaseInvoice | undefined;
+    salesInv: SalesInvoice | undefined;
+  };
 
-  const dataRows: string[] = [];
-  const klant = clientName ?? "";
-
+  const reportRows: ReportAlloc[] = [];
   for (const alloc of allocations) {
     const tx = txById.get(alloc.bank_transaction_id);
     if (!tx) continue;
-
-    // Only definitively matched or manually booked transactions with invoice allocations
     if (tx.match_status !== "gematcht" && tx.match_status !== "handmatig_geboekt") continue;
-
     const purchaseInv = alloc.invoice_type === "inkoop" ? purchaseById.get(alloc.invoice_id) : undefined;
     const salesInv = alloc.invoice_type === "verkoop" ? salesById.get(alloc.invoice_id) : undefined;
-    const inv = purchaseInv ?? salesInv;
-    if (!inv) continue;
+    if (!(purchaseInv ?? salesInv)) continue;
+    reportRows.push({ alloc, tx, purchaseInv, salesInv });
+  }
+
+  // Count per bank transaction using only report-worthy rows
+  const allocCountByTxId = new Map<string, number>();
+  for (const { alloc } of reportRows) {
+    allocCountByTxId.set(alloc.bank_transaction_id, (allocCountByTxId.get(alloc.bank_transaction_id) ?? 0) + 1);
+  }
+
+  const dataRows: string[] = [];
+  const klant = clientName ?? "Alle klanten";
+
+  for (const { alloc, tx, purchaseInv, salesInv } of reportRows) {
+    const inv = (purchaseInv ?? salesInv)!;
 
     // Bank export grootboek
     const { grootboek: gb, source } = resolveBankExportGrootboek(tx, grootboekrekeningen);
