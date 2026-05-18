@@ -128,9 +128,10 @@ export function exportBankTransactionsCSV(
   const fallback1799 = grootboekrekeningen.find(g => g.nummer === 1799) ?? null;
 
   for (const t of transactions) {
-    const gb = t.grootboekrekening_id
-      ? (grootboekrekeningen.find(g => g.id === t.grootboekrekening_id) ?? fallback1799)
-      : fallback1799;
+    const resolvedGb = t.grootboekrekening_id
+      ? grootboekrekeningen.find(g => g.id === t.grootboekrekening_id)
+      : null;
+    const gb = resolvedGb ?? (t.match_status === "gematcht" ? fallback1799 : null);
     if (!gb) continue;
 
     const datum = formatDate(t.transaction_date);

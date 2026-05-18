@@ -1035,33 +1035,39 @@ export default function Bank() {
         <Button variant="outline" onClick={() => {
           const exportCandidates = transactions?.filter(t => t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") ?? [];
           if (!exportCandidates.length) { toast({ title: "Geen verwerkte transacties om te exporteren", variant: "destructive" }); return; }
-          const blockingRows = exportCandidates.filter(t => t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id);
+          const resolvableGrootboekIds = new Set((grootboekrekeningen ?? []).map(g => g.id));
+          const blockingRows = exportCandidates.filter(t =>
+            t.match_status === "handmatig_geboekt" &&
+            (!t.grootboekrekening_id || !resolvableGrootboekIds.has(t.grootboekrekening_id))
+          );
           if (blockingRows.length > 0) {
             toast({
               title: "Export geblokkeerd",
-              description: `${blockingRows.length} handmatig geboekte bankregel(s) missen een grootboekrekening. Gebruik het filter 'Blokkeert export' om ze te vinden.`,
+              description: `${blockingRows.length} handmatig geboekte bankregel(s) missen een geldige grootboekrekening. Gebruik het filter 'Blokkeert export' om ze te vinden.`,
               variant: "destructive",
             });
             return;
           }
-          const resolvableGrootboekIds = new Set((grootboekrekeningen ?? []).map(g => g.id));
           const has1799 = (grootboekrekeningen ?? []).some(g => g.nummer === 1799);
-          const exportedBankRows = exportCandidates.filter(
-            t => !!t.grootboekrekening_id && resolvableGrootboekIds.has(t.grootboekrekening_id),
+          // gematcht rows without a resolvable own ledger — these go to 1799 in the export function
+          const naar1799Rows = exportCandidates.filter(t =>
+            t.match_status === "gematcht" &&
+            (!t.grootboekrekening_id || !resolvableGrootboekIds.has(t.grootboekrekening_id))
           );
-          const unresolvedLedgerRows = exportCandidates.filter(
-            t => !!t.grootboekrekening_id && !resolvableGrootboekIds.has(t.grootboekrekening_id),
+          // total rows that will be written to CSV
+          const exportedBankRows = exportCandidates.filter(t =>
+            (!!t.grootboekrekening_id && resolvableGrootboekIds.has(t.grootboekrekening_id)) ||
+            (t.match_status === "gematcht" && (!t.grootboekrekening_id || !resolvableGrootboekIds.has(t.grootboekrekening_id)) && has1799)
           );
-          const naar1799Rows = exportCandidates.filter(t => t.match_status === "gematcht" && !t.grootboekrekening_id);
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
           exportBankTransactionsCSV(exportCandidates, grootboekrekeningen ?? [], clientName);
-          const unresolvedNote = unresolvedLedgerRows.length > 0
-            ? ` ${unresolvedLedgerRows.length} bankregel(s) hebben een onbekende grootboekrekening en zijn niet geëxporteerd.`
+          const naar1799Line = has1799 && naar1799Rows.length > 0
+            ? ` ${naar1799Rows.length} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.`
             : "";
           const missing1799Note = !has1799 && naar1799Rows.length > 0
-            ? ` Let op: 1799 Onbekende betalingen is niet gevonden. ${naar1799Rows.length} afgeletterde regel(s) zijn niet geëxporteerd.`
+            ? ` Let op: 1799 Onbekende betalingen is niet gevonden. ${naar1799Rows.length} afgeletterde bankregel(s) zijn niet geëxporteerd.`
             : "";
-          const description = `${exportedBankRows.length} bankregel(s) geëxporteerd. ${naar1799Rows.length} afgeletterde bankregel(s) geboekt op 1799 Onbekende betalingen.${unresolvedNote}${missing1799Note}`;
+          const description = `${exportedBankRows.length} bankregel(s) geëxporteerd.${naar1799Line}${missing1799Note}`;
           toast({ title: "Bankexport aangemaakt", description });
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
