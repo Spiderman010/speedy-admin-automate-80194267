@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -320,6 +320,14 @@ export default function Bank() {
     return sortDir === "asc" ? <ArrowUp className="h-3 w-3 inline ml-1" /> : <ArrowDown className="h-3 w-3 inline ml-1" />;
   };
 
+  // handmatig_geboekt transactions without a grootboekrekening_id will be silently
+  // skipped by exportBankTransactionsCSV. Expose them so the user can fix before export.
+  const handmatigZonderGrootboek = useMemo(() =>
+    (transactions ?? []).filter(
+      t => t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id,
+    ),
+  [transactions]);
+
   const filteredSorted = useMemo(() => {
     if (!transactions) return [];
     let result = [...transactions];
@@ -328,6 +336,9 @@ export default function Bank() {
     if (statusFilter === "open") result = result.filter(t => t.match_status === "niet_gematcht" || t.match_status === "suggestie");
     else if (statusFilter === "gematcht") result = result.filter(t => t.match_status === "gematcht");
     else if (statusFilter === "handmatig") result = result.filter(t => t.match_status === "handmatig_geboekt");
+    else if (statusFilter === "geen_grootboek") result = result.filter(t =>
+      (t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") && !t.grootboekrekening_id,
+    );
 
     // Vraagpost filter
     if (vraagpostFilter !== "all") {
@@ -1021,6 +1032,15 @@ export default function Bank() {
         <Button variant="outline" onClick={() => {
           const matched_txs = transactions?.filter(t => t.match_status === "gematcht" || t.match_status === "handmatig_geboekt") ?? [];
           if (!matched_txs.length) { toast({ title: "Geen verwerkte transacties om te exporteren", variant: "destructive" }); return; }
+          const teSkippen = matched_txs.filter(t => t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id);
+          if (teSkippen.length > 0) {
+            toast({
+              title: `${teSkippen.length} transactie(s) worden overgeslagen`,
+              description: "Handmatig geboekte transacties zonder grootboekrekening worden niet geëxporteerd. Wijs een grootboekrekening toe via het filter 'Wordt niet geëxporteerd' en probeer opnieuw.",
+              variant: "destructive",
+            });
+            return;
+          }
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
           exportBankTransactionsCSV(matched_txs, grootboekrekeningen ?? [], clientName);
           toast({ title: `${matched_txs.length} transacties geëxporteerd` });
@@ -1076,6 +1096,7 @@ export default function Bank() {
             <SelectItem value="open">Open</SelectItem>
             <SelectItem value="gematcht">Gematcht</SelectItem>
             <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
+            <SelectItem value="geen_grootboek">Wordt niet geëxporteerd</SelectItem>
           </SelectContent>
         </Select>
         <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
@@ -1090,6 +1111,20 @@ export default function Bank() {
           </SelectContent>
         </Select>
       </div>
+
+      {handmatigZonderGrootboek.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 p-4 flex items-start gap-3">
+          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              Let op: {handmatigZonderGrootboek.length} banktransactie{handmatigZonderGrootboek.length !== 1 ? "s" : ""} zonder grootboekrekening
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+              Deze transacties worden mogelijk niet meegenomen in de SnelStart-export.
+            </p>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-6">
@@ -1226,17 +1261,24 @@ export default function Bank() {
                         ) : "—"}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={
-                          t.match_status === "gematcht" ? "default" 
-                          : t.match_status === "handmatig_geboekt" ? "secondary"
-                          : isSuggestion ? "secondary" 
-                          : "destructive"
-                        }>
-                          {t.match_status === "gematcht" ? "Gematcht" 
-                           : t.match_status === "handmatig_geboekt" ? "Handmatig geboekt"
-                           : isSuggestion ? "Suggestie" 
-                           : "Open"}
-                        </Badge>
+                        <div className="flex flex-col gap-1 items-start">
+                          <Badge variant={
+                            t.match_status === "gematcht" ? "default"
+                            : t.match_status === "handmatig_geboekt" ? "secondary"
+                            : isSuggestion ? "secondary"
+                            : "destructive"
+                          }>
+                            {t.match_status === "gematcht" ? "Gematcht"
+                             : t.match_status === "handmatig_geboekt" ? "Handmatig geboekt"
+                             : isSuggestion ? "Suggestie"
+                             : "Open"}
+                          </Badge>
+                          {t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id && (
+                            <Badge variant="outline" className="text-xs w-fit border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                              Geen grootboek
+                            </Badge>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {(() => {
