@@ -48,7 +48,7 @@ import { useVraagposten } from "@/hooks/useVraagposten";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
-import { BankMatchDialog, rankCandidates } from "@/components/BankMatchDialog";
+import { BankMatchDialog, rankCandidates, type InvoiceCandidate } from "@/components/BankMatchDialog";
 import { BankAfletteringDrawer } from "@/components/BankAfletteringDrawer";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
@@ -70,6 +70,37 @@ function expectedInvoiceTypeForTx(tx: Tables<"bank_transactions">): "inkoop" | "
   return tx.amount >= 0 ? "verkoop" : "inkoop";
 }
 
+/**
+ * Single source of truth for safe auto-confirm criteria. Returns the best
+ * invoice candidate iff ALL of the following hold:
+ *   - match_status === "suggestie"
+ *   - match_confidence >= 90
+ *   - candidate has correct direction (inkoop/verkoop)
+ *   - candidate is not a partial payment
+ *   - |tx_amount − invoice_amount| <= €0.01 (exact match only; ≤€0.50 is NOT safe)
+ * Returns null when any criterion fails — caller must fall back to manual review.
+ */
+function getSafeSuggestionCandidate(
+  tx: Tables<"bank_transactions">,
+  purchaseInvoices: Tables<"purchase_invoices">[],
+  salesInvoices: Tables<"sales_invoices">[],
+): InvoiceCandidate | null {
+  if (tx.match_status !== "suggestie") return null;
+  if ((tx.match_confidence ?? 0) < 90) return null;
+  const expectedType = expectedInvoiceTypeForTx(tx);
+  const candidates = rankCandidates(
+    tx,
+    purchaseInvoices.filter(i => i.client_id === tx.client_id),
+    salesInvoices.filter(i => i.client_id === tx.client_id),
+  );
+  const best = candidates.find(c => c.score > 0 && c.type === expectedType && !c.isPartialPayment);
+  if (!best) return null;
+  const txAmt = Math.abs(tx.amount);
+  const invAmt = best.amount != null ? Math.abs(best.amount) : null;
+  if (invAmt == null || Math.abs(txAmt - invAmt) > 0.01) return null;
+  return best;
+}
+
 export default function Bank() {
   const [searchParams] = useSearchParams();
   const { selectedClientId, setSelectedClientId } = useClientContext();
@@ -79,6 +110,7 @@ export default function Bank() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high" | "medium" | "low" | "none">("all");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
   const [matchDialogMode, setMatchDialogMode] = useState<"primary" | "additional">("primary");
@@ -108,6 +140,10 @@ export default function Bank() {
   useEffect(() => {
     setClientFilter(selectedClientId);
   }, [selectedClientId]);
+
+  useEffect(() => {
+    setConfidenceFilter("all");
+  }, [statusFilter]);
 
   const { toast } = useToast();
 
@@ -362,6 +398,17 @@ export default function Bank() {
     return ids;
   }, [transactions, grootboekrekeningen]);
 
+  // IDs of suggestie transactions that pass all safe auto-confirm criteria.
+  // Derived via getSafeSuggestionCandidate — the single source of truth.
+  const safeSuggestionIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!transactions || !invoices || !salesInvs) return ids;
+    for (const t of transactions) {
+      if (getSafeSuggestionCandidate(t, invoices, salesInvs) !== null) ids.add(t.id);
+    }
+    return ids;
+  }, [transactions, invoices, salesInvs]);
+
   const filteredSorted = useMemo(() => {
     if (!transactions) return [];
     let result = [...transactions];
@@ -396,6 +443,20 @@ export default function Bank() {
       });
     }
 
+    // Confidence subfilter (only applies when showing open/suggestie rows)
+    if (statusFilter === "open" && confidenceFilter !== "all") {
+      result = result.filter(t => {
+        if (t.match_status !== "suggestie") {
+          return confidenceFilter === "none";
+        }
+        const conf = t.match_confidence ?? -1;
+        if (confidenceFilter === "high") return conf >= 90;
+        if (confidenceFilter === "medium") return conf >= 60 && conf < 90;
+        if (confidenceFilter === "low") return conf >= 0 && conf < 60;
+        return false; // "none" only shows niet_gematcht, handled above
+      });
+    }
+
     // Search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -412,17 +473,25 @@ export default function Bank() {
     // Sort
     result.sort((a, b) => {
       const dir = sortDir === "asc" ? 1 : -1;
+      let cmp = 0;
       switch (sortField) {
-        case "date": return dir * (new Date(a.transaction_date).getTime() - new Date(b.transaction_date).getTime());
-        case "amount": return dir * (a.amount - b.amount);
-        case "description": return dir * (a.description || "").localeCompare(b.description || "", "nl");
-        case "status": return dir * a.match_status.localeCompare(b.match_status, "nl");
-        default: return 0;
+        case "date": cmp = new Date(a.transaction_date).getTime() - new Date(b.transaction_date).getTime(); break;
+        case "amount": cmp = a.amount - b.amount; break;
+        case "description": cmp = (a.description || "").localeCompare(b.description || "", "nl"); break;
+        case "status": cmp = a.match_status.localeCompare(b.match_status, "nl"); break;
       }
+      if (cmp !== 0) return dir * cmp;
+      // Secondary sort: confidence DESC so high-confidence suggestions surface first
+      if (statusFilter === "open") {
+        const confA = a.match_confidence ?? -1;
+        const confB = b.match_confidence ?? -1;
+        return confB - confA;
+      }
+      return 0;
     });
 
     return result;
-  }, [transactions, statusFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir, grootboekrekeningen]);
+  }, [transactions, statusFilter, confidenceFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir, grootboekrekeningen]);
 
   const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
 
@@ -913,45 +982,24 @@ export default function Bank() {
 
     for (const id of Array.from(selectedIds)) {
       const tx = transactions.find(t => t.id === id);
-      if (!tx || !suggestionIds.has(tx.id)) {
-        skipped++;
-        continue;
-      }
+      if (!tx) { skipped++; continue; }
 
-      const candidates = rankCandidates(
-        tx,
-        invoices.filter(i => i.client_id === tx.client_id),
-        salesInvs.filter(i => i.client_id === tx.client_id),
-      );
-      const expectedType = expectedInvoiceTypeForTx(tx);
-      const best = candidates.find(c => c.score > 0 && c.type === expectedType);
-      if (!best) {
-        skipped++;
-        continue;
-      }
-
-      const exactMatch = best.reasons.includes("Exact bedrag") || best.reasons.includes("Bedrag ≈ gelijk (≤€0,50)");
+      // Use the shared helper — enforces confidence >= 90, correct direction,
+      // !isPartialPayment, and amount diff <= €0.01 in one place.
+      const best = getSafeSuggestionCandidate(tx, invoices, salesInvs);
+      if (!best) { skipped++; continue; }
 
       try {
         await updateTx.mutateAsync({
           id: tx.id,
           match_status: "gematcht",
           matched_invoice_id: best.id,
-          match_confidence: exactMatch && !best.isPartialPayment ? 100 : best.isPartialPayment ? 60 : 80,
+          match_confidence: 100,
         });
-
-        if (exactMatch && !best.isPartialPayment) {
-          if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
-          }
-        } else if (best.isPartialPayment && best.remainingAmount != null) {
-          if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: best.remainingAmount });
-          } else {
-            await updateSales.mutateAsync({ id: best.id, remaining_amount: best.remainingAmount });
-          }
+        if (best.type === "inkoop") {
+          await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
+        } else {
+          await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
         }
         await upsertSingleAllocationForMatch(tx, best.id);
         confirmed++;
@@ -965,16 +1013,57 @@ export default function Bank() {
     await refetchPurchase();
     await refetchSales();
 
-    if (confirmed > 0) {
-      toast({ title: `${confirmed} suggestie(s) bevestigd` });
-    }
-    if (skipped > 0) {
-      toast({ title: `${skipped} transactie(s) overgeslagen (geen suggestie)` });
+    if (confirmed > 0 || skipped > 0) {
+      toast({
+        title: `${confirmed} suggestie(s) bevestigd${skipped > 0 ? `. ${skipped} overgeslagen voor handmatige controle.` : ""}`,
+      });
     }
     if (errors.length > 0) {
       toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, suggestionIds, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
+
+  // Safe one-click confirm path. Re-evaluates all safe criteria at mutation time
+  // so the UI label and the actual write are always in sync. Falls back to opening
+  // BankMatchDialog when the criteria are not met (unsafe suggestion or stale data).
+  const handleSafeSuggestionConfirm = useCallback(async (t: Tables<"bank_transactions">) => {
+    const best = getSafeSuggestionCandidate(t, invoices ?? [], salesInvs ?? []);
+    if (!best) {
+      setMatchTx(t);
+      return;
+    }
+    try {
+      await updateTx.mutateAsync({
+        id: t.id,
+        match_status: "gematcht",
+        matched_invoice_id: best.id,
+        match_confidence: 100,
+      });
+      if (best.type === "inkoop") {
+        await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
+      } else {
+        await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+      }
+      await upsertSingleAllocationForMatch(t, best.id);
+      toast({ title: "Transactie bevestigd", description: "Factuur status → Betaald" });
+    } catch (e: any) {
+      toast({ title: "Fout", description: e.message, variant: "destructive" });
+    }
+  }, [invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+
+  const handleRejectSuggestion = useCallback(async (t: Tables<"bank_transactions">) => {
+    try {
+      await updateTx.mutateAsync({
+        id: t.id,
+        match_status: "niet_gematcht",
+        matched_invoice_id: null,
+        match_confidence: null,
+      });
+      toast({ title: "Suggestie afgewezen" });
+    } catch (e: any) {
+      toast({ title: "Fout", description: e.message, variant: "destructive" });
+    }
+  }, [updateTx, toast]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
@@ -1177,6 +1266,30 @@ export default function Bank() {
           </SelectContent>
         </Select>
       </div>
+
+      {statusFilter === "open" && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          {([
+            ["all", "Alle"],
+            ["high", "≥90%"],
+            ["medium", "60–89%"],
+            ["low", "<60%"],
+            ["none", "Geen suggestie"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              onClick={() => setConfidenceFilter(value)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                confidenceFilter === value
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {exportBlockingRows.length > 0 && (
         <div className="mb-4 rounded-lg border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 p-4 flex items-start gap-3">
@@ -1456,9 +1569,26 @@ export default function Bank() {
                               </Tooltip>
                             </TooltipProvider>
                           ) : t.match_status === "suggestie" ? (
-                            <Button size="sm" variant="default" onClick={() => handleConfirm(t.id)}>
-                              Bevestig
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                variant={safeSuggestionIds.has(t.id) ? "default" : "outline"}
+                                onClick={() => safeSuggestionIds.has(t.id)
+                                  ? handleSafeSuggestionConfirm(t)
+                                  : setMatchTx(t)
+                                }
+                              >
+                                {safeSuggestionIds.has(t.id) ? "✓ Bevestig" : "Controleer"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-muted-foreground text-xs"
+                                onClick={() => handleRejectSuggestion(t)}
+                              >
+                                Afwijzen
+                              </Button>
+                            </>
                           ) : (
                             <Button size="sm" variant="outline" onClick={() => setMatchTx(t)}>
                               Koppel
