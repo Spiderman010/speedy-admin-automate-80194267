@@ -1627,17 +1627,8 @@ export default function Bank() {
                                       </div>
                                     )}
                                     {best && bestIsWrongDirection && (
-                                      <div className="text-xs text-muted-foreground space-y-0.5">
-                                        <div className="font-medium text-amber-600 dark:text-amber-400">
-                                          Afgewezen kandidaat: verkeerde richting
-                                        </div>
-                                        <div
-                                          className="truncate max-w-[200px]"
-                                          title={`${best.type === "inkoop" ? "Inkoop" : "Verkoop"} · ${best.name}${best.invoiceNumber ? ` · ${best.invoiceNumber}` : ""}`}
-                                        >
-                                          {best.type === "inkoop" ? "Inkoop" : "Verkoop"} · {best.name}
-                                          {best.invoiceNumber ? ` · ${best.invoiceNumber}` : ""}
-                                        </div>
+                                      <div className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                                        Afgewezen kandidaat: verkeerde richting
                                       </div>
                                     )}
                                     {!isSafe && unsafeReasons.length > 0 && (
