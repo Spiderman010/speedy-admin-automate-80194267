@@ -1116,6 +1116,107 @@ export default function Bank() {
     }
   }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
 
+  const handleBulkRejectSuggestions = useCallback(async () => {
+    if (selectedIds.size === 0 || !transactions) return;
+    let processed = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const id of Array.from(selectedIds)) {
+      const tx = transactions.find(t => t.id === id);
+      if (!tx || tx.match_status !== "suggestie") { skipped++; continue; }
+      try {
+        await updateTx.mutateAsync({
+          id: tx.id,
+          match_status: "niet_gematcht",
+          matched_invoice_id: null,
+          match_confidence: null,
+        });
+        processed++;
+      } catch (e: any) {
+        errors.push(e.message || "Onbekende fout");
+      }
+    }
+
+    setSelectedIds(new Set());
+    await refetch();
+
+    if (processed > 0 || skipped > 0) {
+      toast({
+        title: `${processed} suggestie(s) afgewezen${skipped > 0 ? `. ${skipped} overgeslagen (geen suggestie).` : ""}`,
+      });
+    }
+    if (errors.length > 0) {
+      toast({ title: "Fout bij afwijzen", description: errors[0], variant: "destructive" });
+    }
+  }, [selectedIds, transactions, updateTx, toast, refetch]);
+
+  const handleBulkVraagpost = useCallback(async () => {
+    if (selectedIds.size === 0 || !transactions) return;
+    const gb = grootboekrekeningen ?? [];
+    let processed = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const id of Array.from(selectedIds)) {
+      const tx = transactions.find(t => t.id === id);
+      if (!tx) { skipped++; continue; }
+      const { source } = resolveBankExportGrootboek(tx, gb);
+      const eligible = tx.match_status === "niet_gematcht" || source === "blocked_unprocessed";
+      if (!eligible) { skipped++; continue; }
+
+      try {
+        const { data: existing } = await supabase
+          .from("vraagposten")
+          .select("id")
+          .eq("source_type", "bank_transaction")
+          .eq("source_id", tx.id)
+          .maybeSingle();
+
+        if (!existing) {
+          const [y, m, d] = tx.transaction_date.split("-");
+          const formattedDate = y && m && d ? `${d}-${m}-${y}` : tx.transaction_date;
+          const formattedAmount = new Intl.NumberFormat("nl-NL", {
+            style: "currency",
+            currency: "EUR",
+          }).format(tx.amount);
+
+          await createVraagpost.mutateAsync({
+            source_type: "bank_transaction",
+            source_id: tx.id,
+            client_id: tx.client_id,
+            titel: tx.description || "Banktransactie zonder factuur",
+            omschrijving: `${formattedDate} · ${formattedAmount}`,
+            categorie: "bank_zonder_factuur",
+          });
+        }
+
+        const account1605 = gb.find(a => a.nummer === 1605);
+        await updateTx.mutateAsync({
+          id: tx.id,
+          match_status: "handmatig_geboekt",
+          grootboekrekening_id: account1605?.id ?? undefined,
+        });
+
+        processed++;
+      } catch (e: any) {
+        errors.push(e.message || "Onbekende fout");
+      }
+    }
+
+    setSelectedIds(new Set());
+    await refetch();
+
+    if (processed > 0 || skipped > 0) {
+      toast({
+        title: `${processed} vraagpost(en) aangemaakt${skipped > 0 ? `. ${skipped} overgeslagen (niet in aanmerking).` : ""}`,
+      });
+    }
+    if (errors.length > 0) {
+      toast({ title: "Fout bij aanmaken vraagpost", description: errors[0], variant: "destructive" });
+    }
+  }, [selectedIds, transactions, grootboekrekeningen, createVraagpost, updateTx, toast, refetch]);
+
   // Safe one-click confirm path. Re-evaluates all safe criteria at mutation time
   // so the UI label and the actual write are always in sync. Falls back to opening
   // BankMatchDialog when the criteria are not met (unsafe suggestion or stale data).
@@ -1861,14 +1962,40 @@ export default function Bank() {
 
       {/* Bulk boeken toolbar */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4">
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4 flex-wrap max-w-5xl">
           <span className="text-sm font-medium">{selectedIds.size} transactie(s) geselecteerd</span>
           {(() => {
-            const selectedSuggestionCount = Array.from(selectedIds).filter(id => suggestionIds.has(id)).length;
-            return selectedSuggestionCount > 0 ? (
+            const safeCount = Array.from(selectedIds).filter(id => safeSuggestionIds.has(id)).length;
+            return safeCount > 0 ? (
               <Button size="sm" variant="default" onClick={handleBulkConfirmSuggestions}>
                 <CheckCircle2 className="mr-1 h-4 w-4" />
-                Bevestig {selectedSuggestionCount} suggestie(s)
+                Veilige suggesties bevestigen ({safeCount})
+              </Button>
+            ) : null;
+          })()}
+          {(() => {
+            const rejectCount = Array.from(selectedIds).filter(id => {
+              const tx = transactions?.find(t => t.id === id);
+              return tx?.match_status === "suggestie";
+            }).length;
+            return rejectCount > 0 ? (
+              <Button size="sm" variant="outline" onClick={handleBulkRejectSuggestions}>
+                Suggesties afwijzen ({rejectCount})
+              </Button>
+            ) : null;
+          })()}
+          {(() => {
+            const gb = grootboekrekeningen ?? [];
+            const vraagpostCount = Array.from(selectedIds).filter(id => {
+              const tx = transactions?.find(t => t.id === id);
+              if (!tx) return false;
+              const { source } = resolveBankExportGrootboek(tx, gb);
+              return tx.match_status === "niet_gematcht" || source === "blocked_unprocessed";
+            }).length;
+            return vraagpostCount > 0 ? (
+              <Button size="sm" variant="outline" onClick={handleBulkVraagpost}>
+                <HelpCircle className="mr-1 h-4 w-4" />
+                Naar vraagpost ({vraagpostCount})
               </Button>
             ) : null;
           })()}
