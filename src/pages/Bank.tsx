@@ -58,6 +58,28 @@ import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useD
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
 
+type BlockerSource =
+  | "blocked_unconfirmed"
+  | "blocked_unprocessed"
+  | "blocked_manual_invalid"
+  | "blocked_missing_1799";
+
+type BlockerRow = { tx: Tables<"bank_transactions">; source: BlockerSource };
+
+const BLOCKER_REASON: Record<BlockerSource, string> = {
+  blocked_unconfirmed: "Suggestie nog niet bevestigd",
+  blocked_unprocessed: "Nog niet verwerkt",
+  blocked_manual_invalid: "Handmatige boeking zonder geldige grootboekrekening",
+  blocked_missing_1799: "1799 ontbreekt voor gematchte transactie zonder grootboek",
+};
+
+const MATCH_STATUS_NL: Record<string, string> = {
+  suggestie: "Suggestie",
+  niet_gematcht: "Open",
+  gematcht: "Gematcht",
+  handmatig_geboekt: "Handmatig geboekt",
+};
+
 type SortField = "date" | "amount" | "description" | "status";
 type SortDir = "asc" | "desc";
 
@@ -385,14 +407,30 @@ export default function Bank() {
     return sortDir === "asc" ? <ArrowUp className="h-3 w-3 inline ml-1" /> : <ArrowDown className="h-3 w-3 inline ml-1" />;
   };
 
-  // All transactions that would block a bank export. Used for the warning banner.
-  const exportBlockingRows = useMemo(() => {
+  // Blocker queue: all transactions that prevent a clean SnelStart export,
+  // grouped with counts per category and sorted by priority then date desc.
+  const blockerQueue = useMemo(() => {
     const gb = grootboekrekeningen ?? [];
-    return (transactions ?? []).filter(t => {
+    const rows: BlockerRow[] = [];
+    let unconfirmed = 0, unprocessed = 0, manualInvalid = 0, missing1799 = 0;
+    for (const t of transactions ?? []) {
       const { source } = resolveBankExportGrootboek(t, gb);
-      return source === "blocked_manual_invalid" || source === "blocked_missing_1799" ||
-             source === "blocked_unconfirmed" || source === "blocked_unprocessed";
+      if (source === "blocked_unconfirmed") { rows.push({ tx: t, source }); unconfirmed++; }
+      else if (source === "blocked_unprocessed") { rows.push({ tx: t, source }); unprocessed++; }
+      else if (source === "blocked_manual_invalid") { rows.push({ tx: t, source }); manualInvalid++; }
+      else if (source === "blocked_missing_1799") { rows.push({ tx: t, source }); missing1799++; }
+    }
+    const priorityOf = (s: BlockerSource) =>
+      s === "blocked_unconfirmed" ? 0
+      : s === "blocked_unprocessed" ? 1
+      : s === "blocked_manual_invalid" ? 2
+      : 3;
+    rows.sort((a, b) => {
+      const pd = priorityOf(a.source) - priorityOf(b.source);
+      if (pd !== 0) return pd;
+      return new Date(b.tx.transaction_date).getTime() - new Date(a.tx.transaction_date).getTime();
     });
+    return { rows, unconfirmed, unprocessed, manualInvalid, missing1799 };
   }, [transactions, grootboekrekeningen]);
 
   // IDs of transactions that will be exported to 1799 Onbekende betalingen.
@@ -1346,19 +1384,94 @@ export default function Bank() {
         </div>
       )}
 
-      {exportBlockingRows.length > 0 && (
-        <div className="mb-4 rounded-lg border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 p-4 flex items-start gap-3">
-          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-              Let op: {exportBlockingRows.length} bankregel{exportBlockingRows.length !== 1 ? "s" : ""} blokkeren export
-            </p>
-            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-              Gebruik het filter 'Blokkeert export' om ze te bekijken. Bevestig suggesties, koppel of boek openstaande regels, of zet ze op vraagpost.
-            </p>
+      {/* Export blocker queue */}
+      {(() => {
+        const { rows, unconfirmed, unprocessed, manualInvalid, missing1799 } = blockerQueue;
+        const DISPLAY_LIMIT = 20;
+        const shown = rows.slice(0, DISPLAY_LIMIT);
+        const remaining = rows.length - shown.length;
+
+        if (rows.length === 0) {
+          return (
+            <div className="mb-4 rounded-lg border border-green-500/40 bg-green-50 dark:bg-green-950/30 p-3 flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
+              <p className="text-sm text-green-800 dark:text-green-300">Geen bankblokkades voor export</p>
+            </div>
+          );
+        }
+
+        return (
+          <div className="mb-4 rounded-lg border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 overflow-hidden">
+            {/* Header */}
+            <div className="px-4 py-3 flex items-start gap-3 border-b border-amber-500/30">
+              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                  {rows.length} bankregel{rows.length !== 1 ? "s" : ""} blokkeren export
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1">
+                  {unconfirmed > 0 && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      {unconfirmed} suggestie{unconfirmed !== 1 ? "s" : ""}
+                    </span>
+                  )}
+                  {unprocessed > 0 && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      {unprocessed} niet verwerkt
+                    </span>
+                  )}
+                  {manualInvalid > 0 && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      {manualInvalid} handmatig zonder grootboek
+                    </span>
+                  )}
+                  {missing1799 > 0 && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      {missing1799} 1799 ontbreekt
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {/* Blocker list */}
+            <div>
+              {shown.map(({ tx, source }) => (
+                <div key={tx.id} className="px-4 py-2 flex items-start gap-3 border-b border-amber-500/20 last:border-0">
+                  <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">
+                    {new Date(tx.transaction_date).toLocaleDateString("nl-NL")}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className="text-xs font-medium text-foreground truncate max-w-[200px]"
+                        title={getDisplayDescription(tx.description)}
+                      >
+                        {getDisplayDescription(tx.description)}
+                      </span>
+                      <span className={`text-xs font-mono shrink-0 ${tx.amount < 0 ? "text-destructive" : "text-success"}`}>
+                        {formatCurrency(tx.amount)}
+                      </span>
+                      <Badge variant="outline" className="text-xs shrink-0 px-1.5 py-0">
+                        {MATCH_STATUS_NL[tx.match_status] ?? tx.match_status}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                      {BLOCKER_REASON[source]}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {remaining > 0 && (
+              <div className="px-4 py-2 border-t border-amber-500/30">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Nog {remaining} blokkade{remaining !== 1 ? "s" : ""} niet getoond
+                </p>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <Card>
         <CardContent className="p-6">
