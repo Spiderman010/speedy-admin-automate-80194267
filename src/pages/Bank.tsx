@@ -101,6 +101,12 @@ function getSafeSuggestionCandidate(
   return best;
 }
 
+type SuggestionDetail = {
+  best: InvoiceCandidate | null;
+  isSafe: boolean;
+  unsafeReasons: string[];
+};
+
 export default function Bank() {
   const [searchParams] = useSearchParams();
   const { selectedClientId, setSelectedClientId } = useClientContext();
@@ -398,16 +404,59 @@ export default function Bank() {
     return ids;
   }, [transactions, grootboekrekeningen]);
 
-  // IDs of suggestie transactions that pass all safe auto-confirm criteria.
-  // Derived via getSafeSuggestionCandidate — the single source of truth.
+  // Pre-computed display details for each suggestie row.
+  // Calls rankCandidates once per suggestion — safeSuggestionIds is then a cheap
+  // derived set, avoiding a second rankCandidates pass.
+  const suggestionDetailMap = useMemo(() => {
+    const map = new Map<string, SuggestionDetail>();
+    if (!transactions || !invoices || !salesInvs) return map;
+    for (const t of transactions) {
+      if (t.match_status !== "suggestie") continue;
+      const expectedType = expectedInvoiceTypeForTx(t);
+      const candidates = rankCandidates(
+        t,
+        invoices.filter(i => i.client_id === t.client_id),
+        salesInvs.filter(i => i.client_id === t.client_id),
+      );
+      const bestCorrectDir = candidates.find(c => c.score > 0 && c.type === expectedType) ?? null;
+      const bestAny = candidates.find(c => c.score > 0) ?? null;
+
+      const conf = t.match_confidence ?? 0;
+      const txAmt = Math.abs(t.amount);
+      const invAmt = bestCorrectDir?.amount != null ? Math.abs(bestCorrectDir.amount) : null;
+      const isSafe =
+        conf >= 90 &&
+        bestCorrectDir !== null &&
+        !bestCorrectDir.isPartialPayment &&
+        invAmt != null &&
+        Math.abs(txAmt - invAmt) <= 0.01;
+
+      const unsafeReasons: string[] = [];
+      if (!isSafe) {
+        if (conf < 90) unsafeReasons.push(`Betrouwbaarheid ${conf}% (minimaal 90% vereist)`);
+        if (!bestCorrectDir) {
+          unsafeReasons.push(bestAny ? "Verkeerde richting (inkoop/verkoop)" : "Geen factuurkandidaat gevonden");
+        } else {
+          if (bestCorrectDir.isPartialPayment) unsafeReasons.push("Deelbetaling");
+          if (invAmt != null && Math.abs(txAmt - invAmt) > 0.01) {
+            unsafeReasons.push(`Bedragverschil ${formatCurrency(Math.abs(txAmt - invAmt))} (max. €0,01)`);
+          }
+        }
+      }
+
+      map.set(t.id, { best: bestCorrectDir ?? bestAny, isSafe, unsafeReasons });
+    }
+    return map;
+  }, [transactions, invoices, salesInvs]);
+
+  // Derived from suggestionDetailMap — no extra rankCandidates calls needed.
   const safeSuggestionIds = useMemo(() => {
     const ids = new Set<string>();
-    if (!transactions || !invoices || !salesInvs) return ids;
-    for (const t of transactions) {
-      if (getSafeSuggestionCandidate(t, invoices, salesInvs) !== null) ids.add(t.id);
+    for (const [id, detail] of suggestionDetailMap.entries()) {
+      if (detail.isSafe) ids.add(id);
     }
     return ids;
-  }, [transactions, invoices, salesInvs]);
+  }, [suggestionDetailMap]);
 
   const filteredSorted = useMemo(() => {
     if (!transactions) return [];
@@ -1524,10 +1573,61 @@ export default function Bank() {
                           })();
                           return (
                             <div className="flex flex-col gap-1 min-w-0">
-                              <span
-                                className={`text-sm truncate max-w-[200px] block ${isOrphanMatch ? "text-amber-600 dark:text-amber-400" : ""}`}
-                                title={label}
-                              >{label}</span>
+                              {t.match_status !== "suggestie" && (
+                                <span
+                                  className={`text-sm truncate max-w-[200px] block ${isOrphanMatch ? "text-amber-600 dark:text-amber-400" : ""}`}
+                                  title={label}
+                                >{label}</span>
+                              )}
+                              {t.match_status === "suggestie" && (() => {
+                                const detail = suggestionDetailMap.get(t.id);
+                                if (!detail) return <span className="text-sm text-muted-foreground">—</span>;
+                                const { best, isSafe, unsafeReasons } = detail;
+                                return (
+                                  <div className="space-y-1">
+                                    {isSafe ? (
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-400">
+                                        <CheckCircle2 className="h-3 w-3" /> Veilig te bevestigen
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                                        <AlertTriangle className="h-3 w-3" /> Controle nodig
+                                      </span>
+                                    )}
+                                    {best && (
+                                      <div className="text-xs space-y-0.5">
+                                        <div
+                                          className="font-medium truncate max-w-[200px]"
+                                          title={`${best.type === "inkoop" ? "Inkoop" : "Verkoop"} · ${best.name}${best.invoiceNumber ? ` · ${best.invoiceNumber}` : ""}`}
+                                        >
+                                          {best.type === "inkoop" ? "Inkoop" : "Verkoop"} · {best.name}
+                                          {best.invoiceNumber ? ` · ${best.invoiceNumber}` : ""}
+                                        </div>
+                                        <div className="text-muted-foreground">
+                                          {best.date && `${new Date(best.date).toLocaleDateString("nl-NL")} · `}
+                                          {best.amount != null ? formatCurrency(Math.abs(best.amount)) : "—"}
+                                          {best.amount != null && (() => {
+                                            const diff = Math.abs(Math.abs(t.amount) - Math.abs(best.amount));
+                                            return diff > 0.005
+                                              ? <span className="text-amber-600 dark:text-amber-400"> (Δ {formatCurrency(diff)})</span>
+                                              : null;
+                                          })()}
+                                        </div>
+                                        {best.reasons.length > 0 && (
+                                          <div className="text-muted-foreground italic">
+                                            {best.reasons.slice(0, 2).join(" · ")}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                    {!isSafe && unsafeReasons.length > 0 && (
+                                      <div className="text-xs text-amber-600 dark:text-amber-400 space-y-0.5">
+                                        {unsafeReasons.map((r, i) => <div key={i}>• {r}</div>)}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               {vpBadge}
                             </div>
                           );
