@@ -103,6 +103,7 @@ function getSafeSuggestionCandidate(
 
 type SuggestionDetail = {
   best: InvoiceCandidate | null;
+  bestIsWrongDirection: boolean; // true when best came from bestAny (no correct-direction candidate)
   isSafe: boolean;
   unsafeReasons: string[];
 };
@@ -444,7 +445,12 @@ export default function Bank() {
         }
       }
 
-      map.set(t.id, { best: bestCorrectDir ?? bestAny, isSafe, unsafeReasons });
+      map.set(t.id, {
+        best: bestCorrectDir ?? bestAny,
+        bestIsWrongDirection: bestCorrectDir === null && bestAny !== null,
+        isSafe,
+        unsafeReasons,
+      });
     }
     return map;
   }, [transactions, invoices, salesInvs]);
@@ -1582,7 +1588,7 @@ export default function Bank() {
                               {t.match_status === "suggestie" && (() => {
                                 const detail = suggestionDetailMap.get(t.id);
                                 if (!detail) return <span className="text-sm text-muted-foreground">—</span>;
-                                const { best, isSafe, unsafeReasons } = detail;
+                                const { best, bestIsWrongDirection, isSafe, unsafeReasons } = detail;
                                 return (
                                   <div className="space-y-1">
                                     {isSafe ? (
@@ -1594,7 +1600,7 @@ export default function Bank() {
                                         <AlertTriangle className="h-3 w-3" /> Controle nodig
                                       </span>
                                     )}
-                                    {best && (
+                                    {best && !bestIsWrongDirection && (
                                       <div className="text-xs space-y-0.5">
                                         <div
                                           className="font-medium truncate max-w-[200px]"
@@ -1618,6 +1624,20 @@ export default function Bank() {
                                             {best.reasons.slice(0, 2).join(" · ")}
                                           </div>
                                         )}
+                                      </div>
+                                    )}
+                                    {best && bestIsWrongDirection && (
+                                      <div className="text-xs text-muted-foreground space-y-0.5">
+                                        <div className="font-medium text-amber-600 dark:text-amber-400">
+                                          Afgewezen kandidaat: verkeerde richting
+                                        </div>
+                                        <div
+                                          className="truncate max-w-[200px]"
+                                          title={`${best.type === "inkoop" ? "Inkoop" : "Verkoop"} · ${best.name}${best.invoiceNumber ? ` · ${best.invoiceNumber}` : ""}`}
+                                        >
+                                          {best.type === "inkoop" ? "Inkoop" : "Verkoop"} · {best.name}
+                                          {best.invoiceNumber ? ` · ${best.invoiceNumber}` : ""}
+                                        </div>
                                       </div>
                                     )}
                                     {!isSafe && unsafeReasons.length > 0 && (
