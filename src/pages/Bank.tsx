@@ -1154,7 +1154,8 @@ export default function Bank() {
   const handleBulkVraagpost = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
     const gb = grootboekrekeningen ?? [];
-    let processed = 0;
+    let created = 0;
+    let alreadyExisted = 0;
     let skipped = 0;
     const errors: string[] = [];
 
@@ -1173,32 +1174,28 @@ export default function Bank() {
           .eq("source_id", tx.id)
           .maybeSingle();
 
-        if (!existing) {
-          const [y, m, d] = tx.transaction_date.split("-");
-          const formattedDate = y && m && d ? `${d}-${m}-${y}` : tx.transaction_date;
-          const formattedAmount = new Intl.NumberFormat("nl-NL", {
-            style: "currency",
-            currency: "EUR",
-          }).format(tx.amount);
-
-          await createVraagpost.mutateAsync({
-            source_type: "bank_transaction",
-            source_id: tx.id,
-            client_id: tx.client_id,
-            titel: tx.description || "Banktransactie zonder factuur",
-            omschrijving: `${formattedDate} · ${formattedAmount}`,
-            categorie: "bank_zonder_factuur",
-          });
+        if (existing) {
+          alreadyExisted++;
+          continue;
         }
 
-        const account1605 = gb.find(a => a.nummer === 1605);
-        await updateTx.mutateAsync({
-          id: tx.id,
-          match_status: "handmatig_geboekt",
-          grootboekrekening_id: account1605?.id ?? undefined,
+        const [y, m, d] = tx.transaction_date.split("-");
+        const formattedDate = y && m && d ? `${d}-${m}-${y}` : tx.transaction_date;
+        const formattedAmount = new Intl.NumberFormat("nl-NL", {
+          style: "currency",
+          currency: "EUR",
+        }).format(tx.amount);
+
+        await createVraagpost.mutateAsync({
+          source_type: "bank_transaction",
+          source_id: tx.id,
+          client_id: tx.client_id,
+          titel: tx.description || "Banktransactie zonder factuur",
+          omschrijving: `${formattedDate} · ${formattedAmount}`,
+          categorie: "bank_zonder_factuur",
         });
 
-        processed++;
+        created++;
       } catch (e: any) {
         errors.push(e.message || "Onbekende fout");
       }
@@ -1207,15 +1204,17 @@ export default function Bank() {
     setSelectedIds(new Set());
     await refetch();
 
-    if (processed > 0 || skipped > 0) {
-      toast({
-        title: `${processed} vraagpost(en) aangemaakt${skipped > 0 ? `. ${skipped} overgeslagen (niet in aanmerking).` : ""}`,
-      });
+    const parts: string[] = [];
+    if (created > 0) parts.push(`${created} vraagpost(en) aangemaakt`);
+    if (alreadyExisted > 0) parts.push(`${alreadyExisted} bestonden al`);
+    if (skipped > 0) parts.push(`${skipped} overgeslagen (niet in aanmerking)`);
+    if (parts.length > 0) {
+      toast({ title: parts.join(". ") });
     }
     if (errors.length > 0) {
       toast({ title: "Fout bij aanmaken vraagpost", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, grootboekrekeningen, createVraagpost, updateTx, toast, refetch]);
+  }, [selectedIds, transactions, grootboekrekeningen, createVraagpost, toast, refetch]);
 
   // Safe one-click confirm path. Re-evaluates all safe criteria at mutation time
   // so the UI label and the actual write are always in sync. Falls back to opening
