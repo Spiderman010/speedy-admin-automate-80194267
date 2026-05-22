@@ -20,6 +20,14 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      // Temporary legacy lint baseline: these rules are disabled to make the existing
+      // codebase lintable without changing app behavior. Re-enable/fix in a later cleanup PR.
+      // Counts as of PR-E (all pre-existing, none introduced by this PR):
+      //   no-unused-vars        — pervasive throughout all source files
+      //   no-explicit-any       — ~94 occurrences across src/ (catch blocks, Supabase responses, etc.)
+      //   no-require-imports    — 1 occurrence: tailwind.config.ts uses require("tailwindcss-animate")
+      //   no-empty-object-type  — 2 occurrences in src/
+      //   no-useless-escape     — 2 occurrences in src/
       "@typescript-eslint/no-unused-vars": "off",
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-require-imports": "off",
