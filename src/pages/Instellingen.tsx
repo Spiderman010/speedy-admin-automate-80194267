@@ -290,7 +290,7 @@ function HerkenningsregelsTab() {
                 : accounts?.find(a => `${a.nummer} - ${a.omschrijving}` === rule.ledger_account_text);
               if (acc) updates.grootboekrekening_id = acc.id;
             } else if (rule.actie === "inkoopfactuur") {
-              updates.match_status = "wacht_op_factuur";
+              updates.match_status = "niet_gematcht";
             } else if (rule.actie === "vraagpost") {
               // Prevent duplicates: skip creation if a vraagpost for this tx already exists
               const { data: existing } = await supabase

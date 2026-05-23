@@ -21,7 +21,7 @@ export default function Dashboard() {
 
   const pendingInvoices = invoices?.filter((i) => i.status === "te_controleren").length ?? 0;
 
-  const unmatchedTx = transactions?.filter((t) => t.match_status === "niet_gematcht" || t.match_status === "wacht_op_factuur").length ?? 0;
+  const unmatchedTx = transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0;
   const totalInvoices = (invoices?.length ?? 0) + (salesInvoices?.length ?? 0);
 
   const isLoading = loadingClients || loadingInvoices || loadingBank || loadingSales;
@@ -139,7 +139,7 @@ export default function Dashboard() {
               <div className="space-y-3">
                 {clients.map((client) => {
                   const purchaseCount = invoices?.filter((i) => i.client_id === client.id && i.status === "te_controleren").length ?? 0;
-                  const txCount = transactions?.filter((t) => t.client_id === client.id && (t.match_status === "niet_gematcht" || t.match_status === "wacht_op_factuur")).length ?? 0;
+                  const txCount = transactions?.filter((t) => t.client_id === client.id && t.match_status === "niet_gematcht").length ?? 0;
                   const totalTasks = purchaseCount + txCount;
                   return (
                     <div
