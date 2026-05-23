@@ -162,6 +162,7 @@ export default function Bank() {
     blockedManualInvalid: number;
     blockedMissing1799: number;
     clientName: string | undefined;
+    bankDagboek: number;
   };
   const [exportPreflightOpen, setExportPreflightOpen] = useState(false);
   const [exportPreflightData, setExportPreflightData] = useState<ExportPreflightData | null>(null);
@@ -1366,8 +1367,10 @@ export default function Bank() {
           const blockedManualInvalid = sources.filter(s => s === "blocked_manual_invalid").length;
           const blockedMissing1799 = sources.filter(s => s === "blocked_missing_1799").length;
           const countBlocked = blockedUnconfirmed + blockedUnprocessed + blockedManualInvalid + blockedMissing1799;
-          const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-          setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName });
+          const clientRecord = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter) : undefined;
+          const clientName = clientRecord?.name;
+          const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
+          setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName, bankDagboek });
           setExportPreflightOpen(true);
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
@@ -2198,6 +2201,7 @@ export default function Bank() {
                   exportPreflightData.exportCandidates,
                   grootboekrekeningen ?? [],
                   exportPreflightData.clientName,
+                  exportPreflightData.bankDagboek,
                 );
                 setExportPreflightOpen(false);
                 let description = `${meta.exportedTransactions} bankregel(s) geëxporteerd.`;
