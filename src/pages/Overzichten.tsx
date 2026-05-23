@@ -23,6 +23,7 @@ import { useClientContext } from "@/hooks/useClientContext";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { useJournalEntries } from "@/hooks/useJournalEntries";
 import { useBankTransactions } from "@/hooks/useBankTransactions";
+import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { exportAllForClient } from "@/lib/snelstart-export";
 import { useToast } from "@/hooks/use-toast";
 
@@ -45,6 +46,7 @@ export default function Overzichten() {
   const { data: invoices } = usePurchaseInvoices(selectedClient || undefined);
   const { data: entries } = useJournalEntries(selectedClient || undefined);
   const { data: transactions } = useBankTransactions(selectedClient || undefined);
+  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
 
   const totalInvoices = invoices?.reduce((s, i) => s + (i.amount_incl ?? 0), 0) ?? 0;
   const totalBtw = invoices?.reduce((s, i) => s + (i.btw_amount ?? 0), 0) ?? 0;
@@ -55,14 +57,18 @@ export default function Overzichten() {
       toast({ title: "Selecteer eerst een klant", variant: "destructive" });
       return;
     }
-    const clientName = clients?.find(c => c.id === selectedClient)?.name ?? "klant";
+    const clientRecord = clients?.find(c => c.id === selectedClient);
+    const clientName = clientRecord?.name ?? "klant";
+    const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
     setExporting(true);
     try {
       await exportAllForClient(
         clientName,
         invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [],
         entries ?? [],
-        transactions?.filter(t => t.match_status === "gematcht") ?? [],
+        transactions ?? [],
+        grootboekrekeningen ?? [],
+        bankDagboek,
       );
       toast({ title: "ZIP-bestand gedownload", description: `Export voor ${clientName} is klaar.` });
     } catch (e: any) {

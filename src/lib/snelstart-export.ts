@@ -110,7 +110,7 @@ function csvRow(fields: string[]): string {
 }
 
 function downloadCSV(content: string, filename: string) {
-  const bom = "\uFEFF";
+  const bom = "﻿";
   const blob = new Blob([bom + content], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -190,34 +190,50 @@ function downloadSnelstartCSV(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function exportBankTransactionsCSV(
+/**
+ * Pure SnelStart 12 bank row builder — shared by exportBankTransactionsCSV
+ * (standalone download) and exportAllForClient (ZIP entry) so both paths
+ * produce identical CSV content and cannot diverge.
+ *
+ * Uses resolveBankExportGrootboek to determine exportability; blocked
+ * transactions are silently skipped. Does not produce a BOM (SnelStart 12
+ * rejects BOM).
+ *
+ * Exported so it can be unit-tested without a browser.
+ */
+export function buildBankSnelstartRows(
   transactions: BankTransaction[],
   grootboekrekeningen: Grootboek[],
-  clientName?: string,
-  bankDagboek: number = 1100
-): BankExportMeta {
+  bankDagboek: number,
+): {
+  rows: string[];
+  exportedTransactions: number;
+  bookedTo1799: number;
+  skippedTransactions: number;
+  skippedManualInvalidLedger: number;
+  skippedMissingFallback1799: number;
+  skippedUnconfirmed: number;
+  skippedUnprocessed: number;
+} {
   const rows: string[] = [];
   let boekingcode = 1;
-  const meta: BankExportMeta = {
-    exportedTransactions: 0,
-    exportedCsvRows: 0,
-    bookedTo1799: 0,
-    skippedTransactions: 0,
-    skippedManualInvalidLedger: 0,
-    skippedMissingFallback1799: 0,
-    skippedUnconfirmed: 0,
-    skippedUnprocessed: 0,
-  };
+  let exportedTransactions = 0;
+  let bookedTo1799 = 0;
+  let skippedTransactions = 0;
+  let skippedManualInvalidLedger = 0;
+  let skippedMissingFallback1799 = 0;
+  let skippedUnconfirmed = 0;
+  let skippedUnprocessed = 0;
 
   for (const t of transactions) {
     const { grootboek: gb, source } = resolveBankExportGrootboek(t, grootboekrekeningen);
 
     if (!gb) {
-      meta.skippedTransactions++;
-      if (source === "blocked_manual_invalid") meta.skippedManualInvalidLedger++;
-      if (source === "blocked_missing_1799") meta.skippedMissingFallback1799++;
-      if (source === "blocked_unconfirmed") meta.skippedUnconfirmed++;
-      if (source === "blocked_unprocessed") meta.skippedUnprocessed++;
+      skippedTransactions++;
+      if (source === "blocked_manual_invalid") skippedManualInvalidLedger++;
+      if (source === "blocked_missing_1799") skippedMissingFallback1799++;
+      if (source === "blocked_unconfirmed") skippedUnconfirmed++;
+      if (source === "blocked_unprocessed") skippedUnprocessed++;
       continue;
     }
 
@@ -226,7 +242,6 @@ export function exportBankTransactionsCSV(
     const bedrag = Math.abs(t.amount);
     const isPositief = t.amount >= 0;
 
-    // Regel 1: bank rekening
     // Positief bedrag (inkomend) → bank debet, tegenrekening credit
     // Negatief bedrag (uitgaand) → bank credit, tegenrekening debet
     rows.push(snelstartRow([
@@ -239,7 +254,6 @@ export function exportBankTransactionsCSV(
       omschrijving,
     ]));
 
-    // Regel 2: tegenrekening (grootboek)
     rows.push(snelstartRow([
       bankDagboek,
       boekingcode,
@@ -250,15 +264,42 @@ export function exportBankTransactionsCSV(
       omschrijving,
     ]));
 
-    meta.exportedTransactions++;
-    meta.exportedCsvRows += 2;
-    if (source === "1799") meta.bookedTo1799++;
+    exportedTransactions++;
+    if (source === "1799") bookedTo1799++;
     boekingcode++;
   }
 
+  return {
+    rows,
+    exportedTransactions,
+    bookedTo1799,
+    skippedTransactions,
+    skippedManualInvalidLedger,
+    skippedMissingFallback1799,
+    skippedUnconfirmed,
+    skippedUnprocessed,
+  };
+}
+
+export function exportBankTransactionsCSV(
+  transactions: BankTransaction[],
+  grootboekrekeningen: Grootboek[],
+  clientName?: string,
+  bankDagboek: number = 1100
+): BankExportMeta {
+  const result = buildBankSnelstartRows(transactions, grootboekrekeningen, bankDagboek);
   const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
-  downloadSnelstartCSV(buildSnelstartCSV(rows), `${prefix}banktransacties_snelstart.csv`);
-  return meta;
+  downloadSnelstartCSV(buildSnelstartCSV(result.rows), `${prefix}banktransacties_snelstart.csv`);
+  return {
+    exportedTransactions: result.exportedTransactions,
+    exportedCsvRows: result.rows.length,
+    bookedTo1799: result.bookedTo1799,
+    skippedTransactions: result.skippedTransactions,
+    skippedManualInvalidLedger: result.skippedManualInvalidLedger,
+    skippedMissingFallback1799: result.skippedMissingFallback1799,
+    skippedUnconfirmed: result.skippedUnconfirmed,
+    skippedUnprocessed: result.skippedUnprocessed,
+  };
 }
 
 export async function exportAllForClient(
@@ -266,11 +307,13 @@ export async function exportAllForClient(
   invoices: PurchaseInvoice[],
   entries: JournalEntry[],
   transactions: BankTransaction[],
+  grootboekrekeningen: Grootboek[],
+  bankDagboek: number = 1100,
 ) {
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const prefix = clientName.replace(/\s+/g, "_");
-  const bom = "\uFEFF";
+  const bom = "﻿";
 
   if (invoices.length) {
     const rows = invoices.map(inv =>
@@ -287,10 +330,11 @@ export async function exportAllForClient(
   }
 
   if (transactions.length) {
-    const rows = transactions.map(t =>
-      toStandardRow(t.transaction_date, t.description, null, t.amount, null)
-    );
-    zip.file(`${prefix}_banktransacties.csv`, bom + buildStandardCSV(rows));
+    const { rows } = buildBankSnelstartRows(transactions, grootboekrekeningen, bankDagboek);
+    if (rows.length > 0) {
+      // SnelStart 12 verwacht GEEN BOM marker
+      zip.file(`${prefix}_banktransacties.csv`, buildSnelstartCSV(rows));
+    }
   }
 
   const blob = await zip.generateAsync({ type: "blob" });
