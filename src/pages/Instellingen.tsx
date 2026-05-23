@@ -251,6 +251,7 @@ interface RetroPreviewResult {
   skippedNoTemplate: number;
   skippedNoLedger: number;
   skippedInkoopfactuur: number;
+  skippedVraagpostExists: number;
   sample: PreviewItem[];
 }
 
@@ -265,6 +266,13 @@ function resolveTemplateLedger(rule: any, accounts: any[] | undefined) {
 
 function matchTransactionToTemplate(tx: any, activeRules: any[]) {
   for (const rule of activeRules) {
+    // Scope: client-specific rules must only match transactions from that client.
+    if (rule.client_id_filter && rule.client_id_filter !== tx.client_id) continue;
+
+    // Note: rule.geldt_voor (eenmanszaak / bv / alle) is not enforced here.
+    // bank_transactions has no company-type column, so this scope cannot be applied
+    // to retroactive bank matching without additional data.
+
     const term = (rule.zoekterm || "").toLowerCase();
     let field = "";
     if (rule.zoek_in === "naam") field = (tx.counter_account || "").toLowerCase();
@@ -333,6 +341,7 @@ function HerkenningsregelsTab() {
       let skippedNoTemplate = 0;
       let skippedNoLedger = 0;
       let skippedInkoopfactuur = 0;
+      let skippedVraagpostExists = 0;
       let totalWouldUpdate = 0;
       const countMap = new Map<string, number>();
       const sample: PreviewItem[] = [];
@@ -367,6 +376,14 @@ function HerkenningsregelsTab() {
         }
 
         if (rule.actie === "vraagpost") {
+          // Check for an existing vraagpost so preview counts are accurate.
+          const { data: existing } = await supabase
+            .from("vraagposten")
+            .select("id")
+            .eq("source_type", "bank_transaction")
+            .eq("source_id", tx.id)
+            .maybeSingle();
+          if (existing) { skippedVraagpostExists++; continue; }
           totalWouldUpdate++;
           if (sample.length < 10) {
             sample.push({
@@ -386,7 +403,7 @@ function HerkenningsregelsTab() {
         .filter(r => countMap.has(r.id))
         .map(r => ({ templateId: r.id, zoekterm: r.zoekterm || "", actie: r.actie || "", count: countMap.get(r.id) ?? 0 }));
 
-      setPreviewResult({ totalScanned: txList.length, totalWouldUpdate, countPerTemplate, skippedNoTemplate, skippedNoLedger, skippedInkoopfactuur, sample });
+      setPreviewResult({ totalScanned: txList.length, totalWouldUpdate, countPerTemplate, skippedNoTemplate, skippedNoLedger, skippedInkoopfactuur, skippedVraagpostExists, sample });
       setPreviewOpen(true);
     } catch (e: any) {
       toast({ title: "Fout bij preview", description: e.message, variant: "destructive" });
@@ -412,6 +429,7 @@ function HerkenningsregelsTab() {
 
       let countGrootboek = 0;
       let countVraagpost = 0;
+      let skippedVraagpostExists = 0;
       let skipped = 0;
 
       for (const tx of transactions || []) {
@@ -427,9 +445,10 @@ function HerkenningsregelsTab() {
         if (rule.actie === "grootboek") {
           const ledger = resolveTemplateLedger(rule, accounts);
           if (!ledger) { skipped++; continue; }
-          // Additional .eq("match_status", "niet_gematcht") prevents overwriting rows
-          // that changed status between preview and apply.
-          await supabase
+          // .eq("match_status","niet_gematcht") prevents overwriting rows that changed
+          // status between preview and apply. .select("id") lets us confirm the row was
+          // actually updated (returns empty when the row no longer qualifies).
+          const { data: updated } = await supabase
             .from("bank_transactions")
             .update({
               match_status: "handmatig_geboekt",
@@ -438,8 +457,13 @@ function HerkenningsregelsTab() {
               match_confidence: null,
             })
             .eq("id", tx.id)
-            .eq("match_status", "niet_gematcht");
-          countGrootboek++;
+            .eq("match_status", "niet_gematcht")
+            .select("id");
+          if (updated && updated.length > 0) {
+            countGrootboek++;
+          } else {
+            skipped++;
+          }
           continue;
         }
 
@@ -464,6 +488,8 @@ function HerkenningsregelsTab() {
               categorie: "bank_zonder_factuur",
             });
             countVraagpost++;
+          } else {
+            skippedVraagpostExists++;
           }
           continue;
         }
@@ -472,6 +498,7 @@ function HerkenningsregelsTab() {
       const parts: string[] = [];
       if (countGrootboek > 0) parts.push(`${countGrootboek} geboekt op grootboek`);
       if (countVraagpost > 0) parts.push(`${countVraagpost} vraagpost${countVraagpost !== 1 ? "en" : ""} aangemaakt`);
+      if (skippedVraagpostExists > 0) parts.push(`${skippedVraagpostExists} vraagpost al aanwezig`);
       if (skipped > 0) parts.push(`${skipped} overgeslagen`);
       toast({ title: "Klaar", description: parts.join(" · ") || "Geen transacties bijgewerkt" });
       setPreviewOpen(false);
@@ -671,6 +698,12 @@ function HerkenningsregelsTab() {
                     <div className="bg-muted rounded p-3">
                       <p className="text-muted-foreground text-xs">Overgeslagen (inkoopfactuur)</p>
                       <p className="font-bold text-lg">{previewResult.skippedInkoopfactuur}</p>
+                    </div>
+                  )}
+                  {previewResult.skippedVraagpostExists > 0 && (
+                    <div className="bg-muted rounded p-3">
+                      <p className="text-muted-foreground text-xs">Vraagpost al aanwezig</p>
+                      <p className="font-bold text-lg">{previewResult.skippedVraagpostExists}</p>
                     </div>
                   )}
                 </div>
