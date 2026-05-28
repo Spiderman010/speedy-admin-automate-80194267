@@ -636,9 +636,37 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
             </div>
 
-            {duplicateWarning && (
-              <div className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
-                Mogelijk dubbele factuur: er bestaat al een factuur met dit factuurnummer voor deze leverancier.
+            {duplicateMatches.length > 0 && (
+              <div className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200 space-y-2">
+                <div>
+                  Mogelijk dubbele factuur: er {duplicateMatches.length === 1 ? "bestaat al 1 factuur" : `bestaan al ${duplicateMatches.length} facturen`} met dit factuurnummer voor deze leverancier.
+                </div>
+                <ul className="space-y-1">
+                  {duplicateMatches.map((m) => {
+                    const label = [
+                      m.supplier || "Onbekende leverancier",
+                      m.invoice_date ? new Date(m.invoice_date).toLocaleDateString("nl-NL") : null,
+                      m.amount_incl != null
+                        ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(Number(m.amount_incl))
+                        : null,
+                    ].filter(Boolean).join(" · ");
+                    return (
+                      <li key={m.id}>
+                        {onOpenExisting ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenExisting(m.id)}
+                            className="underline underline-offset-2 hover:no-underline text-left"
+                          >
+                            {label}
+                          </button>
+                        ) : (
+                          <span>{label}</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
 
