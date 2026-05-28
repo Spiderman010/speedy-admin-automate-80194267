@@ -14,6 +14,7 @@ import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, Arro
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import { useVraagposten } from "@/hooks/useVraagposten";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -35,6 +36,7 @@ import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-
 import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
 import { useBankTransactions, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
 import { getDisplayDescription } from "@/lib/mt940-description-parser";
+import { useNavigate } from "react-router-dom";
 
 function Chip({
   label, active, count, onClick, activeClassName,
@@ -69,6 +71,29 @@ const statusConfig = {
 
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
+
+function getVraagpostBadgeProps(status: string) {
+  switch (status) {
+    case "opgelost":
+      return {
+        label: "Vraagpost opgelost",
+        variant: "outline" as const,
+        className: "text-xs w-fit border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200",
+      };
+    case "genegeerd":
+      return {
+        label: "Vraagpost genegeerd",
+        variant: "secondary" as const,
+        className: "text-xs w-fit",
+      };
+    default:
+      return {
+        label: "Vraagpost open",
+        variant: "outline" as const,
+        className: "text-xs w-fit border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200",
+      };
+  }
+}
 
 function getPurchaseInvoiceDisplayStatus(inv: { status: string | null; remaining_amount?: number | null; amount_incl?: number | null; amount_excl?: number | null }): string {
   const remaining = getInvoiceRemainingAmount(inv as any);
@@ -147,6 +172,7 @@ function scorePurchaseCandidates(
 
 export default function Facturen() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
+  const navigate = useNavigate();
   const [clientFilter, setClientFilter] = useState(selectedClientId);
   const [uploadClientId, setUploadClientId] = useState<string>(
     selectedClientId !== "all" ? selectedClientId : ""
@@ -166,6 +192,7 @@ export default function Facturen() {
 
   const { data: clients } = useClients();
   const { data: invoices, isLoading } = usePurchaseInvoices(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
   const updateInvoice = useUpdatePurchaseInvoice();
   const deleteInvoice = useDeletePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
@@ -198,6 +225,15 @@ export default function Facturen() {
     for (const tx of allBankTransactions ?? []) m.set(tx.id, tx);
     return m;
   }, [allBankTransactions]);
+
+  const vraagpostByPurchaseInvoiceId = useMemo(() => {
+    const m = new Map<string, NonNullable<typeof vraagposten>[number]>();
+    for (const vp of vraagposten ?? []) {
+      if (vp.source_type !== "purchase_invoice" || !vp.source_id || m.has(vp.source_id)) continue;
+      m.set(vp.source_id, vp);
+    }
+    return m;
+  }, [vraagposten]);
 
   useEffect(() => {
     setClientFilter(selectedClientId);
@@ -652,9 +688,30 @@ export default function Facturen() {
                       const displayStatus = getPurchaseInvoiceDisplayStatus(inv);
                       const isPaid = displayStatus === "betaald";
                       const isPartiallyPaid = displayStatus === "deelbetaling";
+                      const linkedVraagpost = vraagpostByPurchaseInvoiceId.get(inv.id);
+                      const vraagpostBadge = linkedVraagpost ? getVraagpostBadgeProps(linkedVraagpost.status) : null;
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setEditInvoice(inv)}>
-                          <TableCell className="font-medium">{inv.supplier}</TableCell>
+                          <TableCell className="font-medium">
+                            <div className="flex flex-col gap-1">
+                              <span>{inv.supplier}</span>
+                              {linkedVraagpost && vraagpostBadge ? (
+                                <button
+                                  type="button"
+                                  title={linkedVraagpost.titel ? `Vraagpost: ${linkedVraagpost.titel}` : undefined}
+                                  className="w-fit rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    navigate(`/vraagposten?focus=${encodeURIComponent(linkedVraagpost.id)}`);
+                                  }}
+                                >
+                                  <Badge variant={vraagpostBadge.variant} className={`${vraagpostBadge.className} cursor-pointer`}>
+                                    {vraagpostBadge.label}
+                                  </Badge>
+                                </button>
+                              ) : null}
+                            </div>
+                          </TableCell>
                           <TableCell className="font-mono text-sm">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span>{inv.invoice_number || "—"}</span>
