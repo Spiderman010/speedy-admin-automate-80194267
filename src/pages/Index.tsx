@@ -192,7 +192,8 @@ export default function Dashboard() {
                       </div>
                       {(readiness.configMissingBankDagboek ||
                         readiness.configMissingInkoopDagboek ||
-                        readiness.configMissingVerkoopDagboek) && (
+                        readiness.configMissingVerkoopDagboek ||
+                        readiness.configMissing1799) && (
                         <div className="mt-1 flex flex-wrap gap-2">
                           {readiness.configMissingBankDagboek && (
                             <span className="inline-flex items-center gap-0.5 text-xs text-warning">
@@ -210,6 +211,12 @@ export default function Dashboard() {
                             <span className="inline-flex items-center gap-0.5 text-xs text-warning">
                               <AlertCircle className="h-3 w-3" />
                               Verkoop dagboek
+                            </span>
+                          )}
+                          {readiness.configMissing1799 && (
+                            <span className="inline-flex items-center gap-0.5 text-xs text-warning">
+                              <AlertCircle className="h-3 w-3" />
+                              1799 ontbreekt
                             </span>
                           )}
                         </div>
