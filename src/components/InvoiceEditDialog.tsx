@@ -117,7 +117,7 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
   );
 }
 
-export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client }: Props) {
+export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client, onOpenExisting }: Props) {
   const { toast } = useToast();
   const { data: existingLines } = usePurchaseInvoiceLines(invoice?.id);
   const replaceLines = useReplacePurchaseInvoiceLines();
