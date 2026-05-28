@@ -8,8 +8,24 @@ import { useClients } from "@/hooks/useClients";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices } from "@/hooks/useSalesInvoices";
 import { useBankTransactions } from "@/hooks/useBankTransactions";
+import { useVraagposten } from "@/hooks/useVraagposten";
+import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useClientContext } from "@/hooks/useClientContext";
+import { computeClientReadiness } from "@/lib/client-readiness";
+import type { ReadinessStatus } from "@/lib/client-readiness";
+
+function statusLabel(s: ReadinessStatus): string {
+  if (s === "klaar") return "Klaar voor export";
+  if (s === "config_ontbreekt") return "Config ontbreekt";
+  return "Niet klaar";
+}
+
+function statusVariant(s: ReadinessStatus): "default" | "destructive" | "outline" {
+  if (s === "klaar") return "default";
+  if (s === "config_ontbreekt") return "outline";
+  return "destructive";
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -18,13 +34,21 @@ export default function Dashboard() {
   const { data: invoices, isLoading: loadingInvoices } = usePurchaseInvoices();
   const { data: salesInvoices, isLoading: loadingSales } = useSalesInvoices();
   const { data: transactions, isLoading: loadingBank } = useBankTransactions();
+  const { data: vraagposten, isLoading: loadingVraagposten } = useVraagposten();
+  const { data: grootboekrekeningen, isLoading: loadingGrootboek } = useGrootboekrekeningen();
 
   const pendingInvoices = invoices?.filter((i) => i.status === "te_controleren").length ?? 0;
 
   const unmatchedTx = transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0;
   const totalInvoices = (invoices?.length ?? 0) + (salesInvoices?.length ?? 0);
 
-  const isLoading = loadingClients || loadingInvoices || loadingBank || loadingSales;
+  const isLoading =
+    loadingClients ||
+    loadingInvoices ||
+    loadingBank ||
+    loadingSales ||
+    loadingVraagposten ||
+    loadingGrootboek;
 
   // Combined recent invoices (purchase + sales), sorted by created_at desc, max 5
   const recentItems = (() => {
@@ -130,32 +154,66 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="font-display text-lg">Klantenstatus</CardTitle>
+            <CardTitle className="font-display text-lg">Export-gereedheid per klant</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+              <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
             ) : clients && clients.length > 0 ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {clients.map((client) => {
-                  const purchaseCount = invoices?.filter((i) => i.client_id === client.id && i.status === "te_controleren").length ?? 0;
-                  const txCount = transactions?.filter((t) => t.client_id === client.id && t.match_status === "niet_gematcht").length ?? 0;
-                  const totalTasks = purchaseCount + txCount;
+                  const readiness = computeClientReadiness(
+                    client,
+                    transactions ?? [],
+                    invoices ?? [],
+                    salesInvoices ?? [],
+                    vraagposten ?? [],
+                    grootboekrekeningen ?? [],
+                  );
                   return (
                     <div
                       key={client.id}
-                      className="flex items-center justify-between cursor-pointer hover:bg-muted/50 rounded-md px-2 py-1 -mx-2"
+                      className="rounded-md border px-3 py-2 cursor-pointer hover:bg-muted/50 -mx-1"
                       onClick={() => handleClientClick(client.id)}
                     >
-                      <div>
+                      <div className="flex items-center justify-between">
                         <p className="text-sm font-medium">{client.name}</p>
-                        {totalTasks > 0 && (
-                          <p className="text-xs text-muted-foreground">{purchaseCount} facturen · {txCount} transacties</p>
+                        <Badge variant={statusVariant(readiness.status)}>
+                          {statusLabel(readiness.status)}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                        <span>Inkoop: {readiness.inkoopTeControleren}</span>
+                        <span>Bank: {readiness.bankGeblokkeerd}</span>
+                        <span>Vragen: {readiness.openVraagposten}</span>
+                        {readiness.verkoopConcept > 0 && (
+                          <span>Concept: {readiness.verkoopConcept}</span>
                         )}
                       </div>
-                      <Badge variant={totalTasks === 0 ? "default" : totalTasks > 3 ? "destructive" : "secondary"}>
-                        {totalTasks === 0 ? "Bijgewerkt" : `${totalTasks} taken`}
-                      </Badge>
+                      {(readiness.configMissingBankDagboek ||
+                        readiness.configMissingInkoopDagboek ||
+                        readiness.configMissingVerkoopDagboek) && (
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {readiness.configMissingBankDagboek && (
+                            <span className="inline-flex items-center gap-0.5 text-xs text-warning">
+                              <AlertCircle className="h-3 w-3" />
+                              Bank dagboek
+                            </span>
+                          )}
+                          {readiness.configMissingInkoopDagboek && (
+                            <span className="inline-flex items-center gap-0.5 text-xs text-warning">
+                              <AlertCircle className="h-3 w-3" />
+                              Inkoop dagboek
+                            </span>
+                          )}
+                          {readiness.configMissingVerkoopDagboek && (
+                            <span className="inline-flex items-center gap-0.5 text-xs text-warning">
+                              <AlertCircle className="h-3 w-3" />
+                              Verkoop dagboek
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

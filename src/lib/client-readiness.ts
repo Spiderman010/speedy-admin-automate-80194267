@@ -1,0 +1,106 @@
+import type { Tables } from "@/integrations/supabase/types";
+import { resolveBankExportGrootboek } from "@/lib/snelstart-export";
+
+type Client = Tables<"clients">;
+type BankTransaction = Tables<"bank_transactions">;
+type PurchaseInvoice = Tables<"purchase_invoices">;
+type SalesInvoice = Tables<"sales_invoices">;
+type Vraagpost = Tables<"vraagposten">;
+
+export interface GrootboekSlim {
+  id: string;
+  nummer: number;
+  omschrijving: string;
+  client_id: string | null;
+}
+
+export type ReadinessStatus = "klaar" | "niet_klaar" | "config_ontbreekt";
+
+export interface ClientReadiness {
+  clientId: string;
+  bankGeblokkeerd: number;
+  inkoopTeControleren: number;
+  openVraagposten: number;
+  verkoopConcept: number;
+  configMissingBankDagboek: boolean;
+  configMissingInkoopDagboek: boolean;
+  configMissingVerkoopDagboek: boolean;
+  configMissing1799: boolean;
+  status: ReadinessStatus;
+}
+
+function has1799(accounts: GrootboekSlim[]): boolean {
+  return accounts.some(g => String(g.nummer ?? "").trim() === "1799");
+}
+
+/**
+ * Pure function: computes export-readiness metrics for a single client.
+ * All data is passed in; no side effects, no DB calls.
+ *
+ * bankGeblokkeerd: transactions that resolveBankExportGrootboek classifies as
+ * blocked (source starts with "blocked_").
+ *
+ * Sales invoices with status "concept" are counted informational-only and do
+ * not affect the readiness status pill.
+ */
+export function computeClientReadiness(
+  client: Client,
+  bankTransactions: BankTransaction[],
+  purchaseInvoices: PurchaseInvoice[],
+  salesInvoices: SalesInvoice[],
+  vraagposten: Vraagpost[],
+  grootboekrekeningen: GrootboekSlim[],
+): ClientReadiness {
+  const clientAccounts = grootboekrekeningen.filter(
+    g => g.client_id === client.id || g.client_id === null,
+  );
+
+  const bankGeblokkeerd = bankTransactions
+    .filter(t => t.client_id === client.id)
+    .filter(t => resolveBankExportGrootboek(t, clientAccounts).source.startsWith("blocked_"))
+    .length;
+
+  const inkoopTeControleren = purchaseInvoices.filter(
+    i => i.client_id === client.id && i.status === "te_controleren",
+  ).length;
+
+  const openVraagposten = vraagposten.filter(
+    v => v.client_id === client.id && v.status !== "opgelost" && v.status !== "genegeerd",
+  ).length;
+
+  const verkoopConcept = salesInvoices.filter(
+    i => i.client_id === client.id && i.status === "concept",
+  ).length;
+
+  const configMissingBankDagboek = client.bank_dagboek == null;
+  const configMissingInkoopDagboek = client.inkoop_dagboek == null;
+  const configMissingVerkoopDagboek = client.verkoop_dagboek == null;
+  const configMissing1799 = !has1799(clientAccounts);
+
+  const hasConfigWarning =
+    configMissingBankDagboek || configMissingInkoopDagboek || configMissingVerkoopDagboek;
+
+  const hasBlockers = bankGeblokkeerd > 0 || inkoopTeControleren > 0 || openVraagposten > 0;
+
+  let status: ReadinessStatus;
+  if (hasConfigWarning) {
+    status = "config_ontbreekt";
+  } else if (hasBlockers) {
+    status = "niet_klaar";
+  } else {
+    status = "klaar";
+  }
+
+  return {
+    clientId: client.id,
+    bankGeblokkeerd,
+    inkoopTeControleren,
+    openVraagposten,
+    verkoopConcept,
+    configMissingBankDagboek,
+    configMissingInkoopDagboek,
+    configMissingVerkoopDagboek,
+    configMissing1799,
+    status,
+  };
+}
