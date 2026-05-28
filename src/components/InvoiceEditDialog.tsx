@@ -43,6 +43,7 @@ interface Props {
   onSave: (id: string, updates: Partial<PurchaseInvoice>) => Promise<void>;
   onApprove: (id: string, updates: Partial<PurchaseInvoice>) => Promise<void>;
   client?: Client | null;
+  onOpenExisting?: (invoiceId: string) => void;
 }
 
 function InvoicePreview({ filePath }: { filePath: string | null }) {
