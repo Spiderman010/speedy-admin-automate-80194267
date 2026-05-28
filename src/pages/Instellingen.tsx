@@ -20,7 +20,7 @@ import { useClients } from "@/hooks/useClients";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
-import { Pencil, Trash2, Plus, RefreshCw, User, LogOut } from "lucide-react";
+import { Pencil, Trash2, Plus, RefreshCw, User, LogOut, Loader2 } from "lucide-react";
 
 // ──── Tab 0: Profiel ────
 function ProfielTab() {
@@ -226,6 +226,64 @@ function MatchingTab() {
 }
 
 // ──── Tab 2: Herkenningsregels ────
+
+interface PreviewItem {
+  txId: string;
+  date: string;
+  description: string;
+  amount: number;
+  templateZoekterm: string;
+  actie: string;
+  ledgerText: string | null;
+}
+
+interface TemplateMatchCount {
+  templateId: string;
+  zoekterm: string;
+  actie: string;
+  count: number;
+}
+
+interface RetroPreviewResult {
+  totalScanned: number;
+  totalWouldUpdate: number;
+  countPerTemplate: TemplateMatchCount[];
+  skippedNoTemplate: number;
+  skippedNoLedger: number;
+  skippedInkoopfactuur: number;
+  skippedVraagpostExists: number;
+  sample: PreviewItem[];
+}
+
+// Pure helpers used by both preview and apply steps.
+
+function resolveTemplateLedger(rule: any, accounts: any[] | undefined) {
+  if (rule.actie !== "grootboek" || !accounts) return null;
+  if (rule.ledger_account_id) return accounts.find((a: any) => a.id === rule.ledger_account_id) ?? null;
+  if (rule.ledger_account_text) return accounts.find((a: any) => `${a.nummer} - ${a.omschrijving}` === rule.ledger_account_text) ?? null;
+  return null;
+}
+
+function matchTransactionToTemplate(tx: any, activeRules: any[]) {
+  for (const rule of activeRules) {
+    // Scope: client-specific rules must only match transactions from that client.
+    if (rule.client_id_filter && rule.client_id_filter !== tx.client_id) continue;
+
+    // Note: rule.geldt_voor (eenmanszaak / bv / alle) is not enforced here.
+    // bank_transactions has no company-type column, so this scope cannot be applied
+    // to retroactive bank matching without additional data.
+
+    const term = (rule.zoekterm || "").toLowerCase();
+    let field = "";
+    if (rule.zoek_in === "naam") field = (tx.counter_account || "").toLowerCase();
+    else if (rule.zoek_in === "omschrijving") field = (tx.description || "").toLowerCase();
+    else if (rule.zoek_in === "referentie") field = (tx.reference || "").toLowerCase();
+    else field = `${tx.counter_account || ""} ${tx.description || ""} ${tx.reference || ""}`.toLowerCase();
+    if (field.includes(term)) return rule;
+  }
+  return null;
+}
+
 function HerkenningsregelsTab() {
   const { data: templates, isLoading } = useBookingTemplates();
   const addMut = useAddBookingTemplate();
@@ -238,6 +296,9 @@ function HerkenningsregelsTab() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewResult, setPreviewResult] = useState<RetroPreviewResult | null>(null);
   const [applying, setApplying] = useState(false);
 
   const emptyForm = { zoekterm: "", zoek_in: "alles", actie: "grootboek", ledger_account_text: "", geldt_voor: "alle", client_id_filter: null as string | null, prioriteit: 0, actief: true };
@@ -261,79 +322,186 @@ function HerkenningsregelsTab() {
     }
   };
 
-  const handleApplyRules = async () => {
-    if (!user || !templates) return;
-    setApplying(true);
+  // Preview: fetch niet_gematcht rows, evaluate templates, report counts + sample — no DB writes.
+  const handlePreview = async () => {
+    if (!templates) return;
+    setPreviewing(true);
     try {
-      const activeRules = templates.filter(t => t.actief && t.zoekterm);
+      const activeRules = [...templates]
+        .filter(t => t.actief && t.zoekterm)
+        .sort((a, b) => (b.prioriteit ?? 0) - (a.prioriteit ?? 0));
+
       const { data: transactions, error } = await supabase
         .from("bank_transactions")
         .select("*")
         .eq("match_status", "niet_gematcht");
       if (error) throw error;
-      let count = 0;
-      for (const tx of transactions || []) {
-        for (const rule of activeRules) {
-          const term = (rule.zoekterm || "").toLowerCase();
-          let field = "";
-          if (rule.zoek_in === "naam") field = (tx.counter_account || "").toLowerCase();
-          else if (rule.zoek_in === "omschrijving") field = (tx.description || "").toLowerCase();
-          else if (rule.zoek_in === "referentie") field = (tx.reference || "").toLowerCase();
-          else field = `${tx.counter_account || ""} ${tx.description || ""} ${tx.reference || ""}`.toLowerCase();
 
-          if (field.includes(term)) {
-            const updates: any = {};
-            if (rule.actie === "grootboek" && (rule.ledger_account_id || rule.ledger_account_text)) {
-              updates.match_status = "handmatig_geboekt";
-              const acc = rule.ledger_account_id
-                ? accounts?.find(a => a.id === rule.ledger_account_id)
-                : accounts?.find(a => `${a.nummer} - ${a.omschrijving}` === rule.ledger_account_text);
-              if (acc) updates.grootboekrekening_id = acc.id;
-            } else if (rule.actie === "inkoopfactuur") {
-              updates.match_status = "niet_gematcht";
-            } else if (rule.actie === "vraagpost") {
-              // Prevent duplicates: skip creation if a vraagpost for this tx already exists
-              const { data: existing } = await supabase
-                .from("vraagposten")
-                .select("id")
-                .eq("source_type", "bank_transaction")
-                .eq("source_id", tx.id)
-                .maybeSingle();
+      const txList = transactions || [];
+      let skippedNoTemplate = 0;
+      let skippedNoLedger = 0;
+      let skippedInkoopfactuur = 0;
+      let skippedVraagpostExists = 0;
+      let totalWouldUpdate = 0;
+      const countMap = new Map<string, number>();
+      const sample: PreviewItem[] = [];
 
-              if (!existing) {
-                const [y, m, d] = tx.transaction_date.split("-");
-                const formattedDate = y && m && d ? `${d}-${m}-${y}` : tx.transaction_date;
-                const formattedAmount = new Intl.NumberFormat("nl-NL", {
-                  style: "currency",
-                  currency: "EUR",
-                }).format(tx.amount);
+      for (const tx of txList) {
+        const rule = matchTransactionToTemplate(tx, activeRules);
+        if (!rule) { skippedNoTemplate++; continue; }
 
-                // Create vraagpost first — if this throws, updates stays empty
-                // and the bank transaction is NOT marked handmatig_geboekt
-                await createVraagpost.mutateAsync({
-                  source_type: "bank_transaction",
-                  source_id: tx.id,
-                  client_id: tx.client_id,
-                  titel: tx.description || "Banktransactie zonder factuur",
-                  omschrijving: `${formattedDate} · ${formattedAmount}`,
-                  categorie: "bank_zonder_factuur",
-                });
-              }
+        countMap.set(rule.id, (countMap.get(rule.id) ?? 0) + 1);
 
-              // Only reached when vraagpost was created or already existed
-              updates.match_status = "handmatig_geboekt";
-              const vraagpostAccount = accounts?.find(a => a.nummer === 1605);
-              if (vraagpostAccount) updates.grootboekrekening_id = vraagpostAccount.id;
-            }
-            if (Object.keys(updates).length > 0) {
-              await supabase.from("bank_transactions").update(updates).eq("id", tx.id);
-              count++;
-              break;
-            }
+        if (rule.actie === "inkoopfactuur") {
+          skippedInkoopfactuur++;
+          continue;
+        }
+
+        if (rule.actie === "grootboek") {
+          const ledger = resolveTemplateLedger(rule, accounts);
+          if (!ledger) { skippedNoLedger++; continue; }
+          totalWouldUpdate++;
+          if (sample.length < 10) {
+            sample.push({
+              txId: tx.id,
+              date: tx.transaction_date,
+              description: tx.description || "",
+              amount: tx.amount,
+              templateZoekterm: rule.zoekterm || "",
+              actie: rule.actie,
+              ledgerText: `${ledger.nummer} - ${ledger.omschrijving}`,
+            });
+          }
+          continue;
+        }
+
+        if (rule.actie === "vraagpost") {
+          // Check for an existing vraagpost so preview counts are accurate.
+          const { data: existing } = await supabase
+            .from("vraagposten")
+            .select("id")
+            .eq("source_type", "bank_transaction")
+            .eq("source_id", tx.id)
+            .maybeSingle();
+          if (existing) { skippedVraagpostExists++; continue; }
+          totalWouldUpdate++;
+          if (sample.length < 10) {
+            sample.push({
+              txId: tx.id,
+              date: tx.transaction_date,
+              description: tx.description || "",
+              amount: tx.amount,
+              templateZoekterm: rule.zoekterm || "",
+              actie: rule.actie,
+              ledgerText: null,
+            });
           }
         }
       }
-      toast({ title: `${count} transacties verwerkt via herkenningsregels` });
+
+      const countPerTemplate: TemplateMatchCount[] = activeRules
+        .filter(r => countMap.has(r.id))
+        .map(r => ({ templateId: r.id, zoekterm: r.zoekterm || "", actie: r.actie || "", count: countMap.get(r.id) ?? 0 }));
+
+      setPreviewResult({ totalScanned: txList.length, totalWouldUpdate, countPerTemplate, skippedNoTemplate, skippedNoLedger, skippedInkoopfactuur, skippedVraagpostExists, sample });
+      setPreviewOpen(true);
+    } catch (e: any) {
+      toast({ title: "Fout bij preview", description: e.message, variant: "destructive" });
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  // Apply: re-queries niet_gematcht rows for safety, then applies matching templates.
+  const handleApply = async () => {
+    if (!user || !templates) return;
+    setApplying(true);
+    try {
+      const activeRules = [...templates]
+        .filter(t => t.actief && t.zoekterm)
+        .sort((a, b) => (b.prioriteit ?? 0) - (a.prioriteit ?? 0));
+
+      const { data: transactions, error } = await supabase
+        .from("bank_transactions")
+        .select("*")
+        .eq("match_status", "niet_gematcht");
+      if (error) throw error;
+
+      let countGrootboek = 0;
+      let countVraagpost = 0;
+      let skippedVraagpostExists = 0;
+      let skipped = 0;
+
+      for (const tx of transactions || []) {
+        const rule = matchTransactionToTemplate(tx, activeRules);
+        if (!rule) { skipped++; continue; }
+
+        if (rule.actie === "inkoopfactuur") {
+          // Leave as niet_gematcht — no write needed.
+          skipped++;
+          continue;
+        }
+
+        if (rule.actie === "grootboek") {
+          const ledger = resolveTemplateLedger(rule, accounts);
+          if (!ledger) { skipped++; continue; }
+          // .eq("match_status","niet_gematcht") prevents overwriting rows that changed
+          // status between preview and apply. .select("id") lets us confirm the row was
+          // actually updated (returns empty when the row no longer qualifies).
+          const { data: updated } = await supabase
+            .from("bank_transactions")
+            .update({
+              match_status: "handmatig_geboekt",
+              grootboekrekening_id: ledger.id,
+              matched_invoice_id: null,
+              match_confidence: null,
+            })
+            .eq("id", tx.id)
+            .eq("match_status", "niet_gematcht")
+            .select("id");
+          if (updated && updated.length > 0) {
+            countGrootboek++;
+          } else {
+            skipped++;
+          }
+          continue;
+        }
+
+        if (rule.actie === "vraagpost") {
+          // Create vraagpost only if one does not already exist; do not change match_status.
+          const { data: existing } = await supabase
+            .from("vraagposten")
+            .select("id")
+            .eq("source_type", "bank_transaction")
+            .eq("source_id", tx.id)
+            .maybeSingle();
+          if (!existing) {
+            const [y, m, d] = (tx.transaction_date || "").split("-");
+            const formattedDate = y && m && d ? `${d}-${m}-${y}` : tx.transaction_date;
+            const formattedAmount = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(tx.amount);
+            await createVraagpost.mutateAsync({
+              source_type: "bank_transaction",
+              source_id: tx.id,
+              client_id: tx.client_id,
+              titel: tx.description || "Banktransactie zonder factuur",
+              omschrijving: `${formattedDate} · ${formattedAmount}`,
+              categorie: "bank_zonder_factuur",
+            });
+            countVraagpost++;
+          } else {
+            skippedVraagpostExists++;
+          }
+          continue;
+        }
+      }
+
+      const parts: string[] = [];
+      if (countGrootboek > 0) parts.push(`${countGrootboek} geboekt op grootboek`);
+      if (countVraagpost > 0) parts.push(`${countVraagpost} vraagpost${countVraagpost !== 1 ? "en" : ""} aangemaakt`);
+      if (skippedVraagpostExists > 0) parts.push(`${skippedVraagpostExists} vraagpost al aanwezig`);
+      if (skipped > 0) parts.push(`${skipped} overgeslagen`);
+      toast({ title: "Klaar", description: parts.join(" · ") || "Geen transacties bijgewerkt" });
+      setPreviewOpen(false);
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     } finally {
@@ -371,9 +539,9 @@ function HerkenningsregelsTab() {
         <div className="flex items-center justify-between">
           <CardTitle>Herkenningsregels</CardTitle>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleApplyRules} disabled={applying}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Regels opnieuw toepassen op alle open transacties
+            <Button variant="outline" onClick={handlePreview} disabled={previewing || isLoading}>
+              {previewing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+              Preview toepassen op open bankregels
             </Button>
             <Button onClick={openNew}><Plus className="h-4 w-4 mr-2" />Nieuwe regel</Button>
           </div>
@@ -420,6 +588,7 @@ function HerkenningsregelsTab() {
           </TableBody>
         </Table>
 
+        {/* CRUD dialog for creating / editing a template */}
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-lg">
             <DialogHeader><DialogTitle>{editId ? "Regel bewerken" : "Nieuwe regel"}</DialogTitle></DialogHeader>
@@ -494,6 +663,111 @@ function HerkenningsregelsTab() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuleren</Button>
               <Button onClick={handleSave} disabled={!form.zoekterm}>Opslaan</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Preview dialog — read-only until user clicks Apply */}
+        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Preview: herkenningsregels op open bankregels</DialogTitle>
+            </DialogHeader>
+            {previewResult && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                  <div className="bg-muted rounded p-3">
+                    <p className="text-muted-foreground text-xs">Gescand</p>
+                    <p className="font-bold text-lg">{previewResult.totalScanned}</p>
+                  </div>
+                  <div className="bg-muted rounded p-3">
+                    <p className="text-muted-foreground text-xs">Wordt bijgewerkt</p>
+                    <p className="font-bold text-lg">{previewResult.totalWouldUpdate}</p>
+                  </div>
+                  <div className="bg-muted rounded p-3">
+                    <p className="text-muted-foreground text-xs">Geen match</p>
+                    <p className="font-bold text-lg">{previewResult.skippedNoTemplate}</p>
+                  </div>
+                  {previewResult.skippedNoLedger > 0 && (
+                    <div className="bg-muted rounded p-3">
+                      <p className="text-muted-foreground text-xs">Overgeslagen (geen grootboek)</p>
+                      <p className="font-bold text-lg">{previewResult.skippedNoLedger}</p>
+                    </div>
+                  )}
+                  {previewResult.skippedInkoopfactuur > 0 && (
+                    <div className="bg-muted rounded p-3">
+                      <p className="text-muted-foreground text-xs">Overgeslagen (inkoopfactuur)</p>
+                      <p className="font-bold text-lg">{previewResult.skippedInkoopfactuur}</p>
+                    </div>
+                  )}
+                  {previewResult.skippedVraagpostExists > 0 && (
+                    <div className="bg-muted rounded p-3">
+                      <p className="text-muted-foreground text-xs">Vraagpost al aanwezig</p>
+                      <p className="font-bold text-lg">{previewResult.skippedVraagpostExists}</p>
+                    </div>
+                  )}
+                </div>
+
+                {previewResult.countPerTemplate.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Per herkenningsregel:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {previewResult.countPerTemplate.map(tc => (
+                        <Badge key={tc.templateId} variant="outline" className="text-xs">
+                          {tc.zoekterm} ({actieLabel(tc.actie)}) · {tc.count}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {previewResult.sample.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Voorbeeld (eerste {previewResult.sample.length}):</p>
+                    <div className="overflow-y-auto max-h-56 rounded border">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-xs">Datum</TableHead>
+                            <TableHead className="text-xs">Omschrijving</TableHead>
+                            <TableHead className="text-xs text-right">Bedrag</TableHead>
+                            <TableHead className="text-xs">Regel</TableHead>
+                            <TableHead className="text-xs">Grootboek / Actie</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {previewResult.sample.map(item => (
+                            <TableRow key={item.txId}>
+                              <TableCell className="text-xs whitespace-nowrap">{item.date}</TableCell>
+                              <TableCell className="text-xs max-w-[180px] truncate">{item.description || "—"}</TableCell>
+                              <TableCell className="text-xs text-right font-mono whitespace-nowrap">
+                                {new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(item.amount)}
+                              </TableCell>
+                              <TableCell className="text-xs">{item.templateZoekterm}</TableCell>
+                              <TableCell className="text-xs">{item.ledgerText ?? (item.actie === "vraagpost" ? "Vraagpost aanmaken" : "—")}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
+
+                {previewResult.totalWouldUpdate === 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Geen open transacties komen in aanmerking voor bijwerking met de huidige herkenningsregels.
+                  </p>
+                )}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPreviewOpen(false)}>Annuleren</Button>
+              {previewResult && previewResult.totalWouldUpdate > 0 && (
+                <Button onClick={handleApply} disabled={applying}>
+                  {applying && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Toepassen op {previewResult.totalWouldUpdate} open bankregel{previewResult.totalWouldUpdate !== 1 ? "s" : ""}
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
