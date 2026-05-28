@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
 import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
+import { InvoiceNumberCopyButton } from "@/components/InvoiceNumberCopyButton";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
@@ -714,7 +715,14 @@ export default function Facturen() {
                           </TableCell>
                           <TableCell className="font-mono text-sm">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span>{inv.invoice_number || "—"}</span>
+                              {inv.invoice_number ? (
+                                <>
+                                  <span>{inv.invoice_number}</span>
+                                  <InvoiceNumberCopyButton invoiceNumber={inv.invoice_number} />
+                                </>
+                              ) : (
+                                <span>—</span>
+                              )}
                               {duplicateIds.has(inv.id) && (
                                 <Badge variant="outline" className="border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 text-xs font-normal">
                                   Mogelijk dubbel

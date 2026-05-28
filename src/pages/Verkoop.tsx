@@ -25,6 +25,7 @@ import { exportSalesInvoicesCSV } from "@/lib/snelstart-export";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SalesInvoiceDialog, type SalesInvoiceFormData } from "@/components/SalesInvoiceDialog";
 import { SalesInvoiceEditDialog } from "@/components/SalesInvoiceEditDialog";
+import { InvoiceNumberCopyButton } from "@/components/InvoiceNumberCopyButton";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
@@ -585,7 +586,18 @@ export default function Verkoop() {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
-                          <TableCell className="font-mono text-sm font-medium">{inv.invoice_number}</TableCell>
+                          <TableCell className="font-mono text-sm font-medium">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {inv.invoice_number ? (
+                                <>
+                                  <span>{inv.invoice_number}</span>
+                                  <InvoiceNumberCopyButton invoiceNumber={inv.invoice_number} />
+                                </>
+                              ) : (
+                                <span>—</span>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
                           <TableCell className="font-medium">{inv.customer_name}</TableCell>
                           <TableCell>{new Date(inv.invoice_date).toLocaleDateString("nl-NL")}</TableCell>
