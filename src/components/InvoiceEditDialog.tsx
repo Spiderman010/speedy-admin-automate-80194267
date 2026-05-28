@@ -156,7 +156,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [routeReason, setRouteReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [vraagpostOpen, setVraagpostOpen] = useState(false);
-  const [duplicateWarning, setDuplicateWarning] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState<Array<{ id: string; supplier: string | null; invoice_date: string | null; amount_incl: number | null }>>([]);
   const qc = useQueryClient();
   const canGenerateUbl = invoice ? ["gecontroleerd", "geexporteerd"].includes(invoice.status) : false;
 
