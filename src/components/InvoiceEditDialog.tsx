@@ -165,37 +165,34 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   useEffect(() => {
     if (!invoice?.id || !invoice?.client_id) {
-      setDuplicateWarning(false);
+      setDuplicateMatches([]);
       return;
     }
     const invNum = form.invoice_number.trim();
     if (!invNum) {
-      setDuplicateWarning(false);
+      setDuplicateMatches([]);
       return;
     }
     const handle = setTimeout(async () => {
       const { data, error } = await supabase
         .from("purchase_invoices")
-        .select("id, leverancier_id, supplier_btw_number, supplier")
+        .select("id, leverancier_id, supplier_btw_number, supplier, invoice_date, amount_incl")
         .eq("client_id", invoice.client_id)
         .eq("invoice_number", invNum)
         .neq("id", invoice.id);
       if (error || !data) {
-        setDuplicateWarning(false);
+        setDuplicateMatches([]);
         return;
       }
       if (data.length === 0) {
-        setDuplicateWarning(false);
+        setDuplicateMatches([]);
         return;
       }
       const curBtw = form.supplier_btw_number ? normalizeBtwNummer(form.supplier_btw_number) : "";
       const curName = form.supplier ? normalizeSupplierName(form.supplier) : "";
       const hasIdentity = !!leverancierId || !!curBtw || !!curName;
-      if (!hasIdentity) {
-        setDuplicateWarning(true);
-        return;
-      }
-      const match = data.some((c: any) => {
+      const matches = data.filter((c: any) => {
+        if (!hasIdentity) return true;
         if (leverancierId && c.leverancier_id && c.leverancier_id === leverancierId) return true;
         const cBtw = c.supplier_btw_number ? normalizeBtwNummer(c.supplier_btw_number) : "";
         if (curBtw && cBtw && curBtw === cBtw) return true;
@@ -203,7 +200,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         if (curName && cName && curName === cName) return true;
         return false;
       });
-      setDuplicateWarning(match);
+      setDuplicateMatches(
+        matches.map((m: any) => ({
+          id: m.id,
+          supplier: m.supplier ?? null,
+          invoice_date: m.invoice_date ?? null,
+          amount_incl: m.amount_incl ?? null,
+        }))
+      );
     }, 350);
     return () => clearTimeout(handle);
   }, [invoice?.id, invoice?.client_id, form.invoice_number, form.supplier, form.supplier_btw_number, leverancierId]);
