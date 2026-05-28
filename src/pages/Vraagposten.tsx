@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,7 @@ import {
   VRAAGPOST_SOURCE_LABELS,
   type VraagpostStatus,
 } from "@/hooks/useVraagposten";
+import { useSearchParams } from "react-router-dom";
 
 const statusBadge = (status: string) => {
   switch (status) {
@@ -46,11 +47,16 @@ const statusBadge = (status: string) => {
 export default function Vraagposten() {
   const { toast } = useToast();
   const { selectedClientId } = useClientContext();
+  const [searchParams] = useSearchParams();
   const { data: clients } = useClients();
   const { data: vraagposten, isLoading } = useVraagposten(selectedClientId);
   const updateStatus = useUpdateVraagpostStatus();
   const deleteVraagpost = useDeleteVraagpost();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const handledFocusIdRef = useRef<string | null>(null);
+  const focusId = searchParams.get("focus");
 
   const getClientName = (id: string | null) =>
     id ? clients?.find(c => c.id === id)?.name ?? "—" : "—";
@@ -64,6 +70,28 @@ export default function Vraagposten() {
       return (b.created_at || "").localeCompare(a.created_at || "");
     });
   }, [vraagposten]);
+
+  useEffect(() => {
+    if (!focusId) {
+      handledFocusIdRef.current = null;
+      setHighlightedId(null);
+      return;
+    }
+    if (isLoading || !sorted.length || handledFocusIdRef.current === focusId) return;
+
+    const row = rowRefs.current.get(focusId);
+    if (!row) return;
+
+    handledFocusIdRef.current = focusId;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedId(focusId);
+
+    const timeoutId = window.setTimeout(() => {
+      setHighlightedId(current => (current === focusId ? null : current));
+    }, 2000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [focusId, isLoading, sorted]);
 
   const handleDelete = async () => {
     if (!pendingDeleteId) return;
@@ -112,22 +140,35 @@ export default function Vraagposten() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map(vp => (
-                  <TableRow key={vp.id}>
-                    <TableCell className="text-sm">{getClientName(vp.client_id)}</TableCell>
-                    <TableCell className="text-sm">{VRAAGPOST_SOURCE_LABELS[vp.source_type] ?? vp.source_type}</TableCell>
-                    <TableCell className="text-sm">{VRAAGPOST_CATEGORIE_LABELS[vp.categorie] ?? vp.categorie}</TableCell>
-                    <TableCell className="font-medium">
+                {sorted.map(vp => {
+                  const isHighlighted = vp.id === highlightedId;
+                  const highlightClass = isHighlighted
+                    ? "bg-amber-50/80 border-y border-amber-300 first:border-l first:border-l-amber-300 last:border-r last:border-r-amber-300"
+                    : "";
+
+                  return (
+                  <TableRow
+                    key={vp.id}
+                    ref={(element) => {
+                      if (element) rowRefs.current.set(vp.id, element);
+                      else rowRefs.current.delete(vp.id);
+                    }}
+                    className="scroll-mt-24 transition-colors duration-300"
+                  >
+                    <TableCell className={`${highlightClass} text-sm`}>{getClientName(vp.client_id)}</TableCell>
+                    <TableCell className={`${highlightClass} text-sm`}>{VRAAGPOST_SOURCE_LABELS[vp.source_type] ?? vp.source_type}</TableCell>
+                    <TableCell className={`${highlightClass} text-sm`}>{VRAAGPOST_CATEGORIE_LABELS[vp.categorie] ?? vp.categorie}</TableCell>
+                    <TableCell className={`${highlightClass} font-medium`}>
                       {vp.titel}
                       {vp.omschrijving && (
                         <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{vp.omschrijving}</div>
                       )}
                     </TableCell>
-                    <TableCell>{statusBadge(vp.status)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell className={highlightClass}>{statusBadge(vp.status)}</TableCell>
+                    <TableCell className={`${highlightClass} text-sm text-muted-foreground`}>
                       {vp.created_at ? new Date(vp.created_at).toLocaleDateString("nl-NL") : "—"}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className={`${highlightClass} text-right`}>
                       <div className="inline-flex gap-2 items-center">
                         {(vp.status === "open" || vp.status === "in_behandeling") && (
                           <>
@@ -155,7 +196,8 @@ export default function Vraagposten() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                );
+                })}
               </TableBody>
             </Table>
           )}
