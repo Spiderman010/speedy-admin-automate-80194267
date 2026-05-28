@@ -823,6 +823,10 @@ export default function Facturen() {
         onSave={handleSaveInvoice}
         onApprove={handleApproveInvoice}
         client={editInvoice ? clients?.find(c => c.id === editInvoice.client_id) ?? null : null}
+        onOpenExisting={(id) => {
+          const found = invoices?.find((inv) => inv.id === id);
+          if (found) setEditInvoice(found);
+        }}
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>

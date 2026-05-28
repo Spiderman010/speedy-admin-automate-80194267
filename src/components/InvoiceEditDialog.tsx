@@ -43,6 +43,7 @@ interface Props {
   onSave: (id: string, updates: Partial<PurchaseInvoice>) => Promise<void>;
   onApprove: (id: string, updates: Partial<PurchaseInvoice>) => Promise<void>;
   client?: Client | null;
+  onOpenExisting?: (invoiceId: string) => void;
 }
 
 function InvoicePreview({ filePath }: { filePath: string | null }) {
@@ -116,7 +117,7 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
   );
 }
 
-export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client }: Props) {
+export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client, onOpenExisting }: Props) {
   const { toast } = useToast();
   const { data: existingLines } = usePurchaseInvoiceLines(invoice?.id);
   const replaceLines = useReplacePurchaseInvoiceLines();
@@ -155,7 +156,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [routeReason, setRouteReason] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [vraagpostOpen, setVraagpostOpen] = useState(false);
-  const [duplicateWarning, setDuplicateWarning] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState<Array<{ id: string; supplier: string | null; invoice_date: string | null; amount_incl: number | null }>>([]);
   const qc = useQueryClient();
   const canGenerateUbl = invoice ? ["gecontroleerd", "geexporteerd"].includes(invoice.status) : false;
 
@@ -164,37 +165,34 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   useEffect(() => {
     if (!invoice?.id || !invoice?.client_id) {
-      setDuplicateWarning(false);
+      setDuplicateMatches([]);
       return;
     }
     const invNum = form.invoice_number.trim();
     if (!invNum) {
-      setDuplicateWarning(false);
+      setDuplicateMatches([]);
       return;
     }
     const handle = setTimeout(async () => {
       const { data, error } = await supabase
         .from("purchase_invoices")
-        .select("id, leverancier_id, supplier_btw_number, supplier")
+        .select("id, leverancier_id, supplier_btw_number, supplier, invoice_date, amount_incl")
         .eq("client_id", invoice.client_id)
         .eq("invoice_number", invNum)
         .neq("id", invoice.id);
       if (error || !data) {
-        setDuplicateWarning(false);
+        setDuplicateMatches([]);
         return;
       }
       if (data.length === 0) {
-        setDuplicateWarning(false);
+        setDuplicateMatches([]);
         return;
       }
       const curBtw = form.supplier_btw_number ? normalizeBtwNummer(form.supplier_btw_number) : "";
       const curName = form.supplier ? normalizeSupplierName(form.supplier) : "";
       const hasIdentity = !!leverancierId || !!curBtw || !!curName;
-      if (!hasIdentity) {
-        setDuplicateWarning(true);
-        return;
-      }
-      const match = data.some((c: any) => {
+      const matches = data.filter((c: any) => {
+        if (!hasIdentity) return true;
         if (leverancierId && c.leverancier_id && c.leverancier_id === leverancierId) return true;
         const cBtw = c.supplier_btw_number ? normalizeBtwNummer(c.supplier_btw_number) : "";
         if (curBtw && cBtw && curBtw === cBtw) return true;
@@ -202,7 +200,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         if (curName && cName && curName === cName) return true;
         return false;
       });
-      setDuplicateWarning(match);
+      setDuplicateMatches(
+        matches.map((m: any) => ({
+          id: m.id,
+          supplier: m.supplier ?? null,
+          invoice_date: m.invoice_date ?? null,
+          amount_incl: m.amount_incl ?? null,
+        }))
+      );
     }, 350);
     return () => clearTimeout(handle);
   }, [invoice?.id, invoice?.client_id, form.invoice_number, form.supplier, form.supplier_btw_number, leverancierId]);
@@ -631,9 +636,37 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
             </div>
 
-            {duplicateWarning && (
-              <div className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
-                Mogelijk dubbele factuur: er bestaat al een factuur met dit factuurnummer voor deze leverancier.
+            {duplicateMatches.length > 0 && (
+              <div className="rounded-md border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200 space-y-2">
+                <div>
+                  Mogelijk dubbele factuur: er {duplicateMatches.length === 1 ? "bestaat al 1 factuur" : `bestaan al ${duplicateMatches.length} facturen`} met dit factuurnummer voor deze leverancier.
+                </div>
+                <ul className="space-y-1">
+                  {duplicateMatches.map((m) => {
+                    const label = [
+                      m.supplier || "Onbekende leverancier",
+                      m.invoice_date ? new Date(m.invoice_date).toLocaleDateString("nl-NL") : null,
+                      m.amount_incl != null
+                        ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(Number(m.amount_incl))
+                        : null,
+                    ].filter(Boolean).join(" · ");
+                    return (
+                      <li key={m.id}>
+                        {onOpenExisting ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenExisting(m.id)}
+                            className="underline underline-offset-2 hover:no-underline text-left"
+                          >
+                            {label}
+                          </button>
+                        ) : (
+                          <span>{label}</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             )}
 
