@@ -43,12 +43,20 @@ import { FilterChip } from "@/components/FilterChip";
 const statusConfig: Record<string, { label: string; icon: typeof Clock; variant: "default" | "secondary" | "outline" }> = {
   concept: { label: "Concept", icon: Clock, variant: "secondary" },
   verzonden: { label: "Verzonden", icon: Send, variant: "default" },
-  betaald: { label: "Betaald", icon: CheckCircle2, variant: "outline" },
-  gecontroleerd: { label: "Gecontroleerd", icon: CheckCircle2, variant: "outline" },
+  gecontroleerd: { label: "Gecontroleerd", icon: CheckCircle2, variant: "default" },
+  betaald: { label: "Betaald", icon: CheckCircle2, variant: "default" },
   geexporteerd: { label: "Geëxporteerd", icon: Download, variant: "outline" },
 };
 
 const STATUS_ORDER = ["concept", "verzonden", "gecontroleerd", "betaald", "geexporteerd"];
+
+function getSalesInvoiceDisplayStatus(inv: { status: string | null; remaining_amount?: number | null; amount_incl?: number | null; amount_excl?: number | null }): string {
+  const remaining = getInvoiceRemainingAmount(inv as any);
+  if (remaining === 0) return "betaald";
+  const total = getInvoiceTotalAmount(inv as any);
+  if (total != null && remaining != null && remaining < total) return "deelbetaling";
+  return inv.status || "";
+}
 
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
@@ -575,6 +583,9 @@ export default function Verkoop() {
                   <TableBody>
                     {filteredSorted.map(inv => {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
+                      const displayStatus = getSalesInvoiceDisplayStatus(inv);
+                      const isPaid = displayStatus === "betaald";
+                      const isPartiallyPaid = displayStatus === "deelbetaling";
                       const hasExportWarning = inv.status === "geexporteerd";
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
@@ -619,9 +630,19 @@ export default function Verkoop() {
                           </TableCell>
                           <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell>
-                            <Badge variant={sc.variant} className="gap-1">
-                              <sc.icon className="h-3 w-3" />{sc.label}
-                            </Badge>
+                            {isPaid ? (
+                              <Badge variant="outline" className="gap-1 border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
+                                <CheckCircle2 className="h-3 w-3" />Betaald
+                              </Badge>
+                            ) : isPartiallyPaid ? (
+                              <Badge variant="secondary" className="gap-1 text-amber-700">
+                                <Clock className="h-3 w-3" />Deelbetaling
+                              </Badge>
+                            ) : (
+                              <Badge variant={sc.variant} className="gap-1">
+                                <sc.icon className="h-3 w-3" />{sc.label}
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
