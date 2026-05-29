@@ -1447,7 +1447,7 @@ export default function Bank() {
             <SelectItem value="gematcht">Gematcht</SelectItem>
             <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
             <SelectItem value="blokkeert_export">Blokkeert export</SelectItem>
-            <SelectItem value="niet_in_bankexport">Tijdelijk op 1799</SelectItem>
+            <SelectItem value="niet_in_bankexport" title="Betalingen die tijdelijk op tussenrekening 1799 staan.">Onbekende betalingen</SelectItem>
           </SelectContent>
         </Select>
         <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
