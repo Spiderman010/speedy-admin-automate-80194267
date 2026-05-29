@@ -650,10 +650,20 @@ export default function Facturen() {
               {isLoading ? (
                 <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
               ) : !filteredSorted.length ? (
-                <div className="py-12 text-center text-muted-foreground">
-                  {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" || routeFilter !== "all"
-                    ? "Geen facturen gevonden. Probeer een andere zoekopdracht of pas de filters aan."
-                    : "Nog geen facturen. Upload je eerste facturen via het Upload-tabblad."}
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
+                    <FileText className="h-8 w-8 text-primary" />
+                  </div>
+                  <h3 className="font-display text-lg font-semibold">
+                    {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" || routeFilter !== "all"
+                      ? "Geen inkoopfacturen gevonden"
+                      : "Nog geen inkoopfacturen"}
+                  </h3>
+                  <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                    {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" || routeFilter !== "all"
+                      ? "Pas je zoekterm of filters aan om meer resultaten te zien."
+                      : "Upload je eerste inkoopfacturen om ze te controleren, verwerken en exporteren."}
+                  </p>
                 </div>
               ) : (
                 <Table>
