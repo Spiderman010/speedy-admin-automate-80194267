@@ -1110,9 +1110,14 @@ export default function Bank() {
     await refetchSales();
 
     if (confirmed > 0 || skipped > 0) {
-      toast({
-        title: `${confirmed} suggestie(s) bevestigd${skipped > 0 ? `. ${skipped} overgeslagen voor handmatige controle.` : ""}`,
-      });
+      if (skipped > 0) {
+        toast({
+          title: "Suggesties deels bevestigd",
+          description: `${confirmed} suggesties bevestigd. ${skipped} suggesties overgeslagen omdat ze niet veilig genoeg waren.`,
+        });
+      } else {
+        toast({ title: `${confirmed} suggestie(s) bevestigd` });
+      }
     }
     if (errors.length > 0) {
       toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
