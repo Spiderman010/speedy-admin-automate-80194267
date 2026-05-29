@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -15,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { CheckCircle2, RotateCcw, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, ClipboardList, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
@@ -28,6 +29,16 @@ import {
   type VraagpostStatus,
 } from "@/hooks/useVraagposten";
 import { useSearchParams } from "react-router-dom";
+import { FilterChip } from "@/components/FilterChip";
+
+const STATUS_ORDER = ["open", "in_behandeling", "opgelost", "genegeerd"] as const;
+
+const STATUS_CHIP_LABELS: Record<string, string> = {
+  open: "Open",
+  in_behandeling: "In behandeling",
+  opgelost: "Opgelost",
+  genegeerd: "Genegeerd",
+};
 
 const statusBadge = (status: string) => {
   switch (status) {
@@ -54,6 +65,8 @@ export default function Vraagposten() {
   const deleteVraagpost = useDeleteVraagpost();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const handledFocusIdRef = useRef<string | null>(null);
   const focusId = searchParams.get("focus");
@@ -70,6 +83,29 @@ export default function Vraagposten() {
       return (b.created_at || "").localeCompare(a.created_at || "");
     });
   }, [vraagposten]);
+
+  const uniqueStatuses = useMemo(() => {
+    const present = new Set(sorted.map(vp => vp.status).filter(Boolean));
+    return STATUS_ORDER.filter(s => present.has(s));
+  }, [sorted]);
+
+  const searchFiltered = useMemo(() => {
+    if (!searchQuery.trim()) return sorted;
+    const q = searchQuery.toLowerCase();
+    return sorted.filter(vp =>
+      (vp.titel || "").toLowerCase().includes(q) ||
+      (vp.omschrijving || "").toLowerCase().includes(q) ||
+      (VRAAGPOST_SOURCE_LABELS[vp.source_type] ?? vp.source_type ?? "").toLowerCase().includes(q) ||
+      (VRAAGPOST_CATEGORIE_LABELS[vp.categorie] ?? vp.categorie ?? "").toLowerCase().includes(q) ||
+      (vp.client_id ? clients?.find(c => c.id === vp.client_id)?.name ?? "" : "").toLowerCase().includes(q) ||
+      (STATUS_CHIP_LABELS[vp.status] ?? vp.status ?? "").toLowerCase().includes(q)
+    );
+  }, [sorted, searchQuery, clients]);
+
+  const filteredSorted = useMemo(() => {
+    if (statusFilter === "all") return searchFiltered;
+    return searchFiltered.filter(vp => vp.status === statusFilter);
+  }, [searchFiltered, statusFilter]);
 
   useEffect(() => {
     if (!focusId) {
@@ -120,12 +156,55 @@ export default function Vraagposten() {
   return (
     <>
       <PageHeader title="Vraagposten" description="Open punten bij facturen, bank en klanten" />
+      <div className="mb-5 space-y-2.5">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Zoeken op titel, bron, categorie of klant..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        {uniqueStatuses.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
+            <FilterChip
+              label="Alle statussen"
+              active={statusFilter === "all"}
+              count={searchFiltered.length}
+              onClick={() => setStatusFilter("all")}
+            />
+            {uniqueStatuses.map(s => (
+              <FilterChip
+                key={s}
+                label={STATUS_CHIP_LABELS[s] ?? s}
+                active={statusFilter === s}
+                count={searchFiltered.filter(vp => vp.status === s).length}
+                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
       <Card>
         <CardContent className="p-6">
           {isLoading ? (
             <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : !sorted.length ? (
-            <div className="py-12 text-center text-muted-foreground">Geen vraagposten.</div>
+          ) : !filteredSorted.length ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
+                <ClipboardList className="h-8 w-8 text-primary" />
+              </div>
+              <h3 className="font-display text-lg font-semibold">
+                {searchQuery || statusFilter !== "all" ? "Geen vraagposten gevonden" : "Geen vraagposten"}
+              </h3>
+              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                {searchQuery || statusFilter !== "all"
+                  ? "Pas je zoekterm of filters aan om meer resultaten te zien."
+                  : "Er zijn nog geen openstaande punten voor de geselecteerde klant."}
+              </p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -140,7 +219,7 @@ export default function Vraagposten() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map(vp => {
+                {filteredSorted.map(vp => {
                   const isHighlighted = vp.id === highlightedId;
                   const highlightClass = isHighlighted
                     ? "bg-amber-50/80 border-y border-amber-300 first:border-l first:border-l-amber-300 last:border-r last:border-r-amber-300"
