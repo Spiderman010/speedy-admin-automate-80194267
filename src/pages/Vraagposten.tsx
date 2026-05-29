@@ -188,7 +188,7 @@ export default function Vraagposten() {
         )}
       </div>
       <Card>
-        <CardContent className="p-6">
+        <CardContent className="overflow-x-auto p-6">
           {isLoading ? (
             <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
           ) : !filteredSorted.length ? (
