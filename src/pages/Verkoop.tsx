@@ -757,9 +757,20 @@ export default function Verkoop() {
               onClick={async (e) => {
                 e.preventDefault();
                 if (!deleteTarget) return;
+                const wasExportedInvoice = deleteTarget.status === "geexporteerd";
                 try {
                   await deleteInvoice.mutateAsync(deleteTarget.id);
-                  toast({ title: "Verkoopfactuur verwijderd" });
+                  toast(
+                    wasExportedInvoice
+                      ? {
+                          title: "Verkoopfactuur verwijderd uit BoekAssist",
+                          description: "Let op: eerdere exports of externe boekhouding zijn niet automatisch aangepast.",
+                        }
+                      : {
+                          title: "Verkoopfactuur verwijderd",
+                          description: "Alleen de upload/registratie in BoekAssist is verwijderd.",
+                        }
+                  );
                   if (editInvoice?.id === deleteTarget.id) {
                     setEditInvoice(null);
                     setEditOpen(false);
