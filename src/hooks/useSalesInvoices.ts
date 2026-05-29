@@ -56,3 +56,14 @@ export function useUpdateSalesInvoice() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sales_invoices"] }),
   });
 }
+
+export function useDeleteSalesInvoice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (invoiceId: string) => {
+      const { error } = await supabase.from("sales_invoices").delete().eq("id", invoiceId);
+      if (error) throw error;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sales_invoices"] }),
+  });
+}
