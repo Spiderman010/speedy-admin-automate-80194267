@@ -199,6 +199,7 @@ export default function Facturen() {
   const [dragActive, setDragActive] = useState(false);
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
+  const deleteHasExportWarning = deleteTarget?.status === "geexporteerd";
   const [afletteringInvoice, setAfletteringInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
   const [bankSearchQuery, setBankSearchQuery] = useState("");
   const [linkTarget, setLinkTarget] = useState<PurchaseTxCandidate | null>(null);
@@ -840,9 +841,29 @@ export default function Facturen() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Inkoopfactuur verwijderen</AlertDialogTitle>
-            <AlertDialogDescription>
-              Weet je zeker dat je deze inkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.
+            <AlertDialogTitle>
+              {deleteHasExportWarning ? "Geëxporteerde inkoopfactuur verwijderen?" : "Inkoopfactuur verwijderen"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                {!deleteHasExportWarning ? (
+                  <p>Weet je zeker dat je deze inkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.</p>
+                ) : null}
+                {deleteTarget && (
+                  <div className="rounded-md border bg-muted/40 px-3 py-2 text-foreground">
+                    <div><span className="font-medium">Leverancier:</span> {deleteTarget.supplier || "—"}</div>
+                    <div><span className="font-medium">Factuurnummer:</span> {deleteTarget.invoice_number || "—"}</div>
+                    <div><span className="font-medium">Bedrag:</span> {deleteTarget.amount_incl != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(deleteTarget.amount_incl) : "—"}</div>
+                  </div>
+                )}
+                {deleteHasExportWarning ? (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+                    <p className="text-destructive">
+                      Deze inkoopfactuur is al geëxporteerd. Als je deze upload verwijdert, wordt alleen het record in BoekAssist verwijderd. Een eerdere export of externe boekhouding wordt niet automatisch aangepast. Verwijder alleen als dit een verkeerde upload was of als je de gevolgen begrijpt.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -853,9 +874,20 @@ export default function Facturen() {
               onClick={async (e) => {
                 e.preventDefault();
                 if (!deleteTarget) return;
+                const wasExported = deleteTarget.status === "geexporteerd";
                 try {
-                  await deleteInvoice.mutateAsync({ id: deleteTarget.id, file_path: deleteTarget.file_path });
-                  toast({ title: "Inkoopfactuur verwijderd" });
+                  await deleteInvoice.mutateAsync(deleteTarget.id);
+                  toast(
+                    wasExported
+                      ? {
+                          title: "Inkoopfactuur verwijderd uit BoekAssist",
+                          description: "Let op: eerdere exports of externe boekhouding zijn niet automatisch aangepast.",
+                        }
+                      : {
+                          title: "Inkoopfactuur verwijderd",
+                          description: "Alleen de upload/registratie in BoekAssist is verwijderd.",
+                        }
+                  );
                   if (editInvoice?.id === deleteTarget.id) setEditInvoice(null);
                   setDeleteTarget(null);
                 } catch (err: any) {
@@ -863,7 +895,7 @@ export default function Facturen() {
                 }
               }}
             >
-              Verwijderen
+              {deleteHasExportWarning ? "Toch verwijderen" : "Verwijderen"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
