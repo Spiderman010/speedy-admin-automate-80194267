@@ -846,6 +846,8 @@ export default function Bank() {
           omschrijving: `${formattedDate} · ${formattedAmount}`,
           categorie: "bank_zonder_factuur",
         });
+        // createVraagpost.mutateAsync throws on failure, so updateTx below is
+        // only reached when the vraagpost was successfully created (or already existed).
       }
 
       const account1605 = grootboekrekeningen?.find(a => a.nummer === 1605);
@@ -1213,7 +1215,11 @@ export default function Bank() {
       toast({ title: parts.join(". ") });
     }
     if (errors.length > 0) {
-      toast({ title: "Fout bij aanmaken vraagpost", description: errors[0], variant: "destructive" });
+      toast({
+        title: `${errors.length} vraagpost(en) konden niet worden aangemaakt`,
+        description: errors[0],
+        variant: "destructive",
+      });
     }
   }, [selectedIds, transactions, grootboekrekeningen, createVraagpost, toast, refetch]);
 
