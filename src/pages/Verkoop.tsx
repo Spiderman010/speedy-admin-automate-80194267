@@ -674,7 +674,7 @@ export default function Verkoop() {
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     {isDeleteBlocked
-                                      ? "Geëxporteerde facturen kunnen niet worden verwijderd"
+                                      ? "Geëxporteerde facturen kun je later corrigeren via een creditfactuur of annulering."
                                       : "Verwijderen"}
                                   </TooltipContent>
                                 </Tooltip>
@@ -726,10 +726,14 @@ export default function Verkoop() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Verkoopfactuur verwijderen</AlertDialogTitle>
+            <AlertDialogTitle>{deleteBlocked ? "Geëxporteerde factuur kan niet worden verwijderd" : "Verkoopfactuur verwijderen"}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
-                <p>Weet je zeker dat je deze verkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.</p>
+                <p>
+                  {deleteBlocked
+                    ? "Deze verkoopfactuur is al geëxporteerd. Geëxporteerde facturen kunnen niet worden verwijderd."
+                    : "Weet je zeker dat je deze verkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt."}
+                </p>
                 {deleteTarget && (
                   <div className="rounded-md border bg-muted/40 px-3 py-2 text-foreground">
                     <div><span className="font-medium">Factuurnummer:</span> {deleteTarget.invoice_number || "—"}</div>
@@ -738,9 +742,14 @@ export default function Verkoop() {
                   </div>
                 )}
                 {deleteTarget?.status === "geexporteerd" ? (
-                  <p className="font-medium text-destructive">
-                    Deze factuur staat als geexporteerd gemarkeerd en kan daarom niet meer via de UI worden verwijderd.
-                  </p>
+                  <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+                    <p className="font-medium text-destructive">
+                      De juiste vervolgstap wordt straks een creditfactuur of annuleringsflow.
+                    </p>
+                    <p className="text-destructive">
+                      Die functie is nog niet beschikbaar. Daarom kun je deze geëxporteerde factuur nu niet verwijderen.
+                    </p>
+                  </div>
                 ) : null}
               </div>
             </AlertDialogDescription>
