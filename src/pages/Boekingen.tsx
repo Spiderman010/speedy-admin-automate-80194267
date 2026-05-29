@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Plus, Save, Download } from "lucide-react";
+import { Save, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useAddJournalEntry, useJournalEntries } from "@/hooks/useJournalEntries";
@@ -116,8 +116,7 @@ export default function Boekingen() {
         </Button>
       </PageHeader>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
+      <div className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="font-display text-lg">Nieuwe boeking</CardTitle>
@@ -246,24 +245,6 @@ export default function Boekingen() {
               )}
             </CardContent>
           </Card>
-        </div>
-
-        <div>
-          <Card>
-            <CardHeader>
-              <CardTitle className="font-display text-lg">Terugkerend</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Sla veelvoorkomende boekingen op als sjabloon zodat je ze met één klik kunt herhalen.
-              </p>
-              <Button variant="outline" className="mt-4 w-full" disabled>
-                <Plus className="mr-2 h-4 w-4" />Sjabloon aanmaken
-              </Button>
-              <p className="mt-2 text-xs text-muted-foreground text-center">Sjablonen volgen later</p>
-            </CardContent>
-          </Card>
-        </div>
       </div>
     </>
   );
