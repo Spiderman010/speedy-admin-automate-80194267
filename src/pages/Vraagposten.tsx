@@ -30,6 +30,7 @@ import {
 } from "@/hooks/useVraagposten";
 import { useSearchParams } from "react-router-dom";
 import { FilterChip } from "@/components/FilterChip";
+import { formatMT940Title, formatMT940Detail } from "@/lib/mt940-description-parser";
 
 const STATUS_ORDER = ["open", "in_behandeling", "opgelost", "genegeerd"] as const;
 
