@@ -70,6 +70,8 @@ const statusConfig = {
   geexporteerd: { label: "Geëxporteerd", icon: Download, variant: "outline" as const },
 };
 
+const STATUS_ORDER = ["te_controleren", "gecontroleerd", "betaald", "geexporteerd"];
+
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
 
@@ -351,6 +353,13 @@ export default function Facturen() {
     });
     return list;
   }, [searchFiltered, workflowFilter, paymentFilter]);
+
+  const uniqueStatuses = useMemo(() => {
+    const present = new Set(searchFiltered.map(inv => inv.status).filter(Boolean));
+    const ordered = STATUS_ORDER.filter(s => present.has(s));
+    present.forEach(s => { if (!STATUS_ORDER.includes(s)) ordered.push(s); });
+    return ordered;
+  }, [searchFiltered]);
 
   const filteredSorted = useMemo(() => {
     let list = [...searchFiltered];
@@ -635,18 +644,18 @@ export default function Facturen() {
                 activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Workflow</span>
-              <Chip label="Alle" active={workflowFilter === "all"} count={forWorkflowCounts.length}
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
+              <Chip label="Alle statussen" active={workflowFilter === "all"} count={forWorkflowCounts.length}
                 onClick={() => setWorkflowFilter("all")} />
-              <Chip label="Te controleren" active={workflowFilter === "te_controleren"}
-                count={forWorkflowCounts.filter(inv => inv.status === "te_controleren").length}
-                onClick={() => setWorkflowFilter(workflowFilter === "te_controleren" ? "all" : "te_controleren")} />
-              <Chip label="Gecontroleerd" active={workflowFilter === "gecontroleerd"}
-                count={forWorkflowCounts.filter(inv => inv.status === "gecontroleerd").length}
-                onClick={() => setWorkflowFilter(workflowFilter === "gecontroleerd" ? "all" : "gecontroleerd")} />
-              <Chip label="Geëxporteerd" active={workflowFilter === "geexporteerd"}
-                count={forWorkflowCounts.filter(inv => inv.status === "geexporteerd").length}
-                onClick={() => setWorkflowFilter(workflowFilter === "geexporteerd" ? "all" : "geexporteerd")} />
+              {uniqueStatuses.map(s => (
+                <Chip
+                  key={s}
+                  label={statusConfig[s as keyof typeof statusConfig]?.label ?? s}
+                  active={workflowFilter === s}
+                  count={forWorkflowCounts.filter(inv => inv.status === s).length}
+                  onClick={() => setWorkflowFilter(workflowFilter === s ? "all" : s)}
+                />
+              ))}
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Route</span>
@@ -665,7 +674,9 @@ export default function Facturen() {
                 <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
               ) : !filteredSorted.length ? (
                 <div className="py-12 text-center text-muted-foreground">
-                  {searchQuery ? "Geen facturen gevonden voor deze zoekopdracht." : "Nog geen facturen. Upload je eerste facturen via het Upload-tabblad."}
+                  {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" || routeFilter !== "all"
+                    ? "Geen facturen gevonden. Probeer een andere zoekopdracht of pas de filters aan."
+                    : "Nog geen facturen. Upload je eerste facturen via het Upload-tabblad."}
                 </div>
               ) : (
                 <Table>
