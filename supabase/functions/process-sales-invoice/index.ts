@@ -195,7 +195,8 @@ serve(async (req) => {
         btw_amount: extracted.btw_amount || null,
         amount_incl: extracted.amount_incl || null,
         btw_percentage: extracted.btw_percentage || null,
-        remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? null,
+        // Fall back to 0 so allocation logic always has a numeric starting point
+        remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? 0,
         pdf_path: filePath,
         status: "concept",
       })
