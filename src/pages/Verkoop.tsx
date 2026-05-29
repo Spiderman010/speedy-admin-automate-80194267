@@ -167,6 +167,7 @@ export default function Verkoop() {
   const [bankSearchQuery, setBankSearchQuery] = useState("");
   const [linkTarget, setLinkTarget] = useState<SalesTxCandidate | null>(null);
   const [linkAmount, setLinkAmount] = useState("");
+  const deleteBlocked = deleteTarget?.status === "geexporteerd";
 
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const updateBankTx = useUpdateBankTransaction();
@@ -590,6 +591,7 @@ export default function Verkoop() {
                   <TableBody>
                     {filteredSorted.map(inv => {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
+                      const isDeleteBlocked = inv.status === "geexporteerd";
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
                           <TableCell className="font-mono text-sm font-medium">
@@ -654,18 +656,29 @@ export default function Verkoop() {
                               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setEditInvoice(inv); setEditOpen(true); }}>
                                 <Eye className="h-4 w-4" />
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteTarget(inv);
-                                }}
-                                aria-label="Verwijderen"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className={`h-8 w-8 text-muted-foreground ${isDeleteBlocked ? "hover:text-muted-foreground/80" : "hover:text-destructive"}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setDeleteTarget(inv);
+                                      }}
+                                      aria-label={isDeleteBlocked ? "Verwijderen niet mogelijk: factuur is geëxporteerd" : "Verwijderen"}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {isDeleteBlocked
+                                      ? "Geëxporteerde facturen kunnen niet worden verwijderd"
+                                      : "Verwijderen"}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -726,20 +739,24 @@ export default function Verkoop() {
                 )}
                 {deleteTarget?.status === "geexporteerd" ? (
                   <p className="font-medium text-destructive">
-                    Deze factuur staat als geexporteerd gemarkeerd. Controleer eerst of verwijderen geen gevolgen heeft voor eerdere exports.
+                    Deze factuur staat als geexporteerd gemarkeerd en kan daarom niet meer via de UI worden verwijderd.
                   </p>
                 ) : null}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteInvoice.isPending}>Annuleren</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteInvoice.isPending}>{deleteBlocked ? "Sluiten" : "Annuleren"}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={deleteInvoice.isPending}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteInvoice.isPending || deleteBlocked}
+              className={
+                deleteBlocked
+                  ? "bg-muted text-muted-foreground hover:bg-muted"
+                  : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              }
               onClick={async (e) => {
                 e.preventDefault();
-                if (!deleteTarget) return;
+                if (!deleteTarget || deleteBlocked) return;
                 try {
                   await deleteInvoice.mutateAsync(deleteTarget.id);
                   toast({ title: "Verkoopfactuur verwijderd" });
@@ -757,7 +774,7 @@ export default function Verkoop() {
                 }
               }}
             >
-              Verwijderen
+              {deleteBlocked ? "Niet mogelijk" : "Verwijderen"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
