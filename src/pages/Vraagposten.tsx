@@ -30,6 +30,7 @@ import {
 } from "@/hooks/useVraagposten";
 import { useSearchParams } from "react-router-dom";
 import { FilterChip } from "@/components/FilterChip";
+import { formatMT940Title, formatMT940Detail } from "@/lib/mt940-description-parser";
 
 const STATUS_ORDER = ["open", "in_behandeling", "opgelost", "genegeerd"] as const;
 
@@ -238,10 +239,19 @@ export default function Vraagposten() {
                     <TableCell className={`${highlightClass} text-sm`}>{VRAAGPOST_SOURCE_LABELS[vp.source_type] ?? vp.source_type}</TableCell>
                     <TableCell className={`${highlightClass} text-sm`}>{VRAAGPOST_CATEGORIE_LABELS[vp.categorie] ?? vp.categorie}</TableCell>
                     <TableCell className={`${highlightClass} font-medium`}>
-                      {vp.titel}
-                      {vp.omschrijving && (
-                        <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{vp.omschrijving}</div>
-                      )}
+                      <span title={vp.titel ?? undefined}>{formatMT940Title(vp.titel)}</span>
+                      {(() => {
+                        const detail = formatMT940Detail(vp.omschrijving);
+                        if (!detail) return null;
+                        return (
+                          <div
+                            className="text-xs text-muted-foreground mt-0.5 line-clamp-2"
+                            title={vp.omschrijving ?? undefined}
+                          >
+                            {detail}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className={highlightClass}>{statusBadge(vp.status)}</TableCell>
                     <TableCell className={`${highlightClass} text-sm text-muted-foreground`}>

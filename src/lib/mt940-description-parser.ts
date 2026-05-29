@@ -58,3 +58,38 @@ export function getDisplayDescription(description: string | null): string {
   const parsed = parseMT940Description(description);
   return parsed.name || description;
 }
+
+/** True when string looks like a raw MT940 structured description. */
+export function isMT940Description(description: string | null | undefined): boolean {
+  if (!description) return false;
+  return /\/(NAME|CNTP|REMI|EREF|TRTP|IBAN)\//.test(description);
+}
+
+/**
+ * Build a short, human readable title from a (possibly MT940) string.
+ * Falls back to the original string when it does not look like MT940.
+ */
+export function formatMT940Title(description: string | null | undefined, fallback = "Banktransactie"): string {
+  if (!description) return fallback;
+  if (!isMT940Description(description)) return description;
+  const parsed = parseMT940Description(description);
+  if (parsed.name) return parsed.name;
+  if (parsed.reference) return parsed.reference;
+  return fallback;
+}
+
+/**
+ * Build a short detail line (e.g. reference / IBAN) from a MT940 string.
+ * Returns the original string unchanged when it does not look like MT940,
+ * or null when nothing useful can be shown.
+ */
+export function formatMT940Detail(description: string | null | undefined): string | null {
+  if (!description) return null;
+  if (!isMT940Description(description)) return description;
+  const parsed = parseMT940Description(description);
+  const parts: string[] = [];
+  if (parsed.reference) parts.push(parsed.reference);
+  if (parsed.iban) parts.push(parsed.iban);
+  return parts.length ? parts.join(" · ") : null;
+}
+
