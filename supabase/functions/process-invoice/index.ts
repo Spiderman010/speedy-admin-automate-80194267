@@ -311,7 +311,8 @@ BELANGRIJK: gebruik NOOIT het adres of de gegevens van de klant/koper als levera
         amount_incl: extracted.amount_incl || null,
         btw_percentage: extracted.btw_percentage || null,
         supplier_btw_number: supplierBtw,
-        remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? null,
+        // Fall back to 0 so allocation logic always has a numeric starting point
+        remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? 0,
         file_path: filePath,
         ocr_data: extracted,
         status: "te_controleren",
