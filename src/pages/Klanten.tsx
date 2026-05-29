@@ -6,6 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -116,6 +126,7 @@ export default function Klanten() {
   const [form, setForm] = useState<ClientForm>({ ...emptyForm });
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const { toast } = useToast();
 
   const { data: clients, isLoading } = useClients();
@@ -241,13 +252,15 @@ export default function Klanten() {
     }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Weet je zeker dat je "${name}" wilt verwijderen?`)) return;
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
     try {
-      await deleteClient.mutateAsync(id);
+      await deleteClient.mutateAsync(deleteTarget.id);
       toast({ title: "Klant verwijderd" });
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
+    } finally {
+      setDeleteTarget(null);
     }
   };
 
@@ -351,7 +364,7 @@ export default function Klanten() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleDelete(client.id, client.name)}
+                            onClick={() => setDeleteTarget({ id: client.id, name: client.name })}
                             title="Klant verwijderen"
                             aria-label={`Verwijder ${client.name}`}
                           >
@@ -367,6 +380,41 @@ export default function Klanten() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Klant verwijderen?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                {deleteTarget && (
+                  <div className="rounded-md border bg-muted/40 px-3 py-2 text-foreground">
+                    <span className="font-medium">{deleteTarget.name}</span>
+                  </div>
+                )}
+                <p>
+                  Weet je zeker dat je deze klant wilt verwijderen? Dit kan gevolgen hebben voor
+                  gekoppelde facturen, banktransacties en vraagposten. Deze actie kan niet ongedaan
+                  worden gemaakt.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteClient.isPending}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteClient.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                await handleConfirmDelete();
+              }}
+            >
+              Verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={showDialog} onOpenChange={(o) => { if (!o) resetForm(); setShowDialog(o); }}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
