@@ -39,7 +39,7 @@ export default function Dashboard() {
 
   const pendingInvoices = invoices?.filter((i) => i.status === "te_controleren").length ?? 0;
 
-  const unmatchedTx = transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0;
+  const unmatchedTx = transactions?.filter((t) => t.match_status === "niet_gematcht" || t.match_status === "suggestie").length ?? 0;
   const totalInvoices = (invoices?.length ?? 0) + (salesInvoices?.length ?? 0);
 
   const isLoading =
@@ -110,7 +110,7 @@ export default function Dashboard() {
               <StatCard title="Te verwerken facturen" value={pendingInvoices} icon={FileText} />
             </div>
             <div className="cursor-pointer" onClick={() => navigate("/bank")}>
-              <StatCard title="Ongematchte transacties" value={unmatchedTx} icon={Landmark} />
+              <StatCard title="Open banktransacties" value={unmatchedTx} icon={Landmark} />
             </div>
             <div className="cursor-pointer" onClick={() => navigate("/facturen")}>
               <StatCard title="Totaal facturen" value={totalInvoices} icon={Receipt} />
