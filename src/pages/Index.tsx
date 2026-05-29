@@ -50,42 +50,53 @@ export default function Dashboard() {
     loadingVraagposten ||
     loadingGrootboek;
 
-  // Combined recent invoices (purchase + sales), sorted by created_at desc, max 5
-  const recentItems = (() => {
-    const items: Array<{
+  const teVerwerkenItems = (() => {
+    type WorkItem = {
       id: string;
-      type: "purchase" | "sales";
+      type: "inkoop" | "verkoop" | "vraagpost";
       label: string;
       sub: string;
-      status: string;
-      created_at: string;
-    }> = [];
-    invoices?.forEach((inv) => {
+      date: string;
+      path: string;
+    };
+    const items: WorkItem[] = [];
+
+    invoices?.filter(i => i.status === "te_controleren").forEach(inv => {
       items.push({
         id: inv.id,
-        type: "purchase",
-        label: `${inv.supplier} — ${inv.invoice_number || "Geen nr."}`,
-        sub: `${inv.amount_incl ? `€ ${inv.amount_incl.toFixed(2)}` : ""} · ${inv.status.replace("_", " ")}`,
-        status: inv.status,
-        created_at: inv.created_at,
+        type: "inkoop",
+        label: inv.supplier || inv.invoice_number || "Inkoopfactuur",
+        sub: inv.invoice_number ? `Factuurnr. ${inv.invoice_number}` : "Te controleren",
+        date: inv.invoice_date || inv.created_at || "",
+        path: "/facturen",
       });
     });
-    salesInvoices?.forEach((inv) => {
+
+    salesInvoices?.filter(i => i.status === "concept").forEach(inv => {
       items.push({
         id: inv.id,
-        type: "sales",
-        label: `${inv.customer_name} — ${inv.invoice_number}`,
-        sub: `${inv.amount_incl ? `€ ${inv.amount_incl.toFixed(2)}` : ""} · ${inv.status}`,
-        status: inv.status,
-        created_at: inv.created_at,
+        type: "verkoop",
+        label: inv.customer_name || inv.invoice_number || "Verkoopfactuur",
+        sub: inv.invoice_number ? `Factuurnr. ${inv.invoice_number}` : "Concept",
+        date: inv.invoice_date || inv.created_at || "",
+        path: "/verkoop",
       });
     });
-    items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    vraagposten?.filter(vp => vp.status === "open").forEach(vp => {
+      items.push({
+        id: vp.id,
+        type: "vraagpost",
+        label: vp.titel || "Vraagpost",
+        sub: "Open vraagpost",
+        date: vp.created_at || "",
+        path: "/vraagposten",
+      });
+    });
+
+    items.sort((a, b) => a.date.localeCompare(b.date));
     return items.slice(0, 5);
   })();
-
-  const isGoodStatus = (s: string) =>
-    s === "gecontroleerd" || s === "geexporteerd" || s === "betaald" || s === "verzonden";
 
   const handleClientClick = (clientId: string) => {
     setSelectedClientId(clientId);
@@ -122,32 +133,45 @@ export default function Dashboard() {
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="font-display text-lg">Recente facturen</CardTitle>
+            <CardTitle className="font-display text-lg">Te verwerken</CardTitle>
+            <p className="text-sm text-muted-foreground">Items die nog controle of actie nodig hebben</p>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
-            ) : recentItems.length > 0 ? (
-              <div className="space-y-4">
-                {recentItems.map((item) => (
-                  <div key={item.id} className="flex items-start gap-3">
-                    {isGoodStatus(item.status) ? (
-                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
-                    ) : (
+            ) : teVerwerkenItems.length > 0 ? (
+              <div className="space-y-3">
+                {teVerwerkenItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-start gap-3 cursor-pointer rounded-md hover:bg-muted/50 -mx-1 px-1 py-1 transition-colors"
+                    onClick={() => navigate(item.path)}
+                  >
+                    {item.type === "vraagpost" ? (
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                    ) : (
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">{item.sub}</p>
+                      <p className="text-sm font-medium truncate">{item.label}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.sub}{item.date ? ` · ${new Date(item.date).toLocaleDateString("nl-NL")}` : ""}
+                      </p>
                     </div>
                     <Badge variant="outline" className="text-xs shrink-0">
-                      {item.type === "purchase" ? "Inkoop" : "Verkoop"}
+                      {item.type === "inkoop" ? "Inkoopfactuur" : item.type === "verkoop" ? "Verkoopfactuur" : "Vraagpost"}
                     </Badge>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Nog geen facturen. Upload je eerste facturen via het Inkoopfacturen-scherm.</p>
+              <div className="py-8 text-center">
+                <CheckCircle2 className="mx-auto h-8 w-8 text-muted-foreground/40 mb-2" />
+                <p className="text-sm font-medium">Geen open werk</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Er zijn op dit moment geen facturen of vraagposten die aandacht nodig hebben.
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
