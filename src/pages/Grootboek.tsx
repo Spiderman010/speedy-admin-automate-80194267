@@ -13,6 +13,16 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Plus, Pencil, Trash2, Search, Download } from "lucide-react";
@@ -39,6 +49,7 @@ const categorieColor: Record<string, string> = {
 export default function Grootboek() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [seedConfirmOpen, setSeedConfirmOpen] = useState(false);
   const [editing, setEditing] = useState<Grootboekrekening | null>(null);
   const [form, setForm] = useState({ nummer: "", omschrijving: "", categorie: "kosten", actief: true });
   const { toast } = useToast();
@@ -122,14 +133,7 @@ export default function Grootboek() {
       <PageHeader title="Grootboekrekeningen" description="Beheer het globale rekeningschema">
         <Button
           variant="outline"
-          onClick={() => {
-            if (confirm(`Dit importeert ${rekeningen && rekeningen.length > 0 ? "en overschrijft" : ""} alle standaard SnelStart rekeningen. Doorgaan?`)) {
-              seedRek.mutate(true as any, {
-                onSuccess: () => toast({ title: "190 grootboekrekeningen geïmporteerd ✅" }),
-                onError: (e: any) => toast({ title: "Fout bij importeren", description: e.message, variant: "destructive" }),
-              });
-            }
-          }}
+          onClick={() => setSeedConfirmOpen(true)}
           disabled={seedRek.isPending}
         >
           <Download className="mr-2 h-4 w-4" />
@@ -200,6 +204,39 @@ export default function Grootboek() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog open={seedConfirmOpen} onOpenChange={setSeedConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Standaard grootboekrekeningen importeren?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Weet je zeker dat je de standaard grootboekrekeningen wilt importeren? Dit kan bestaande
+              grootboekrekeningen aanpassen of vervangen. Deze actie kan niet automatisch ongedaan worden gemaakt.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={seedRek.isPending}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={seedRek.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                seedRek.mutate(true as any, {
+                  onSuccess: () => {
+                    toast({ title: "190 grootboekrekeningen geïmporteerd ✅" });
+                    setSeedConfirmOpen(false);
+                  },
+                  onError: (err: any) => {
+                    toast({ title: "Fout bij importeren", description: err.message, variant: "destructive" });
+                    setSeedConfirmOpen(false);
+                  },
+                });
+              }}
+            >
+              Importeren
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
