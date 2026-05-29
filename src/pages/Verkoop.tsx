@@ -741,7 +741,7 @@ export default function Verkoop() {
                 e.preventDefault();
                 if (!deleteTarget) return;
                 try {
-                  await deleteInvoice.mutateAsync({ id: deleteTarget.id, pdf_path: deleteTarget.pdf_path });
+                  await deleteInvoice.mutateAsync(deleteTarget.id);
                   toast({ title: "Verkoopfactuur verwijderd" });
                   if (editInvoice?.id === deleteTarget.id) {
                     setEditInvoice(null);

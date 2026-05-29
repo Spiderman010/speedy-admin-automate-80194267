@@ -60,27 +60,10 @@ export function useUpdateSalesInvoice() {
 export function useDeleteSalesInvoice() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (invoice: { id: string; pdf_path?: string | null }) => {
-      await supabase
-        .from("vraagposten")
-        .delete()
-        .eq("source_type", "sales_invoice")
-        .eq("source_id", invoice.id);
-
-      if (invoice.pdf_path) {
-        try {
-          await supabase.storage.from("invoices").remove([invoice.pdf_path]);
-        } catch {
-          // ignore missing file
-        }
-      }
-
-      const { error } = await supabase.from("sales_invoices").delete().eq("id", invoice.id);
+    mutationFn: async (invoiceId: string) => {
+      const { error } = await supabase.from("sales_invoices").delete().eq("id", invoiceId);
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["sales_invoices"] });
-      qc.invalidateQueries({ queryKey: ["vraagposten"] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sales_invoices"] }),
   });
 }
