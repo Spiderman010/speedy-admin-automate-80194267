@@ -167,7 +167,7 @@ export default function Verkoop() {
   const [bankSearchQuery, setBankSearchQuery] = useState("");
   const [linkTarget, setLinkTarget] = useState<SalesTxCandidate | null>(null);
   const [linkAmount, setLinkAmount] = useState("");
-  const deleteBlocked = deleteTarget?.status === "geexporteerd";
+  const deleteHasExportWarning = deleteTarget?.status === "geexporteerd";
 
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const updateBankTx = useUpdateBankTransaction();
@@ -591,7 +591,7 @@ export default function Verkoop() {
                   <TableBody>
                     {filteredSorted.map(inv => {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
-                      const isDeleteBlocked = inv.status === "geexporteerd";
+                      const hasExportWarning = inv.status === "geexporteerd";
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
                           <TableCell className="font-mono text-sm font-medium">
@@ -662,19 +662,19 @@ export default function Verkoop() {
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className={`h-8 w-8 text-muted-foreground ${isDeleteBlocked ? "hover:text-muted-foreground/80" : "hover:text-destructive"}`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDeleteTarget(inv);
-                                      }}
-                                      aria-label={isDeleteBlocked ? "Verwijderen niet mogelijk: factuur is geëxporteerd" : "Verwijderen"}
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {isDeleteBlocked
-                                      ? "Geëxporteerde facturen kunnen niet worden verwijderd"
+                                    className={`h-8 w-8 text-muted-foreground ${hasExportWarning ? "hover:text-amber-600" : "hover:text-destructive"}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDeleteTarget(inv);
+                                    }}
+                                    aria-label={hasExportWarning ? "Verwijderen met extra waarschuwing: factuur is geëxporteerd" : "Verwijderen"}
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    {hasExportWarning
+                                      ? "Geëxporteerd: verwijderen met extra waarschuwing"
                                       : "Verwijderen"}
                                   </TooltipContent>
                                 </Tooltip>
@@ -726,10 +726,12 @@ export default function Verkoop() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Verkoopfactuur verwijderen</AlertDialogTitle>
+            <AlertDialogTitle>{deleteHasExportWarning ? "Geëxporteerde verkoopfactuur verwijderen?" : "Verkoopfactuur verwijderen"}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-3 text-sm text-muted-foreground">
-                <p>Weet je zeker dat je deze verkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.</p>
+                {!deleteHasExportWarning ? (
+                  <p>Weet je zeker dat je deze verkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.</p>
+                ) : null}
                 {deleteTarget && (
                   <div className="rounded-md border bg-muted/40 px-3 py-2 text-foreground">
                     <div><span className="font-medium">Factuurnummer:</span> {deleteTarget.invoice_number || "—"}</div>
@@ -737,26 +739,24 @@ export default function Verkoop() {
                     <div><span className="font-medium">Bedrag:</span> {formatCurrency(deleteTarget.amount_incl)}</div>
                   </div>
                 )}
-                {deleteTarget?.status === "geexporteerd" ? (
-                  <p className="font-medium text-destructive">
-                    Deze factuur staat als geexporteerd gemarkeerd en kan daarom niet meer via de UI worden verwijderd.
-                  </p>
+                {deleteHasExportWarning ? (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+                    <p className="text-destructive">
+                      Deze verkoopfactuur is al geëxporteerd. Als je deze upload verwijdert, wordt alleen het record in BoekAssist verwijderd. Een eerdere export of externe boekhouding wordt niet automatisch aangepast. Verwijder alleen als dit een verkeerde upload was of als je de gevolgen begrijpt.
+                    </p>
+                  </div>
                 ) : null}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteInvoice.isPending}>{deleteBlocked ? "Sluiten" : "Annuleren"}</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteInvoice.isPending}>Annuleren</AlertDialogCancel>
             <AlertDialogAction
-              disabled={deleteInvoice.isPending || deleteBlocked}
-              className={
-                deleteBlocked
-                  ? "bg-muted text-muted-foreground hover:bg-muted"
-                  : "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              }
+              disabled={deleteInvoice.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={async (e) => {
                 e.preventDefault();
-                if (!deleteTarget || deleteBlocked) return;
+                if (!deleteTarget) return;
                 try {
                   await deleteInvoice.mutateAsync(deleteTarget.id);
                   toast({ title: "Verkoopfactuur verwijderd" });
@@ -774,7 +774,7 @@ export default function Verkoop() {
                 }
               }}
             >
-              {deleteBlocked ? "Niet mogelijk" : "Verwijderen"}
+              {deleteHasExportWarning ? "Toch verwijderen" : "Verwijderen"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
