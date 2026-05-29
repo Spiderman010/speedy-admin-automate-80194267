@@ -13,14 +13,18 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import type { Tables } from "@/integrations/supabase/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
-import { Plus, Download, FileText, CheckCircle2, Clock, Send, Upload, Loader2, Eye, ArrowUp, ArrowDown, Search, Landmark } from "lucide-react";
+import { Plus, Download, FileText, CheckCircle2, Clock, Send, Upload, Loader2, Eye, ArrowUp, ArrowDown, Search, Landmark, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
-import { useSalesInvoices, useAddSalesInvoice, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
+import { useSalesInvoices, useAddSalesInvoice, useUpdateSalesInvoice, useDeleteSalesInvoice } from "@/hooks/useSalesInvoices";
 import { exportSalesInvoicesCSV } from "@/lib/snelstart-export";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SalesInvoiceDialog, type SalesInvoiceFormData } from "@/components/SalesInvoiceDialog";
@@ -155,8 +159,10 @@ export default function Verkoop() {
   const { data: invoices, isLoading } = useSalesInvoices(clientFilter !== "all" ? clientFilter : undefined);
   const addInvoice = useAddSalesInvoice();
   const updateInvoice = useUpdateSalesInvoice();
+  const deleteInvoice = useDeleteSalesInvoice();
   const [editInvoice, setEditInvoice] = useState<any>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Tables<"sales_invoices"> | null>(null);
   const [afletteringInvoice, setAfletteringInvoice] = useState<any>(null);
   const [bankSearchQuery, setBankSearchQuery] = useState("");
   const [linkTarget, setLinkTarget] = useState<SalesTxCandidate | null>(null);
@@ -648,6 +654,18 @@ export default function Verkoop() {
                               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setEditInvoice(inv); setEditOpen(true); }}>
                                 <Eye className="h-4 w-4" />
                               </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteTarget(inv);
+                                }}
+                                aria-label="Verwijderen"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -691,6 +709,59 @@ export default function Verkoop() {
           }
         }}
       />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Verkoopfactuur verwijderen</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>Weet je zeker dat je deze verkoopfactuur wilt verwijderen? Dit kan niet ongedaan worden gemaakt.</p>
+                {deleteTarget && (
+                  <div className="rounded-md border bg-muted/40 px-3 py-2 text-foreground">
+                    <div><span className="font-medium">Factuurnummer:</span> {deleteTarget.invoice_number || "—"}</div>
+                    <div><span className="font-medium">Klant:</span> {deleteTarget.customer_name || "—"}</div>
+                    <div><span className="font-medium">Bedrag:</span> {formatCurrency(deleteTarget.amount_incl)}</div>
+                  </div>
+                )}
+                {deleteTarget?.status === "geexporteerd" ? (
+                  <p className="font-medium text-destructive">
+                    Deze factuur staat als geexporteerd gemarkeerd. Controleer eerst of verwijderen geen gevolgen heeft voor eerdere exports.
+                  </p>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteInvoice.isPending}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteInvoice.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!deleteTarget) return;
+                try {
+                  await deleteInvoice.mutateAsync({ id: deleteTarget.id, pdf_path: deleteTarget.pdf_path });
+                  toast({ title: "Verkoopfactuur verwijderd" });
+                  if (editInvoice?.id === deleteTarget.id) {
+                    setEditInvoice(null);
+                    setEditOpen(false);
+                  }
+                  if (afletteringInvoice?.id === deleteTarget.id) {
+                    setAfletteringInvoice(null);
+                    setBankSearchQuery("");
+                  }
+                  setDeleteTarget(null);
+                } catch (err: any) {
+                  toast({ title: "Verwijderen mislukt", description: err?.message, variant: "destructive" });
+                }
+              }}
+            >
+              Verwijderen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {afletteringInvoice && (() => {
         const inv = afletteringInvoice;
