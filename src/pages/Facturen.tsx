@@ -38,30 +38,7 @@ import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, type
 import { useBankTransactions, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
 import { getDisplayDescription } from "@/lib/mt940-description-parser";
 import { useNavigate } from "react-router-dom";
-
-function Chip({
-  label, active, count, onClick, activeClassName,
-}: {
-  label: string; active: boolean; count: number;
-  onClick: () => void; activeClassName?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-        active
-          ? (activeClassName ?? "border-primary bg-primary text-primary-foreground")
-          : "border-border bg-background text-muted-foreground hover:border-foreground/20 hover:bg-muted hover:text-foreground"
-      }`}
-    >
-      {label}
-      <span className={`rounded-full px-1.5 text-[10px] font-semibold leading-tight ${active ? "bg-black/15" : "bg-muted"}`}>
-        {count}
-      </span>
-    </button>
-  );
-}
+import { FilterChip } from "@/components/FilterChip";
 
 const statusConfig = {
   te_controleren: { label: "Te controleren", icon: Clock, variant: "secondary" as const },
@@ -628,27 +605,27 @@ export default function Facturen() {
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
-              <Chip label="Alle" active={paymentFilter === "all"} count={forPaymentCounts.length}
+              <FilterChip label="Alle" active={paymentFilter === "all"} count={forPaymentCounts.length}
                 onClick={() => setPaymentFilter("all")} />
-              <Chip label="Openstaand" active={paymentFilter === "open"}
+              <FilterChip label="Openstaand" active={paymentFilter === "open"}
                 count={forPaymentCounts.filter(inv => { const ds = getPurchaseInvoiceDisplayStatus(inv); return ds !== "betaald" && ds !== "deelbetaling"; }).length}
                 onClick={() => setPaymentFilter(paymentFilter === "open" ? "all" : "open")}
                 activeClassName="border-orange-400 bg-orange-50 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200" />
-              <Chip label="Deelbetaling" active={paymentFilter === "partial"}
+              <FilterChip label="Deelbetaling" active={paymentFilter === "partial"}
                 count={forPaymentCounts.filter(inv => getPurchaseInvoiceDisplayStatus(inv) === "deelbetaling").length}
                 onClick={() => setPaymentFilter(paymentFilter === "partial" ? "all" : "partial")}
                 activeClassName="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" />
-              <Chip label="Betaald" active={paymentFilter === "paid"}
+              <FilterChip label="Betaald" active={paymentFilter === "paid"}
                 count={forPaymentCounts.filter(inv => getPurchaseInvoiceDisplayStatus(inv) === "betaald").length}
                 onClick={() => setPaymentFilter(paymentFilter === "paid" ? "all" : "paid")}
                 activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
-              <Chip label="Alle statussen" active={workflowFilter === "all"} count={forWorkflowCounts.length}
+              <FilterChip label="Alle statussen" active={workflowFilter === "all"} count={forWorkflowCounts.length}
                 onClick={() => setWorkflowFilter("all")} />
               {uniqueStatuses.map(s => (
-                <Chip
+                <FilterChip
                   key={s}
                   label={statusConfig[s as keyof typeof statusConfig]?.label ?? s}
                   active={workflowFilter === s}
@@ -659,10 +636,10 @@ export default function Facturen() {
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Route</span>
-              <Chip label="Alle" active={routeFilter === "all"} count={forRouteCounts.length}
+              <FilterChip label="Alle" active={routeFilter === "all"} count={forRouteCounts.length}
                 onClick={() => setRouteFilter("all")} />
               {DOCUMENT_ROUTE_OPTIONS.map(opt => (
-                <Chip key={opt.value} label={opt.label} active={routeFilter === opt.value}
+                <FilterChip key={opt.value} label={opt.label} active={routeFilter === opt.value}
                   count={forRouteCounts.filter(inv => (inv as any).document_route === opt.value).length}
                   onClick={() => setRouteFilter(routeFilter === opt.value ? "all" : opt.value)} />
               ))}
