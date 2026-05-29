@@ -97,7 +97,7 @@ export default function Vraagposten() {
       (vp.omschrijving || "").toLowerCase().includes(q) ||
       (VRAAGPOST_SOURCE_LABELS[vp.source_type] ?? vp.source_type ?? "").toLowerCase().includes(q) ||
       (VRAAGPOST_CATEGORIE_LABELS[vp.categorie] ?? vp.categorie ?? "").toLowerCase().includes(q) ||
-      getClientName(vp.client_id).toLowerCase().includes(q) ||
+      (vp.client_id ? clients?.find(c => c.id === vp.client_id)?.name ?? "" : "").toLowerCase().includes(q) ||
       (STATUS_CHIP_LABELS[vp.status] ?? vp.status ?? "").toLowerCase().includes(q)
     );
   }, [sorted, searchQuery, clients]);
