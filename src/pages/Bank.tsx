@@ -1313,8 +1313,8 @@ export default function Bank() {
     await refetchPurchase();
     if (allocationErrors > 0) {
       toast({
-        title: `${success} van ${txs.length} transacties geïmporteerd, maar ${allocationErrors} allocatie(s) niet aangemaakt`,
-        description: firstAllocationError,
+        title: "Bankafschrift geïmporteerd met waarschuwing",
+        description: `${success} transacties geïmporteerd. ${allocationErrors} afletteringen konden niet worden bijgewerkt. Controleer openstaande bedragen.`,
         variant: "destructive",
       });
     } else {
