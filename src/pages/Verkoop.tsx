@@ -68,7 +68,10 @@ const statusConfig: Record<string, { label: string; icon: typeof Clock; variant:
   verzonden: { label: "Verzonden", icon: Send, variant: "default" },
   betaald: { label: "Betaald", icon: CheckCircle2, variant: "outline" },
   gecontroleerd: { label: "Gecontroleerd", icon: CheckCircle2, variant: "outline" },
+  geexporteerd: { label: "Geëxporteerd", icon: Download, variant: "outline" },
 };
+
+const STATUS_ORDER = ["concept", "verzonden", "gecontroleerd", "betaald", "geexporteerd"];
 
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
@@ -238,6 +241,13 @@ export default function Verkoop() {
       return state === "open" || state === "unknown";
     });
   }, [searchFiltered, paymentFilter]);
+
+  const uniqueStatuses = useMemo(() => {
+    const present = new Set(searchFiltered.map(inv => inv.status).filter(Boolean));
+    const ordered = STATUS_ORDER.filter(s => present.has(s));
+    present.forEach(s => { if (!STATUS_ORDER.includes(s)) ordered.push(s); });
+    return ordered;
+  }, [searchFiltered]);
 
   const filteredSorted = useMemo(() => {
     let list = [...searchFiltered];
@@ -539,21 +549,18 @@ export default function Verkoop() {
                 activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Workflow</span>
-              <Chip label="Alle" active={workflowFilter === "all"} count={forWorkflowCounts.length}
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
+              <Chip label="Alle statussen" active={workflowFilter === "all"} count={forWorkflowCounts.length}
                 onClick={() => setWorkflowFilter("all")} />
-              <Chip label="Concept" active={workflowFilter === "concept"}
-                count={forWorkflowCounts.filter(inv => inv.status === "concept").length}
-                onClick={() => setWorkflowFilter(workflowFilter === "concept" ? "all" : "concept")} />
-              <Chip label="Verzonden" active={workflowFilter === "verzonden"}
-                count={forWorkflowCounts.filter(inv => inv.status === "verzonden").length}
-                onClick={() => setWorkflowFilter(workflowFilter === "verzonden" ? "all" : "verzonden")} />
-              <Chip label="Gecontroleerd" active={workflowFilter === "gecontroleerd"}
-                count={forWorkflowCounts.filter(inv => inv.status === "gecontroleerd").length}
-                onClick={() => setWorkflowFilter(workflowFilter === "gecontroleerd" ? "all" : "gecontroleerd")} />
-              <Chip label="Betaald" active={workflowFilter === "betaald"}
-                count={forWorkflowCounts.filter(inv => inv.status === "betaald").length}
-                onClick={() => setWorkflowFilter(workflowFilter === "betaald" ? "all" : "betaald")} />
+              {uniqueStatuses.map(s => (
+                <Chip
+                  key={s}
+                  label={statusConfig[s]?.label ?? s}
+                  active={workflowFilter === s}
+                  count={forWorkflowCounts.filter(inv => inv.status === s).length}
+                  onClick={() => setWorkflowFilter(workflowFilter === s ? "all" : s)}
+                />
+              ))}
             </div>
           </div>
           <Card>
@@ -566,10 +573,10 @@ export default function Verkoop() {
                     <FileText className="h-8 w-8 text-primary" />
                   </div>
                   <h3 className="font-display text-lg font-semibold">
-                    {searchQuery ? "Geen facturen gevonden" : "Nog geen verkoopfacturen"}
+                    {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" ? "Geen facturen gevonden" : "Nog geen verkoopfacturen"}
                   </h3>
                   <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                    {searchQuery ? "Probeer een andere zoekopdracht." : "Upload facturen via het Upload-tabblad of voeg handmatig toe."}
+                    {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" ? "Probeer een andere zoekopdracht of pas de filters aan." : "Upload facturen via het Upload-tabblad of voeg handmatig toe."}
                   </p>
                 </div>
               ) : (
