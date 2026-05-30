@@ -9,88 +9,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, Check, ChevronsUpDown } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
+import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 
 type SalesInvoice = Tables<"sales_invoices">;
-
-const LEDGER_ACCOUNTS = [
-  { code: "1100", name: "Rekening-courant bank" },
-  { code: "1200", name: "Kruisposten" },
-  { code: "1300", name: "Debiteuren" },
-  { code: "1600", name: "Crediteuren" },
-  { code: "4203", name: "Betaalde huur" },
-  { code: "4210", name: "Gas water elektra" },
-  { code: "4400", name: "Reclame- en advertentiekosten" },
-  { code: "4406", name: "Reis- en verblijfkosten" },
-  { code: "4420", name: "Websitekosten" },
-  { code: "4500", name: "Brandstofkosten auto's" },
-  { code: "4501", name: "Reparatie onderhoud auto's" },
-  { code: "4518", name: "Parkeerkosten auto's" },
-  { code: "4600", name: "Kantoorbenodigdheden" },
-  { code: "4602", name: "Telefoonkosten" },
-  { code: "4604", name: "Drukwerk" },
-  { code: "4610", name: "Kosten automatisering" },
-  { code: "4614", name: "Overige kantoorkosten" },
-  { code: "4650", name: "Bedrijfsaansprakelijkheidsverzekering" },
-  { code: "4700", name: "Accountants- en advieskosten" },
-  { code: "4702", name: "Notariskosten" },
-  { code: "4753", name: "Bankkosten" },
-  { code: "7000", name: "Inkopen alle btw tarieven" },
-  { code: "7001", name: "Inkopen laag tarief" },
-  { code: "7002", name: "Inkopen hoog tarief" },
-  { code: "7100", name: "Kosten uitbesteed werk" },
-  { code: "7400", name: "Inkoopwaarde handelsgoederen" },
-  { code: "8000", name: "Omzet hoog tarief" },
-  { code: "8001", name: "Omzet laag tarief" },
-  { code: "8002", name: "Omzet verlegd" },
-  { code: "8003", name: "Omzet vrij van btw" },
-];
-
-function formatAccount(code: string, name: string) {
-  return `${code} - ${name}`;
-}
-
-function LedgerAccountCombobox({ value, onValueChange }: { value: string; onValueChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const selected = LEDGER_ACCOUNTS.find(a => formatAccount(a.code, a.name) === value);
-  const displayLabel = selected ? formatAccount(selected.code, selected.name) : value || "Selecteer rekening...";
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between font-normal h-10 text-sm">
-          <span className="truncate">{displayLabel}</span>
-          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[340px] p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Zoek rekening..." />
-          <CommandList>
-            <CommandEmpty>Geen rekening gevonden.</CommandEmpty>
-            <CommandGroup>
-              {LEDGER_ACCOUNTS.map((account) => {
-                const label = formatAccount(account.code, account.name);
-                return (
-                  <CommandItem key={account.code} value={label} onSelect={(v) => { onValueChange(v); setOpen(false); }}>
-                    <Check className={cn("mr-2 h-4 w-4", value === label ? "opacity-100" : "opacity-0")} />
-                    {label}
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 function InvoicePreview({ filePath }: { filePath: string | null }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -178,11 +103,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
       const enabled = !verlegd && (parseFloat(pct) !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0));
       setBtwEnabled(enabled && !verlegd);
 
-      let ledgerValue = (invoice as any).ledger_account_text || "";
-      const match = LEDGER_ACCOUNTS.find(a =>
-        ledgerValue === formatAccount(a.code, a.name) || ledgerValue === a.code || ledgerValue === a.name
-      );
-      if (match) ledgerValue = formatAccount(match.code, match.name);
+      const ledgerValue = (invoice as any).ledger_account_text || "";
 
       setForm({
         customer_name: invoice.customer_name || "",
@@ -367,7 +288,11 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
 
             <div>
               <Label>Grootboekrekening</Label>
-              <LedgerAccountCombobox value={form.ledger_account_text} onValueChange={(v) => set("ledger_account_text", v)} />
+              <GrootboekCombobox
+                value={form.ledger_account_text}
+                onValueChange={(v) => set("ledger_account_text", v)}
+                noneOption
+              />
             </div>
 
             <div>
