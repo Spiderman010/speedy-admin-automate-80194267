@@ -12,7 +12,8 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
@@ -454,6 +455,23 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   if (!invoice) return null;
 
+  const ocrScore = (() => {
+    const isPresent = (v: string | null | undefined) => {
+      if (!v) return false;
+      const s = v.trim();
+      return !!s && s.toLowerCase() !== "onbekend";
+    };
+    const isNum = (v: number | null | undefined) => v != null && isFinite(v);
+    return [
+      isPresent(invoice.supplier),
+      isPresent(invoice.invoice_number),
+      isPresent(invoice.invoice_date),
+      isNum(invoice.amount_incl),
+      isNum(invoice.btw_percentage),
+      isPresent(invoice.supplier_btw_number),
+    ].filter(Boolean).length;
+  })();
+
   const hasFile = !!invoice.file_path;
   const set = (key: string, value: string) => setForm(prev => ({ ...prev, [key]: value }));
 
@@ -536,6 +554,28 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               {invoice.status === "te_controleren" ? "Te controleren" : invoice.status}
             </Badge>
             <Badge variant="outline">{getDocumentRouteLabel(documentRoute)}</Badge>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge
+                    variant="outline"
+                    className={
+                      ocrScore >= 5
+                        ? "cursor-default border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200"
+                        : ocrScore >= 3
+                        ? "cursor-default border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                        : "cursor-default border-destructive/50 bg-destructive/10 text-destructive"
+                    }
+                  >
+                    <Info className="mr-1 h-3 w-3" />
+                    {ocrScore}/6 velden herkend
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Indicatie op basis van ingevulde herkende velden; geen AI-zekerheidsscore.</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </DialogTitle>
         </DialogHeader>
 
