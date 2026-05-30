@@ -253,6 +253,26 @@ export default function Verkoop() {
     return ordered;
   }, [searchFiltered]);
 
+  const receivablesSummary = useMemo(() => {
+    let openTotal = 0;
+    let countOpen = 0;
+    let countPartial = 0;
+    let countPaid = 0;
+    for (const inv of searchFiltered) {
+      const state = getInvoicePaymentState(inv);
+      if (state === "paid") {
+        countPaid++;
+      } else if (state === "partial") {
+        countPartial++;
+        openTotal += getInvoiceRemainingAmount(inv) ?? 0;
+      } else {
+        countOpen++;
+        openTotal += getInvoiceRemainingAmount(inv) ?? getInvoiceTotalAmount(inv) ?? 0;
+      }
+    }
+    return { openTotal, countOpen, countPartial, countPaid };
+  }, [searchFiltered]);
+
   const filteredSorted = useMemo(() => {
     let list = [...searchFiltered];
     if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
@@ -525,6 +545,32 @@ export default function Verkoop() {
         </TabsContent>
 
         <TabsContent value="overview" className="mt-6">
+          {!isLoading && (invoices?.length ?? 0) > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+              <div className="rounded-lg border bg-card px-4 py-3">
+                <p className="text-xs text-muted-foreground">Openstaand totaal</p>
+                <p className="mt-1 text-lg font-semibold text-amber-600 dark:text-amber-400">
+                  {formatCurrency(receivablesSummary.openTotal)}
+                </p>
+              </div>
+              <div className="rounded-lg border bg-card px-4 py-3">
+                <p className="text-xs text-muted-foreground">Open facturen</p>
+                <p className="mt-1 text-lg font-semibold">{receivablesSummary.countOpen}</p>
+              </div>
+              <div className="rounded-lg border bg-card px-4 py-3">
+                <p className="text-xs text-muted-foreground">Deelbetalingen</p>
+                <p className="mt-1 text-lg font-semibold text-amber-600 dark:text-amber-400">
+                  {receivablesSummary.countPartial}
+                </p>
+              </div>
+              <div className="rounded-lg border bg-card px-4 py-3">
+                <p className="text-xs text-muted-foreground">Betaald</p>
+                <p className="mt-1 text-lg font-semibold text-green-600 dark:text-green-400">
+                  {receivablesSummary.countPaid}
+                </p>
+              </div>
+            </div>
+          )}
           <div className="mb-5 space-y-2.5">
             <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
