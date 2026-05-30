@@ -91,7 +91,18 @@ serve(async (req) => {
       messages = [
         {
           role: "system",
-          content: `Je bent een OCR-assistent voor het verwerken van Nederlandse inkoopfacturen. Analyseer de factuur en extraheer de gevraagde gegevens. Geef alleen de tool call terug, geen extra tekst.`,
+          content: `Je bent een OCR-assistent voor het verwerken van Nederlandse inkoopfacturen. Analyseer de factuur en extraheer de gevraagde gegevens. Geef alleen de tool call terug, geen extra tekst.
+
+Datuminstructies:
+- Datumnotatie is Nederlands: dd-mm-jjjj of dd/mm/jjjj.
+- Geef alle datums terug als YYYY-MM-DD.
+- invoice_date moet komen van labels zoals "Factuurdatum", "Datum factuur" of "Invoice date".
+- Gebruik labels zoals "Vervaldatum", "Betalen voor", "Betalingstermijn" of "Payment due" nooit als invoice_date.
+
+Factuurnummerinstructies:
+- Geef invoice_number exact terug zoals afgedrukt.
+- Behoud voorloopnullen, prefixes, suffixes, schuine strepen, koppeltekens, punten en andere zichtbare tekens.
+- Strip, normaliseer, verkort of herinterpreteer invoice_number niet.`,
         },
         {
           role: "user",
@@ -114,7 +125,16 @@ serve(async (req) => {
 - supplier_country (land leverancier, alleen als duidelijk zichtbaar)
 - supplier_iban (IBAN leverancier indien zichtbaar)
 
-BELANGRIJK: gebruik NOOIT het adres of de gegevens van de klant/koper als leveranciersgegevens. Laat velden leeg/null als ze niet zichtbaar zijn op de factuur.`,
+BELANGRIJK: gebruik NOOIT het adres of de gegevens van de klant/koper als leveranciersgegevens. Laat velden leeg/null als ze niet zichtbaar zijn op de factuur.
+
+Extra instructies:
+- Datumnotatie is Nederlands: dd-mm-jjjj of dd/mm/jjjj.
+- Geef alle datums terug als YYYY-MM-DD.
+- invoice_date moet komen van labels zoals "Factuurdatum", "Datum factuur" of "Invoice date".
+- Gebruik labels zoals "Vervaldatum", "Betalen voor", "Betalingstermijn" of "Payment due" nooit als invoice_date.
+- Geef invoice_number exact terug zoals afgedrukt.
+- Behoud voorloopnullen, prefixes, suffixes, schuine strepen, koppeltekens, punten en andere zichtbare tekens.
+- Strip, normaliseer, verkort of herinterpreteer invoice_number niet.`,
             },
           ],
         },

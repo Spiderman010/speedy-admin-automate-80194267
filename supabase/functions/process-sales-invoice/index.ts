@@ -95,7 +95,18 @@ serve(async (req) => {
     const messages = [
       {
         role: "system",
-        content: `Je bent een OCR-assistent voor het verwerken van Nederlandse verkoopfacturen. Analyseer de factuur en extraheer de gevraagde gegevens. Geef alleen de tool call terug, geen extra tekst.`,
+        content: `Je bent een OCR-assistent voor het verwerken van Nederlandse verkoopfacturen. Analyseer de factuur en extraheer de gevraagde gegevens. Geef alleen de tool call terug, geen extra tekst.
+
+Datuminstructies:
+- Datumnotatie is Nederlands: dd-mm-jjjj of dd/mm/jjjj.
+- Geef alle datums terug als YYYY-MM-DD.
+- invoice_date moet komen van labels zoals "Factuurdatum", "Datum factuur" of "Invoice date".
+- Gebruik labels zoals "Vervaldatum", "Betalen voor", "Betalingstermijn" of "Payment due" nooit als invoice_date.
+
+Factuurnummerinstructies:
+- Geef invoice_number exact terug zoals afgedrukt.
+- Behoud voorloopnullen, prefixes, suffixes, schuine strepen, koppeltekens, punten en andere zichtbare tekens.
+- Strip, normaliseer, verkort of herinterpreteer invoice_number niet.`,
       },
       {
         role: "user",
@@ -106,7 +117,16 @@ serve(async (req) => {
           },
           {
             type: "text",
-            text: "Analyseer deze verkoopfactuur en extraheer: klantnaam (de klant aan wie gefactureerd wordt), factuurnummer, factuurdatum, vervaldatum, bedrag exclusief BTW, BTW-bedrag, bedrag inclusief BTW, en BTW-percentage.",
+            text: `Analyseer deze verkoopfactuur en extraheer: klantnaam (de klant aan wie gefactureerd wordt), factuurnummer, factuurdatum, vervaldatum, bedrag exclusief BTW, BTW-bedrag, bedrag inclusief BTW, en BTW-percentage.
+
+Extra instructies:
+- Datumnotatie is Nederlands: dd-mm-jjjj of dd/mm/jjjj.
+- Geef alle datums terug als YYYY-MM-DD.
+- invoice_date moet komen van labels zoals "Factuurdatum", "Datum factuur" of "Invoice date".
+- Gebruik labels zoals "Vervaldatum", "Betalen voor", "Betalingstermijn" of "Payment due" nooit als invoice_date.
+- Geef invoice_number exact terug zoals afgedrukt.
+- Behoud voorloopnullen, prefixes, suffixes, schuine strepen, koppeltekens, punten en andere zichtbare tekens.
+- Strip, normaliseer, verkort of herinterpreteer invoice_number niet.`,
           },
         ],
       },
