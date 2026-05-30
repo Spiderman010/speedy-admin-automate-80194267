@@ -576,6 +576,9 @@ export default function Verkoop() {
                     {filteredSorted.map(inv => {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
                       const hasExportWarning = inv.status === "geexporteerd";
+                      const paymentState = getInvoicePaymentState(inv);
+                      const isPaid = paymentState === "paid";
+                      const isPartiallyPaid = paymentState === "partial";
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
                           <TableCell className="font-mono text-sm font-medium">
@@ -619,9 +622,19 @@ export default function Verkoop() {
                           </TableCell>
                           <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell>
-                            <Badge variant={sc.variant} className="gap-1">
-                              <sc.icon className="h-3 w-3" />{sc.label}
-                            </Badge>
+                            {isPaid ? (
+                              <Badge variant="outline" className="gap-1 border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
+                                <CheckCircle2 className="h-3 w-3" />Betaald
+                              </Badge>
+                            ) : isPartiallyPaid ? (
+                              <Badge variant="secondary" className="gap-1 text-amber-700">
+                                <Clock className="h-3 w-3" />Deelbetaling
+                              </Badge>
+                            ) : (
+                              <Badge variant={sc.variant} className="gap-1">
+                                <sc.icon className="h-3 w-3" />{sc.label}
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1">
