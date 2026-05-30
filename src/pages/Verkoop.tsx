@@ -475,6 +475,14 @@ export default function Verkoop() {
             toast({ title: "Geen exporteerbare verkoopfacturen", description: "Alleen gecontroleerde en betaalde facturen worden geëxporteerd.", variant: "destructive" });
             return;
           }
+          if (exportable.some(i => i.btw_verlegd)) {
+            toast({
+              title: "Export geblokkeerd",
+              description: "Deze selectie bevat verkoopfacturen met btw verlegd. De juiste SnelStart-exportcode is nog niet ingesteld. Controleer dit eerst voordat je exporteert.",
+              variant: "destructive",
+            });
+            return;
+          }
           const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
           exportSalesInvoicesCSV(exportable, clientName);
           toast({ title: `${exportable.length} verkoopfacturen geëxporteerd voor Snelstart` });
