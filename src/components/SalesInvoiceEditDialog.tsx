@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
@@ -76,9 +76,10 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   onSave: (id: string, updates: Partial<SalesInvoice>) => Promise<void>;
   onApprove: (id: string, updates: Partial<SalesInvoice>) => Promise<void>;
+  allInvoices?: SalesInvoice[];
 }
 
-export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove }: Props) {
+export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, allInvoices }: Props) {
   const [form, setForm] = useState({
     customer_name: "",
     invoice_number: "",
@@ -95,6 +96,19 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
   });
   const [btwEnabled, setBtwEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const isDuplicate = useMemo(() => {
+    if (!invoice || !allInvoices) return false;
+    const normName = invoice.customer_name?.trim().toLowerCase() ?? "";
+    const normNum = invoice.invoice_number?.trim().toLowerCase() ?? "";
+    if (!normName || !normNum) return false;
+    return allInvoices.some(
+      other =>
+        other.id !== invoice.id &&
+        (other.customer_name?.trim().toLowerCase() ?? "") === normName &&
+        (other.invoice_number?.trim().toLowerCase() ?? "") === normNum,
+    );
+  }, [invoice, allInvoices]);
 
   useEffect(() => {
     if (invoice) {
@@ -203,6 +217,14 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
           {hasFile && <InvoicePreview filePath={invoice.pdf_path} />}
 
           <div className="space-y-4 overflow-y-auto max-h-[60vh] pr-1">
+            {isDuplicate && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <p>
+                  Deze verkoopfactuur lijkt al eerder te zijn geüpload voor dezelfde klant en hetzelfde factuurnummer. Controleer dit voordat je exporteert.
+                </p>
+              </div>
+            )}
             <div>
               <Label>Klantnaam *</Label>
               <Input value={form.customer_name} onChange={e => set("customer_name", e.target.value)} />

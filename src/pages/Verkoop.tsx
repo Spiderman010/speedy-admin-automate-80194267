@@ -167,6 +167,25 @@ export default function Verkoop() {
   const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
   const { data: allBankTransactions } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
 
+  const duplicateIds = useMemo(() => {
+    if (!invoices) return new Set<string>();
+    const groups = new Map<string, string[]>();
+    for (const inv of invoices) {
+      const normName = inv.customer_name?.trim().toLowerCase() ?? "";
+      const normNum = inv.invoice_number?.trim().toLowerCase() ?? "";
+      if (!normName || !normNum) continue;
+      const key = `${normName}||${normNum}`;
+      const group = groups.get(key) ?? [];
+      group.push(inv.id);
+      groups.set(key, group);
+    }
+    const result = new Set<string>();
+    for (const ids of groups.values()) {
+      if (ids.length >= 2) ids.forEach(id => result.add(id));
+    }
+    return result;
+  }, [invoices]);
+
   const allocationsByInvoiceId = useMemo(() => {
     const m = new Map<string, typeof allAllocations[number][]>();
     for (const a of allAllocations ?? []) {
@@ -599,6 +618,11 @@ export default function Verkoop() {
                               ) : (
                                 <span>—</span>
                               )}
+                              {duplicateIds.has(inv.id) && (
+                                <Badge variant="outline" className="text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                  Mogelijk dubbel
+                                </Badge>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
@@ -708,6 +732,7 @@ export default function Verkoop() {
         invoice={editInvoice}
         open={editOpen}
         onOpenChange={setEditOpen}
+        allInvoices={invoices ?? []}
         onSave={async (id, updates) => {
           try {
             await updateInvoice.mutateAsync({ id, ...updates } as any);
