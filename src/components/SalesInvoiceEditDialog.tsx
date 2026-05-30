@@ -291,6 +291,12 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
                 </p>
               </div>
             )}
+            <div className="space-y-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+              <p>{SALES_UBL_TEST_HELPER_TEXT}</p>
+              <Button variant="outline" onClick={handleDownloadTestPackage} className="w-full sm:w-auto">
+                <FileCode2 className="mr-2 h-4 w-4" />Download verkoop testpakket
+              </Button>
+            </div>
             <div>
               <Label>Klantnaam *</Label>
               <Input value={form.customer_name} onChange={e => set("customer_name", e.target.value)} />
