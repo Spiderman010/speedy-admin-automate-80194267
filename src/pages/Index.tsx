@@ -1,9 +1,10 @@
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Users, FileText, Landmark, Receipt, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Users, FileText, Landmark, Receipt, AlertCircle, CheckCircle2, TrendingUp } from "lucide-react";
 import { useClients } from "@/hooks/useClients";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices } from "@/hooks/useSalesInvoices";
@@ -13,6 +14,7 @@ import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useClientContext } from "@/hooks/useClientContext";
 import { computeClientReadiness } from "@/lib/client-readiness";
+import { getInvoicePaymentState, getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 import type { ReadinessStatus } from "@/lib/client-readiness";
 
 function statusLabel(s: ReadinessStatus): string {
@@ -41,6 +43,24 @@ export default function Dashboard() {
 
   const unmatchedTx = transactions?.filter((t) => t.match_status === "niet_gematcht" || t.match_status === "suggestie").length ?? 0;
   const totalInvoices = (invoices?.length ?? 0) + (salesInvoices?.length ?? 0);
+
+  const openSalesStats = useMemo(() => {
+    let amount = 0;
+    let countOpen = 0;
+    let countPartial = 0;
+    for (const inv of salesInvoices ?? []) {
+      const state = getInvoicePaymentState(inv);
+      if (state === "paid") continue;
+      if (state === "partial") {
+        countPartial++;
+        amount += getInvoiceRemainingAmount(inv) ?? 0;
+      } else {
+        countOpen++;
+        amount += getInvoiceRemainingAmount(inv) ?? getInvoiceTotalAmount(inv) ?? 0;
+      }
+    }
+    return { amount, countOpen, countPartial };
+  }, [salesInvoices]);
 
   const isLoading =
     loadingClients ||
@@ -107,9 +127,9 @@ export default function Dashboard() {
     <>
       <PageHeader title="Dashboard" description="Overzicht van alle administraties" />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {isLoading ? (
-          Array.from({ length: 4 }).map((_, i) => (
+          Array.from({ length: 5 }).map((_, i) => (
             <Card key={i}><CardContent className="p-6"><Skeleton className="h-16 w-full" /></CardContent></Card>
           ))
         ) : (
@@ -125,6 +145,21 @@ export default function Dashboard() {
             </div>
             <div className="cursor-pointer" onClick={() => navigate("/facturen")}>
               <StatCard title="Totaal facturen" value={totalInvoices} icon={Receipt} />
+            </div>
+            <div className="cursor-pointer" onClick={() => navigate("/verkoop")}>
+              <StatCard
+                title="Openstaande verkoop"
+                value={new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(openSalesStats.amount)}
+                icon={TrendingUp}
+                trend={
+                  openSalesStats.countOpen === 0 && openSalesStats.countPartial === 0
+                    ? "Geen open verkoopfacturen"
+                    : [
+                        openSalesStats.countOpen > 0 ? `${openSalesStats.countOpen} open facturen` : null,
+                        openSalesStats.countPartial > 0 ? `${openSalesStats.countPartial} deelbetalingen` : null,
+                      ].filter(Boolean).join(" · ")
+                }
+              />
             </div>
           </>
         )}
