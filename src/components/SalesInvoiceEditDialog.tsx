@@ -9,12 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, AlertTriangle, HelpCircle } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, AlertTriangle, HelpCircle, FileCode2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
+import { useToast } from "@/hooks/use-toast";
+import { useClients } from "@/hooks/useClients";
+import { SALES_UBL_TEST_HELPER_TEXT, buildSalesInvoiceTestPackage } from "@/lib/sales-ubl-generator";
 
 type SalesInvoice = Tables<"sales_invoices">;
 
@@ -81,6 +84,8 @@ interface Props {
 }
 
 export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, allInvoices }: Props) {
+  const { toast } = useToast();
+  const { data: clients } = useClients();
   const [form, setForm] = useState({
     customer_name: "",
     invoice_number: "",
@@ -111,6 +116,11 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
         (other.invoice_number?.trim().toLowerCase() ?? "") === normNum,
     );
   }, [invoice, allInvoices]);
+
+  const currentClient = useMemo(
+    () => clients?.find((client) => client.id === invoice?.client_id) ?? null,
+    [clients, invoice?.client_id],
+  );
 
   useEffect(() => {
     if (invoice) {
@@ -201,6 +211,60 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
     verzonden: "Verzonden",
     betaald: "Betaald",
     gecontroleerd: "Gecontroleerd",
+  };
+
+  const handleDownloadTestPackage = async () => {
+    if (!invoice.pdf_path) {
+      toast({
+        title: "Originele PDF ontbreekt",
+        description: "Download verkoop testpakket is alleen mogelijk als een originele PDF-bijlage beschikbaar is.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!invoice.pdf_path.toLowerCase().endsWith(".pdf")) {
+      toast({
+        title: "Originele PDF ontbreekt",
+        description: "Download verkoop testpakket is alleen mogelijk als deze verkoopfactuur als PDF is geüpload.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const { data: pdfBlob, error } = await supabase.storage.from("invoices").download(invoice.pdf_path);
+      if (error || !pdfBlob) {
+        toast({
+          title: "PDF-download mislukt",
+          description: "De originele PDF-bijlage kon niet worden gedownload. Het testpakket is niet gemaakt.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const { zipBlobPromise, zipFilename } = buildSalesInvoiceTestPackage(invoice, pdfBlob, currentClient);
+      const zipBlob = await zipBlobPromise;
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = zipFilename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Verkoop testpakket gedownload",
+        description: SALES_UBL_TEST_HELPER_TEXT,
+      });
+    } catch (e: any) {
+      toast({
+        title: "PDF-download mislukt",
+        description: e?.message || "De originele PDF-bijlage kon niet worden gedownload. Het testpakket is niet gemaakt.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -339,9 +403,16 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
           </div>
         </div>
 
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+          {SALES_UBL_TEST_HELPER_TEXT}
+        </div>
+
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
             <HelpCircle className="mr-2 h-4 w-4" />Vraagpost maken
+          </Button>
+          <Button variant="outline" onClick={handleDownloadTestPackage}>
+            <FileCode2 className="mr-2 h-4 w-4" />Download verkoop testpakket
           </Button>
           <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name}>
             <Save className="mr-2 h-4 w-4" />Opslaan
