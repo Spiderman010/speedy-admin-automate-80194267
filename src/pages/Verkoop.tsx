@@ -652,6 +652,9 @@ export default function Verkoop() {
                       const isPaid = displayStatus === "betaald";
                       const isPartiallyPaid = displayStatus === "deelbetaling";
                       const hasExportWarning = inv.status === "geexporteerd";
+                      const paymentState = getInvoicePaymentState(inv);
+                      const isPaid = paymentState === "paid";
+                      const isPartiallyPaid = paymentState === "partial";
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
                           <TableCell className="font-mono text-sm font-medium">
