@@ -273,6 +273,7 @@ export type Database = {
           inkoop_dagboek: number | null
           kvk_number: string | null
           name: string
+          organization_id: string | null
           phone: string | null
           postal_code: string | null
           rechtsvorm: string | null
@@ -299,6 +300,7 @@ export type Database = {
           inkoop_dagboek?: number | null
           kvk_number?: string | null
           name: string
+          organization_id?: string | null
           phone?: string | null
           postal_code?: string | null
           rechtsvorm?: string | null
@@ -325,6 +327,7 @@ export type Database = {
           inkoop_dagboek?: number | null
           kvk_number?: string | null
           name?: string
+          organization_id?: string | null
           phone?: string | null
           postal_code?: string | null
           rechtsvorm?: string | null
@@ -334,7 +337,15 @@ export type Database = {
           verkoop_dagboek?: number | null
           verwerkingsfrequentie?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "clients_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       grootboekrekeningen: {
         Row: {
@@ -581,6 +592,88 @@ export type Database = {
           },
         ]
       }
+      organization_members: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_members_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organizations: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          default_organization_id: string | null
+          display_name: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          default_organization_id?: string | null
+          display_name?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          default_organization_id?: string | null
+          display_name?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profiles_default_organization_id_fkey"
+            columns: ["default_organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       purchase_invoice_lines: {
         Row: {
           amount_excl: number
@@ -810,6 +903,38 @@ export type Database = {
           },
         ]
       }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_roles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vraagposten: {
         Row: {
           categorie: string
@@ -860,10 +985,21 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _organization_id: string
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_organization_member: {
+        Args: { _organization_id: string; _user_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "owner" | "accountant" | "assistant" | "read_only"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -990,6 +1126,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["owner", "accountant", "assistant", "read_only"],
+    },
   },
 } as const
