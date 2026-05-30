@@ -9,10 +9,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, AlertTriangle } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, AlertTriangle, HelpCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 
 type SalesInvoice = Tables<"sales_invoices">;
@@ -96,6 +97,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
   });
   const [btwEnabled, setBtwEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [vraagpostOpen, setVraagpostOpen] = useState(false);
 
   const isDuplicate = useMemo(() => {
     if (!invoice || !allInvoices) return false;
@@ -338,6 +340,9 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
         </div>
 
         <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
+            <HelpCircle className="mr-2 h-4 w-4" />Vraagpost maken
+          </Button>
           <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name}>
             <Save className="mr-2 h-4 w-4" />Opslaan
           </Button>
@@ -346,6 +351,14 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
           </Button>
         </DialogFooter>
       </DialogContent>
+      <CreateVraagpostDialog
+        open={vraagpostOpen}
+        onOpenChange={setVraagpostOpen}
+        sourceType="sales_invoice"
+        sourceId={invoice.id}
+        clientId={invoice.client_id}
+        defaultTitel={[invoice.customer_name, invoice.invoice_number].filter(Boolean).join(" — ")}
+      />
     </Dialog>
   );
 }
