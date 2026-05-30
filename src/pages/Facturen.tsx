@@ -83,6 +83,23 @@ function getPurchaseInvoiceDisplayStatus(inv: { status: string | null; remaining
   return inv.status || "";
 }
 
+function calcOcrScore(inv: Tables<"purchase_invoices">): number {
+  const isPresent = (v: string | null | undefined) => {
+    if (!v) return false;
+    const s = v.trim();
+    return !!s && s.toLowerCase() !== "onbekend";
+  };
+  const isNum = (v: number | null | undefined) => v != null && isFinite(v);
+  return [
+    isPresent(inv.supplier),
+    isPresent(inv.invoice_number),
+    isPresent(inv.invoice_date),
+    isNum(inv.amount_incl),
+    isNum(inv.btw_percentage),
+    isPresent(inv.supplier_btw_number),
+  ].filter(Boolean).length;
+}
+
 type SortField = "supplier" | "invoice_number" | "date" | "amount" | "btw" | "status";
 type SortDir = "asc" | "desc";
 
@@ -710,6 +727,29 @@ export default function Facturen() {
                                   </Badge>
                                 </button>
                               ) : null}
+                              {(() => {
+                                const score = calcOcrScore(inv);
+                                const colorClass =
+                                  score >= 5
+                                    ? "border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200"
+                                    : score >= 3
+                                    ? "border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                                    : "border-destructive/50 bg-destructive/10 text-destructive";
+                                return (
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className={`inline-flex w-fit cursor-default items-center rounded border px-1 py-0 text-[10px] font-normal ${colorClass}`}>
+                                          {score}/6 herkend
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Indicatie op basis van ingevulde herkende velden; geen AI-zekerheidsscore.</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                );
+                              })()}
                             </div>
                           </TableCell>
                           <TableCell className="font-mono text-sm">
