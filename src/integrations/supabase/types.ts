@@ -18,6 +18,7 @@ export type Database = {
         Row: {
           id: string
           key: string
+          organization_id: string | null
           updated_at: string
           user_id: string
           value: Json
@@ -25,6 +26,7 @@ export type Database = {
         Insert: {
           id?: string
           key: string
+          organization_id?: string | null
           updated_at?: string
           user_id: string
           value?: Json
@@ -32,6 +34,7 @@ export type Database = {
         Update: {
           id?: string
           key?: string
+          organization_id?: string | null
           updated_at?: string
           user_id?: string
           value?: Json
@@ -47,6 +50,7 @@ export type Database = {
           id: string
           invoice_id: string
           invoice_type: string
+          organization_id: string | null
           updated_at: string
           user_id: string
         }
@@ -58,6 +62,7 @@ export type Database = {
           id?: string
           invoice_id: string
           invoice_type: string
+          organization_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -69,6 +74,7 @@ export type Database = {
           id?: string
           invoice_id?: string
           invoice_type?: string
+          organization_id?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -102,6 +108,7 @@ export type Database = {
           match_confidence: number | null
           match_status: string
           matched_invoice_id: string | null
+          organization_id: string | null
           reference: string | null
           transaction_date: string
           updated_at: string
@@ -119,6 +126,7 @@ export type Database = {
           match_confidence?: number | null
           match_status?: string
           matched_invoice_id?: string | null
+          organization_id?: string | null
           reference?: string | null
           transaction_date: string
           updated_at?: string
@@ -136,6 +144,7 @@ export type Database = {
           match_confidence?: number | null
           match_status?: string
           matched_invoice_id?: string | null
+          organization_id?: string | null
           reference?: string | null
           transaction_date?: string
           updated_at?: string
@@ -195,6 +204,7 @@ export type Database = {
           ledger_account_id: string | null
           ledger_account_text: string | null
           name: string
+          organization_id: string | null
           prioriteit: number | null
           user_id: string
           zoek_in: string | null
@@ -214,6 +224,7 @@ export type Database = {
           ledger_account_id?: string | null
           ledger_account_text?: string | null
           name: string
+          organization_id?: string | null
           prioriteit?: number | null
           user_id: string
           zoek_in?: string | null
@@ -233,6 +244,7 @@ export type Database = {
           ledger_account_id?: string | null
           ledger_account_text?: string | null
           name?: string
+          organization_id?: string | null
           prioriteit?: number | null
           user_id?: string
           zoek_in?: string | null
@@ -356,6 +368,7 @@ export type Database = {
           id: string
           nummer: number
           omschrijving: string
+          organization_id: string | null
           updated_at: string
           user_id: string
         }
@@ -367,6 +380,7 @@ export type Database = {
           id?: string
           nummer: number
           omschrijving: string
+          organization_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -378,6 +392,7 @@ export type Database = {
           id?: string
           nummer?: number
           omschrijving?: string
+          organization_id?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -433,6 +448,7 @@ export type Database = {
           invoice_number: string | null
           ledger_account_id: string | null
           ledger_account_text: string | null
+          organization_id: string | null
           updated_at: string
           user_id: string
         }
@@ -449,6 +465,7 @@ export type Database = {
           invoice_number?: string | null
           ledger_account_id?: string | null
           ledger_account_text?: string | null
+          organization_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -465,6 +482,7 @@ export type Database = {
           invoice_number?: string | null
           ledger_account_id?: string | null
           ledger_account_text?: string | null
+          organization_id?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -493,6 +511,7 @@ export type Database = {
           created_at: string
           id: string
           name: string
+          organization_id: string | null
           user_id: string
         }
         Insert: {
@@ -502,6 +521,7 @@ export type Database = {
           created_at?: string
           id?: string
           name: string
+          organization_id?: string | null
           user_id: string
         }
         Update: {
@@ -511,6 +531,7 @@ export type Database = {
           created_at?: string
           id?: string
           name?: string
+          organization_id?: string | null
           user_id?: string
         }
         Relationships: [
@@ -535,6 +556,7 @@ export type Database = {
           kvk_nummer: string | null
           land: string
           naam: string
+          organization_id: string | null
           plaats: string | null
           postcode: string | null
           standaard_grootboekrekening_id: string | null
@@ -552,6 +574,7 @@ export type Database = {
           kvk_nummer?: string | null
           land?: string
           naam: string
+          organization_id?: string | null
           plaats?: string | null
           postcode?: string | null
           standaard_grootboekrekening_id?: string | null
@@ -569,6 +592,7 @@ export type Database = {
           kvk_nummer?: string | null
           land?: string
           naam?: string
+          organization_id?: string | null
           plaats?: string | null
           postcode?: string | null
           standaard_grootboekrekening_id?: string | null
@@ -682,6 +706,7 @@ export type Database = {
           grootboekrekening_id: string | null
           id: string
           omschrijving: string
+          organization_id: string | null
           purchase_invoice_id: string
           sort_order: number
           user_id: string
@@ -693,6 +718,7 @@ export type Database = {
           grootboekrekening_id?: string | null
           id?: string
           omschrijving: string
+          organization_id?: string | null
           purchase_invoice_id: string
           sort_order?: number
           user_id: string
@@ -704,6 +730,7 @@ export type Database = {
           grootboekrekening_id?: string | null
           id?: string
           omschrijving?: string
+          organization_id?: string | null
           purchase_invoice_id?: string
           sort_order?: number
           user_id?: string
@@ -729,6 +756,7 @@ export type Database = {
           leverancier_id: string | null
           notes: string | null
           ocr_data: Json | null
+          organization_id: string | null
           original_ubl_path: string | null
           remaining_amount: number | null
           route_reason: string | null
@@ -758,6 +786,7 @@ export type Database = {
           leverancier_id?: string | null
           notes?: string | null
           ocr_data?: Json | null
+          organization_id?: string | null
           original_ubl_path?: string | null
           remaining_amount?: number | null
           route_reason?: string | null
@@ -787,6 +816,7 @@ export type Database = {
           leverancier_id?: string | null
           notes?: string | null
           ocr_data?: Json | null
+          organization_id?: string | null
           original_ubl_path?: string | null
           remaining_amount?: number | null
           route_reason?: string | null
@@ -845,6 +875,7 @@ export type Database = {
           invoice_number: string
           ledger_account_text: string | null
           notes: string | null
+          organization_id: string | null
           pdf_path: string | null
           remaining_amount: number | null
           status: string
@@ -866,6 +897,7 @@ export type Database = {
           invoice_number: string
           ledger_account_text?: string | null
           notes?: string | null
+          organization_id?: string | null
           pdf_path?: string | null
           remaining_amount?: number | null
           status?: string
@@ -887,6 +919,7 @@ export type Database = {
           invoice_number?: string
           ledger_account_text?: string | null
           notes?: string | null
+          organization_id?: string | null
           pdf_path?: string | null
           remaining_amount?: number | null
           status?: string
@@ -942,6 +975,7 @@ export type Database = {
           created_at: string
           id: string
           omschrijving: string | null
+          organization_id: string | null
           resolved_at: string | null
           source_id: string | null
           source_type: string
@@ -956,6 +990,7 @@ export type Database = {
           created_at?: string
           id?: string
           omschrijving?: string | null
+          organization_id?: string | null
           resolved_at?: string | null
           source_id?: string | null
           source_type: string
@@ -970,6 +1005,7 @@ export type Database = {
           created_at?: string
           id?: string
           omschrijving?: string | null
+          organization_id?: string | null
           resolved_at?: string | null
           source_id?: string | null
           source_type?: string
