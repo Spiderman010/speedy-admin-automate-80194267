@@ -1,90 +1,101 @@
-## Cleanup-migration (data-only) — niet toepassen zonder akkoord
+## Doel
 
-**Bestandsnaam (voorstel):**
-`supabase/migrations/<UTC-timestamp>_cleanup-rls-team-test-data.sql`
+Frontend-only Auth UX-verbeteringen in BoekAssist. Geen database-, RLS-, schema-, auth-settings- of business-logic wijzigingen.
 
-**Scope:** alleen DELETEs. Geen schema/RLS/policy/frontend wijzigingen. `auth.users` blijft ongemoeid.
+## Branch
 
-### Opmerking vooraf (gevonden bij verificatie)
+`feature/auth-ux-form-and-reset` — afgeleid van `main`. Geen directe commits naar `main`, PR na implementatie.
 
-De 2 test-vraagposten hebben verschillende `organization_id`:
+## Wijzigingen
 
-| id | organization_id | toelichting |
-|---|---|---|
-| `617805b3-e19b-469c-a5c0-5dc9d53e26ba` | `5faf7b16-…` (owner-org) | expliciet meegegeven |
-| `9abe6b35-7133-4a81-be30-a6ae97486354` | `3fdc1925-65ad-40bf-9725-5c1f229649c4` | trigger zette nbsafety1's eigen `default_organization_id` |
+### 1. `src/pages/Auth.tsx` (refactor)
 
-Beide horen tot de test en worden via hun `id` verwijderd. Geen issue voor cleanup, maar gerapporteerd voor transparantie.
+- Wrap login-tab inhoud in `<form onSubmit={handleLogin}>`; submit-knop krijgt `type="submit"`. `handleLogin` krijgt `e.preventDefault()`.
+- Wrap signup-tab inhoud in `<form onSubmit={handleSignUp}>`; idem.
+- Beide knoppen blijven `disabled={loading}` zodat dubbele submit niet kan.
+- Onder de login-form: tekstknop "Wachtwoord vergeten?" (variant `link`, type `button`) die een nieuwe `view`-state toggelt: `login | forgot`.
+- Nieuwe forgot-view binnen dezelfde Card: e-mail input + submit-form. Submit roept:
+  ```ts
+  supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/reset-password`
+  })
+  ```
+  Bij success én bij not-found toont neutrale toast:
+  > "Als dit e-mailadres bekend is, ontvang je een resetlink."
+  Bij netwerk-/onverwachte fout: Dutch error toast met `error.message`.
+- "Terug naar inloggen" knop in forgot-view.
 
-### Exacte cleanup-SQL
+### 2. Duplicate-email detectie in `handleSignUp`
 
-```sql
--- Data-only cleanup van RLS team-access test.
--- Geen schema/RLS/policy wijzigingen. auth.users blijft ongemoeid.
--- rollback: niet automatisch — testdata wordt definitief verwijderd.
+```ts
+const { data, error } = await supabase.auth.signUp({...});
 
-BEGIN;
+const DUPLICATE_MSG = "Dit e-mailadres bestaat al. Log in of gebruik 'Wachtwoord vergeten'.";
 
--- 1) Test-vraagposten
-DELETE FROM public.vraagposten
-WHERE id IN (
-  '617805b3-e19b-469c-a5c0-5dc9d53e26ba',
-  '9abe6b35-7133-4a81-be30-a6ae97486354'
-);
+const isDuplicate =
+  (error && /already (registered|exists)|User already registered/i.test(error.message)) ||
+  (!error && data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0);
 
--- 2) Test user_role (assistant in owner-org)
-DELETE FROM public.user_roles
-WHERE user_id        = '1a50b2fc-8a73-4ce1-8b89-6e7d893da529'
-  AND organization_id = '5faf7b16-e11f-4602-ab72-71078997f706'
-  AND role            = 'assistant';
-
--- 3) Test-membership in owner-org
-DELETE FROM public.organization_members
-WHERE user_id        = '1a50b2fc-8a73-4ce1-8b89-6e7d893da529'
-  AND organization_id = '5faf7b16-e11f-4602-ab72-71078997f706';
-
-COMMIT;
+if (isDuplicate) {
+  toast({ title: "Account bestaat al", description: DUPLICATE_MSG, variant: "destructive" });
+} else if (error) {
+  toast({ title: "Fout", description: error.message, variant: "destructive" });
+} else {
+  toast({ title: "Account aangemaakt", description: "Controleer je e-mail om je account te bevestigen." });
+}
 ```
 
-### Verificatiequeries (na toepassen handmatig draaien)
+Bestaande "Controleer je e-mail"-toast wordt dus alleen getoond bij een echte nieuwe registratie.
 
-```sql
--- A) Test-vraagposten weg → verwacht 0
-SELECT count(*) AS remaining_test_vraagposten
-FROM public.vraagposten
-WHERE id IN (
-  '617805b3-e19b-469c-a5c0-5dc9d53e26ba',
-  '9abe6b35-7133-4a81-be30-a6ae97486354'
-);
+### 3. Nieuwe `src/pages/ResetPassword.tsx` (publieke pagina)
 
--- B) Test user_role weg → verwacht 0
-SELECT count(*) AS remaining_test_user_role
-FROM public.user_roles
-WHERE user_id        = '1a50b2fc-8a73-4ce1-8b89-6e7d893da529'
-  AND organization_id = '5faf7b16-e11f-4602-ab72-71078997f706'
-  AND role            = 'assistant';
+Zelfde shadcn `Card`/`Input`/`Label`/`Button` styling als `Auth.tsx`.
 
--- C) Test-membership weg → verwacht 0
-SELECT count(*) AS remaining_test_membership
-FROM public.organization_members
-WHERE user_id        = '1a50b2fc-8a73-4ce1-8b89-6e7d893da529'
-  AND organization_id = '5faf7b16-e11f-4602-ab72-71078997f706';
+- `<form onSubmit={handleReset}>` met twee password-velden: "Nieuw wachtwoord" en "Bevestig wachtwoord".
+- Validatie client-side:
+  - min. 6 tekens
+  - beide wachtwoorden identiek
+  Fouten via destructive toast met Nederlandse tekst.
+- Bij submit:
+  ```ts
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) { toast(...Dutch error...); return; }
+  await supabase.auth.signOut();
+  toast({ title: "Wachtwoord bijgewerkt", description: "Wachtwoord bijgewerkt. Log opnieuw in." });
+  navigate("/auth");
+  ```
+- Bij mount: check `supabase.auth.getSession()`. Geen sessie → toon Dutch melding ("Geen geldige herstel-sessie...") + knop "Terug naar inloggen" die naar `/auth` navigeert. Form wordt dan verborgen.
+- Als `updateUser` faalt met session-related error, idem fallback.
 
--- D) auth.users record bestaat nog → verwacht 1
-SELECT count(*) AS auth_user_still_present
-FROM auth.users
-WHERE id = '1a50b2fc-8a73-4ce1-8b89-6e7d893da529';
+### 4. `src/App.tsx`
 
--- E) org_members_* policies nog 48 → verwacht 48
-SELECT count(*) AS org_members_policies
-FROM pg_policies
-WHERE schemaname = 'public' AND policyname LIKE 'org_members_%';
+- `import ResetPassword from "./pages/ResetPassword";`
+- Voeg publieke route toe **vóór** `AuthRoute` en buiten `ProtectedRoutes`:
+  ```tsx
+  <Route path="/reset-password" element={<ResetPassword />} />
+  ```
+- `AuthRoute` blijft alleen op `/auth`; geen redirect-logica op `/reset-password`.
+
+## Niet wijzigen
+
+SQL, migraties, RLS, policies, Supabase auth-settings, schema, organizations/user_roles/memberships, app_settings, sales/export/UBL/bank logic, `src/integrations/supabase/types.ts`, `package.json`, lockfiles, sidebar, dashboard, andere pagina's.
+
+## Verificatie
+
+```
+npx tsc --noEmit
+npm run lint
+npx vitest run
 ```
 
-### Niet in scope
+Daarna browser-test in Lovable preview tegen acceptatiecriteria (login, signup, Enter-submit op beide forms, duplicate-email tekst exact, "Wachtwoord vergeten?" zichtbaar, `/reset-password` publiek bereikbaar, password-validatie, signOut + redirect na succes, geen console errors).
 
-- auth.users verwijderen
-- schema / RLS / policies / triggers wijzigen
-- frontend / types / app_settings / sales / UBL / bank logica
+## Output bij afronden
 
-Wacht op akkoord vóór ik de migration aanmaak en laat uitvoeren.
+- Branch: `feature/auth-ux-form-and-reset`
+- Reviewed files: `AGENTS.md`, `PROJECT_MAP.md`, `src/App.tsx`, `src/pages/Auth.tsx`, `src/hooks/useAuth.tsx`, `src/integrations/supabase/client.ts`, `src/hooks/use-toast.ts`
+- Changed files: `src/pages/Auth.tsx`, `src/pages/ResetPassword.tsx` (new), `src/App.tsx`
+- Migrations: None
+- Bevestiging: geen SQL/RLS/auth-settings/schema/types/sales/bank wijzigingen
+- Test results van de drie commando's
+- Preview URL + PR link

@@ -17,6 +17,7 @@ import Vraagposten from "./pages/Vraagposten";
 import Leveranciers from "./pages/Leveranciers";
 import Instellingen from "./pages/Instellingen";
 import Auth from "./pages/Auth";
+import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -43,6 +44,7 @@ const App = () => (
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/auth" element={<AuthRoute />} />
             <Route element={<ProtectedRoutes />}>
               <Route path="/" element={<Index />} />
