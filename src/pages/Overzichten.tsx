@@ -43,7 +43,7 @@ export default function Overzichten() {
 
   const { data: invoices } = usePurchaseInvoices({ clientId: selectedClient || undefined });
   const { data: entries } = useJournalEntries(selectedClient || undefined);
-  const { data: transactions } = useBankTransactions(selectedClient || undefined);
+  const { data: transactions } = useBankTransactions({ clientId: selectedClient || undefined });
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
 
   const totalInvoices = invoices?.reduce((s, i) => s + (i.amount_incl ?? 0), 0) ?? 0;

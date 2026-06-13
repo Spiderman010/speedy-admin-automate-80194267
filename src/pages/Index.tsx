@@ -13,6 +13,7 @@ import { useVraagposten } from "@/hooks/useVraagposten";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { computeClientReadiness } from "@/lib/client-readiness";
 import { getInvoicePaymentState, getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 import { formatEuro } from "@/lib/format";
@@ -33,11 +34,13 @@ function statusVariant(s: ReadinessStatus): "default" | "destructive" | "outline
 export default function Dashboard() {
   const navigate = useNavigate();
   const { setSelectedClientId } = useClientContext();
-  const { data: clients, isLoading: loadingClients } = useClients();
-  const { data: invoices, isLoading: loadingInvoices } = usePurchaseInvoices();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: clients, isLoading: loadingClients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
+  const { data: invoices, isLoading: loadingInvoices } = usePurchaseInvoices({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
   const { data: salesInvoices, isLoading: loadingSales } = useSalesInvoices();
-  const { data: transactions, isLoading: loadingBank } = useBankTransactions();
-  const { data: vraagposten, isLoading: loadingVraagposten } = useVraagposten();
+  const { data: transactions, isLoading: loadingBank } = useBankTransactions({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
+  const { data: vraagposten, isLoading: loadingVraagposten } = useVraagposten({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
   const { data: grootboekrekeningen, isLoading: loadingGrootboek } = useGrootboekrekeningen();
 
   const pendingInvoices = invoices?.filter((i) => i.status === "te_controleren").length ?? 0;

@@ -20,6 +20,7 @@ import { CheckCircle2, ClipboardList, RotateCcw, Search, Trash2, XCircle } from 
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import {
   useVraagposten,
   useUpdateVraagpostStatus,
@@ -60,9 +61,15 @@ const statusBadge = (status: string) => {
 export default function Vraagposten() {
   const { toast } = useToast();
   const { selectedClientId } = useClientContext();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
   const [searchParams] = useSearchParams();
-  const { data: clients } = useClients();
-  const { data: vraagposten, isLoading } = useVraagposten(selectedClientId);
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
+  const { data: vraagposten, isLoading } = useVraagposten({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: selectedClientId !== "all" ? selectedClientId : undefined,
+    enabled: orgEnabled,
+  });
   const updateStatus = useUpdateVraagpostStatus();
   const deleteVraagpost = useDeleteVraagpost();
   const deleteConfirm = useDeleteConfirm();
