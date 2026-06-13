@@ -6,18 +6,26 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type PurchaseInvoiceInsert = TablesInsert<"purchase_invoices">;
 
-export function usePurchaseInvoices(clientId?: string) {
+export interface UsePurchaseInvoicesOptions {
+  organizationId?: string;
+  clientId?: string;
+  enabled?: boolean;
+}
+
+export function usePurchaseInvoices(options: UsePurchaseInvoicesOptions = {}) {
+  const { organizationId, clientId, enabled = true } = options;
   const { user } = useAuth();
   return useQuery({
-    queryKey: ["purchase_invoices", clientId],
+    queryKey: ["purchase_invoices", organizationId ?? "all", clientId ?? "all"],
     queryFn: async () => {
       let query = supabase.from("purchase_invoices").select("*").order("invoice_date", { ascending: false });
+      if (organizationId) query = query.eq("organization_id", organizationId);
       if (clientId) query = query.eq("client_id", clientId);
       const { data, error } = await query;
       if (error) throw error;
       return data as PurchaseInvoice[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 

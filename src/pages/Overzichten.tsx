@@ -41,7 +41,7 @@ export default function Overzichten() {
     setSelectedClient(selectedClientId !== "all" ? selectedClientId : "");
   }, [selectedClientId]);
 
-  const { data: invoices } = usePurchaseInvoices(selectedClient || undefined);
+  const { data: invoices } = usePurchaseInvoices({ clientId: selectedClient || undefined });
   const { data: entries } = useJournalEntries(selectedClient || undefined);
   const { data: transactions } = useBankTransactions(selectedClient || undefined);
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();

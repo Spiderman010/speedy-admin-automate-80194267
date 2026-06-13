@@ -6,18 +6,26 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 type Leverancier = Tables<"leveranciers">;
 type LeverancierInsert = TablesInsert<"leveranciers">;
 
-export function useLeveranciers(clientId?: string) {
+export interface UseLeveranciersOptions {
+  organizationId?: string;
+  clientId?: string;
+  enabled?: boolean;
+}
+
+export function useLeveranciers(options: UseLeveranciersOptions = {}) {
+  const { organizationId, clientId, enabled = true } = options;
   const { user } = useAuth();
   return useQuery({
-    queryKey: ["leveranciers", clientId],
+    queryKey: ["leveranciers", organizationId ?? "all", clientId ?? "all"],
     queryFn: async () => {
       let query = supabase.from("leveranciers").select("*").order("naam");
+      if (organizationId) query = query.eq("organization_id", organizationId);
       if (clientId && clientId !== "all") query = query.eq("client_id", clientId);
       const { data, error } = await query;
       if (error) throw error;
       return data as Leverancier[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 
