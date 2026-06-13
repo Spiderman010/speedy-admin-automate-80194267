@@ -182,8 +182,14 @@ export default function Bank() {
   const orgEnabled = isReady && activeOrganizationId !== null;
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
-  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
-  const { data: bookingTemplates } = useBookingTemplates();
+  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
+  const { data: bookingTemplates } = useBookingTemplates({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const { data: transactions, isLoading, refetch } = useBankTransactions({
     organizationId: activeOrganizationId ?? undefined,
     clientId: clientFilter !== "all" ? clientFilter : undefined,

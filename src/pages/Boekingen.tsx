@@ -17,6 +17,7 @@ import { useClients } from "@/hooks/useClients";
 import { useAddJournalEntry, useJournalEntries } from "@/hooks/useJournalEntries";
 import { exportJournalEntriesCSV } from "@/lib/snelstart-export";
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { formatGetal } from "@/lib/format";
 import { NoClientBanner } from "@/components/NoClientBanner";
@@ -29,9 +30,11 @@ const btwOptions = [
 
 export default function Boekingen() {
   const { toast } = useToast();
-  const { data: clients } = useClients();
-  const addEntry = useAddJournalEntry();
   const { selectedClientId, setSelectedClientId } = useClientContext();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
+  const addEntry = useAddJournalEntry();
 
   const hasSpecificClient = !!selectedClientId && selectedClientId !== "all";
 
@@ -60,7 +63,11 @@ export default function Boekingen() {
     });
   }, [selectedClientId, clients]);
 
-  const { data: journalEntries } = useJournalEntries(form.client_id || undefined);
+  const { data: journalEntries } = useJournalEntries({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: form.client_id || undefined,
+    enabled: orgEnabled,
+  });
 
   const handleSave = async () => {
     if (!form.client_id) {

@@ -6,18 +6,26 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 type JournalEntry = Tables<"journal_entries">;
 type JournalEntryInsert = TablesInsert<"journal_entries">;
 
-export function useJournalEntries(clientId?: string) {
+export interface UseJournalEntriesOptions {
+  organizationId?: string;
+  clientId?: string;
+  enabled?: boolean;
+}
+
+export function useJournalEntries(options: UseJournalEntriesOptions = {}) {
+  const { organizationId, clientId, enabled = true } = options;
   const { user } = useAuth();
   return useQuery({
-    queryKey: ["journal_entries", clientId],
+    queryKey: ["journal_entries", organizationId ?? "all", clientId ?? "all"],
     queryFn: async () => {
       let query = supabase.from("journal_entries").select("*").order("entry_date", { ascending: false });
-      if (clientId) query = query.eq("client_id", clientId);
+      if (organizationId) query = query.eq("organization_id", organizationId);
+      if (clientId && clientId !== "all") query = query.eq("client_id", clientId);
       const { data, error } = await query;
       if (error) throw error;
       return data as JournalEntry[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 

@@ -269,31 +269,42 @@ const DEFAULT_ACCOUNTS = [
   { nummer: 9190, omschrijving: "Overige verzekeringsuitkeringen", categorie: "omzet" },
 ];
 
-export function useGrootboekrekeningen() {
+export interface UseGrootboekrEkeningenOptions {
+  organizationId?: string;
+  enabled?: boolean;
+}
+
+export function useGrootboekrekeningen(options: UseGrootboekrEkeningenOptions = {}) {
+  const { organizationId, enabled = true } = options;
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ["grootboekrekeningen"],
+    queryKey: ["grootboekrekeningen", organizationId ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("grootboekrekeningen").select("*").order("nummer");
+      let query = supabase.from("grootboekrekeningen").select("*").order("nummer");
+      if (organizationId) query = query.or(`organization_id.is.null,organization_id.eq.${organizationId}`);
+      const { data, error } = await query;
       if (error) throw error;
       return data as Grootboekrekening[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 
-export function useActiveGrootboekrekeningen() {
+export function useActiveGrootboekrekeningen(options: UseGrootboekrEkeningenOptions = {}) {
+  const { organizationId, enabled = true } = options;
   const { user } = useAuth();
 
   return useQuery({
-    queryKey: ["grootboekrekeningen", "actief"],
+    queryKey: ["grootboekrekeningen", "actief", organizationId ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("grootboekrekeningen").select("*").eq("actief", true).order("nummer");
+      let query = supabase.from("grootboekrekeningen").select("*").eq("actief", true).order("nummer");
+      if (organizationId) query = query.or(`organization_id.is.null,organization_id.eq.${organizationId}`);
+      const { data, error } = await query;
       if (error) throw error;
       return data as Grootboekrekening[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 

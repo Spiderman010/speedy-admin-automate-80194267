@@ -37,6 +37,7 @@ import {
   useSeedGrootboekrekeningen,
 } from "@/hooks/useGrootboekrekeningen";
 import type { Grootboekrekening } from "@/hooks/useGrootboekrekeningen";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 
 const CATEGORIEEN = ["activa", "passiva", "omzet", "kosten", "privé"];
 
@@ -55,8 +56,13 @@ export default function Grootboek() {
   const [editing, setEditing] = useState<Grootboekrekening | null>(null);
   const [form, setForm] = useState({ nummer: "", omschrijving: "", categorie: "kosten", actief: true });
   const { toast } = useToast();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
 
-  const { data: rekeningen, isLoading } = useGrootboekrekeningen();
+  const { data: rekeningen, isLoading } = useGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const addRek = useAddGrootboekrekening();
   const updateRek = useUpdateGrootboekrekening();
   const deleteRek = useDeleteGrootboekrekening();

@@ -19,6 +19,7 @@ import { useCreateVraagpost } from "@/hooks/useVraagposten";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useClients } from "@/hooks/useClients";
 import { useAuth } from "@/hooks/useAuth";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { Pencil, Trash2, Plus, RefreshCw, User, LogOut, Loader2 } from "lucide-react";
@@ -286,13 +287,21 @@ function matchTransactionToTemplate(tx: any, activeRules: any[]) {
 }
 
 function HerkenningsregelsTab() {
-  const { data: templates, isLoading } = useBookingTemplates();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: templates, isLoading } = useBookingTemplates({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const addMut = useAddBookingTemplate();
   const updateMut = useUpdateBookingTemplate();
   const deleteMut = useDeleteBookingTemplate();
   const createVraagpost = useCreateVraagpost();
-  const { data: accounts } = useActiveGrootboekrekeningen();
-  const { data: clients } = useClients();
+  const { data: accounts } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -851,8 +860,13 @@ const STANDAARD_BOEKINGEN = [
 ];
 
 function GrootboekStandaardenTab() {
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
   const { data: settings, isLoading } = useAppSettings();
-  const { data: accounts } = useActiveGrootboekrekeningen();
+  const { data: accounts } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const saveMut = useSaveAppSetting();
   const [values, setValues] = useState<Record<string, string>>({});
 
