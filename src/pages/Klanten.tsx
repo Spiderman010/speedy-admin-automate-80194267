@@ -44,6 +44,7 @@ import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SearchInput } from "@/components/SearchInput";
 import { EmptyState } from "@/components/EmptyState";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 
 interface ClientForm {
   name: string;
@@ -130,8 +131,12 @@ export default function Klanten() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const { toast } = useToast();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
 
-  const { data: clients, isLoading } = useClients();
+  const { data: clients, isLoading } = useClients(
+    activeOrganizationId ?? undefined,
+    isReady && activeOrganizationId !== null,
+  );
   const { data: invoices } = usePurchaseInvoices();
   const addClient = useAddClient();
   const updateClient = useUpdateClient();
