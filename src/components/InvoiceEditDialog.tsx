@@ -129,7 +129,10 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   });
   const addLeverancier = useAddLeverancier();
   const updateLeverancier = useUpdateLeverancier();
-  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
+  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
+    organizationId: invoice?.organization_id ?? undefined,
+    enabled: !!invoice,
+  });
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);

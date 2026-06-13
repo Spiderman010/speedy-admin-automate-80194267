@@ -91,7 +91,10 @@ export default function Leveranciers() {
     clientId: selectedClientId !== "all" ? selectedClientId : undefined,
     enabled: isReady && activeOrganizationId !== null,
   });
-  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
+  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const addMut = useAddLeverancier();
   const updateMut = useUpdateLeverancier();
   const deleteMut = useDeleteLeverancier();
