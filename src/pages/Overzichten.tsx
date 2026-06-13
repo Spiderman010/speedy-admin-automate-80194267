@@ -20,6 +20,7 @@ import {
 import { TrendingUp, TrendingDown, Minus, Download, Loader2 } from "lucide-react";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { useJournalEntries } from "@/hooks/useJournalEntries";
 import { useBankTransactions } from "@/hooks/useBankTransactions";
@@ -30,7 +31,9 @@ import { formatEuro } from "@/lib/format";
 
 export default function Overzichten() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
-  const { data: clients } = useClients();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   const [selectedClient, setSelectedClient] = useState<string>(
     selectedClientId !== "all" ? selectedClientId : ""
   );
@@ -41,10 +44,25 @@ export default function Overzichten() {
     setSelectedClient(selectedClientId !== "all" ? selectedClientId : "");
   }, [selectedClientId]);
 
-  const { data: invoices } = usePurchaseInvoices({ clientId: selectedClient || undefined });
-  const { data: entries } = useJournalEntries(selectedClient || undefined);
-  const { data: transactions } = useBankTransactions({ clientId: selectedClient || undefined });
-  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
+  const { data: invoices } = usePurchaseInvoices({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: selectedClient || undefined,
+    enabled: orgEnabled,
+  });
+  const { data: entries } = useJournalEntries({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: selectedClient || undefined,
+    enabled: orgEnabled,
+  });
+  const { data: transactions } = useBankTransactions({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: selectedClient || undefined,
+    enabled: orgEnabled,
+  });
+  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
 
   const totalInvoices = invoices?.reduce((s, i) => s + (i.amount_incl ?? 0), 0) ?? 0;
   const totalBtw = invoices?.reduce((s, i) => s + (i.btw_amount ?? 0), 0) ?? 0;

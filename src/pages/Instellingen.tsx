@@ -19,6 +19,7 @@ import { useCreateVraagpost } from "@/hooks/useVraagposten";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useClients } from "@/hooks/useClients";
 import { useAuth } from "@/hooks/useAuth";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import { Pencil, Trash2, Plus, RefreshCw, User, LogOut, Loader2 } from "lucide-react";
@@ -286,13 +287,21 @@ function matchTransactionToTemplate(tx: any, activeRules: any[]) {
 }
 
 function HerkenningsregelsTab() {
-  const { data: templates, isLoading } = useBookingTemplates();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: templates, isLoading } = useBookingTemplates({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const addMut = useAddBookingTemplate();
   const updateMut = useUpdateBookingTemplate();
   const deleteMut = useDeleteBookingTemplate();
   const createVraagpost = useCreateVraagpost();
-  const { data: accounts } = useActiveGrootboekrekeningen();
-  const { data: clients } = useClients();
+  const { data: accounts } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -325,7 +334,7 @@ function HerkenningsregelsTab() {
 
   // Preview: fetch niet_gematcht rows, evaluate templates, report counts + sample — no DB writes.
   const handlePreview = async () => {
-    if (!templates) return;
+    if (!templates || !orgEnabled || !activeOrganizationId) return;
     setPreviewing(true);
     try {
       const activeRules = [...templates]
@@ -335,7 +344,8 @@ function HerkenningsregelsTab() {
       const { data: transactions, error } = await supabase
         .from("bank_transactions")
         .select("*")
-        .eq("match_status", "niet_gematcht");
+        .eq("match_status", "niet_gematcht")
+        .eq("organization_id", activeOrganizationId);
       if (error) throw error;
 
       const txList = transactions || [];
@@ -383,6 +393,7 @@ function HerkenningsregelsTab() {
             .select("id")
             .eq("source_type", "bank_transaction")
             .eq("source_id", tx.id)
+            .eq("organization_id", activeOrganizationId)
             .maybeSingle();
           if (existing) { skippedVraagpostExists++; continue; }
           totalWouldUpdate++;
@@ -415,7 +426,7 @@ function HerkenningsregelsTab() {
 
   // Apply: re-queries niet_gematcht rows for safety, then applies matching templates.
   const handleApply = async () => {
-    if (!user || !templates) return;
+    if (!user || !templates || !orgEnabled || !activeOrganizationId) return;
     setApplying(true);
     try {
       const activeRules = [...templates]
@@ -425,7 +436,8 @@ function HerkenningsregelsTab() {
       const { data: transactions, error } = await supabase
         .from("bank_transactions")
         .select("*")
-        .eq("match_status", "niet_gematcht");
+        .eq("match_status", "niet_gematcht")
+        .eq("organization_id", activeOrganizationId);
       if (error) throw error;
 
       let countGrootboek = 0;
@@ -459,6 +471,7 @@ function HerkenningsregelsTab() {
             })
             .eq("id", tx.id)
             .eq("match_status", "niet_gematcht")
+            .eq("organization_id", activeOrganizationId)
             .select("id");
           if (updated && updated.length > 0) {
             countGrootboek++;
@@ -475,6 +488,7 @@ function HerkenningsregelsTab() {
             .select("id")
             .eq("source_type", "bank_transaction")
             .eq("source_id", tx.id)
+            .eq("organization_id", activeOrganizationId)
             .maybeSingle();
           if (!existing) {
             const [y, m, d] = (tx.transaction_date || "").split("-");
@@ -851,8 +865,13 @@ const STANDAARD_BOEKINGEN = [
 ];
 
 function GrootboekStandaardenTab() {
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
   const { data: settings, isLoading } = useAppSettings();
-  const { data: accounts } = useActiveGrootboekrekeningen();
+  const { data: accounts } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const saveMut = useSaveAppSetting();
   const [values, setValues] = useState<Record<string, string>>({});
 

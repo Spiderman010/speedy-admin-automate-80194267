@@ -41,7 +41,10 @@ export default function Dashboard() {
   const { data: salesInvoices, isLoading: loadingSales } = useSalesInvoices();
   const { data: transactions, isLoading: loadingBank } = useBankTransactions({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
   const { data: vraagposten, isLoading: loadingVraagposten } = useVraagposten({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
-  const { data: grootboekrekeningen, isLoading: loadingGrootboek } = useGrootboekrekeningen();
+  const { data: grootboekrekeningen, isLoading: loadingGrootboek } = useGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
 
   const pendingInvoices = invoices?.filter((i) => i.status === "te_controleren").length ?? 0;
 

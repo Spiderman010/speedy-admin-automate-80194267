@@ -22,19 +22,27 @@ export interface BookingTemplate {
   created_at: string;
 }
 
-export function useBookingTemplates() {
+export interface UseBookingTemplatesOptions {
+  organizationId?: string;
+  enabled?: boolean;
+}
+
+export function useBookingTemplates(options: UseBookingTemplatesOptions = {}) {
+  const { organizationId, enabled = true } = options;
   const { user } = useAuth();
   return useQuery({
-    queryKey: ["booking_templates"],
+    queryKey: ["booking_templates", organizationId ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("booking_templates")
         .select("*")
         .order("prioriteit", { ascending: false });
+      if (organizationId) query = query.eq("organization_id", organizationId);
+      const { data, error } = await query;
       if (error) throw error;
       return data as BookingTemplate[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 
