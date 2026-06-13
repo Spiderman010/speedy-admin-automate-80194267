@@ -6,19 +6,18 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 type Client = Tables<"clients">;
 type ClientInsert = TablesInsert<"clients">;
 
-export function useClients() {
+export function useClients(organizationId?: string, enabled = true) {
   const { user } = useAuth();
   return useQuery({
-    queryKey: ["clients"],
+    queryKey: ["clients", user?.id ?? "", organizationId ?? "all"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("clients")
-        .select("*")
-        .order("name");
+      let query = supabase.from("clients").select("*").order("name");
+      if (organizationId) query = query.eq("organization_id", organizationId);
+      const { data, error } = await query;
       if (error) throw error;
       return data as Client[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 

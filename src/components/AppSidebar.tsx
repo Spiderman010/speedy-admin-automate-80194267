@@ -25,6 +25,8 @@ import {
 } from "./ui/select";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
+import { OrganizationSelector } from "@/components/OrganizationSelector";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -41,7 +43,13 @@ const navItems = [
 
 export function AppSidebar() {
   const navigate = useNavigate();
-  const { data: clients } = useClients();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  // Only fetch clients once the org context has resolved and we have a specific org.
+  // This prevents a brief window where an unfiltered query would return all RLS-accessible clients.
+  const { data: clients } = useClients(
+    activeOrganizationId ?? undefined,
+    isReady && activeOrganizationId !== null,
+  );
   const { selectedClientId, setSelectedClientId } = useClientContext();
 
   const handleLogout = async () => {
@@ -61,6 +69,9 @@ export function AppSidebar() {
           BoekAssist
         </span>
       </div>
+
+      {/* Organisatiekiezer — alleen zichtbaar als user lid is van > 1 organisatie */}
+      <OrganizationSelector />
 
       {/* Klantenkiezer */}
       <div className="px-3 py-3 border-b border-sidebar-border">
