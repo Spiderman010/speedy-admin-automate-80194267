@@ -30,6 +30,7 @@ import {
 } from "@/hooks/useVraagposten";
 import { useSearchParams } from "react-router-dom";
 import { FilterChip } from "@/components/FilterChip";
+import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { formatMT940Title, formatMT940Detail } from "@/lib/mt940-description-parser";
 
 const STATUS_ORDER = ["open", "in_behandeling", "opgelost", "genegeerd"] as const;
@@ -64,7 +65,7 @@ export default function Vraagposten() {
   const { data: vraagposten, isLoading } = useVraagposten(selectedClientId);
   const updateStatus = useUpdateVraagpostStatus();
   const deleteVraagpost = useDeleteVraagpost();
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const deleteConfirm = useDeleteConfirm();
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -131,14 +132,14 @@ export default function Vraagposten() {
   }, [focusId, isLoading, sorted]);
 
   const handleDelete = async () => {
-    if (!pendingDeleteId) return;
+    if (!deleteConfirm.pendingId) return;
     try {
-      await deleteVraagpost.mutateAsync(pendingDeleteId);
+      await deleteVraagpost.mutateAsync(deleteConfirm.pendingId);
       toast({ title: "Vraagpost verwijderd" });
     } catch (e: any) {
       toast({ title: "Fout bij verwijderen", description: e.message, variant: "destructive" });
     } finally {
-      setPendingDeleteId(null);
+      deleteConfirm.cancel();
     }
   };
 
@@ -278,7 +279,7 @@ export default function Vraagposten() {
                           size="sm"
                           variant="ghost"
                           className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => setPendingDeleteId(vp.id)}
+                          onClick={() => deleteConfirm.request(vp.id)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
@@ -292,7 +293,7 @@ export default function Vraagposten() {
           )}
         </CardContent>
       </Card>
-      <AlertDialog open={!!pendingDeleteId} onOpenChange={(open) => { if (!open) setPendingDeleteId(null); }}>
+      <AlertDialog open={deleteConfirm.open} onOpenChange={(open) => { if (!open) deleteConfirm.cancel(); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Vraagpost verwijderen</AlertDialogTitle>

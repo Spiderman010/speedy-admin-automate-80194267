@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/PageHeader";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { SearchInput } from "@/components/SearchInput";
 import { useAppSettings, useSaveAppSetting } from "@/hooks/useAppSettings";
 import { useBookingTemplates, useAddBookingTemplate, useUpdateBookingTemplate, useDeleteBookingTemplate } from "@/hooks/useBookingTemplates";
 import { useCreateVraagpost } from "@/hooks/useVraagposten";
@@ -548,7 +549,7 @@ function HerkenningsregelsTab() {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <Input placeholder="Zoek op zoekterm of grootboek..." value={search} onChange={e => setSearch(e.target.value)} className="max-w-sm" />
+        <SearchInput placeholder="Zoek op zoekterm of grootboek..." value={search} onChange={setSearch} className="max-w-sm" />
         <Table>
           <TableHeader>
             <TableRow>

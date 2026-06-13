@@ -25,8 +25,10 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Search, Download } from "lucide-react";
+import { Plus, Pencil, Trash2, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { SearchInput } from "@/components/SearchInput";
+import { EmptyState } from "@/components/EmptyState";
 import {
   useGrootboekrekeningen,
   useAddGrootboekrekening,
@@ -146,20 +148,17 @@ export default function Grootboek() {
 
       <Card>
         <CardContent className="p-6">
-          <div className="mb-4 relative max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Zoek op nummer of omschrijving..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Zoek op nummer of omschrijving..."
+            className="mb-4 max-w-sm"
+          />
 
           {isLoading ? (
             <div className="py-12 text-center text-muted-foreground">Laden...</div>
           ) : filtered.length === 0 ? (
-            <div className="py-12 text-center text-muted-foreground">Geen grootboekrekeningen gevonden. De standaardrekeningen worden automatisch toegevoegd.</div>
+            <EmptyState message="Geen grootboekrekeningen gevonden. De standaardrekeningen worden automatisch toegevoegd." />
           ) : (
             <Table>
               <TableHeader>

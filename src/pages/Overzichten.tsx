@@ -26,9 +26,7 @@ import { useBankTransactions } from "@/hooks/useBankTransactions";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { exportAllForClient } from "@/lib/snelstart-export";
 import { useToast } from "@/hooks/use-toast";
-
-const formatCurrency = (amount: number) =>
-  new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
+import { formatEuro } from "@/lib/format";
 
 export default function Overzichten() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
@@ -104,7 +102,7 @@ export default function Overzichten() {
               <TrendingUp className="h-4 w-4 text-success" />
               <p className="text-sm text-muted-foreground">Inkoopfacturen</p>
             </div>
-            <p className="mt-1 font-display text-xl font-bold">{formatCurrency(totalInvoices)}</p>
+            <p className="mt-1 font-display text-xl font-bold">{formatEuro(totalInvoices)}</p>
             <p className="text-xs text-muted-foreground">{invoices?.length ?? 0} facturen</p>
           </CardContent>
         </Card>
@@ -114,7 +112,7 @@ export default function Overzichten() {
               <TrendingDown className="h-4 w-4 text-destructive" />
               <p className="text-sm text-muted-foreground">BTW totaal</p>
             </div>
-            <p className="mt-1 font-display text-xl font-bold">{formatCurrency(totalBtw)}</p>
+            <p className="mt-1 font-display text-xl font-bold">{formatEuro(totalBtw)}</p>
           </CardContent>
         </Card>
         <Card>
@@ -123,7 +121,7 @@ export default function Overzichten() {
               <Minus className="h-4 w-4 text-primary" />
               <p className="text-sm text-muted-foreground">Boekingen totaal</p>
             </div>
-            <p className="mt-1 font-display text-xl font-bold">{formatCurrency(totalEntries)}</p>
+            <p className="mt-1 font-display text-xl font-bold">{formatEuro(totalEntries)}</p>
             <p className="text-xs text-muted-foreground">{entries?.length ?? 0} boekingen</p>
           </CardContent>
         </Card>
@@ -156,9 +154,9 @@ export default function Overzichten() {
                     <TableCell className="font-medium">{inv.supplier}</TableCell>
                     <TableCell className="font-mono text-sm">{inv.invoice_number || "—"}</TableCell>
                     <TableCell>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
-                    <TableCell className="text-right font-mono">{inv.amount_excl != null ? formatCurrency(inv.amount_excl) : "—"}</TableCell>
-                    <TableCell className="text-right font-mono">{inv.btw_amount != null ? formatCurrency(inv.btw_amount) : "—"}</TableCell>
-                    <TableCell className="text-right font-mono font-semibold">{inv.amount_incl != null ? formatCurrency(inv.amount_incl) : "—"}</TableCell>
+                    <TableCell className="text-right font-mono">{inv.amount_excl != null ? formatEuro(inv.amount_excl) : "—"}</TableCell>
+                    <TableCell className="text-right font-mono">{inv.btw_amount != null ? formatEuro(inv.btw_amount) : "—"}</TableCell>
+                    <TableCell className="text-right font-mono font-semibold">{inv.amount_incl != null ? formatEuro(inv.amount_incl) : "—"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

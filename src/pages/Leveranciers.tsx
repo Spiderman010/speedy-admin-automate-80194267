@@ -47,6 +47,9 @@ import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
+import { EmptyState } from "@/components/EmptyState";
+import { NoClientBanner } from "@/components/NoClientBanner";
+import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 
 type Leverancier = Tables<"leveranciers">;
 
@@ -89,8 +92,7 @@ export default function Leveranciers() {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<LeverancierForm>(emptyForm);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const deleteConfirm = useDeleteConfirm();
 
   const grootboekById = useMemo(() => {
     const m = new Map<string, string>();
@@ -164,29 +166,23 @@ export default function Leveranciers() {
   const set = <K extends keyof LeverancierForm>(k: K, v: LeverancierForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
-  const openDelete = (id: string) => {
-    setDeleteId(id);
-    setDeleteConfirmOpen(true);
-  };
-
   const handleDeleteConfirm = async () => {
-    if (!deleteId) return;
+    if (!deleteConfirm.pendingId) return;
     try {
       const { count, error: countError } = await supabase
         .from("purchase_invoices")
         .select("*", { count: "exact", head: true })
-        .eq("leverancier_id", deleteId);
+        .eq("leverancier_id", deleteConfirm.pendingId);
       if (countError) throw countError;
 
       if (count && count > 0) {
-        await updateMut.mutateAsync({ id: deleteId, actief: false });
+        await updateMut.mutateAsync({ id: deleteConfirm.pendingId, actief: false });
         toast({ title: "Leverancier is gekoppeld aan facturen en is daarom op inactief gezet." });
       } else {
-        await deleteMut.mutateAsync(deleteId);
+        await deleteMut.mutateAsync(deleteConfirm.pendingId);
         toast({ title: "Leverancier verwijderd" });
       }
-      setDeleteConfirmOpen(false);
-      setDeleteId(null);
+      deleteConfirm.cancel();
     } catch (e: any) {
       toast({ title: "Verwijderen mislukt", description: e.message, variant: "destructive" });
     }
@@ -205,11 +201,7 @@ export default function Leveranciers() {
       </PageHeader>
 
       {noClientSelected && (
-        <Card>
-          <CardContent className="py-6 text-sm text-muted-foreground">
-            Kies links in de zijbalk een specifieke klant om diens leveranciers te beheren.
-          </CardContent>
-        </Card>
+        <NoClientBanner message="Kies links in de zijbalk een specifieke klant om diens leveranciers te beheren." />
       )}
 
       {!noClientSelected && (
@@ -222,9 +214,7 @@ export default function Leveranciers() {
                 <Skeleton className="h-8 w-full" />
               </div>
             ) : !leveranciers || leveranciers.length === 0 ? (
-              <div className="py-10 text-center text-sm text-muted-foreground">
-                Nog geen leveranciers voor deze klant.
-              </div>
+              <EmptyState message="Nog geen leveranciers voor deze klant." />
             ) : (
               <Table>
                 <TableHeader>
@@ -263,7 +253,7 @@ export default function Leveranciers() {
                         <Button variant="ghost" size="sm" onClick={() => openEdit(l)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openDelete(l.id)}>
+                        <Button variant="ghost" size="sm" onClick={() => deleteConfirm.request(l.id)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </TableCell>
@@ -362,7 +352,7 @@ export default function Leveranciers() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+      <AlertDialog open={deleteConfirm.open} onOpenChange={(o) => { if (!o) deleteConfirm.cancel(); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Leverancier verwijderen</AlertDialogTitle>
@@ -371,7 +361,7 @@ export default function Leveranciers() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setDeleteId(null)}>Annuleren</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => deleteConfirm.cancel()}>Annuleren</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteConfirm} disabled={deleteMut.isPending || updateMut.isPending}>
               Verwijderen
             </AlertDialogAction>
