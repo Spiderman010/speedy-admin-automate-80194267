@@ -37,11 +37,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Search, Building2, Trash2, Pencil, X, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Building2, Trash2, Pencil, X, ArrowUp, ArrowDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients, useAddClient, useUpdateClient, useDeleteClient } from "@/hooks/useClients";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchInput } from "@/components/SearchInput";
+import { EmptyState } from "@/components/EmptyState";
 
 interface ClientForm {
   name: string;
@@ -280,25 +282,20 @@ export default function Klanten() {
       <Card>
         <CardContent className="p-6">
           <div className="mb-4 flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Zoek op naam, KvK of BTW-nummer..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-10"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              placeholder="Zoek op naam, KvK of BTW-nummer..."
+              className="flex-1"
+            />
           </div>
 
           {isLoading ? (
             <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
           ) : sorted.length === 0 ? (
-            <div className="py-12 text-center">
-              <p className="text-muted-foreground">
-                {clients?.length === 0 ? "Nog geen klanten. Voeg je eerste klant toe!" : "Geen resultaten gevonden."}
-              </p>
-            </div>
+            <EmptyState
+              message={clients?.length === 0 ? "Nog geen klanten. Voeg je eerste klant toe!" : "Geen resultaten gevonden."}
+            />
           ) : (
             <Table>
               <TableHeader>

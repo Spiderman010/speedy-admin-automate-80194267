@@ -15,6 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useClientContext } from "@/hooks/useClientContext";
 import { computeClientReadiness } from "@/lib/client-readiness";
 import { getInvoicePaymentState, getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
+import { formatEuro } from "@/lib/format";
 import type { ReadinessStatus } from "@/lib/client-readiness";
 
 function statusLabel(s: ReadinessStatus): string {
@@ -149,7 +150,7 @@ export default function Dashboard() {
             <div className="cursor-pointer" onClick={() => navigate("/verkoop")}>
               <StatCard
                 title="Openstaande verkoop"
-                value={new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(openSalesStats.amount)}
+                value={formatEuro(openSalesStats.amount)}
                 icon={TrendingUp}
                 trend={
                   openSalesStats.countOpen === 0 && openSalesStats.countPartial === 0

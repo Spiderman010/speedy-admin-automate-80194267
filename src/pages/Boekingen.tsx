@@ -18,6 +18,8 @@ import { useAddJournalEntry, useJournalEntries } from "@/hooks/useJournalEntries
 import { exportJournalEntriesCSV } from "@/lib/snelstart-export";
 import { useClientContext } from "@/hooks/useClientContext";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { formatGetal } from "@/lib/format";
+import { NoClientBanner } from "@/components/NoClientBanner";
 
 const btwOptions = [
   { label: "0%", value: 0 },
@@ -95,9 +97,7 @@ export default function Boekingen() {
   };
 
   const formatBedrag = (n: number | null | undefined) =>
-    typeof n === "number"
-      ? n.toLocaleString("nl-NL", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      : "-";
+    typeof n === "number" ? formatGetal(n) : "-";
   const formatDatum = (d: string) => {
     const [y, m, day] = d.split("-");
     return `${day}-${m}-${y}`;
@@ -123,9 +123,7 @@ export default function Boekingen() {
             </CardHeader>
             <CardContent className="space-y-4">
               {!hasSpecificClient && (
-                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                  Kies eerst een specifieke administratie om een boeking toe te voegen.
-                </div>
+                <NoClientBanner message="Kies eerst een specifieke administratie om een boeking toe te voegen." />
               )}
 
               <div className="grid grid-cols-2 gap-4">
