@@ -84,7 +84,8 @@ export default function Leveranciers() {
   const { toast } = useToast();
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const { activeOrganizationId, isReady } = useActiveOrganization();
-  const { data: clients } = useClients();
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   const { data: leveranciers, isLoading } = useLeveranciers({
     organizationId: activeOrganizationId ?? undefined,
     clientId: selectedClientId !== "all" ? selectedClientId : undefined,

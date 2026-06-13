@@ -122,7 +122,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const { toast } = useToast();
   const { data: existingLines } = usePurchaseInvoiceLines(invoice?.id);
   const replaceLines = useReplacePurchaseInvoiceLines();
-  const { data: leveranciers } = useLeveranciers({ clientId: invoice?.client_id });
+  const { data: leveranciers } = useLeveranciers({
+    organizationId: invoice?.organization_id ?? undefined,
+    clientId: invoice?.client_id ?? undefined,
+    enabled: !!invoice,
+  });
   const addLeverancier = useAddLeverancier();
   const updateLeverancier = useUpdateLeverancier();
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();

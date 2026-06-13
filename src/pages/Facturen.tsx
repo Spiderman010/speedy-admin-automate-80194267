@@ -189,8 +189,8 @@ export default function Facturen() {
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: clients } = useClients();
   const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   const { data: invoices, isLoading } = usePurchaseInvoices({
     organizationId: activeOrganizationId ?? undefined,
     clientId: clientFilter !== "all" ? clientFilter : undefined,
