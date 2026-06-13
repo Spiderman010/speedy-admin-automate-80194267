@@ -1021,6 +1021,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      has_min_role: {
+        Args: {
+          _min: Database["public"]["Enums"]["app_role"]
+          _organization_id: string
+          _user_id: string
+        }
+        Returns: boolean
+      }
       has_role: {
         Args: {
           _organization_id: string
@@ -1032,6 +1040,10 @@ export type Database = {
       is_organization_member: {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
+      }
+      role_rank: {
+        Args: { _role: Database["public"]["Enums"]["app_role"] }
+        Returns: number
       }
     }
     Enums: {
