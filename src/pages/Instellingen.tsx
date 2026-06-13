@@ -334,7 +334,7 @@ function HerkenningsregelsTab() {
 
   // Preview: fetch niet_gematcht rows, evaluate templates, report counts + sample — no DB writes.
   const handlePreview = async () => {
-    if (!templates) return;
+    if (!templates || !orgEnabled || !activeOrganizationId) return;
     setPreviewing(true);
     try {
       const activeRules = [...templates]
@@ -344,7 +344,8 @@ function HerkenningsregelsTab() {
       const { data: transactions, error } = await supabase
         .from("bank_transactions")
         .select("*")
-        .eq("match_status", "niet_gematcht");
+        .eq("match_status", "niet_gematcht")
+        .eq("organization_id", activeOrganizationId);
       if (error) throw error;
 
       const txList = transactions || [];
@@ -392,6 +393,7 @@ function HerkenningsregelsTab() {
             .select("id")
             .eq("source_type", "bank_transaction")
             .eq("source_id", tx.id)
+            .eq("organization_id", activeOrganizationId)
             .maybeSingle();
           if (existing) { skippedVraagpostExists++; continue; }
           totalWouldUpdate++;
@@ -424,7 +426,7 @@ function HerkenningsregelsTab() {
 
   // Apply: re-queries niet_gematcht rows for safety, then applies matching templates.
   const handleApply = async () => {
-    if (!user || !templates) return;
+    if (!user || !templates || !orgEnabled || !activeOrganizationId) return;
     setApplying(true);
     try {
       const activeRules = [...templates]
@@ -434,7 +436,8 @@ function HerkenningsregelsTab() {
       const { data: transactions, error } = await supabase
         .from("bank_transactions")
         .select("*")
-        .eq("match_status", "niet_gematcht");
+        .eq("match_status", "niet_gematcht")
+        .eq("organization_id", activeOrganizationId);
       if (error) throw error;
 
       let countGrootboek = 0;
@@ -468,6 +471,7 @@ function HerkenningsregelsTab() {
             })
             .eq("id", tx.id)
             .eq("match_status", "niet_gematcht")
+            .eq("organization_id", activeOrganizationId)
             .select("id");
           if (updated && updated.length > 0) {
             countGrootboek++;
@@ -484,6 +488,7 @@ function HerkenningsregelsTab() {
             .select("id")
             .eq("source_type", "bank_transaction")
             .eq("source_id", tx.id)
+            .eq("organization_id", activeOrganizationId)
             .maybeSingle();
           if (!existing) {
             const [y, m, d] = (tx.transaction_date || "").split("-");

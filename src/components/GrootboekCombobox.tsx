@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 
 function formatAccount(nummer: number, omschrijving: string) {
   return `${nummer} - ${omschrijving}`;
@@ -21,7 +22,11 @@ interface Props {
 
 export function GrootboekCombobox({ value, onValueChange, onIdChange, className, noneOption, placeholder = "Selecteer rekening..." }: Props) {
   const [open, setOpen] = useState(false);
-  const { data: accounts } = useActiveGrootboekrekeningen();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const { data: accounts } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: isReady && activeOrganizationId !== null,
+  });
 
   const items = accounts ?? [];
   const selectedItem = items.find(a => formatAccount(a.nummer, a.omschrijving) === value);
