@@ -35,6 +35,7 @@ import {
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useClients } from "@/hooks/useClients";
 import {
   useLeveranciers,
@@ -82,8 +83,13 @@ const emptyForm: LeverancierForm = {
 export default function Leveranciers() {
   const { toast } = useToast();
   const { selectedClientId, setSelectedClientId } = useClientContext();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
   const { data: clients } = useClients();
-  const { data: leveranciers, isLoading } = useLeveranciers(selectedClientId);
+  const { data: leveranciers, isLoading } = useLeveranciers({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: selectedClientId !== "all" ? selectedClientId : undefined,
+    enabled: isReady && activeOrganizationId !== null,
+  });
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
   const addMut = useAddLeverancier();
   const updateMut = useUpdateLeverancier();

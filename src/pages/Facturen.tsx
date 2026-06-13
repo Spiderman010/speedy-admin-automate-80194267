@@ -104,6 +104,7 @@ type SortField = "supplier" | "invoice_number" | "date" | "amount" | "btw" | "st
 type SortDir = "asc" | "desc";
 
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 
 type PurchaseTxCandidate = {
   tx: Tables<"bank_transactions">;
@@ -169,6 +170,7 @@ function scorePurchaseCandidates(
 
 export default function Facturen() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
   const navigate = useNavigate();
   const [clientFilter, setClientFilter] = useState(selectedClientId);
   const [uploadClientId, setUploadClientId] = useState<string>(
@@ -188,7 +190,12 @@ export default function Facturen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: clients } = useClients();
-  const { data: invoices, isLoading } = usePurchaseInvoices(clientFilter !== "all" ? clientFilter : undefined);
+  const orgEnabled = isReady && activeOrganizationId !== null;
+  const { data: invoices, isLoading } = usePurchaseInvoices({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+  });
   const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
   const updateInvoice = useUpdatePurchaseInvoice();
   const deleteInvoice = useDeletePurchaseInvoice();

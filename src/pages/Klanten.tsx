@@ -137,7 +137,10 @@ export default function Klanten() {
     activeOrganizationId ?? undefined,
     isReady && activeOrganizationId !== null,
   );
-  const { data: invoices } = usePurchaseInvoices();
+  const { data: invoices } = usePurchaseInvoices({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: isReady && activeOrganizationId !== null,
+  });
   const addClient = useAddClient();
   const updateClient = useUpdateClient();
   const deleteClient = useDeleteClient();
