@@ -196,7 +196,11 @@ export default function Facturen() {
     clientId: clientFilter !== "all" ? clientFilter : undefined,
     enabled: orgEnabled,
   });
-  const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: vraagposten } = useVraagposten({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+  });
   const updateInvoice = useUpdatePurchaseInvoice();
   const deleteInvoice = useDeletePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
@@ -211,8 +215,16 @@ export default function Facturen() {
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const updateBankTx = useUpdateBankTransaction();
 
-  const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
-  const { data: allBankTransactions } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: allAllocations } = useBankTransactionAllocations({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+  });
+  const { data: allBankTransactions } = useBankTransactions({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+  });
 
   const allocationsByInvoiceId = useMemo(() => {
     const m = new Map<string, NonNullable<typeof allAllocations>[number][]>();

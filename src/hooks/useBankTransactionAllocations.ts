@@ -25,26 +25,34 @@ const QUERY_KEY = ["bank_transaction_allocations"] as const;
 // Queries
 // ---------------------------------------------------------------------------
 
+export interface UseBankTransactionAllocationsOptions {
+  organizationId?: string;
+  clientId?: string;
+  enabled?: boolean;
+}
+
 /**
- * List all allocation rows, optionally scoped to a single client.
+ * List all allocation rows, optionally scoped to an org and/or client.
  * Suitable for building a lookup map (allocationsByTransactionId, etc.)
  * for the Bankafschriften table.
  */
-export function useBankTransactionAllocations(clientId?: string) {
+export function useBankTransactionAllocations(options: UseBankTransactionAllocationsOptions = {}) {
+  const { organizationId, clientId, enabled = true } = options;
   const { user } = useAuth();
   return useQuery({
-    queryKey: [...QUERY_KEY, clientId],
+    queryKey: [...QUERY_KEY, organizationId ?? "all", clientId ?? "all"],
     queryFn: async () => {
       let query = supabase
         .from(TABLE)
         .select("*")
         .order("created_at", { ascending: true });
+      if (organizationId) query = query.eq("organization_id", organizationId);
       if (clientId) query = query.eq("client_id", clientId);
       const { data, error } = await query;
       if (error) throw error;
       return data as BankTransactionAllocation[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 

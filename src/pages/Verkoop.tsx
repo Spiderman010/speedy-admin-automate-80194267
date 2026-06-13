@@ -164,8 +164,8 @@ export default function Verkoop() {
     setClientFilter(selectedClientId);
   }, [selectedClientId]);
 
-  const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
-  const { data: allBankTransactions } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: allAllocations } = useBankTransactionAllocations({ clientId: clientFilter !== "all" ? clientFilter : undefined });
+  const { data: allBankTransactions } = useBankTransactions({ clientId: clientFilter !== "all" ? clientFilter : undefined });
 
   const duplicateIds = useMemo(() => {
     if (!invoices) return new Set<string>();

@@ -84,6 +84,7 @@ type SortField = "date" | "amount" | "description" | "status";
 type SortDir = "asc" | "desc";
 
 import { useClientContext } from "@/hooks/useClientContext";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 
 const isOpenTransactionStatus = (matchStatus: string) =>
   matchStatus === "niet_gematcht" || matchStatus === "suggestie";
@@ -177,21 +178,39 @@ export default function Bank() {
 
   const { toast } = useToast();
 
-  const { data: clients } = useClients();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  const orgEnabled = isReady && activeOrganizationId !== null;
+
+  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen();
   const { data: bookingTemplates } = useBookingTemplates();
-  const { data: transactions, isLoading, refetch } = useBankTransactions(clientFilter !== "all" ? clientFilter : undefined);
-  const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices();
+  const { data: transactions, isLoading, refetch } = useBankTransactions({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+  });
+  const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const { data: salesInvs, refetch: refetchSales } = useSalesInvoices();
   const addTx = useAddBankTransaction();
   const updateTx = useUpdateBankTransaction();
   const updatePurchase = useUpdatePurchaseInvoice();
   const updateSales = useUpdateSalesInvoice();
   const createVraagpost = useCreateVraagpost();
-  const { data: vraagposten } = useVraagposten(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: vraagposten } = useVraagposten({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+  });
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const deleteAllocationsForTx = useDeleteAllocationsForTransaction();
-  const { data: allAllocations } = useBankTransactionAllocations(clientFilter !== "all" ? clientFilter : undefined);
+  const { data: allAllocations } = useBankTransactionAllocations({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+  });
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 

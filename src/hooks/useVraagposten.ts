@@ -7,18 +7,26 @@ export type Vraagpost = Tables<"vraagposten">;
 export type VraagpostInsert = TablesInsert<"vraagposten">;
 export type VraagpostStatus = "open" | "in_behandeling" | "opgelost" | "genegeerd";
 
-export function useVraagposten(clientId?: string) {
+export interface UseVraagpostenOptions {
+  organizationId?: string;
+  clientId?: string;
+  enabled?: boolean;
+}
+
+export function useVraagposten(options: UseVraagpostenOptions = {}) {
+  const { organizationId, clientId, enabled = true } = options;
   const { user } = useAuth();
   return useQuery({
-    queryKey: ["vraagposten", clientId ?? "all"],
+    queryKey: ["vraagposten", organizationId ?? "all", clientId ?? "all"],
     queryFn: async () => {
       let q = supabase.from("vraagposten").select("*").order("created_at", { ascending: false });
+      if (organizationId) q = q.eq("organization_id", organizationId);
       if (clientId && clientId !== "all") q = q.eq("client_id", clientId);
       const { data, error } = await q;
       if (error) throw error;
       return data as Vraagpost[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 

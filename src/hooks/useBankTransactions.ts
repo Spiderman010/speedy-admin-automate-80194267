@@ -6,18 +6,26 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 type BankTransaction = Tables<"bank_transactions">;
 type BankTransactionInsert = TablesInsert<"bank_transactions">;
 
-export function useBankTransactions(clientId?: string) {
+export interface UseBankTransactionsOptions {
+  organizationId?: string;
+  clientId?: string;
+  enabled?: boolean;
+}
+
+export function useBankTransactions(options: UseBankTransactionsOptions = {}) {
+  const { organizationId, clientId, enabled = true } = options;
   const { user } = useAuth();
   return useQuery({
-    queryKey: ["bank_transactions", clientId],
+    queryKey: ["bank_transactions", organizationId ?? "all", clientId ?? "all"],
     queryFn: async () => {
       let query = supabase.from("bank_transactions").select("*").order("transaction_date", { ascending: false });
+      if (organizationId) query = query.eq("organization_id", organizationId);
       if (clientId) query = query.eq("client_id", clientId);
       const { data, error } = await query;
       if (error) throw error;
       return data as BankTransaction[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 
