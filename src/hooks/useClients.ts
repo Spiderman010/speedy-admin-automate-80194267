@@ -6,7 +6,7 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 type Client = Tables<"clients">;
 type ClientInsert = TablesInsert<"clients">;
 
-export function useClients(organizationId?: string) {
+export function useClients(organizationId?: string, enabled = true) {
   const { user } = useAuth();
   return useQuery({
     queryKey: ["clients", user?.id ?? "", organizationId ?? "all"],
@@ -17,7 +17,7 @@ export function useClients(organizationId?: string) {
       if (error) throw error;
       return data as Client[];
     },
-    enabled: !!user,
+    enabled: !!user && enabled,
   });
 }
 

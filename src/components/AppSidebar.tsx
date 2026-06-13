@@ -43,8 +43,13 @@ const navItems = [
 
 export function AppSidebar() {
   const navigate = useNavigate();
-  const { activeOrganizationId } = useActiveOrganization();
-  const { data: clients } = useClients(activeOrganizationId ?? undefined);
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+  // Only fetch clients once the org context has resolved and we have a specific org.
+  // This prevents a brief window where an unfiltered query would return all RLS-accessible clients.
+  const { data: clients } = useClients(
+    activeOrganizationId ?? undefined,
+    isReady && activeOrganizationId !== null,
+  );
   const { selectedClientId, setSelectedClientId } = useClientContext();
 
   const handleLogout = async () => {

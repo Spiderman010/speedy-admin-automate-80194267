@@ -9,11 +9,20 @@ const LS_KEY = "ba_active_org";
 interface ActiveOrganizationContextType {
   activeOrganizationId: string | null;
   setActiveOrganizationId: (id: string) => void;
+  /** true once the active org has been resolved (localStorage / profile / first org) */
+  isReady: boolean;
+  /** true while memberships or profile are still loading */
+  isLoading: boolean;
+  /** false if the user has no org memberships at all */
+  hasOrganizations: boolean;
 }
 
 const ActiveOrganizationContext = createContext<ActiveOrganizationContextType>({
   activeOrganizationId: null,
   setActiveOrganizationId: () => {},
+  isReady: false,
+  isLoading: true,
+  hasOrganizations: false,
 });
 
 function useProfile() {
@@ -34,14 +43,22 @@ function useProfile() {
 }
 
 export function OrganizationProvider({ children }: { children: ReactNode }) {
-  const { data: organizations } = useOrganizations();
-  const { data: profile } = useProfile();
+  const { data: organizations, isLoading: orgsLoading } = useOrganizations();
+  const { data: profile, isLoading: profileLoading } = useProfile();
   const [activeOrganizationId, setActiveOrganizationIdState] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false);
   const initializedRef = useRef(false);
 
   useEffect(() => {
     if (initializedRef.current) return;
-    if (!organizations || organizations.length === 0) return;
+    if (!organizations || organizations.length === 0) {
+      // Orgs loaded but empty — nothing to pick; mark ready so callers don't wait forever.
+      if (!orgsLoading) {
+        initializedRef.current = true;
+        setIsReady(true);
+      }
+      return;
+    }
 
     const orgIds = organizations.map((o) => o.id);
 
@@ -50,17 +67,19 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
     if (stored && orgIds.includes(stored)) {
       setActiveOrganizationIdState(stored);
       initializedRef.current = true;
+      setIsReady(true);
       return;
     }
 
     // Priority 2: profile default_organization_id (wait until profile query settles)
-    if (profile === undefined) return;
+    if (profileLoading) return;
 
     const defaultId = profile?.default_organization_id;
     if (defaultId && orgIds.includes(defaultId)) {
       setActiveOrganizationIdState(defaultId);
       localStorage.setItem(LS_KEY, defaultId);
       initializedRef.current = true;
+      setIsReady(true);
       return;
     }
 
@@ -68,15 +87,24 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
     setActiveOrganizationIdState(organizations[0].id);
     localStorage.setItem(LS_KEY, organizations[0].id);
     initializedRef.current = true;
-  }, [organizations, profile]);
+    setIsReady(true);
+  }, [organizations, orgsLoading, profile, profileLoading]);
 
   const setActiveOrganizationId = (id: string) => {
     setActiveOrganizationIdState(id);
     localStorage.setItem(LS_KEY, id);
   };
 
+  const value: ActiveOrganizationContextType = {
+    activeOrganizationId,
+    setActiveOrganizationId,
+    isReady,
+    isLoading: orgsLoading || profileLoading,
+    hasOrganizations: (organizations?.length ?? 0) > 0,
+  };
+
   return (
-    <ActiveOrganizationContext.Provider value={{ activeOrganizationId, setActiveOrganizationId }}>
+    <ActiveOrganizationContext.Provider value={value}>
       {children}
     </ActiveOrganizationContext.Provider>
   );
