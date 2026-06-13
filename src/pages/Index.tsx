@@ -4,10 +4,10 @@ import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Users, FileText, Landmark, Receipt, AlertCircle, CheckCircle2, TrendingUp } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Users, FileText, Landmark, AlertCircle, CheckCircle2, HelpCircle } from "lucide-react";
 import { useClients } from "@/hooks/useClients";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
-import { useSalesInvoices } from "@/hooks/useSalesInvoices";
 import { useBankTransactions } from "@/hooks/useBankTransactions";
 import { useVraagposten } from "@/hooks/useVraagposten";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
@@ -15,8 +15,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { computeClientReadiness } from "@/lib/client-readiness";
-import { getInvoicePaymentState, getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { formatEuro } from "@/lib/format";
 import type { ReadinessStatus } from "@/lib/client-readiness";
 
 function statusLabel(s: ReadinessStatus): string {
@@ -36,9 +34,9 @@ export default function Dashboard() {
   const { setSelectedClientId } = useClientContext();
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const orgEnabled = isReady && activeOrganizationId !== null;
+
   const { data: clients, isLoading: loadingClients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   const { data: invoices, isLoading: loadingInvoices } = usePurchaseInvoices({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
-  const { data: salesInvoices, isLoading: loadingSales } = useSalesInvoices();
   const { data: transactions, isLoading: loadingBank } = useBankTransactions({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
   const { data: vraagposten, isLoading: loadingVraagposten } = useVraagposten({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
   const { data: grootboekrekeningen, isLoading: loadingGrootboek } = useGrootboekrekeningen({
@@ -47,40 +45,15 @@ export default function Dashboard() {
   });
 
   const pendingInvoices = invoices?.filter((i) => i.status === "te_controleren").length ?? 0;
-
   const unmatchedTx = transactions?.filter((t) => t.match_status === "niet_gematcht" || t.match_status === "suggestie").length ?? 0;
-  const totalInvoices = (invoices?.length ?? 0) + (salesInvoices?.length ?? 0);
+  const openVraagposten = vraagposten?.filter((vp) => vp.status === "open" || vp.status === "in_behandeling").length ?? 0;
 
-  const openSalesStats = useMemo(() => {
-    let amount = 0;
-    let countOpen = 0;
-    let countPartial = 0;
-    for (const inv of salesInvoices ?? []) {
-      const state = getInvoicePaymentState(inv);
-      if (state === "paid") continue;
-      if (state === "partial") {
-        countPartial++;
-        amount += getInvoiceRemainingAmount(inv) ?? 0;
-      } else {
-        countOpen++;
-        amount += getInvoiceRemainingAmount(inv) ?? getInvoiceTotalAmount(inv) ?? 0;
-      }
-    }
-    return { amount, countOpen, countPartial };
-  }, [salesInvoices]);
+  const isLoading = loadingClients || loadingInvoices || loadingBank || loadingVraagposten || loadingGrootboek;
 
-  const isLoading =
-    loadingClients ||
-    loadingInvoices ||
-    loadingBank ||
-    loadingSales ||
-    loadingVraagposten ||
-    loadingGrootboek;
-
-  const teVerwerkenItems = (() => {
+  const teVerwerkenItems = useMemo(() => {
     type WorkItem = {
       id: string;
-      type: "inkoop" | "verkoop" | "vraagpost";
+      type: "inkoop" | "vraagpost";
       label: string;
       sub: string;
       date: string;
@@ -99,17 +72,6 @@ export default function Dashboard() {
       });
     });
 
-    salesInvoices?.filter(i => i.status === "concept").forEach(inv => {
-      items.push({
-        id: inv.id,
-        type: "verkoop",
-        label: inv.customer_name || inv.invoice_number || "Verkoopfactuur",
-        sub: inv.invoice_number ? `Factuurnr. ${inv.invoice_number}` : "Concept",
-        date: inv.invoice_date || inv.created_at || "",
-        path: "/verkoop",
-      });
-    });
-
     vraagposten?.filter(vp => vp.status === "open").forEach(vp => {
       items.push({
         id: vp.id,
@@ -123,7 +85,7 @@ export default function Dashboard() {
 
     items.sort((a, b) => a.date.localeCompare(b.date));
     return items.slice(0, 5);
-  })();
+  }, [invoices, vraagposten]);
 
   const handleClientClick = (clientId: string) => {
     setSelectedClientId(clientId);
@@ -132,11 +94,12 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHeader title="Dashboard" description="Overzicht van alle administraties" />
+      <PageHeader title="Dagelijkse cockpit" description="Overzicht van alle openstaande werkzaamheden" />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      {/* ── Stat cards ── */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {isLoading ? (
-          Array.from({ length: 5 }).map((_, i) => (
+          Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}><CardContent className="p-6"><Skeleton className="h-16 w-full" /></CardContent></Card>
           ))
         ) : (
@@ -145,34 +108,36 @@ export default function Dashboard() {
               <StatCard title="Actieve klanten" value={clients?.length ?? 0} icon={Users} />
             </div>
             <div className="cursor-pointer" onClick={() => navigate("/facturen")}>
-              <StatCard title="Te verwerken facturen" value={pendingInvoices} icon={FileText} />
+              <StatCard title="Facturen te controleren" value={pendingInvoices} icon={FileText} />
             </div>
             <div className="cursor-pointer" onClick={() => navigate("/bank")}>
               <StatCard title="Open banktransacties" value={unmatchedTx} icon={Landmark} />
             </div>
-            <div className="cursor-pointer" onClick={() => navigate("/facturen")}>
-              <StatCard title="Totaal facturen" value={totalInvoices} icon={Receipt} />
-            </div>
-            <div className="cursor-pointer" onClick={() => navigate("/verkoop")}>
-              <StatCard
-                title="Openstaande verkoop"
-                value={formatEuro(openSalesStats.amount)}
-                icon={TrendingUp}
-                trend={
-                  openSalesStats.countOpen === 0 && openSalesStats.countPartial === 0
-                    ? "Geen open verkoopfacturen"
-                    : [
-                        openSalesStats.countOpen > 0 ? `${openSalesStats.countOpen} open facturen` : null,
-                        openSalesStats.countPartial > 0 ? `${openSalesStats.countPartial} deelbetalingen` : null,
-                      ].filter(Boolean).join(" · ")
-                }
-              />
+            <div className="cursor-pointer" onClick={() => navigate("/vraagposten")}>
+              <StatCard title="Open vraagposten" value={openVraagposten} icon={HelpCircle} />
             </div>
           </>
         )}
       </div>
 
-      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+      {/* ── Snelle acties ── */}
+      <div className="mt-6 flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => navigate("/bank")}>
+          <Landmark className="mr-2 h-4 w-4" />Bankafschriften
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => navigate("/facturen")}>
+          <FileText className="mr-2 h-4 w-4" />Facturen
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => navigate("/vraagposten")}>
+          <HelpCircle className="mr-2 h-4 w-4" />Vraagposten
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => navigate("/klanten")}>
+          <Users className="mr-2 h-4 w-4" />Klanten
+        </Button>
+      </div>
+
+      {/* ── Main content ── */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle className="font-display text-lg">Te verwerken</CardTitle>
@@ -201,7 +166,7 @@ export default function Dashboard() {
                       </p>
                     </div>
                     <Badge variant="outline" className="text-xs shrink-0">
-                      {item.type === "inkoop" ? "Inkoopfactuur" : item.type === "verkoop" ? "Verkoopfactuur" : "Vraagpost"}
+                      {item.type === "inkoop" ? "Inkoopfactuur" : "Vraagpost"}
                     </Badge>
                   </div>
                 ))}
@@ -232,7 +197,7 @@ export default function Dashboard() {
                     client,
                     transactions ?? [],
                     invoices ?? [],
-                    salesInvoices ?? [],
+                    [],
                     vraagposten ?? [],
                     grootboekrekeningen ?? [],
                   );
@@ -252,9 +217,6 @@ export default function Dashboard() {
                         <span>Inkoop: {readiness.inkoopTeControleren}</span>
                         <span>Bank: {readiness.bankGeblokkeerd}</span>
                         <span>Vragen: {readiness.openVraagposten}</span>
-                        {readiness.verkoopConcept > 0 && (
-                          <span>Concept: {readiness.verkoopConcept}</span>
-                        )}
                       </div>
                       {(readiness.configMissingBankDagboek ||
                         readiness.configMissingInkoopDagboek ||
