@@ -1592,35 +1592,37 @@ export default function Bank() {
               </Button>
             </div>
             {/* Blocker list */}
-            <div>
-              {shown.map(({ tx, source }) => (
-                <div key={tx.id} className="px-4 py-2 flex items-start gap-3 border-b border-amber-500/20 last:border-0">
-                  <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">
-                    {new Date(tx.transaction_date).toLocaleDateString("nl-NL")}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span
-                        className="text-xs font-medium text-foreground truncate max-w-[200px]"
-                        title={getDisplayDescription(tx.description)}
-                      >
-                        {getDisplayDescription(tx.description)}
-                      </span>
-                      <span className={`text-xs font-mono shrink-0 ${tx.amount < 0 ? "text-destructive" : "text-success"}`}>
-                        {formatCurrency(tx.amount)}
-                      </span>
-                      <Badge variant="outline" className="text-xs shrink-0 px-1.5 py-0">
-                        {MATCH_STATUS_NL[tx.match_status] ?? tx.match_status}
-                      </Badge>
+            {showExportBlockers && (
+              <div>
+                {shown.map(({ tx, source }) => (
+                  <div key={tx.id} className="px-4 py-2 flex items-start gap-3 border-b border-amber-500/20 last:border-0">
+                    <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">
+                      {new Date(tx.transaction_date).toLocaleDateString("nl-NL")}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className="text-xs font-medium text-foreground truncate max-w-[200px]"
+                          title={getDisplayDescription(tx.description)}
+                        >
+                          {getDisplayDescription(tx.description)}
+                        </span>
+                        <span className={`text-xs font-mono shrink-0 ${tx.amount < 0 ? "text-destructive" : "text-success"}`}>
+                          {formatCurrency(tx.amount)}
+                        </span>
+                        <Badge variant="outline" className="text-xs shrink-0 px-1.5 py-0">
+                          {MATCH_STATUS_NL[tx.match_status] ?? tx.match_status}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                        {BLOCKER_REASON[source]}
+                      </p>
                     </div>
-                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                      {BLOCKER_REASON[source]}
-                    </p>
                   </div>
-                </div>
-              ))}
-            </div>
-            {remaining > 0 && (
+                ))}
+              </div>
+            )}
+            {showExportBlockers && remaining > 0 && (
               <div className="px-4 py-2 border-t border-amber-500/30">
                 <p className="text-xs text-amber-700 dark:text-amber-400">
                   Nog {remaining} blokkade{remaining !== 1 ? "s" : ""} niet getoond
