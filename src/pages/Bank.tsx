@@ -152,6 +152,7 @@ export default function Bank() {
   const [bulkLedgerId, setBulkLedgerId] = useState("");
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
   const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
+  const [showExportBlockers, setShowExportBlockers] = useState(true);
 
   type ExportPreflightData = {
     exportCandidates: Tables<"bank_transactions">[];
