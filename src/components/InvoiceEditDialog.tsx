@@ -433,14 +433,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       (existingLines ?? []).map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: Number(l.amount_excl),
-        btw_percentage: l.btw_percentage != null ? Number(l.btw_percentage) : null,
+        btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
         grootboekrekening_id: l.grootboekrekening_id,
         _ledgerLabel: "",
       }))
     );
-  }, [existingLines, invoice?.id]);
+  }, [existingLines, invoice?.id, isBtwVrijgesteld]);
 
-  const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
+  const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
   const removeLine = (i: number) => setLines((p) => p.filter((_, idx) => idx !== i));
   const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
