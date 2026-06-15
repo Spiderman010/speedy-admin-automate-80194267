@@ -829,14 +829,16 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                       onClick={() => {
                         const headerExcl = parseFloat(form.amount_excl) || 0;
                         const headerBtw = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
-                        const ledgerLabel = form.ledger_account_text || "";
+                        const headerLedger = grootboekrekeningen?.find(
+                          (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
+                        ) ?? null;
                         const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
                         setLines([{
                           omschrijving,
                           amount_excl: headerExcl,
                           btw_percentage: headerBtw,
-                          grootboekrekening_id: null,
-                          _ledgerLabel: ledgerLabel,
+                          grootboekrekening_id: headerLedger?.id ?? null,
+                          _ledgerLabel: headerLedger ? form.ledger_account_text : "",
                         }]);
                       }}
                     >
@@ -945,12 +947,15 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                         onClick={() => {
                           const remaining = headerExcl - sumExcl;
                           const headerBtw = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
+                          const headerLedger = grootboekrekeningen?.find(
+                            (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
+                          ) ?? null;
                           setLines((prev) => [...prev, {
                             omschrijving: "Resterend bedrag",
                             amount_excl: Math.round(remaining * 100) / 100,
                             btw_percentage: headerBtw,
-                            grootboekrekening_id: null,
-                            _ledgerLabel: "",
+                            grootboekrekening_id: headerLedger?.id ?? null,
+                            _ledgerLabel: headerLedger ? form.ledger_account_text : "",
                           }]);
                         }}
                       >
