@@ -322,13 +322,46 @@ function HerkenningsregelsTab() {
   };
 
   const handleSave = () => {
+    if (!activeOrganizationId) {
+      toast({
+        title: "Geen actieve organisatie",
+        description: "Selecteer eerst een organisatie voordat je een herkenningsregel opslaat.",
+        variant: "destructive",
+      });
+      return;
+    }
     const payload: any = { ...form };
     if (form.actie !== "grootboek") { payload.ledger_account_text = null; payload.ledger_account_id = null; }
     if (form.geldt_voor !== "specifieke_klant") payload.client_id_filter = null;
     if (editId) {
-      updateMut.mutate({ id: editId, ...payload }, { onSuccess: () => { setDialogOpen(false); toast({ title: "Regel bijgewerkt" }); } });
+      updateMut.mutate(
+        { id: editId, ...payload },
+        {
+          onSuccess: () => { setDialogOpen(false); toast({ title: "Regel bijgewerkt" }); },
+          onError: (error) => {
+            toast({
+              title: "Opslaan mislukt",
+              description: error instanceof Error ? error.message : "De herkenningsregel kon niet worden bijgewerkt.",
+              variant: "destructive",
+            });
+          },
+        }
+      );
     } else {
-      addMut.mutate(payload, { onSuccess: () => { setDialogOpen(false); toast({ title: "Regel aangemaakt" }); } });
+      payload.organization_id = activeOrganizationId;
+      addMut.mutate(
+        payload,
+        {
+          onSuccess: () => { setDialogOpen(false); toast({ title: "Regel aangemaakt" }); },
+          onError: (error) => {
+            toast({
+              title: "Opslaan mislukt",
+              description: error instanceof Error ? error.message : "De herkenningsregel kon niet worden opgeslagen.",
+              variant: "destructive",
+            });
+          },
+        }
+      );
     }
   };
 
