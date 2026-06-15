@@ -84,6 +84,17 @@ serve(async (req) => {
       });
     }
 
+    const mimeType = file.type || "image/jpeg";
+    const isImage = mimeType.startsWith("image/");
+    const isPdf = mimeType === "application/pdf";
+
+    if (!isImage && !isPdf) {
+      return new Response(
+        JSON.stringify({ error: "Unsupported file type. Use PDF, JPG, or PNG." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Upload file to storage
     const fileExt = file.name.split(".").pop();
     const filePath = `${user.id}/sales/${clientId}/${crypto.randomUUID()}.${fileExt}`;
@@ -105,17 +116,6 @@ serve(async (req) => {
     const base64 = btoa(
       new Uint8Array(fileBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
     );
-
-    const mimeType = file.type || "image/jpeg";
-    const isImage = mimeType.startsWith("image/");
-    const isPdf = mimeType === "application/pdf";
-
-    if (!isImage && !isPdf) {
-      return new Response(
-        JSON.stringify({ error: "Unsupported file type. Use PDF, JPG, or PNG." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
 
     const messages = [
       {
