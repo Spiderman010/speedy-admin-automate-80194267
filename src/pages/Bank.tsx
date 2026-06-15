@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -152,6 +152,7 @@ export default function Bank() {
   const [bulkLedgerId, setBulkLedgerId] = useState("");
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
   const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
+  const [showExportBlockers, setShowExportBlockers] = useState(true);
 
   type ExportPreflightData = {
     exportCandidates: Tables<"bank_transactions">[];
@@ -1571,37 +1572,57 @@ export default function Bank() {
                   )}
                 </div>
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowExportBlockers(v => !v)}
+                className="shrink-0 text-amber-800 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+              >
+                {showExportBlockers ? (
+                  <>
+                    <ChevronUp className="h-4 w-4 mr-1" />
+                    Inklappen
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="h-4 w-4 mr-1" />
+                    Uitklappen
+                  </>
+                )}
+              </Button>
             </div>
             {/* Blocker list */}
-            <div>
-              {shown.map(({ tx, source }) => (
-                <div key={tx.id} className="px-4 py-2 flex items-start gap-3 border-b border-amber-500/20 last:border-0">
-                  <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">
-                    {new Date(tx.transaction_date).toLocaleDateString("nl-NL")}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span
-                        className="text-xs font-medium text-foreground truncate max-w-[200px]"
-                        title={getDisplayDescription(tx.description)}
-                      >
-                        {getDisplayDescription(tx.description)}
-                      </span>
-                      <span className={`text-xs font-mono shrink-0 ${tx.amount < 0 ? "text-destructive" : "text-success"}`}>
-                        {formatCurrency(tx.amount)}
-                      </span>
-                      <Badge variant="outline" className="text-xs shrink-0 px-1.5 py-0">
-                        {MATCH_STATUS_NL[tx.match_status] ?? tx.match_status}
-                      </Badge>
+            {showExportBlockers && (
+              <div>
+                {shown.map(({ tx, source }) => (
+                  <div key={tx.id} className="px-4 py-2 flex items-start gap-3 border-b border-amber-500/20 last:border-0">
+                    <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">
+                      {new Date(tx.transaction_date).toLocaleDateString("nl-NL")}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className="text-xs font-medium text-foreground truncate max-w-[200px]"
+                          title={getDisplayDescription(tx.description)}
+                        >
+                          {getDisplayDescription(tx.description)}
+                        </span>
+                        <span className={`text-xs font-mono shrink-0 ${tx.amount < 0 ? "text-destructive" : "text-success"}`}>
+                          {formatCurrency(tx.amount)}
+                        </span>
+                        <Badge variant="outline" className="text-xs shrink-0 px-1.5 py-0">
+                          {MATCH_STATUS_NL[tx.match_status] ?? tx.match_status}
+                        </Badge>
+                      </div>
+                      <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                        {BLOCKER_REASON[source]}
+                      </p>
                     </div>
-                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                      {BLOCKER_REASON[source]}
-                    </p>
                   </div>
-                </div>
-              ))}
-            </div>
-            {remaining > 0 && (
+                ))}
+              </div>
+            )}
+            {showExportBlockers && remaining > 0 && (
               <div className="px-4 py-2 border-t border-amber-500/30">
                 <p className="text-xs text-amber-700 dark:text-amber-400">
                   Nog {remaining} blokkade{remaining !== 1 ? "s" : ""} niet getoond
