@@ -36,9 +36,11 @@ serve(async (req) => {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Verify user
-    const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    const { data: { user }, error: authError } = await anonClient.auth.getUser(
+    // Verify user with a request-scoped client so RLS applies to the access check
+    const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: { user }, error: authError } = await userClient.auth.getUser(
       authHeader.replace("Bearer ", "")
     );
     if (authError || !user) {
@@ -55,6 +57,28 @@ serve(async (req) => {
     if (!file || !clientId) {
       return new Response(JSON.stringify({ error: "file and client_id are required" }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Validate UUID format to prevent unexpected storage path segments
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!UUID_RE.test(clientId)) {
+      return new Response(JSON.stringify({ error: "Invalid client_id" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Authorization: confirm the authenticated user can access this client via RLS
+    const { data: clientRow, error: clientErr } = await userClient
+      .from("clients")
+      .select("id")
+      .eq("id", clientId)
+      .maybeSingle();
+    if (clientErr || !clientRow) {
+      return new Response(JSON.stringify({ error: "Forbidden: no access to this client" }), {
+        status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
