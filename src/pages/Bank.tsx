@@ -1572,6 +1572,24 @@ export default function Bank() {
                   )}
                 </div>
               </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowExportBlockers(v => !v)}
+                className="shrink-0 text-amber-800 dark:text-amber-300 hover:text-amber-900 dark:hover:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+              >
+                {showExportBlockers ? (
+                  <>
+                    <ChevronUp className="h-4 w-4 mr-1" />
+                    Inklappen
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="h-4 w-4 mr-1" />
+                    Uitklappen
+                  </>
+                )}
+              </Button>
             </div>
             {/* Blocker list */}
             <div>
