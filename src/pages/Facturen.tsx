@@ -205,10 +205,6 @@ export default function Facturen() {
   const deleteInvoice = useDeletePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
-  const editInvoiceIdx = useMemo(() => {
-    if (!editInvoice) return -1;
-    return filteredSorted.findIndex((inv) => inv.id === editInvoice.id);
-  }, [editInvoice, filteredSorted]);
   const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
   const deleteHasExportWarning = deleteTarget?.status === "geexporteerd";
   const [afletteringInvoice, setAfletteringInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
@@ -402,6 +398,11 @@ export default function Facturen() {
     });
     return list;
   }, [searchFiltered, workflowFilter, paymentFilter, routeFilter, sortField, sortDir]);
+
+  const editInvoiceIdx = useMemo(() => {
+    if (!editInvoice) return -1;
+    return filteredSorted.findIndex((inv) => inv.id === editInvoice.id);
+  }, [editInvoice, filteredSorted]);
 
   const duplicateIds = useMemo(() => {
     const result = new Set<string>();
