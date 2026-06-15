@@ -226,7 +226,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   useEffect(() => {
     if (invoice) {
       const pct = invoice.btw_percentage?.toString() || "21";
-      const enabled = parseFloat(pct) !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0);
+      const rawEnabled = parseFloat(pct) !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0);
+      const enabled = isBtwVrijgesteld ? false : rawEnabled;
       setBtwEnabled(enabled);
 
       const ledgerValue = invoice.ledger_account_text || "";
