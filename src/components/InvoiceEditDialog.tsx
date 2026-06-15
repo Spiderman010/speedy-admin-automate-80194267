@@ -167,6 +167,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [duplicateMatches, setDuplicateMatches] = useState<Array<{ id: string; supplier: string | null; invoice_date: string | null; amount_incl: number | null }>>([]);
   const qc = useQueryClient();
   const canGenerateUbl = invoice ? ["gecontroleerd", "geexporteerd"].includes(invoice.status) : false;
+  const clientBtwType = ((client as unknown as { btw_type?: string } | null)?.btw_type)
+    ?? (client?.btw_vrijgesteld ? "vrijgesteld" : "plichtig");
+  const isBtwVrijgesteld = clientBtwType === "vrijgesteld";
 
   const normalizeSupplierName = (s: string) =>
     s.toLowerCase().trim().replace(/\s+/g, " ");
