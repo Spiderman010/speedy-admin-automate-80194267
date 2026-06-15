@@ -167,6 +167,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const [duplicateMatches, setDuplicateMatches] = useState<Array<{ id: string; supplier: string | null; invoice_date: string | null; amount_incl: number | null }>>([]);
   const qc = useQueryClient();
   const canGenerateUbl = invoice ? ["gecontroleerd", "geexporteerd"].includes(invoice.status) : false;
+  const clientBtwType = ((client as unknown as { btw_type?: string } | null)?.btw_type)
+    ?? (client?.btw_vrijgesteld ? "vrijgesteld" : "plichtig");
+  const isBtwVrijgesteld = clientBtwType === "vrijgesteld";
 
   const normalizeSupplierName = (s: string) =>
     s.toLowerCase().trim().replace(/\s+/g, " ");
@@ -223,7 +226,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   useEffect(() => {
     if (invoice) {
       const pct = invoice.btw_percentage?.toString() || "21";
-      const enabled = parseFloat(pct) !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0);
+      const rawEnabled = parseFloat(pct) !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0);
+      const enabled = isBtwVrijgesteld ? false : rawEnabled;
       setBtwEnabled(enabled);
 
       const ledgerValue = invoice.ledger_account_text || "";
@@ -429,14 +433,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       (existingLines ?? []).map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: Number(l.amount_excl),
-        btw_percentage: l.btw_percentage != null ? Number(l.btw_percentage) : null,
+        btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
         grootboekrekening_id: l.grootboekrekening_id,
         _ledgerLabel: "",
       }))
     );
-  }, [existingLines, invoice?.id]);
+  }, [existingLines, invoice?.id, isBtwVrijgesteld]);
 
-  const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
+  const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
   const removeLine = (i: number) => setLines((p) => p.filter((_, idx) => idx !== i));
   const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -494,8 +498,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       invoice_date: form.invoice_date || null,
       amount_excl: amountExcl,
       amount_incl: amountIncl,
-      btw_amount: form.btw_amount ? parseFloat(form.btw_amount) : null,
-      btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
+      btw_amount: isBtwVrijgesteld ? 0 : (form.btw_amount ? parseFloat(form.btw_amount) : null),
+      btw_percentage: isBtwVrijgesteld ? 0 : (form.btw_percentage ? parseFloat(form.btw_percentage) : null),
       ledger_account_text: form.ledger_account_text || null,
       notes: form.notes || null,
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
@@ -511,7 +515,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       lines: lines.map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: Number(l.amount_excl) || 0,
-        btw_percentage: l.btw_percentage,
+        btw_percentage: isBtwVrijgesteld ? 0 : l.btw_percentage,
         grootboekrekening_id: l.grootboekrekening_id,
       })),
     });
@@ -731,7 +735,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               <div>
                 <Label>BTW-bedrag</Label>
                 <Input type="number" step="0.01" value={form.btw_amount}
-                  onChange={e => set("btw_amount", e.target.value)} />
+                  onChange={e => set("btw_amount", e.target.value)} disabled={isBtwVrijgesteld} />
               </div>
             </div>
 
@@ -740,6 +744,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 <Label>BTW toepassen</Label>
                 <Switch
                   checked={btwEnabled}
+                  disabled={isBtwVrijgesteld}
                   onCheckedChange={(checked) => {
                     setBtwEnabled(checked);
                     if (!checked) {
@@ -753,7 +758,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
               <div>
                 <Label>BTW %</Label>
-                {btwEnabled ? (
+                {btwEnabled && !isBtwVrijgesteld ? (
                   <Select value={form.btw_percentage} onValueChange={(v) => set("btw_percentage", v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -766,6 +771,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   <Input value="0" disabled />
                 )}
               </div>
+              {isBtwVrijgesteld && (
+                <p className="text-xs text-muted-foreground">
+                  Klant is BTW-vrijgesteld: BTW wordt op 0 gezet.
+                </p>
+              )}
             </div>
 
             <div>
@@ -815,6 +825,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                       <Select
                         value={String(l.btw_percentage ?? 0)}
                         onValueChange={(v) => updateLine(i, { btw_percentage: parseFloat(v) })}
+                        disabled={isBtwVrijgesteld}
                       >
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
