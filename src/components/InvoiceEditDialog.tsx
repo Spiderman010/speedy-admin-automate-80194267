@@ -557,7 +557,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={hasFile ? "sm:max-w-6xl lg:max-w-7xl w-[95vw] max-h-[92vh] flex flex-col" : "sm:max-w-2xl w-[90vw] max-h-[90vh] flex flex-col"}>
+      <DialogContent className={hasFile ? "sm:max-w-6xl lg:max-w-7xl w-[95vw] max-h-[92vh] flex flex-col overflow-hidden" : "sm:max-w-2xl w-[90vw] max-h-[90vh] flex flex-col overflow-hidden"}>
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             Factuur controleren
@@ -590,12 +590,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           </DialogTitle>
         </DialogHeader>
 
-        <div className={hasFile ? "grid grid-cols-2 gap-6 flex-1 overflow-hidden min-h-0" : "flex-1 overflow-auto"}>
+        <div className={hasFile ? "grid grid-cols-2 gap-6 flex-1 overflow-hidden min-h-0" : "flex flex-col flex-1 overflow-hidden min-h-0"}>
           {hasFile && (
             <InvoicePreview filePath={invoice.file_path} />
           )}
 
-          <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
+          <div className="space-y-4 overflow-y-auto flex-1 min-h-0 h-full pr-1">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Leverancier *</Label>
