@@ -498,8 +498,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       invoice_date: form.invoice_date || null,
       amount_excl: amountExcl,
       amount_incl: amountIncl,
-      btw_amount: form.btw_amount ? parseFloat(form.btw_amount) : null,
-      btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
+      btw_amount: isBtwVrijgesteld ? 0 : (form.btw_amount ? parseFloat(form.btw_amount) : null),
+      btw_percentage: isBtwVrijgesteld ? 0 : (form.btw_percentage ? parseFloat(form.btw_percentage) : null),
       ledger_account_text: form.ledger_account_text || null,
       notes: form.notes || null,
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
@@ -515,7 +515,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       lines: lines.map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: Number(l.amount_excl) || 0,
-        btw_percentage: l.btw_percentage,
+        btw_percentage: isBtwVrijgesteld ? 0 : l.btw_percentage,
         grootboekrekening_id: l.grootboekrekening_id,
       })),
     });
