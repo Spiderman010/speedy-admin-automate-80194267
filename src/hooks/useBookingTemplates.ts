@@ -20,6 +20,7 @@ export interface BookingTemplate {
   prioriteit: number | null;
   actief: boolean;
   created_at: string;
+  organization_id?: string | null;
 }
 
 export interface UseBookingTemplatesOptions {
