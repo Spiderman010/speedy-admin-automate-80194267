@@ -593,12 +593,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 </Tooltip>
               </TooltipProvider>
             </DialogTitle>
-            {(hasPrev !== undefined || hasNext !== undefined) && (
+            {(onPrev || onNext) && (
               <div className="flex items-center gap-1 shrink-0">
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={!hasPrev} onClick={onPrev}>
+                <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!hasPrev} onClick={onPrev}>
                   <ChevronLeft className="h-3.5 w-3.5 mr-0.5" />Vorige
                 </Button>
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={!hasNext} onClick={onNext}>
+                <Button type="button" variant="outline" size="sm" className="h-7 px-2 text-xs" disabled={!hasNext} onClick={onNext}>
                   Volgende<ChevronRight className="h-3.5 w-3.5 ml-0.5" />
                 </Button>
               </div>
