@@ -825,6 +825,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                       <Select
                         value={String(l.btw_percentage ?? 0)}
                         onValueChange={(v) => updateLine(i, { btw_percentage: parseFloat(v) })}
+                        disabled={isBtwVrijgesteld}
                       >
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
