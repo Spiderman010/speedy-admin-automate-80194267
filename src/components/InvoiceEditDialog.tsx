@@ -557,7 +557,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={hasFile ? "sm:max-w-5xl max-h-[90vh] flex flex-col" : "sm:max-w-lg flex flex-col"}>
+      <DialogContent className={hasFile ? "sm:max-w-6xl lg:max-w-7xl w-[95vw] max-h-[92vh] flex flex-col" : "sm:max-w-2xl w-[90vw] max-h-[90vh] flex flex-col"}>
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             Factuur controleren
