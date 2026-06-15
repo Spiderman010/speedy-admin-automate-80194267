@@ -2169,16 +2169,32 @@ export default function Bank() {
         transaction={afletteringTx}
         allocations={afletteringTx ? (allocationsByTxId.get(afletteringTx.id) ?? []) : []}
         allAllocations={allAllocations ?? []}
-        purchaseInvoices={invoices ?? []}
-        salesInvoices={salesInvs ?? []}
+        purchaseInvoices={
+          afletteringTx?.client_id
+            ? (invoices ?? []).filter(i => i.client_id === afletteringTx.client_id)
+            : []
+        }
+        salesInvoices={
+          afletteringTx?.client_id
+            ? (salesInvs ?? []).filter(i => i.client_id === afletteringTx.client_id)
+            : []
+        }
       />
 
       <BankMatchDialog
         open={!!matchTx}
         onOpenChange={(v) => { if (!v) closeMatchDialog(); }}
         transaction={matchTx}
-        purchaseInvoices={(invoices ?? []).filter(i => matchTx ? i.client_id === matchTx.client_id : true)}
-        salesInvoices={(salesInvs ?? []).filter(i => matchTx ? i.client_id === matchTx.client_id : true)}
+        purchaseInvoices={
+          matchTx?.client_id
+            ? (invoices ?? []).filter(i => i.client_id === matchTx.client_id)
+            : []
+        }
+        salesInvoices={
+          matchTx?.client_id
+            ? (salesInvs ?? []).filter(i => i.client_id === matchTx.client_id)
+            : []
+        }
         onConfirm={handleMatch}
         onManualBook={handleManualBook}
         onRefresh={handleRefreshMatching}

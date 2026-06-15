@@ -352,7 +352,9 @@ export function BankAfletteringDrawer({
 
                   {suggestions.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
-                      Geen passende openstaande facturen gevonden.
+                      {transaction?.client_id
+                        ? "Geen passende openstaande facturen gevonden."
+                        : "Kies eerst een klant op deze bankregel om facturen te tonen."}
                     </p>
                   ) : (
                     <div className="space-y-2">
