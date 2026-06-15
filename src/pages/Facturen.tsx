@@ -205,6 +205,10 @@ export default function Facturen() {
   const deleteInvoice = useDeletePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
   const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
+  const editInvoiceIdx = useMemo(() => {
+    if (!editInvoice) return -1;
+    return filteredSorted.findIndex((inv) => inv.id === editInvoice.id);
+  }, [editInvoice, filteredSorted]);
   const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
   const deleteHasExportWarning = deleteTarget?.status === "geexporteerd";
   const [afletteringInvoice, setAfletteringInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
@@ -893,6 +897,10 @@ export default function Facturen() {
           const found = invoices?.find((inv) => inv.id === id);
           if (found) setEditInvoice(found);
         }}
+        hasPrev={editInvoiceIdx > 0}
+        hasNext={editInvoiceIdx >= 0 && editInvoiceIdx < filteredSorted.length - 1}
+        onPrev={() => editInvoiceIdx > 0 && setEditInvoice(filteredSorted[editInvoiceIdx - 1])}
+        onNext={() => editInvoiceIdx >= 0 && editInvoiceIdx < filteredSorted.length - 1 && setEditInvoice(filteredSorted[editInvoiceIdx + 1])}
       />
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>

@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info, ChevronLeft, ChevronRight } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,6 +45,10 @@ interface Props {
   onApprove: (id: string, updates: Partial<PurchaseInvoice>) => Promise<void>;
   client?: Client | null;
   onOpenExisting?: (invoiceId: string) => void;
+  hasPrev?: boolean;
+  hasNext?: boolean;
+  onPrev?: () => void;
+  onNext?: () => void;
 }
 
 function InvoicePreview({ filePath }: { filePath: string | null }) {
@@ -118,7 +122,7 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
   );
 }
 
-export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client, onOpenExisting }: Props) {
+export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, client, onOpenExisting, hasPrev, hasNext, onPrev, onNext }: Props) {
   const { toast } = useToast();
   const { data: existingLines } = usePurchaseInvoiceLines(invoice?.id);
   const replaceLines = useReplacePurchaseInvoiceLines();
@@ -559,35 +563,47 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={hasFile ? "sm:max-w-6xl lg:max-w-7xl w-[95vw] max-h-[92vh] flex flex-col overflow-hidden" : "sm:max-w-2xl w-[90vw] max-h-[90vh] flex flex-col overflow-hidden"}>
         <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2 flex-wrap">
-            Factuur controleren
-            <Badge variant={invoice.status === "te_controleren" ? "secondary" : "default"}>
-              {invoice.status === "te_controleren" ? "Te controleren" : invoice.status}
-            </Badge>
-            <Badge variant="outline">{getDocumentRouteLabel(documentRoute)}</Badge>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Badge
-                    variant="outline"
-                    className={
-                      ocrScore >= 5
-                        ? "cursor-default border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200"
-                        : ocrScore >= 3
-                        ? "cursor-default border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-                        : "cursor-default border-destructive/50 bg-destructive/10 text-destructive"
-                    }
-                  >
-                    <Info className="mr-1 h-3 w-3" />
-                    {ocrScore}/6 velden herkend
-                  </Badge>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Indicatie op basis van ingevulde herkende velden; geen AI-zekerheidsscore.</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </DialogTitle>
+          <div className="flex items-start justify-between gap-4">
+            <DialogTitle className="flex items-center gap-2 flex-wrap">
+              Factuur controleren
+              <Badge variant={invoice.status === "te_controleren" ? "secondary" : "default"}>
+                {invoice.status === "te_controleren" ? "Te controleren" : invoice.status}
+              </Badge>
+              <Badge variant="outline">{getDocumentRouteLabel(documentRoute)}</Badge>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Badge
+                      variant="outline"
+                      className={
+                        ocrScore >= 5
+                          ? "cursor-default border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200"
+                          : ocrScore >= 3
+                          ? "cursor-default border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                          : "cursor-default border-destructive/50 bg-destructive/10 text-destructive"
+                      }
+                    >
+                      <Info className="mr-1 h-3 w-3" />
+                      {ocrScore}/6 velden herkend
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Indicatie op basis van ingevulde herkende velden; geen AI-zekerheidsscore.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </DialogTitle>
+            {(hasPrev !== undefined || hasNext !== undefined) && (
+              <div className="flex items-center gap-1 shrink-0">
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={!hasPrev} onClick={onPrev}>
+                  <ChevronLeft className="h-3.5 w-3.5 mr-0.5" />Vorige
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={!hasNext} onClick={onNext}>
+                  Volgende<ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                </Button>
+              </div>
+            )}
+          </div>
         </DialogHeader>
 
         <div className={hasFile ? "grid grid-cols-2 gap-6 flex-1 overflow-hidden min-h-0" : "flex flex-col flex-1 overflow-hidden min-h-0"}>
