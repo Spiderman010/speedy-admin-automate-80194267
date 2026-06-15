@@ -735,7 +735,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               <div>
                 <Label>BTW-bedrag</Label>
                 <Input type="number" step="0.01" value={form.btw_amount}
-                  onChange={e => set("btw_amount", e.target.value)} />
+                  onChange={e => set("btw_amount", e.target.value)} disabled={isBtwVrijgesteld} />
               </div>
             </div>
 
@@ -744,6 +744,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 <Label>BTW toepassen</Label>
                 <Switch
                   checked={btwEnabled}
+                  disabled={isBtwVrijgesteld}
                   onCheckedChange={(checked) => {
                     setBtwEnabled(checked);
                     if (!checked) {
@@ -757,7 +758,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
               <div>
                 <Label>BTW %</Label>
-                {btwEnabled ? (
+                {btwEnabled && !isBtwVrijgesteld ? (
                   <Select value={form.btw_percentage} onValueChange={(v) => set("btw_percentage", v)}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -770,6 +771,11 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   <Input value="0" disabled />
                 )}
               </div>
+              {isBtwVrijgesteld && (
+                <p className="text-xs text-muted-foreground">
+                  Klant is BTW-vrijgesteld: BTW wordt op 0 gezet.
+                </p>
+              )}
             </div>
 
             <div>
