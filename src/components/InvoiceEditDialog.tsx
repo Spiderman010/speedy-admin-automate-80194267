@@ -59,13 +59,16 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
 
   useEffect(() => {
     if (!filePath) { setUrl(null); return; }
+    setUrl(null);
     setLoading(true);
+    setZoom(1);
+    setRotation(0);
     supabase.storage.from("invoices").createSignedUrl(filePath, 3600).then(({ data }) => {
       setUrl(data?.signedUrl ?? null);
       setLoading(false);
+    }).catch(() => {
+      setLoading(false);
     });
-    setZoom(1);
-    setRotation(0);
   }, [filePath]);
 
   if (!filePath) {
@@ -608,7 +611,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
         <div className={hasFile ? "grid grid-cols-2 gap-6 flex-1 overflow-hidden min-h-0" : "flex flex-col flex-1 overflow-hidden min-h-0"}>
           {hasFile && (
-            <InvoicePreview filePath={invoice.file_path} />
+            <InvoicePreview key={invoice.file_path ?? invoice.id} filePath={invoice.file_path} />
           )}
 
           <div className="space-y-4 overflow-y-auto flex-1 min-h-0 h-full pr-1">
