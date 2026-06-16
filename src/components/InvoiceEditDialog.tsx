@@ -1101,7 +1101,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           </div>
         </div>
 
-        <DialogFooter className="gap-2 flex-shrink-0 border-t pt-4">
+        <DialogFooter className="gap-2 flex-shrink-0 border-t pt-3 mt-2 bg-background flex-wrap">
           <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
             <HelpCircle className="mr-2 h-4 w-4" />Maak vraagpost
           </Button>
