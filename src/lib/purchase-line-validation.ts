@@ -73,8 +73,8 @@ export function computeLineDiffs(
   return { excl, btw, incl, tolerance, exclOk, btwOk, inclOk, allOk: exclOk && btwOk && inclOk };
 }
 
-const fmt = (n: number) => `€${n.toFixed(2)}`;
-const fmtDiff = (d: number) => `${d > 0 ? "+" : ""}${fmt(d)}`;
+const fmt = (n: number) => `€${Math.abs(n).toFixed(2)}`;
+const fmtDiff = (d: number) => `${d < 0 ? "-" : "+"}${fmt(d)}`;
 
 /**
  * Returns a Dutch validation error string, or null when lines are valid.
