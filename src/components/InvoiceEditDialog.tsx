@@ -197,15 +197,22 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   });
   type LineRow = InvoiceLineInput & { _ledgerLabel: string; _amountInput: string };
   const [lines, setLines] = useState<LineRow[]>([]);
-  // Allow typing partial decimals like "" / "12," / "12,5" without snapping to 0.
+  // Houd het invoerveld als tekst leidend, zodat bedragen zoals "", "3," en
+  // "3.99" tijdens typen niet teruggezet worden naar 0.
   const parseAmountInput = (raw: string): number => {
-    const s = (raw ?? "").toString().replace(",", ".").trim();
-    if (s === "") return 0;
-    const n = parseFloat(s);
+    const s = (raw ?? "")
+      .toString()
+      .trim()
+      .replace(/\s/g, "")
+      .replace(/[^0-9,.-]/g, "")
+      .replace(",", ".");
+    if (s === "" || s === "-" || s === "." || s === "-.") return 0;
+    const n = Number(s);
     return Number.isFinite(n) ? n : 0;
   };
   const formatAmountInput = (n: number | null | undefined): string =>
     n === null || n === undefined || !Number.isFinite(Number(n)) ? "" : String(n);
+  const lineAmountExcl = (line: LineRow): number => parseAmountInput(line._amountInput);
   const linesInitInvoiceIdRef = useRef<string | null>(null);
   const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
@@ -625,7 +632,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     validatePurchaseLines(
       lines.map((l) => ({
         omschrijving: l.omschrijving,
-        amount_excl: Number(l.amount_excl || 0),
+        amount_excl: lineAmountExcl(l),
         btw_percentage: Number(l.btw_percentage || 0),
       })),
       headerTotalsForLines(),
@@ -681,7 +688,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       invoiceId: invoice.id,
       lines: lines.map((l) => ({
         omschrijving: l.omschrijving,
-        amount_excl: Number(l.amount_excl) || 0,
+        amount_excl: lineAmountExcl(l),
         btw_percentage: isBtwVrijgesteld ? 0 : l.btw_percentage,
         grootboekrekening_id: l.grootboekrekening_id,
       })),
@@ -980,7 +987,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 const header = headerTotalsForLines();
                 const lineInputs = lines.map((l) => ({
                   omschrijving: l.omschrijving,
-                  amount_excl: Number(l.amount_excl || 0),
+                  amount_excl: lineAmountExcl(l),
                   btw_percentage: Number(l.btw_percentage || 0),
                 }));
                 const diffs = computeLineDiffs(lineInputs, header);
@@ -1064,7 +1071,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               {lines.length > 0 && (
                 <div className="space-y-1.5">
                   {lines.map((l, i) => {
-                    const excl = Number(l.amount_excl || 0);
+                    const excl = lineAmountExcl(l);
                     const pct = Number(l.btw_percentage || 0);
                     const lineIncl = excl + excl * pct / 100;
                     return (
@@ -1089,7 +1096,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               value={l._amountInput}
                               onChange={(e) => {
                                 const raw = e.target.value;
-                                updateLine(i, { _amountInput: raw, amount_excl: parseAmountInput(raw) });
+                                updateLine(i, { _amountInput: raw });
                               }}
                               onBlur={(e) => {
                                 const n = parseAmountInput(e.target.value);
