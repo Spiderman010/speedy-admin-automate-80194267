@@ -944,6 +944,13 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 </div>
               ) : null}
 
+              {prefilledFromHeader && lines.length > 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  Voorstelregel aangemaakt uit factuurtotaal — pas aan of splits indien nodig.
+                </p>
+              )}
+
+
               {lines.map((l, i) => (
                 <div key={i} className="rounded-md border p-2 space-y-2 bg-muted/20">
                   <div className="flex gap-2">
