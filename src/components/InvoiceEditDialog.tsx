@@ -26,6 +26,7 @@ import JSZip from "jszip";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
+import { computeLineDiffs, validatePurchaseLines } from "@/lib/purchase-line-validation";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
@@ -506,26 +507,26 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
 
-  const validateLines = (): string | null => {
-    if (lines.length === 0) return null;
-    for (const l of lines) {
-      if (!l.omschrijving.trim()) return "Elke regel moet een omschrijving hebben";
-      if (isNaN(Number(l.amount_excl))) return "Elke regel moet een geldig bedrag excl. hebben";
-    }
-    const sumExcl = lines.reduce((s, l) => s + Number(l.amount_excl || 0), 0);
-    const sumIncl = lines.reduce((s, l) => s + Number(l.amount_excl || 0) * (1 + Number(l.btw_percentage || 0) / 100), 0);
-    const headerIncl = parseFloat(form.amount_incl);
-    const headerExcl = parseFloat(form.amount_excl);
-    if (!isNaN(headerExcl) && Math.abs(sumExcl - headerExcl) > 0.02) {
-      const diff = sumExcl - headerExcl;
-      return `Deelregels excl. BTW: som €${sumExcl.toFixed(2)}, vereist €${headerExcl.toFixed(2)}, verschil €${diff > 0 ? "+" : ""}${diff.toFixed(2)}`;
-    }
-    if (!isNaN(headerIncl) && Math.abs(sumIncl - headerIncl) > 0.02) {
-      const diff = sumIncl - headerIncl;
-      return `Deelregels incl. BTW: som €${sumIncl.toFixed(2)}, vereist €${headerIncl.toFixed(2)}, verschil €${diff > 0 ? "+" : ""}${diff.toFixed(2)}`;
-    }
-    return null;
+  const headerTotalsForLines = () => {
+    const excl = parseFloat(form.amount_excl);
+    const btw = parseFloat(form.btw_amount);
+    const incl = parseFloat(form.amount_incl);
+    return {
+      amount_excl: Number.isFinite(excl) ? excl : null,
+      btw_amount: Number.isFinite(btw) ? btw : null,
+      amount_incl: Number.isFinite(incl) ? incl : null,
+    };
   };
+
+  const validateLines = (): string | null =>
+    validatePurchaseLines(
+      lines.map((l) => ({
+        omschrijving: l.omschrijving,
+        amount_excl: Number(l.amount_excl || 0),
+        btw_percentage: Number(l.btw_percentage || 0),
+      })),
+      headerTotalsForLines(),
+    );
 
   if (!invoice) return null;
 
@@ -952,17 +953,20 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               ))}
 
               {lines.length > 0 && (() => {
-                const sumExcl = lines.reduce((s, l) => s + Number(l.amount_excl || 0), 0);
-                const sumIncl = lines.reduce((s, l) => s + Number(l.amount_excl || 0) * (1 + Number(l.btw_percentage || 0) / 100), 0);
-                const headerExcl = parseFloat(form.amount_excl);
-                const headerIncl = parseFloat(form.amount_incl);
-                const diffExcl = !isNaN(headerExcl) ? sumExcl - headerExcl : null;
-                const diffIncl = !isNaN(headerIncl) ? sumIncl - headerIncl : null;
-                const exclOk = diffExcl === null || Math.abs(diffExcl) <= 0.02;
-                const inclOk = diffIncl === null || Math.abs(diffIncl) <= 0.02;
-                const allOk = exclOk && inclOk;
+                const header = headerTotalsForLines();
+                const lineInputs = lines.map((l) => ({
+                  omschrijving: l.omschrijving,
+                  amount_excl: Number(l.amount_excl || 0),
+                  btw_percentage: Number(l.btw_percentage || 0),
+                }));
+                const diffs = computeLineDiffs(lineInputs, header);
+                const sumExcl = lineInputs.reduce((s, l) => s + l.amount_excl, 0);
+                const sumBtw = lineInputs.reduce((s, l) => s + l.amount_excl * (l.btw_percentage || 0) / 100, 0);
+                const sumIncl = sumExcl + sumBtw;
+                const { allOk, exclOk, btwOk, inclOk, excl: diffExcl, btw: diffBtw, incl: diffIncl } = diffs;
                 const fmt = (n: number) => `€${n.toFixed(2)}`;
                 const fmtDiff = (d: number) => `${d > 0 ? "+" : ""}${fmt(d)}`;
+                const showFillRest = !exclOk && header.amount_excl !== null;
                 return (
                   <div className={`rounded-md border px-3 py-2 text-xs space-y-1 ${allOk ? "border-green-500/40 bg-green-50 dark:bg-green-950/30" : "border-amber-500/50 bg-amber-50 dark:bg-amber-950/30"}`}>
                     <div className={`flex items-center gap-1.5 font-medium mb-1 ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
@@ -972,34 +976,35 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                     </div>
                     <div className="grid grid-cols-3 gap-x-3 text-muted-foreground">
                       <span>Excl. BTW</span>
+                      <span>BTW</span>
                       <span>Incl. BTW</span>
-                      <span />
                     </div>
                     <div className="grid grid-cols-3 gap-x-3">
-                      <span>Factuur: {isNaN(headerExcl) ? "—" : fmt(headerExcl)}</span>
-                      <span>Factuur: {isNaN(headerIncl) ? "—" : fmt(headerIncl)}</span>
-                      <span />
+                      <span>Factuur: {header.amount_excl === null ? "—" : fmt(header.amount_excl)}</span>
+                      <span>Factuur: {header.btw_amount === null ? "—" : fmt(header.btw_amount)}</span>
+                      <span>Factuur: {header.amount_incl === null ? "—" : fmt(header.amount_incl)}</span>
                     </div>
                     <div className="grid grid-cols-3 gap-x-3">
                       <span>Som: {fmt(sumExcl)}</span>
+                      <span>Som: {fmt(sumBtw)}</span>
                       <span>Som: {fmt(sumIncl)}</span>
-                      <span />
                     </div>
-                    {(diffExcl !== null || diffIncl !== null) && (
-                      <div className={`grid grid-cols-3 gap-x-3 font-medium ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
-                        <span>Verschil: {diffExcl !== null ? fmtDiff(diffExcl) : "—"}</span>
-                        <span>Verschil: {diffIncl !== null ? fmtDiff(diffIncl) : "—"}</span>
-                        <span />
-                      </div>
-                    )}
-                    {!allOk && !isNaN(headerExcl) && Math.abs(diffExcl ?? 0) > 0.02 && (
+                    <div className={`grid grid-cols-3 gap-x-3 font-medium ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
+                      <span>{diffExcl === null ? "—" : `Verschil: ${fmtDiff(diffExcl)}${exclOk ? "" : " ⚠"}`}</span>
+                      <span>{diffBtw === null ? "—" : `Verschil: ${fmtDiff(diffBtw)}${btwOk ? "" : " ⚠"}`}</span>
+                      <span>{diffIncl === null ? "—" : `Verschil: ${fmtDiff(diffIncl)}${inclOk ? "" : " ⚠"}`}</span>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground pt-0.5">
+                      Tolerantie: ±{fmt(diffs.tolerance)} (schaalt met aantal regels)
+                    </div>
+                    {showFillRest && header.amount_excl !== null && (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
                         className="mt-1 text-xs h-7"
                         onClick={() => {
-                          const remaining = headerExcl - sumExcl;
+                          const remaining = (header.amount_excl ?? 0) - sumExcl;
                           const headerBtw = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
                           const headerLedger = grootboekrekeningen?.find(
                             (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
