@@ -196,6 +196,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     enabled: !!invoice,
   });
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
+  const linesInitInvoiceIdRef = useRef<string | null>(null);
+  const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
