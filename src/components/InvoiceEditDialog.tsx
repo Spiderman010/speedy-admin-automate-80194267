@@ -632,7 +632,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     validatePurchaseLines(
       lines.map((l) => ({
         omschrijving: l.omschrijving,
-        amount_excl: Number(l.amount_excl || 0),
+        amount_excl: lineAmountExcl(l),
         btw_percentage: Number(l.btw_percentage || 0),
       })),
       headerTotalsForLines(),
@@ -688,7 +688,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       invoiceId: invoice.id,
       lines: lines.map((l) => ({
         omschrijving: l.omschrijving,
-        amount_excl: Number(l.amount_excl) || 0,
+        amount_excl: lineAmountExcl(l),
         btw_percentage: isBtwVrijgesteld ? 0 : l.btw_percentage,
         grootboekrekening_id: l.grootboekrekening_id,
       })),
