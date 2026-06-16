@@ -1121,7 +1121,17 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               tabIndex={-1}
                             />
                           </div>
-                          <div className="col-span-2 md:col-span-1 flex justify-end min-w-0">
+                          <div className="col-span-2 md:col-span-1 flex justify-end gap-0.5 min-w-0">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-primary shrink-0"
+                              onClick={() => splitLine(i)}
+                              title="Regel splitsen"
+                            >
+                              <Split className="h-4 w-4" />
+                            </Button>
                             <Button
                               type="button"
                               variant="ghost"
