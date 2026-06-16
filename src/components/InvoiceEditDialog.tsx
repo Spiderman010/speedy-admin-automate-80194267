@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info, ChevronLeft, ChevronRight } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
@@ -463,10 +463,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     const headerIncl = parseFloat(form.amount_incl);
     const headerExcl = parseFloat(form.amount_excl);
     if (!isNaN(headerExcl) && Math.abs(sumExcl - headerExcl) > 0.02) {
-      return `Totaal regels excl. (€${sumExcl.toFixed(2)}) komt niet overeen met factuurtotaal excl. (€${headerExcl.toFixed(2)})`;
+      const diff = sumExcl - headerExcl;
+      return `Deelregels excl. BTW: som €${sumExcl.toFixed(2)}, vereist €${headerExcl.toFixed(2)}, verschil €${diff > 0 ? "+" : ""}${diff.toFixed(2)}`;
     }
     if (!isNaN(headerIncl) && Math.abs(sumIncl - headerIncl) > 0.02) {
-      return `Totaal regels incl. BTW (€${sumIncl.toFixed(2)}) komt niet overeen met factuurtotaal incl. (€${headerIncl.toFixed(2)})`;
+      const diff = sumIncl - headerIncl;
+      return `Deelregels incl. BTW: som €${sumIncl.toFixed(2)}, vereist €${headerIncl.toFixed(2)}, verschil €${diff > 0 ? "+" : ""}${diff.toFixed(2)}`;
     }
     return null;
   };
@@ -812,11 +814,40 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   <Plus className="h-3.5 w-3.5 mr-1" />Regel toevoegen
                 </Button>
               </div>
-              {lines.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Geen regels. Voeg regels toe om de factuur over meerdere grootboekrekeningen of BTW-tarieven te splitsen.
-                </p>
-              )}
+
+              {lines.length === 0 ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground">
+                    Geen regels. Voeg regels toe om de factuur over meerdere grootboekrekeningen of BTW-tarieven te splitsen.
+                  </p>
+                  {(form.amount_excl || form.amount_incl) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => {
+                        const headerExcl = parseFloat(form.amount_excl) || 0;
+                        const headerBtw = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
+                        const headerLedger = grootboekrekeningen?.find(
+                          (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
+                        ) ?? null;
+                        const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
+                        setLines([{
+                          omschrijving,
+                          amount_excl: headerExcl,
+                          btw_percentage: headerBtw,
+                          grootboekrekening_id: headerLedger?.id ?? null,
+                          _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+                        }]);
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />Maak deelregel voor totaalbedrag
+                    </Button>
+                  )}
+                </div>
+              ) : null}
+
               {lines.map((l, i) => (
                 <div key={i} className="rounded-md border p-2 space-y-2 bg-muted/20">
                   <div className="flex gap-2">
@@ -865,6 +896,75 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   </div>
                 </div>
               ))}
+
+              {lines.length > 0 && (() => {
+                const sumExcl = lines.reduce((s, l) => s + Number(l.amount_excl || 0), 0);
+                const sumIncl = lines.reduce((s, l) => s + Number(l.amount_excl || 0) * (1 + Number(l.btw_percentage || 0) / 100), 0);
+                const headerExcl = parseFloat(form.amount_excl);
+                const headerIncl = parseFloat(form.amount_incl);
+                const diffExcl = !isNaN(headerExcl) ? sumExcl - headerExcl : null;
+                const diffIncl = !isNaN(headerIncl) ? sumIncl - headerIncl : null;
+                const exclOk = diffExcl === null || Math.abs(diffExcl) <= 0.02;
+                const inclOk = diffIncl === null || Math.abs(diffIncl) <= 0.02;
+                const allOk = exclOk && inclOk;
+                const fmt = (n: number) => `€${n.toFixed(2)}`;
+                const fmtDiff = (d: number) => `${d > 0 ? "+" : ""}${fmt(d)}`;
+                return (
+                  <div className={`rounded-md border px-3 py-2 text-xs space-y-1 ${allOk ? "border-green-500/40 bg-green-50 dark:bg-green-950/30" : "border-amber-500/50 bg-amber-50 dark:bg-amber-950/30"}`}>
+                    <div className={`flex items-center gap-1.5 font-medium mb-1 ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
+                      {allOk
+                        ? <><CheckCircle2 className="h-3.5 w-3.5" />Deelregels kloppen</>
+                        : <><AlertTriangle className="h-3.5 w-3.5" />Deelregels wijken af</>}
+                    </div>
+                    <div className="grid grid-cols-3 gap-x-3 text-muted-foreground">
+                      <span>Excl. BTW</span>
+                      <span>Incl. BTW</span>
+                      <span />
+                    </div>
+                    <div className="grid grid-cols-3 gap-x-3">
+                      <span>Factuur: {isNaN(headerExcl) ? "—" : fmt(headerExcl)}</span>
+                      <span>Factuur: {isNaN(headerIncl) ? "—" : fmt(headerIncl)}</span>
+                      <span />
+                    </div>
+                    <div className="grid grid-cols-3 gap-x-3">
+                      <span>Som: {fmt(sumExcl)}</span>
+                      <span>Som: {fmt(sumIncl)}</span>
+                      <span />
+                    </div>
+                    {(diffExcl !== null || diffIncl !== null) && (
+                      <div className={`grid grid-cols-3 gap-x-3 font-medium ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
+                        <span>Verschil: {diffExcl !== null ? fmtDiff(diffExcl) : "—"}</span>
+                        <span>Verschil: {diffIncl !== null ? fmtDiff(diffIncl) : "—"}</span>
+                        <span />
+                      </div>
+                    )}
+                    {!allOk && !isNaN(headerExcl) && Math.abs(diffExcl ?? 0) > 0.02 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-1 text-xs h-7"
+                        onClick={() => {
+                          const remaining = headerExcl - sumExcl;
+                          const headerBtw = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
+                          const headerLedger = grootboekrekeningen?.find(
+                            (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
+                          ) ?? null;
+                          setLines((prev) => [...prev, {
+                            omschrijving: "Resterend bedrag",
+                            amount_excl: Math.round(remaining * 100) / 100,
+                            btw_percentage: headerBtw,
+                            grootboekrekening_id: headerLedger?.id ?? null,
+                            _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+                          }]);
+                        }}
+                      >
+                        <Plus className="h-3 w-3 mr-1" />Vul resterend verschil
+                      </Button>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="border-t pt-3 grid grid-cols-2 gap-3">
