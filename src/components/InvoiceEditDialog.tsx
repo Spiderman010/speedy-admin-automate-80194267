@@ -26,7 +26,7 @@ import JSZip from "jszip";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
-import { computeLineDiffs, validatePurchaseLines, derivePrefillLine } from "@/lib/purchase-line-validation";
+import { computeLineDiffs, validatePurchaseLines } from "@/lib/purchase-line-validation";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
@@ -514,29 +514,23 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       return;
     }
 
-    // No stored lines → prefill exactly one default line from header totals.
-    const headerExclRaw = parseFloat(form.amount_excl);
-    const headerInclRaw = parseFloat(form.amount_incl);
-    const headerPctRaw = parseFloat(form.btw_percentage);
-    const prefill = derivePrefillLine({
-      amount_excl: Number.isFinite(headerExclRaw) ? headerExclRaw : null,
-      amount_incl: Number.isFinite(headerInclRaw) ? headerInclRaw : null,
-      btw_percentage: Number.isFinite(headerPctRaw) ? headerPctRaw : null,
-      isBtwVrijgesteld,
-    });
-    if (!prefill) {
+    // No stored lines → prefill one default line from header totals (same logic as the manual button).
+    const hasAmount = !!(form.amount_excl || form.amount_incl);
+    if (!hasAmount) {
       setLines([]);
       setPrefilledFromHeader(false);
       return;
     }
+    const excl = parseFloat(form.amount_excl) || 0;
+    const pct = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
     const headerLedger = grootboekrekeningen?.find(
       (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
     ) ?? null;
     const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
     setLines([{
       omschrijving,
-      amount_excl: prefill.amount_excl,
-      btw_percentage: prefill.btw_percentage,
+      amount_excl: excl,
+      btw_percentage: pct,
       grootboekrekening_id: headerLedger?.id ?? null,
       _ledgerLabel: headerLedger ? form.ledger_account_text : "",
     }]);
