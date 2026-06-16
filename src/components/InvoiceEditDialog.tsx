@@ -1015,12 +1015,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                           const headerLedger = grootboekrekeningen?.find(
                             (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
                           ) ?? null;
+                          const restAmount = Math.round(remaining * 100) / 100;
                           setLines((prev) => [...prev, {
                             omschrijving: "Resterend bedrag",
-                            amount_excl: Math.round(remaining * 100) / 100,
+                            amount_excl: restAmount,
                             btw_percentage: headerBtw,
                             grootboekrekening_id: headerLedger?.id ?? null,
                             _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+                            _amountInput: formatAmountInput(restAmount),
                           }]);
                         }}
                       >
