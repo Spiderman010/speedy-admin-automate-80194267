@@ -660,7 +660,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={hasFile ? "sm:max-w-6xl lg:max-w-7xl w-[95vw] max-h-[92vh] flex flex-col overflow-hidden" : "sm:max-w-2xl w-[90vw] max-h-[90vh] flex flex-col overflow-hidden"}>
+      <DialogContent className={hasFile ? "sm:max-w-[1400px] lg:max-w-[1600px] w-[98vw] max-h-[94vh] flex flex-col overflow-hidden p-4 sm:p-6" : "sm:max-w-3xl w-[92vw] max-h-[92vh] flex flex-col overflow-hidden"}>
         <DialogHeader className="flex-shrink-0">
           <div className="flex items-start justify-between gap-4">
             <DialogTitle className="flex items-center gap-2 flex-wrap">
