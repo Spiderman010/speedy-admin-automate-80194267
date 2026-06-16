@@ -1004,7 +1004,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                     return (
                       <div key={i} className="rounded-md border p-2 bg-card">
                         <div className="grid grid-cols-12 gap-2 items-end">
-                          <div className="col-span-12 md:col-span-5">
+                          <div className="col-span-12 md:col-span-5 min-w-0">
                             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Omschrijving</Label>
                             <Input
                               className="h-8"
@@ -1013,7 +1013,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               onChange={(e) => updateLine(i, { omschrijving: e.target.value })}
                             />
                           </div>
-                          <div className="col-span-4 md:col-span-2">
+                          <div className="col-span-4 md:col-span-2 min-w-0">
                             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Excl.</Label>
                             <Input
                               className="h-8"
@@ -1023,14 +1023,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               onChange={(e) => updateLine(i, { amount_excl: parseFloat(e.target.value) || 0 })}
                             />
                           </div>
-                          <div className="col-span-4 md:col-span-2">
+                          <div className="col-span-3 md:col-span-2 min-w-0">
                             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">BTW %</Label>
                             <Select
                               value={String(l.btw_percentage ?? 0)}
                               onValueChange={(v) => updateLine(i, { btw_percentage: parseFloat(v) })}
                               disabled={isBtwVrijgesteld}
                             >
-                              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-8 w-full"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="0">0%</SelectItem>
                                 <SelectItem value="9">9%</SelectItem>
@@ -1038,28 +1038,28 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               </SelectContent>
                             </Select>
                           </div>
-                          <div className="col-span-3 md:col-span-2">
+                          <div className="col-span-3 md:col-span-2 min-w-0">
                             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Incl.</Label>
                             <Input
-                              className="h-8 bg-muted/40"
+                              className="h-8 bg-muted/40 truncate"
                               value={`€${lineIncl.toFixed(2)}`}
                               readOnly
                               tabIndex={-1}
                             />
                           </div>
-                          <div className="col-span-1 flex justify-end">
+                          <div className="col-span-2 md:col-span-1 flex justify-end min-w-0">
                             <Button
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive shrink-0"
                               onClick={() => removeLine(i)}
                               title="Regel verwijderen"
                             >
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </div>
-                          <div className="col-span-12">
+                          <div className="col-span-12 min-w-0">
                             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Grootboekrekening</Label>
                             <GrootboekCombobox
                               value={l._ledgerLabel}
