@@ -104,5 +104,92 @@ describe("purchase line validation", () => {
     expect(d.btw).toBeNull();
     expect(d.incl).toBe(0);
     expect(d.allOk).toBe(true);
+});
+
+describe("derivePrefillLine", () => {
+  it("uses header excl when present (21% BTW)", () => {
+    expect(derivePrefillLine({
+      amount_excl: 100, amount_incl: 121, btw_percentage: 21, isBtwVrijgesteld: false,
+    })).toEqual({ amount_excl: 100, btw_percentage: 21 });
   });
+
+  it("derives excl from incl using header pct when excl missing (21%)", () => {
+    const r = derivePrefillLine({
+      amount_excl: null, amount_incl: 121, btw_percentage: 21, isBtwVrijgesteld: false,
+    });
+    expect(r).toEqual({ amount_excl: 100, btw_percentage: 21 });
+  });
+
+  it("derives excl from incl using header pct when excl missing (9%)", () => {
+    const r = derivePrefillLine({
+      amount_excl: null, amount_incl: 109, btw_percentage: 9, isBtwVrijgesteld: false,
+    });
+    expect(r).toEqual({ amount_excl: 100, btw_percentage: 9 });
+  });
+
+  it("BTW-vrijgesteld forces pct=0 and excl=incl when only incl present", () => {
+    const r = derivePrefillLine({
+      amount_excl: null, amount_incl: 250, btw_percentage: 21, isBtwVrijgesteld: true,
+    });
+    expect(r).toEqual({ amount_excl: 250, btw_percentage: 0 });
+  });
+
+  it("BTW-vrijgesteld forces pct=0 even when header excl + pct are set", () => {
+    const r = derivePrefillLine({
+      amount_excl: 250, amount_incl: 302.5, btw_percentage: 21, isBtwVrijgesteld: true,
+    });
+    expect(r).toEqual({ amount_excl: 250, btw_percentage: 0 });
+  });
+
+  it("returns null when neither excl nor incl is available", () => {
+    expect(derivePrefillLine({
+      amount_excl: null, amount_incl: null, btw_percentage: 21, isBtwVrijgesteld: false,
+    })).toBeNull();
+  });
+
+  it("incl-only with no pct treats invoice as 0% (excl = incl)", () => {
+    const r = derivePrefillLine({
+      amount_excl: null, amount_incl: 100, btw_percentage: null, isBtwVrijgesteld: false,
+    });
+    expect(r).toEqual({ amount_excl: 100, btw_percentage: 0 });
+  });
+
+  it("rounds derived excl to 2 decimals", () => {
+    const r = derivePrefillLine({
+      amount_excl: null, amount_incl: 100, btw_percentage: 21, isBtwVrijgesteld: false,
+    });
+    // 100 / 1.21 = 82.6446... → 82.64
+    expect(r).toEqual({ amount_excl: 82.64, btw_percentage: 21 });
+  });
+
+  it("ignores NaN/Infinity inputs and falls back correctly", () => {
+    const r = derivePrefillLine({
+      amount_excl: Number.NaN, amount_incl: 121, btw_percentage: 21, isBtwVrijgesteld: false,
+    });
+    expect(r).toEqual({ amount_excl: 100, btw_percentage: 21 });
+  });
+
+  it("derived prefill round-trips through validation within tolerance", () => {
+    const prefill = derivePrefillLine({
+      amount_excl: null, amount_incl: 121, btw_percentage: 21, isBtwVrijgesteld: false,
+    })!;
+    const err = validatePurchaseLines(
+      [{ omschrijving: "x", amount_excl: prefill.amount_excl, btw_percentage: prefill.btw_percentage }],
+      { amount_excl: null, btw_amount: null, amount_incl: 121 },
+    );
+    expect(err).toBeNull();
+  });
+
+  it("BTW-vrijgesteld prefill round-trips through validation", () => {
+    const prefill = derivePrefillLine({
+      amount_excl: null, amount_incl: 250, btw_percentage: null, isBtwVrijgesteld: true,
+    })!;
+    const err = validatePurchaseLines(
+      [{ omschrijving: "x", amount_excl: prefill.amount_excl, btw_percentage: prefill.btw_percentage }],
+      { amount_excl: 250, btw_amount: 0, amount_incl: 250 },
+    );
+    expect(err).toBeNull();
+  });
+});
+
 });
