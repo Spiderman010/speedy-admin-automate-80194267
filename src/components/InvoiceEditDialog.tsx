@@ -987,7 +987,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 const header = headerTotalsForLines();
                 const lineInputs = lines.map((l) => ({
                   omschrijving: l.omschrijving,
-                  amount_excl: Number(l.amount_excl || 0),
+                  amount_excl: lineAmountExcl(l),
                   btw_percentage: Number(l.btw_percentage || 0),
                 }));
                 const diffs = computeLineDiffs(lineInputs, header);
@@ -1071,7 +1071,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               {lines.length > 0 && (
                 <div className="space-y-1.5">
                   {lines.map((l, i) => {
-                    const excl = Number(l.amount_excl || 0);
+                    const excl = lineAmountExcl(l);
                     const pct = Number(l.btw_percentage || 0);
                     const lineIncl = excl + excl * pct / 100;
                     return (
@@ -1096,7 +1096,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               value={l._amountInput}
                               onChange={(e) => {
                                 const raw = e.target.value;
-                                updateLine(i, { _amountInput: raw, amount_excl: parseAmountInput(raw) });
+                                updateLine(i, { _amountInput: raw });
                               }}
                               onBlur={(e) => {
                                 const n = parseAmountInput(e.target.value);
