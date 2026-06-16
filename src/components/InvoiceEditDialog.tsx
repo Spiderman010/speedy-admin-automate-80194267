@@ -514,16 +514,17 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       return;
     }
 
-    // No stored lines → prefill exactly one default line from header totals,
-    // matching the "Maak deelregel voor totaalbedrag" button logic.
+    // No stored lines → prefill exactly one default line from header totals.
     const headerExclRaw = parseFloat(form.amount_excl);
     const headerInclRaw = parseFloat(form.amount_incl);
-    const headerPct = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
-    let excl: number | null = Number.isFinite(headerExclRaw) ? headerExclRaw : null;
-    if (excl == null && Number.isFinite(headerInclRaw)) {
-      excl = headerPct ? headerInclRaw / (1 + headerPct / 100) : headerInclRaw;
-    }
-    if (excl == null) {
+    const headerPctRaw = parseFloat(form.btw_percentage);
+    const prefill = derivePrefillLine({
+      amount_excl: Number.isFinite(headerExclRaw) ? headerExclRaw : null,
+      amount_incl: Number.isFinite(headerInclRaw) ? headerInclRaw : null,
+      btw_percentage: Number.isFinite(headerPctRaw) ? headerPctRaw : null,
+      isBtwVrijgesteld,
+    });
+    if (!prefill) {
       setLines([]);
       setPrefilledFromHeader(false);
       return;
@@ -534,8 +535,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
     setLines([{
       omschrijving,
-      amount_excl: Math.round(excl * 100) / 100,
-      btw_percentage: headerPct,
+      amount_excl: prefill.amount_excl,
+      btw_percentage: prefill.btw_percentage,
       grootboekrekening_id: headerLedger?.id ?? null,
       _ledgerLabel: headerLedger ? form.ledger_account_text : "",
     }]);
