@@ -583,14 +583,15 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       btw_percentage: prefill.btw_percentage,
       grootboekrekening_id: headerLedger?.id ?? null,
       _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+      _amountInput: formatAmountInput(prefill.amount_excl),
     }]);
     setPrefilledFromHeader(true);
   }, [existingLines, invoice?.id, isBtwVrijgesteld, grootboekrekeningen, form.amount_excl, form.amount_incl, form.btw_percentage, form.ledger_account_text, form.supplier]);
 
 
-  const addLine = () => { setPrefilledFromHeader(false); setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "" }]); };
+  const addLine = () => { setPrefilledFromHeader(false); setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "", _amountInput: "" }]); };
   const removeLine = (i: number) => { setPrefilledFromHeader(false); setLines((p) => p.filter((_, idx) => idx !== i)); };
-  const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
+  const updateLine = (i: number, patch: Partial<LineRow>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
 
   const headerTotalsForLines = () => {
