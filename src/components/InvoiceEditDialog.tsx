@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info, ChevronLeft, ChevronRight, AlertTriangle } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info, ChevronLeft, ChevronRight, AlertTriangle, ExternalLink } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
@@ -51,24 +51,44 @@ interface Props {
   onNext?: () => void;
 }
 
+type PreviewErrorKind = "missing" | "unauthorized" | "error";
+
 function InvoicePreview({ filePath }: { filePath: string | null }) {
   const [url, setUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<PreviewErrorKind | null>(null);
+  const [renderError, setRenderError] = useState(false);
 
   useEffect(() => {
-    if (!filePath) { setUrl(null); return; }
+    if (!filePath) { setUrl(null); setPreviewError(null); setRenderError(false); return; }
     setUrl(null);
+    setPreviewError(null);
+    setRenderError(false);
     setLoading(true);
     setZoom(1);
     setRotation(0);
     supabase.storage.from("invoices").createSignedUrl(filePath, 3600).then(({ data, error }) => {
-      if (error) console.error("InvoicePreview createSignedUrl error", filePath, error);
+      if (error) {
+        console.error("InvoicePreview createSignedUrl error", filePath, error);
+        const status = (error as any).status ?? (error as any).statusCode;
+        const msg = (error.message ?? "").toLowerCase();
+        // Supabase Storage returns 404 for both "file missing" and "access denied"
+        // to avoid leaking object existence — we surface a single clear message.
+        if (status === 404 || msg.includes("not found") || msg.includes("does not exist")) {
+          setPreviewError("missing");
+        } else if (status === 403 || status === 401 || msg.includes("unauthorized") || msg.includes("forbidden")) {
+          setPreviewError("unauthorized");
+        } else {
+          setPreviewError("error");
+        }
+      }
       setUrl(data?.signedUrl ?? null);
       setLoading(false);
     }).catch((err) => {
       console.error("InvoicePreview createSignedUrl exception", filePath, err);
+      setPreviewError("error");
       setLoading(false);
     });
   }, [filePath]);
@@ -92,6 +112,11 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
 
   const isPdf = filePath.toLowerCase().endsWith(".pdf");
 
+  const urlErrorMessage =
+    previewError === "missing" ? "Bestand ontbreekt of pad klopt niet" :
+    previewError === "unauthorized" ? "Geen toegang tot bestand" :
+    "Document kan niet worden geladen";
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-1 mb-2 border-b pb-2">
@@ -103,25 +128,51 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
         <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setZoom(z => Math.min(3, z + 0.25))}>
           <ZoomIn className="h-3.5 w-3.5" />
         </Button>
-        {!isPdf && (
+        {!isPdf && !renderError && (
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setRotation(r => (r + 90) % 360)}>
             <RotateCw className="h-3.5 w-3.5" />
+          </Button>
+        )}
+        {url && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Open in nieuw tabblad"
+            onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
           </Button>
         )}
       </div>
       <div className="flex-1 overflow-auto rounded-lg bg-muted/20 border">
         {isPdf && url ? (
           <iframe src={url} className="w-full h-full min-h-[400px]" style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }} />
-        ) : url ? (
+        ) : url && !renderError ? (
           <img
             src={url}
             alt="Factuur preview"
             className="max-w-full transition-transform"
             style={{ transform: `scale(${zoom}) rotate(${rotation}deg)`, transformOrigin: "top left" }}
-            onError={() => { console.error("InvoicePreview image render error", filePath); setUrl(null); }}
+            onError={() => { console.error("InvoicePreview image render error", filePath); setRenderError(true); }}
           />
+        ) : url && renderError ? (
+          <div className="flex flex-col items-center justify-center h-full text-sm text-muted-foreground gap-3 py-8">
+            <AlertTriangle className="h-8 w-8 opacity-40" />
+            <p>Bestand kan niet worden weergegeven</p>
+            <button
+              type="button"
+              className="text-xs underline underline-offset-2 hover:no-underline"
+              onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+            >
+              Bestand openen in nieuw tabblad
+            </button>
+          </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Kan document niet laden</div>
+          <div className="flex flex-col items-center justify-center h-full text-sm text-muted-foreground gap-2 py-8">
+            <AlertTriangle className="h-8 w-8 opacity-40" />
+            <p>{urlErrorMessage}</p>
+          </div>
         )}
       </div>
     </div>
