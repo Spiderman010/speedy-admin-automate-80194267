@@ -741,14 +741,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           </div>
         </DialogHeader>
 
-        <div className={hasFile ? "grid grid-cols-1 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-6 flex-1 overflow-hidden min-h-0" : "flex flex-col flex-1 overflow-hidden min-h-0"}>
+        <div className={hasFile ? "grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6 flex-1 overflow-hidden min-h-0" : "flex flex-col flex-1 overflow-hidden min-h-0"}>
           {hasFile && (
             <div className="hidden lg:block h-full min-h-0 overflow-hidden">
               <InvoicePreview key={invoice.file_path ?? invoice.id} filePath={invoice.file_path} />
             </div>
           )}
 
-          <div className="space-y-4 overflow-y-auto flex-1 min-h-0 h-full pr-2">
+          <div className="space-y-2 overflow-y-auto flex-1 min-h-0 h-full pr-2">
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -765,7 +765,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
             </div>
 
-            <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+            <div className="rounded-md border bg-muted/30 p-2 space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <Label className="flex items-center gap-1.5"><Truck className="h-3.5 w-3.5" />Leverancier koppeling</Label>
                 {linkedLeverancier ? (
@@ -893,7 +893,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>BTW toepassen</Label>
                 <Switch
@@ -940,7 +940,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               />
             </div>
 
-            <div className="border-t pt-3 space-y-3">
+            <div className="border-t pt-2 space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-semibold">Factuurregels</Label>
                 <Button type="button" variant="outline" size="sm" onClick={addLine}>
@@ -1032,7 +1032,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               )}
 
               {lines.length > 0 && (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {lines.map((l, i) => {
                     const excl = Number(l.amount_excl || 0);
                     const pct = Number(l.btw_percentage || 0);
@@ -1112,7 +1112,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             </div>
 
 
-            <div className="border-t pt-3 grid grid-cols-2 gap-3">
+            <div className="border-t pt-2 grid grid-cols-2 gap-3">
               <div>
                 <Label>Document-route</Label>
                 <Select value={documentRoute} onValueChange={(v) => setDocumentRoute(v as DocumentRoute)}>
