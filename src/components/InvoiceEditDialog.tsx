@@ -593,6 +593,22 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const removeLine = (i: number) => { setPrefilledFromHeader(false); setLines((p) => p.filter((_, idx) => idx !== i)); };
   const updateLine = (i: number, patch: Partial<LineRow>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const splitLine = (i: number) => {
+    setPrefilledFromHeader(false);
+    setLines((p) => {
+      const src = p[i];
+      if (!src) return p;
+      const newLine: LineRow = {
+        omschrijving: "",
+        amount_excl: 0,
+        btw_percentage: src.btw_percentage,
+        grootboekrekening_id: null,
+        _ledgerLabel: "",
+        _amountInput: "",
+      };
+      return [...p.slice(0, i + 1), newLine, ...p.slice(i + 1)];
+    });
+  };
 
   const headerTotalsForLines = () => {
     const excl = parseFloat(form.amount_excl);
