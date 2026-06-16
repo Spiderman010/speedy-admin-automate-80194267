@@ -1067,10 +1067,18 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Excl.</Label>
                             <Input
                               className="h-8"
-                              type="number"
-                              step="0.01"
-                              value={l.amount_excl}
-                              onChange={(e) => updateLine(i, { amount_excl: parseFloat(e.target.value) || 0 })}
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0,00"
+                              value={l._amountInput}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                updateLine(i, { _amountInput: raw, amount_excl: parseAmountInput(raw) });
+                              }}
+                              onBlur={(e) => {
+                                const n = parseAmountInput(e.target.value);
+                                updateLine(i, { _amountInput: e.target.value.trim() === "" ? "" : formatAmountInput(n), amount_excl: n });
+                              }}
                             />
                           </div>
                           <div className="col-span-3 md:col-span-2 min-w-0">
