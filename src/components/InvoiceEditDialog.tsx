@@ -195,7 +195,17 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     organizationId: invoice?.organization_id ?? undefined,
     enabled: !!invoice,
   });
-  const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
+  type LineRow = InvoiceLineInput & { _ledgerLabel: string; _amountInput: string };
+  const [lines, setLines] = useState<LineRow[]>([]);
+  // Allow typing partial decimals like "" / "12," / "12,5" without snapping to 0.
+  const parseAmountInput = (raw: string): number => {
+    const s = (raw ?? "").toString().replace(",", ".").trim();
+    if (s === "") return 0;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const formatAmountInput = (n: number | null | undefined): string =>
+    n === null || n === undefined || !Number.isFinite(Number(n)) ? "" : String(n);
   const linesInitInvoiceIdRef = useRef<string | null>(null);
   const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
