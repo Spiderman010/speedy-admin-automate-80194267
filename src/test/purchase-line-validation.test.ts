@@ -4,7 +4,9 @@ import {
   computeLineDiffs,
   lineTolerance,
   validatePurchaseLines,
+  derivePrefillLine,
 } from "@/lib/purchase-line-validation";
+
 
 describe("purchase line validation", () => {
   it("returns null for empty lines", () => {
