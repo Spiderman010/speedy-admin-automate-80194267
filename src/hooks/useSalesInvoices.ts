@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
+import { useActiveOrganization } from "./useActiveOrganization";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
 type SalesInvoice = Tables<"sales_invoices">;
@@ -8,16 +9,21 @@ type SalesInvoiceInsert = TablesInsert<"sales_invoices">;
 
 export function useSalesInvoices(clientId?: string) {
   const { user } = useAuth();
+  const { activeOrganizationId } = useActiveOrganization();
   return useQuery({
-    queryKey: ["sales_invoices", clientId],
+    queryKey: ["sales_invoices", activeOrganizationId ?? "none", clientId ?? "all"],
     queryFn: async () => {
-      let query = supabase.from("sales_invoices").select("*").order("invoice_date", { ascending: false });
+      let query = supabase
+        .from("sales_invoices")
+        .select("*")
+        .eq("organization_id", activeOrganizationId!)
+        .order("invoice_date", { ascending: false });
       if (clientId) query = query.eq("client_id", clientId);
       const { data, error } = await query;
       if (error) throw error;
       return data as SalesInvoice[];
     },
-    enabled: !!user,
+    enabled: !!user && !!activeOrganizationId,
   });
 }
 
