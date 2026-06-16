@@ -322,6 +322,37 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   }, [invoice]);
 
+  // Vangnet: bij BTW-vrijgesteld moet het verschil tussen excl en incl in de
+  // form-state altijd exact 0 zijn en BTW op 0. Corrigeer wanneer iets (OCR,
+  // herberekening, handmatige invoer) toch een verschil introduceert.
+  useEffect(() => {
+    if (!isBtwVrijgesteld) return;
+    setForm((prev) => {
+      const excl = parseFloat(prev.amount_excl);
+      const incl = parseFloat(prev.amount_incl);
+      const hasExcl = Number.isFinite(excl);
+      const hasIncl = Number.isFinite(incl);
+      // Pak het hoogste bekende bedrag als waarheid (meestal het incl-totaal).
+      const target = hasIncl && hasExcl
+        ? Math.max(excl, incl)
+        : hasIncl ? incl : hasExcl ? excl : null;
+      const targetStr = target === null ? "" : target.toString();
+      const exclOk = prev.amount_excl === targetStr;
+      const inclOk = prev.amount_incl === targetStr;
+      const btwAmountOk = prev.btw_amount === "0" || prev.btw_amount === "";
+      const btwPctOk = prev.btw_percentage === "0" || prev.btw_percentage === "";
+      if (exclOk && inclOk && btwAmountOk && btwPctOk) return prev;
+      return {
+        ...prev,
+        amount_excl: targetStr,
+        amount_incl: targetStr,
+        btw_amount: "0",
+        btw_percentage: "0",
+      };
+    });
+  }, [isBtwVrijgesteld, form.amount_excl, form.amount_incl, form.btw_amount, form.btw_percentage]);
+
+
   const linkedLeverancier = leveranciers?.find((l) => l.id === leverancierId) ?? null;
 
   const getSupplierDefaultLedgerLabel = (supplierId: string) => {
