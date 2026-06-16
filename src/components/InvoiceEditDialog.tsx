@@ -63,10 +63,12 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
     setLoading(true);
     setZoom(1);
     setRotation(0);
-    supabase.storage.from("invoices").createSignedUrl(filePath, 3600).then(({ data }) => {
+    supabase.storage.from("invoices").createSignedUrl(filePath, 3600).then(({ data, error }) => {
+      if (error) console.error("InvoicePreview createSignedUrl error", filePath, error);
       setUrl(data?.signedUrl ?? null);
       setLoading(false);
-    }).catch(() => {
+    }).catch((err) => {
+      console.error("InvoicePreview createSignedUrl exception", filePath, err);
       setLoading(false);
     });
   }, [filePath]);
@@ -116,6 +118,7 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
             alt="Factuur preview"
             className="max-w-full transition-transform"
             style={{ transform: `scale(${zoom}) rotate(${rotation}deg)`, transformOrigin: "top left" }}
+            onError={() => { console.error("InvoicePreview image render error", filePath); setUrl(null); }}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-sm text-muted-foreground">Kan document niet laden</div>
