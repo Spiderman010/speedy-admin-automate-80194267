@@ -196,6 +196,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     enabled: !!invoice,
   });
   const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
+  const linesInitInvoiceIdRef = useRef<string | null>(null);
+  const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
@@ -310,6 +312,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       setDocumentRoute(getDocumentRoute((invoice as any).document_route));
       setRouteReason(((invoice as any).route_reason as string | null) || "");
       setLeverancierId((invoice as any).leverancier_id ?? null);
+      linesInitInvoiceIdRef.current = null;
+      setPrefilledFromHeader(false);
     }
   }, [invoice]);
 
@@ -491,19 +495,56 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   };
 
   useEffect(() => {
-    setLines(
-      (existingLines ?? []).map((l) => ({
-        omschrijving: l.omschrijving,
-        amount_excl: Number(l.amount_excl),
-        btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
-        grootboekrekening_id: l.grootboekrekening_id,
-        _ledgerLabel: "",
-      }))
-    );
-  }, [existingLines, invoice?.id, isBtwVrijgesteld]);
+    if (!invoice?.id) return;
+    if (existingLines === undefined) return;
+    if (linesInitInvoiceIdRef.current === invoice.id) return;
+    linesInitInvoiceIdRef.current = invoice.id;
 
-  const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
-  const removeLine = (i: number) => setLines((p) => p.filter((_, idx) => idx !== i));
+    if (existingLines.length > 0) {
+      setLines(
+        existingLines.map((l) => ({
+          omschrijving: l.omschrijving,
+          amount_excl: Number(l.amount_excl),
+          btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
+          grootboekrekening_id: l.grootboekrekening_id,
+          _ledgerLabel: "",
+        }))
+      );
+      setPrefilledFromHeader(false);
+      return;
+    }
+
+    // No stored lines → prefill exactly one default line from header totals,
+    // matching the "Maak deelregel voor totaalbedrag" button logic.
+    const headerExclRaw = parseFloat(form.amount_excl);
+    const headerInclRaw = parseFloat(form.amount_incl);
+    const headerPct = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
+    let excl: number | null = Number.isFinite(headerExclRaw) ? headerExclRaw : null;
+    if (excl == null && Number.isFinite(headerInclRaw)) {
+      excl = headerPct ? headerInclRaw / (1 + headerPct / 100) : headerInclRaw;
+    }
+    if (excl == null) {
+      setLines([]);
+      setPrefilledFromHeader(false);
+      return;
+    }
+    const headerLedger = grootboekrekeningen?.find(
+      (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
+    ) ?? null;
+    const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
+    setLines([{
+      omschrijving,
+      amount_excl: Math.round(excl * 100) / 100,
+      btw_percentage: headerPct,
+      grootboekrekening_id: headerLedger?.id ?? null,
+      _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+    }]);
+    setPrefilledFromHeader(true);
+  }, [existingLines, invoice?.id, isBtwVrijgesteld, grootboekrekeningen, form.amount_excl, form.amount_incl, form.btw_percentage, form.ledger_account_text, form.supplier]);
+
+
+  const addLine = () => { setPrefilledFromHeader(false); setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "" }]); };
+  const removeLine = (i: number) => { setPrefilledFromHeader(false); setLines((p) => p.filter((_, idx) => idx !== i)); };
   const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
 
@@ -902,6 +943,13 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                   )}
                 </div>
               ) : null}
+
+              {prefilledFromHeader && lines.length > 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  Voorstelregel aangemaakt uit factuurtotaal — pas aan of splits indien nodig.
+                </p>
+              )}
+
 
               {lines.map((l, i) => (
                 <div key={i} className="rounded-md border p-2 space-y-2 bg-muted/20">
