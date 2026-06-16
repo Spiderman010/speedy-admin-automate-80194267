@@ -904,102 +904,13 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               />
             </div>
 
-            <div className="border-t pt-3 space-y-2">
+            <div className="border-t pt-3 space-y-3">
               <div className="flex items-center justify-between">
-                <Label>Factuurregels (optioneel)</Label>
+                <Label className="text-base font-semibold">Factuurregels</Label>
                 <Button type="button" variant="outline" size="sm" onClick={addLine}>
                   <Plus className="h-3.5 w-3.5 mr-1" />Regel toevoegen
                 </Button>
               </div>
-
-              {lines.length === 0 ? (
-                <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground">
-                    Geen regels. Voeg regels toe om de factuur over meerdere grootboekrekeningen of BTW-tarieven te splitsen.
-                  </p>
-                  {(form.amount_excl || form.amount_incl) && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="text-xs"
-                      onClick={() => {
-                        const headerExcl = parseFloat(form.amount_excl) || 0;
-                        const headerBtw = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
-                        const headerLedger = grootboekrekeningen?.find(
-                          (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
-                        ) ?? null;
-                        const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
-                        setLines([{
-                          omschrijving,
-                          amount_excl: headerExcl,
-                          btw_percentage: headerBtw,
-                          grootboekrekening_id: headerLedger?.id ?? null,
-                          _ledgerLabel: headerLedger ? form.ledger_account_text : "",
-                        }]);
-                      }}
-                    >
-                      <Plus className="h-3 w-3 mr-1" />Maak deelregel voor totaalbedrag
-                    </Button>
-                  )}
-                </div>
-              ) : null}
-
-              {prefilledFromHeader && lines.length > 0 && (
-                <p className="text-xs text-muted-foreground italic">
-                  Voorstelregel aangemaakt uit factuurtotaal — pas aan of splits indien nodig.
-                </p>
-              )}
-
-
-              {lines.map((l, i) => (
-                <div key={i} className="rounded-md border p-2 space-y-2 bg-muted/20">
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Omschrijving"
-                      value={l.omschrijving}
-                      onChange={(e) => updateLine(i, { omschrijving: e.target.value })}
-                    />
-                    <Button type="button" variant="ghost" size="icon" onClick={() => removeLine(i)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label className="text-xs">Bedrag excl.</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={l.amount_excl}
-                        onChange={(e) => updateLine(i, { amount_excl: parseFloat(e.target.value) || 0 })}
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">BTW %</Label>
-                      <Select
-                        value={String(l.btw_percentage ?? 0)}
-                        onValueChange={(v) => updateLine(i, { btw_percentage: parseFloat(v) })}
-                        disabled={isBtwVrijgesteld}
-                      >
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="0">0%</SelectItem>
-                          <SelectItem value="9">9%</SelectItem>
-                          <SelectItem value="21">21%</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Grootboekrekening</Label>
-                    <GrootboekCombobox
-                      value={l._ledgerLabel}
-                      onValueChange={(v) => updateLine(i, { _ledgerLabel: v })}
-                      onIdChange={(id) => updateLine(i, { grootboekrekening_id: id })}
-                    />
-                  </div>
-                </div>
-              ))}
 
               {lines.length > 0 && (() => {
                 const header = headerTotalsForLines();
@@ -1015,43 +926,41 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                 const { allOk, exclOk, btwOk, inclOk, excl: diffExcl, btw: diffBtw, incl: diffIncl } = diffs;
                 const fmt = (n: number) => `€${n.toFixed(2)}`;
                 const fmtDiff = (d: number) => `${d > 0 ? "+" : ""}${fmt(d)}`;
-                const showFillRest = !exclOk && header.amount_excl !== null;
+                const cellOk = (ok: boolean) => allOk ? "text-green-700 dark:text-green-300" : (ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-300 font-medium");
                 return (
-                  <div className={`rounded-md border px-3 py-2 text-xs space-y-1 ${allOk ? "border-green-500/40 bg-green-50 dark:bg-green-950/30" : "border-amber-500/50 bg-amber-50 dark:bg-amber-950/30"}`}>
-                    <div className={`flex items-center gap-1.5 font-medium mb-1 ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
+                  <div className={`rounded-md border px-3 py-2 text-xs ${allOk ? "border-green-500/40 bg-green-50 dark:bg-green-950/30" : "border-amber-500/50 bg-amber-50 dark:bg-amber-950/30"}`}>
+                    <div className={`flex items-center gap-1.5 font-medium mb-2 ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
                       {allOk
-                        ? <><CheckCircle2 className="h-3.5 w-3.5" />Deelregels kloppen</>
-                        : <><AlertTriangle className="h-3.5 w-3.5" />Deelregels wijken af</>}
+                        ? <><CheckCircle2 className="h-3.5 w-3.5" />Deelregels kloppen met factuurtotaal</>
+                        : <><AlertTriangle className="h-3.5 w-3.5" />Er is nog een verschil. Pas de regels aan of boek het restant.</>}
                     </div>
-                    <div className="grid grid-cols-3 gap-x-3 text-muted-foreground">
-                      <span>Excl. BTW</span>
-                      <span>BTW</span>
-                      <span>Incl. BTW</span>
+                    <div className="grid grid-cols-[80px_1fr_1fr_1fr] gap-x-3 gap-y-0.5">
+                      <span className="text-muted-foreground"></span>
+                      <span className="text-muted-foreground">Excl. BTW</span>
+                      <span className="text-muted-foreground">BTW</span>
+                      <span className="text-muted-foreground">Incl. BTW</span>
+                      <span className="text-muted-foreground">Factuur</span>
+                      <span>{header.amount_excl === null ? "—" : fmt(header.amount_excl)}</span>
+                      <span>{header.btw_amount === null ? "—" : fmt(header.btw_amount)}</span>
+                      <span>{header.amount_incl === null ? "—" : fmt(header.amount_incl)}</span>
+                      <span className="text-muted-foreground">Regels</span>
+                      <span>{fmt(sumExcl)}</span>
+                      <span>{fmt(sumBtw)}</span>
+                      <span>{fmt(sumIncl)}</span>
+                      <span className="text-muted-foreground">Verschil</span>
+                      <span className={cellOk(exclOk)}>{diffExcl === null ? "—" : fmtDiff(diffExcl)}</span>
+                      <span className={cellOk(btwOk)}>{diffBtw === null ? "—" : fmtDiff(diffBtw)}</span>
+                      <span className={cellOk(inclOk)}>{diffIncl === null ? "—" : fmtDiff(diffIncl)}</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-x-3">
-                      <span>Factuur: {header.amount_excl === null ? "—" : fmt(header.amount_excl)}</span>
-                      <span>Factuur: {header.btw_amount === null ? "—" : fmt(header.btw_amount)}</span>
-                      <span>Factuur: {header.amount_incl === null ? "—" : fmt(header.amount_incl)}</span>
+                    <div className="text-[10px] text-muted-foreground pt-1.5 mt-1.5 border-t border-current/10">
+                      Kleine afrondingsverschillen zijn toegestaan.
                     </div>
-                    <div className="grid grid-cols-3 gap-x-3">
-                      <span>Som: {fmt(sumExcl)}</span>
-                      <span>Som: {fmt(sumBtw)}</span>
-                      <span>Som: {fmt(sumIncl)}</span>
-                    </div>
-                    <div className={`grid grid-cols-3 gap-x-3 font-medium ${allOk ? "text-green-700 dark:text-green-300" : "text-amber-700 dark:text-amber-300"}`}>
-                      <span>{diffExcl === null ? "—" : `Verschil: ${fmtDiff(diffExcl)}${exclOk ? "" : " ⚠"}`}</span>
-                      <span>{diffBtw === null ? "—" : `Verschil: ${fmtDiff(diffBtw)}${btwOk ? "" : " ⚠"}`}</span>
-                      <span>{diffIncl === null ? "—" : `Verschil: ${fmtDiff(diffIncl)}${inclOk ? "" : " ⚠"}`}</span>
-                    </div>
-                    <div className="text-[10px] text-muted-foreground pt-0.5">
-                      Tolerantie: ±{fmt(diffs.tolerance)} (schaalt met aantal regels)
-                    </div>
-                    {showFillRest && header.amount_excl !== null && (
+                    {!exclOk && header.amount_excl !== null && (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="mt-1 text-xs h-7"
+                        className="mt-2 text-xs h-7"
                         onClick={() => {
                           const remaining = (header.amount_excl ?? 0) - sumExcl;
                           const headerBtw = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
@@ -1067,13 +976,105 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                           }]);
                         }}
                       >
-                        <Plus className="h-3 w-3 mr-1" />Vul resterend verschil
+                        <Plus className="h-3 w-3 mr-1" />Boek restant op nieuwe regel
                       </Button>
                     )}
                   </div>
                 );
               })()}
+
+              {lines.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Geen regels. Voeg regels toe om de factuur over meerdere grootboekrekeningen of BTW-tarieven te splitsen.
+                </p>
+              )}
+
+              {prefilledFromHeader && lines.length > 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  Voorstelregel aangemaakt uit factuurtotaal — pas aan of splits indien nodig.
+                </p>
+              )}
+
+              {lines.length > 0 && (
+                <div className="space-y-2">
+                  {lines.map((l, i) => {
+                    const excl = Number(l.amount_excl || 0);
+                    const pct = Number(l.btw_percentage || 0);
+                    const lineIncl = excl + excl * pct / 100;
+                    return (
+                      <div key={i} className="rounded-md border p-2 bg-card">
+                        <div className="grid grid-cols-12 gap-2 items-end">
+                          <div className="col-span-12 md:col-span-5">
+                            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Omschrijving</Label>
+                            <Input
+                              className="h-8"
+                              placeholder="Omschrijving"
+                              value={l.omschrijving}
+                              onChange={(e) => updateLine(i, { omschrijving: e.target.value })}
+                            />
+                          </div>
+                          <div className="col-span-4 md:col-span-2">
+                            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Excl.</Label>
+                            <Input
+                              className="h-8"
+                              type="number"
+                              step="0.01"
+                              value={l.amount_excl}
+                              onChange={(e) => updateLine(i, { amount_excl: parseFloat(e.target.value) || 0 })}
+                            />
+                          </div>
+                          <div className="col-span-4 md:col-span-2">
+                            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">BTW %</Label>
+                            <Select
+                              value={String(l.btw_percentage ?? 0)}
+                              onValueChange={(v) => updateLine(i, { btw_percentage: parseFloat(v) })}
+                              disabled={isBtwVrijgesteld}
+                            >
+                              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="0">0%</SelectItem>
+                                <SelectItem value="9">9%</SelectItem>
+                                <SelectItem value="21">21%</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="col-span-3 md:col-span-2">
+                            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Incl.</Label>
+                            <Input
+                              className="h-8 bg-muted/40"
+                              value={`€${lineIncl.toFixed(2)}`}
+                              readOnly
+                              tabIndex={-1}
+                            />
+                          </div>
+                          <div className="col-span-1 flex justify-end">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              onClick={() => removeLine(i)}
+                              title="Regel verwijderen"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <div className="col-span-12">
+                            <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Grootboekrekening</Label>
+                            <GrootboekCombobox
+                              value={l._ledgerLabel}
+                              onValueChange={(v) => updateLine(i, { _ledgerLabel: v })}
+                              onIdChange={(id) => updateLine(i, { grootboekrekening_id: id })}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+
 
             <div className="border-t pt-3 grid grid-cols-2 gap-3">
               <div>
