@@ -936,21 +936,21 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                     </div>
                     <div className="grid grid-cols-[80px_1fr_1fr_1fr] gap-x-3 gap-y-0.5">
                       <span className="text-muted-foreground"></span>
-                      <span className="text-muted-foreground">Excl. BTW</span>
-                      <span className="text-muted-foreground">BTW</span>
-                      <span className="text-muted-foreground">Incl. BTW</span>
-                      <span className="text-muted-foreground">Factuur</span>
-                      <span>{header.amount_excl === null ? "—" : fmt(header.amount_excl)}</span>
-                      <span>{header.btw_amount === null ? "—" : fmt(header.btw_amount)}</span>
-                      <span>{header.amount_incl === null ? "—" : fmt(header.amount_incl)}</span>
-                      <span className="text-muted-foreground">Regels</span>
-                      <span>{fmt(sumExcl)}</span>
-                      <span>{fmt(sumBtw)}</span>
-                      <span>{fmt(sumIncl)}</span>
-                      <span className="text-muted-foreground">Verschil</span>
-                      <span className={cellOk(exclOk)}>{diffExcl === null ? "—" : fmtDiff(diffExcl)}</span>
-                      <span className={cellOk(btwOk)}>{diffBtw === null ? "—" : fmtDiff(diffBtw)}</span>
-                      <span className={cellOk(inclOk)}>{diffIncl === null ? "—" : fmtDiff(diffIncl)}</span>
+                      <span className="text-muted-foreground min-w-0 truncate">Excl. BTW</span>
+                      <span className="text-muted-foreground min-w-0 truncate">BTW</span>
+                      <span className="text-muted-foreground min-w-0 truncate">Incl. BTW</span>
+                      <span className="text-muted-foreground min-w-0 truncate">Factuur</span>
+                      <span className="min-w-0 truncate">{header.amount_excl === null ? "—" : fmt(header.amount_excl)}</span>
+                      <span className="min-w-0 truncate">{header.btw_amount === null ? "—" : fmt(header.btw_amount)}</span>
+                      <span className="min-w-0 truncate">{header.amount_incl === null ? "—" : fmt(header.amount_incl)}</span>
+                      <span className="text-muted-foreground min-w-0 truncate">Regels</span>
+                      <span className="min-w-0 truncate">{fmt(sumExcl)}</span>
+                      <span className="min-w-0 truncate">{fmt(sumBtw)}</span>
+                      <span className="min-w-0 truncate">{fmt(sumIncl)}</span>
+                      <span className="text-muted-foreground min-w-0 truncate">Verschil</span>
+                      <span className={cellOk(exclOk) + " min-w-0 truncate"}>{diffExcl === null ? "—" : fmtDiff(diffExcl)}</span>
+                      <span className={cellOk(btwOk) + " min-w-0 truncate"}>{diffBtw === null ? "—" : fmtDiff(diffBtw)}</span>
+                      <span className={cellOk(inclOk) + " min-w-0 truncate"}>{diffIncl === null ? "—" : fmtDiff(diffIncl)}</span>
                     </div>
                     <div className="text-[10px] text-muted-foreground pt-1.5 mt-1.5 border-t border-current/10">
                       Kleine afrondingsverschillen zijn toegestaan.
