@@ -495,16 +495,53 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   };
 
   useEffect(() => {
-    setLines(
-      (existingLines ?? []).map((l) => ({
-        omschrijving: l.omschrijving,
-        amount_excl: Number(l.amount_excl),
-        btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
-        grootboekrekening_id: l.grootboekrekening_id,
-        _ledgerLabel: "",
-      }))
-    );
-  }, [existingLines, invoice?.id, isBtwVrijgesteld]);
+    if (!invoice?.id) return;
+    if (existingLines === undefined) return;
+    if (linesInitInvoiceIdRef.current === invoice.id) return;
+    linesInitInvoiceIdRef.current = invoice.id;
+
+    if (existingLines.length > 0) {
+      setLines(
+        existingLines.map((l) => ({
+          omschrijving: l.omschrijving,
+          amount_excl: Number(l.amount_excl),
+          btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
+          grootboekrekening_id: l.grootboekrekening_id,
+          _ledgerLabel: "",
+        }))
+      );
+      setPrefilledFromHeader(false);
+      return;
+    }
+
+    // No stored lines → prefill exactly one default line from header totals,
+    // matching the "Maak deelregel voor totaalbedrag" button logic.
+    const headerExclRaw = parseFloat(form.amount_excl);
+    const headerInclRaw = parseFloat(form.amount_incl);
+    const headerPct = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
+    let excl: number | null = Number.isFinite(headerExclRaw) ? headerExclRaw : null;
+    if (excl == null && Number.isFinite(headerInclRaw)) {
+      excl = headerPct ? headerInclRaw / (1 + headerPct / 100) : headerInclRaw;
+    }
+    if (excl == null) {
+      setLines([]);
+      setPrefilledFromHeader(false);
+      return;
+    }
+    const headerLedger = grootboekrekeningen?.find(
+      (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
+    ) ?? null;
+    const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
+    setLines([{
+      omschrijving,
+      amount_excl: Math.round(excl * 100) / 100,
+      btw_percentage: headerPct,
+      grootboekrekening_id: headerLedger?.id ?? null,
+      _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+    }]);
+    setPrefilledFromHeader(true);
+  }, [existingLines, invoice?.id, isBtwVrijgesteld, grootboekrekeningen, form.amount_excl, form.amount_incl, form.btw_percentage, form.ledger_account_text, form.supplier]);
+
 
   const addLine = () => setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "" }]);
   const removeLine = (i: number) => setLines((p) => p.filter((_, idx) => idx !== i));
