@@ -554,6 +554,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
           grootboekrekening_id: l.grootboekrekening_id,
           _ledgerLabel: "",
+          _amountInput: formatAmountInput(Number(l.amount_excl)),
         }))
       );
       setPrefilledFromHeader(false);
