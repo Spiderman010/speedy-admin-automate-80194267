@@ -893,7 +893,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label>BTW toepassen</Label>
                 <Switch
