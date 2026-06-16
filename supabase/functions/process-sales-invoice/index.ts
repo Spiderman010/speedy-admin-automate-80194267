@@ -74,12 +74,19 @@ serve(async (req) => {
     // Authorization: confirm the authenticated user can access this client via RLS
     const { data: clientRow, error: clientErr } = await userClient
       .from("clients")
-      .select("id")
+      .select("id, organization_id")
       .eq("id", clientId)
       .maybeSingle();
     if (clientErr || !clientRow) {
       return new Response(JSON.stringify({ error: "Forbidden: no access to this client" }), {
         status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (!clientRow.organization_id) {
+      console.error("process-sales-invoice: client has null organization_id", clientId);
+      return new Response(JSON.stringify({ error: "Client heeft geen organization_id; neem contact op met de beheerder." }), {
+        status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -232,6 +239,7 @@ Extra instructies:
       .insert({
         user_id: user.id,
         client_id: clientId,
+        organization_id: clientRow.organization_id,
         customer_name: extracted.customer_name || "Onbekend",
         invoice_number: extracted.invoice_number || `VF-${Date.now()}`,
         invoice_date: extracted.invoice_date || new Date().toISOString().split("T")[0],
