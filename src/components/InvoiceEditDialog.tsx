@@ -195,7 +195,17 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     organizationId: invoice?.organization_id ?? undefined,
     enabled: !!invoice,
   });
-  const [lines, setLines] = useState<(InvoiceLineInput & { _ledgerLabel: string })[]>([]);
+  type LineRow = InvoiceLineInput & { _ledgerLabel: string; _amountInput: string };
+  const [lines, setLines] = useState<LineRow[]>([]);
+  // Allow typing partial decimals like "" / "12," / "12,5" without snapping to 0.
+  const parseAmountInput = (raw: string): number => {
+    const s = (raw ?? "").toString().replace(",", ".").trim();
+    if (s === "") return 0;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const formatAmountInput = (n: number | null | undefined): string =>
+    n === null || n === undefined || !Number.isFinite(Number(n)) ? "" : String(n);
   const linesInitInvoiceIdRef = useRef<string | null>(null);
   const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
@@ -544,6 +554,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
           grootboekrekening_id: l.grootboekrekening_id,
           _ledgerLabel: "",
+          _amountInput: formatAmountInput(Number(l.amount_excl)),
         }))
       );
       setPrefilledFromHeader(false);
@@ -572,14 +583,15 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       btw_percentage: prefill.btw_percentage,
       grootboekrekening_id: headerLedger?.id ?? null,
       _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+      _amountInput: formatAmountInput(prefill.amount_excl),
     }]);
     setPrefilledFromHeader(true);
   }, [existingLines, invoice?.id, isBtwVrijgesteld, grootboekrekeningen, form.amount_excl, form.amount_incl, form.btw_percentage, form.ledger_account_text, form.supplier]);
 
 
-  const addLine = () => { setPrefilledFromHeader(false); setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "" }]); };
+  const addLine = () => { setPrefilledFromHeader(false); setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "", _amountInput: "" }]); };
   const removeLine = (i: number) => { setPrefilledFromHeader(false); setLines((p) => p.filter((_, idx) => idx !== i)); };
-  const updateLine = (i: number, patch: Partial<InvoiceLineInput & { _ledgerLabel: string }>) =>
+  const updateLine = (i: number, patch: Partial<LineRow>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
 
   const headerTotalsForLines = () => {
@@ -1003,12 +1015,14 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                           const headerLedger = grootboekrekeningen?.find(
                             (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
                           ) ?? null;
+                          const restAmount = Math.round(remaining * 100) / 100;
                           setLines((prev) => [...prev, {
                             omschrijving: "Resterend bedrag",
-                            amount_excl: Math.round(remaining * 100) / 100,
+                            amount_excl: restAmount,
                             btw_percentage: headerBtw,
                             grootboekrekening_id: headerLedger?.id ?? null,
                             _ledgerLabel: headerLedger ? form.ledger_account_text : "",
+                            _amountInput: formatAmountInput(restAmount),
                           }]);
                         }}
                       >
@@ -1053,10 +1067,18 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                             <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Excl.</Label>
                             <Input
                               className="h-8"
-                              type="number"
-                              step="0.01"
-                              value={l.amount_excl}
-                              onChange={(e) => updateLine(i, { amount_excl: parseFloat(e.target.value) || 0 })}
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0,00"
+                              value={l._amountInput}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                updateLine(i, { _amountInput: raw, amount_excl: parseAmountInput(raw) });
+                              }}
+                              onBlur={(e) => {
+                                const n = parseAmountInput(e.target.value);
+                                updateLine(i, { _amountInput: e.target.value.trim() === "" ? "" : formatAmountInput(n), amount_excl: n });
+                              }}
                             />
                           </div>
                           <div className="col-span-3 md:col-span-2 min-w-0">
