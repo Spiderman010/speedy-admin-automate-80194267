@@ -312,6 +312,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       setDocumentRoute(getDocumentRoute((invoice as any).document_route));
       setRouteReason(((invoice as any).route_reason as string | null) || "");
       setLeverancierId((invoice as any).leverancier_id ?? null);
+      linesInitInvoiceIdRef.current = null;
+      setPrefilledFromHeader(false);
     }
   }, [invoice]);
 
