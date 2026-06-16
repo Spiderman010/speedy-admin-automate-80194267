@@ -1112,7 +1112,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             </div>
 
 
-            <div className="border-t pt-3 grid grid-cols-2 gap-3">
+            <div className="border-t pt-2 grid grid-cols-2 gap-3">
               <div>
                 <Label>Document-route</Label>
                 <Select value={documentRoute} onValueChange={(v) => setDocumentRoute(v as DocumentRoute)}>
