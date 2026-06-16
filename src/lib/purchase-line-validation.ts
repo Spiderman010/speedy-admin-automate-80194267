@@ -107,3 +107,46 @@ export function validatePurchaseLines(
   if (parts.length === 0) return null;
   return `Deelregels wijken af op ${parts.join("; ")}.`;
 }
+
+// -----------------------------------------------------------------------------
+// Prefill helper — derives one default purchase line from header totals.
+// Mirrors the "Maak deelregel voor totaalbedrag" button, with one extension:
+// when amount_excl is missing but amount_incl is present, excl is derived from
+// incl using the header VAT percentage (or equals incl when pct is 0).
+// -----------------------------------------------------------------------------
+
+export interface PrefillHeader {
+  amount_excl: number | null;
+  amount_incl: number | null;
+  btw_percentage: number | null;
+  isBtwVrijgesteld: boolean;
+}
+
+export interface PrefillLine {
+  amount_excl: number;
+  btw_percentage: number;
+}
+
+/**
+ * Returns the prefill line derived from header totals, or null when no usable
+ * excl amount can be determined. Rounds excl to 2 decimals.
+ *
+ * Rules (in order):
+ *  - btw_percentage = 0 when BTW-vrijgesteld, otherwise header pct (0 when missing).
+ *  - excl = header.amount_excl when finite.
+ *  - else, if amount_incl is finite: excl = incl / (1 + pct/100). With pct=0 this
+ *    equals incl, which also covers BTW-vrijgesteld facturen met alleen incl.
+ *  - else: null (no prefill possible).
+ */
+export function derivePrefillLine(header: PrefillHeader): PrefillLine | null {
+  const pct = header.isBtwVrijgesteld ? 0 : (Number.isFinite(header.btw_percentage as number) ? Number(header.btw_percentage) : 0);
+  const headerExcl = header.amount_excl;
+  const headerIncl = header.amount_incl;
+  let excl: number | null = headerExcl != null && Number.isFinite(headerExcl) ? headerExcl : null;
+  if (excl == null && headerIncl != null && Number.isFinite(headerIncl)) {
+    excl = pct ? headerIncl / (1 + pct / 100) : headerIncl;
+  }
+  if (excl == null) return null;
+  return { amount_excl: r2(excl), btw_percentage: pct };
+}
+
