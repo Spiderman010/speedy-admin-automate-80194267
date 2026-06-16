@@ -302,8 +302,13 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         supplier_btw_number: invoice.supplier_btw_number || "",
         invoice_number: invoice.invoice_number || "",
         invoice_date: invoice.invoice_date || "",
-        amount_excl: invoice.amount_excl?.toString() || "",
-        amount_incl: invoice.amount_incl?.toString() || "",
+        // Bij BTW-vrijgesteld: geen BTW, dus excl = incl (val terug op het beschikbare totaal).
+        amount_excl: isBtwVrijgesteld
+          ? ((invoice.amount_incl ?? invoice.amount_excl)?.toString() || "")
+          : (invoice.amount_excl?.toString() || ""),
+        amount_incl: isBtwVrijgesteld
+          ? ((invoice.amount_incl ?? invoice.amount_excl)?.toString() || "")
+          : (invoice.amount_incl?.toString() || ""),
         btw_amount: isBtwVrijgesteld ? "0" : (enabled ? (invoice.btw_amount?.toString() || "") : "0"),
         btw_percentage: isBtwVrijgesteld ? "0" : (enabled ? (["0", "9", "21"].includes(pct) ? pct : "21") : "0"),
         ledger_account_text: ledgerValue,
