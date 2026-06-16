@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info, ChevronLeft, ChevronRight, AlertTriangle, ExternalLink } from "lucide-react";
+import { CheckCircle2, Save, FileText, ZoomIn, ZoomOut, RotateCw, FileCode2, Plus, Trash2, HelpCircle, Link2, Link2Off, UserPlus, Truck, Pencil, Info, ChevronLeft, ChevronRight, AlertTriangle, ExternalLink, Split } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CreateVraagpostDialog } from "@/components/CreateVraagpostDialog";
 import { supabase } from "@/integrations/supabase/client";
@@ -593,6 +593,22 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const removeLine = (i: number) => { setPrefilledFromHeader(false); setLines((p) => p.filter((_, idx) => idx !== i)); };
   const updateLine = (i: number, patch: Partial<LineRow>) =>
     setLines((p) => p.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const splitLine = (i: number) => {
+    setPrefilledFromHeader(false);
+    setLines((p) => {
+      const src = p[i];
+      if (!src) return p;
+      const newLine: LineRow = {
+        omschrijving: "",
+        amount_excl: 0,
+        btw_percentage: src.btw_percentage,
+        grootboekrekening_id: null,
+        _ledgerLabel: "",
+        _amountInput: "",
+      };
+      return [...p.slice(0, i + 1), newLine, ...p.slice(i + 1)];
+    });
+  };
 
   const headerTotalsForLines = () => {
     const excl = parseFloat(form.amount_excl);
@@ -1105,7 +1121,17 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               tabIndex={-1}
                             />
                           </div>
-                          <div className="col-span-2 md:col-span-1 flex justify-end min-w-0">
+                          <div className="col-span-2 md:col-span-1 flex justify-end gap-0.5 min-w-0">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-primary shrink-0"
+                              onClick={() => splitLine(i)}
+                              title="Regel splitsen"
+                            >
+                              <Split className="h-4 w-4" />
+                            </Button>
                             <Button
                               type="button"
                               variant="ghost"
