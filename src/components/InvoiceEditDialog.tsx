@@ -1032,7 +1032,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               )}
 
               {lines.length > 0 && (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {lines.map((l, i) => {
                     const excl = Number(l.amount_excl || 0);
                     const pct = Number(l.btw_percentage || 0);
