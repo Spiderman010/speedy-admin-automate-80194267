@@ -940,7 +940,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
               />
             </div>
 
-            <div className="border-t pt-3 space-y-3">
+            <div className="border-t pt-2 space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-semibold">Factuurregels</Label>
                 <Button type="button" variant="outline" size="sm" onClick={addLine}>
