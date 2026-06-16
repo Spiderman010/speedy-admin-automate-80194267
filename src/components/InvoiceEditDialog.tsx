@@ -26,7 +26,7 @@ import JSZip from "jszip";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
-import { computeLineDiffs, validatePurchaseLines } from "@/lib/purchase-line-validation";
+import { computeLineDiffs, validatePurchaseLines, derivePrefillLine } from "@/lib/purchase-line-validation";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
@@ -304,8 +304,8 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
         invoice_date: invoice.invoice_date || "",
         amount_excl: invoice.amount_excl?.toString() || "",
         amount_incl: invoice.amount_incl?.toString() || "",
-        btw_amount: enabled ? (invoice.btw_amount?.toString() || "") : "0",
-        btw_percentage: enabled ? (["0", "9", "21"].includes(pct) ? pct : "21") : "0",
+        btw_amount: isBtwVrijgesteld ? "0" : (enabled ? (invoice.btw_amount?.toString() || "") : "0"),
+        btw_percentage: isBtwVrijgesteld ? "0" : (enabled ? (["0", "9", "21"].includes(pct) ? pct : "21") : "0"),
         ledger_account_text: ledgerValue,
         notes: invoice.notes || "",
       });
@@ -514,23 +514,26 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       return;
     }
 
-    // No stored lines → prefill one default line from header totals (same logic as the manual button).
-    const hasAmount = !!(form.amount_excl || form.amount_incl);
-    if (!hasAmount) {
+    // No stored lines → prefill one default line from header totals.
+    const prefill = derivePrefillLine({
+      amount_excl: form.amount_excl ? parseFloat(form.amount_excl) : null,
+      amount_incl: form.amount_incl ? parseFloat(form.amount_incl) : null,
+      btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
+      isBtwVrijgesteld,
+    });
+    if (!prefill) {
       setLines([]);
       setPrefilledFromHeader(false);
       return;
     }
-    const excl = parseFloat(form.amount_excl) || 0;
-    const pct = isBtwVrijgesteld ? 0 : (parseFloat(form.btw_percentage) || 0);
     const headerLedger = grootboekrekeningen?.find(
       (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
     ) ?? null;
     const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
     setLines([{
       omschrijving,
-      amount_excl: excl,
-      btw_percentage: pct,
+      amount_excl: prefill.amount_excl,
+      btw_percentage: prefill.btw_percentage,
       grootboekrekening_id: headerLedger?.id ?? null,
       _ledgerLabel: headerLedger ? form.ledger_account_text : "",
     }]);
