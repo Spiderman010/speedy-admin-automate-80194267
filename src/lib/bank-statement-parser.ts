@@ -223,7 +223,29 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
 
   let description = getTextNS(entry, ns, "AddtlNtryInf");
   if (!description) description = getTextNS(entry, ns, "Ustrd");
+  if (!description) {
+    // Fallback: try counterparty name from RltdPties (Dbtr/Cdtr <Nm>)
+    const rltdPties = ns
+      ? entry.getElementsByTagNameNS(ns, "RltdPties")
+      : entry.getElementsByTagName("RltdPties");
+    for (let i = 0; i < rltdPties.length && !description; i++) {
+      const partyTags = ["Dbtr", "Cdtr", "UltmtDbtr", "UltmtCdtr"];
+      for (const tag of partyTags) {
+        const partyEls = ns
+          ? (rltdPties[i] as Element).getElementsByTagNameNS(ns, tag)
+          : (rltdPties[i] as Element).getElementsByTagName(tag);
+        if (partyEls.length) {
+          const nm = getTextNS(partyEls[0] as Element, ns, "Nm");
+          if (nm) {
+            description = nm;
+            break;
+          }
+        }
+      }
+    }
+  }
   if (!description) description = "Geen omschrijving";
+
 
   let counterAccount: string | null = null;
   const ibanEl = ns ? entry.getElementsByTagNameNS(ns, "IBAN") : entry.getElementsByTagName("IBAN");
