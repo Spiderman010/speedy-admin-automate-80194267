@@ -238,7 +238,7 @@ export function buildBankSnelstartRows(
     }
 
     const datum = formatDate(t.transaction_date);
-    const omschrijving = (t.description ?? "").substring(0, 100).replace(/[\r\n;]/g, " ");
+    const omschrijving = buildBankOmschrijving(t).substring(0, 100).replace(/[\r\n;]/g, " ");
     const bedrag = Math.abs(t.amount);
     const isPositief = t.amount >= 0;
 
