@@ -1515,6 +1515,29 @@ export default function Bank() {
         </Button>
       </PageHeader>
 
+      {!hasSelection ? (
+        <Card className="mt-6">
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            <div className="rounded-full bg-primary/10 p-3">
+              <Landmark className="h-6 w-6 text-primary" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-display text-lg font-semibold">Kies eerst één of meer klanten</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                Bankafschriften worden pas geladen nadat je een klantselectie hebt gemaakt.
+                Kies één klant, meerdere klanten, of selecteer expliciet alle klanten.
+              </p>
+            </div>
+            <ClientMultiSelect
+              clients={clients ?? []}
+              value={clientSelection}
+              onChange={handleClientSelectionChange}
+              triggerClassName="w-72"
+            />
+          </CardContent>
+        </Card>
+      ) : (
+      <>
       <div className="grid gap-4 sm:grid-cols-4 mb-6">
         <Card><CardContent className="flex items-center gap-3 p-4">
           <CheckCircle2 className="h-5 w-5 text-success" />
