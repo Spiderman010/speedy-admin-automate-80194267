@@ -6,6 +6,30 @@ type JournalEntry = Tables<"journal_entries">;
 type BankTransaction = Tables<"bank_transactions">;
 type Grootboek = { id: string; nummer: number; omschrijving: string };
 
+/**
+ * Build the SnelStart omschrijving for a bank transaction.
+ *
+ * Uses the stored description, but when it is empty or the generic
+ * "Geen omschrijving" placeholder, falls back to the captured CAMT.053
+ * fields (AddtlNtryInf → Ustrd → tegenpartijnaam) and finally to
+ * reference / tegenrekening so SnelStart never receives a blank line.
+ */
+function buildBankOmschrijving(t: BankTransaction): string {
+  const candidates = [
+    t.description,
+    t.camt_addtl_ntry_inf,
+    t.camt_ustrd,
+    t.camt_counterparty_name,
+    t.reference,
+    t.counter_account,
+  ];
+  for (const c of candidates) {
+    const v = c?.trim();
+    if (v && v.toLowerCase() !== "geen omschrijving") return v;
+  }
+  return "Geen omschrijving";
+}
+
 export type BankExportResolutionSource =
   | "own"                    // transaction has a resolvable grootboekrekening_id
   | "1799"                   // gematcht, no own ledger, 1799 fallback used
