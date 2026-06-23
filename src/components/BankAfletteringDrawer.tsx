@@ -133,7 +133,10 @@ export function BankAfletteringDrawer({
 
   if (!transaction) return null;
 
-  const displayDesc = getDisplayDescription(transaction.description);
+  const displayDesc = getDisplayDescription(transaction.description, {
+    counterAccount: transaction.counter_account,
+    reference: transaction.reference,
+  });
   const counterAccount = transaction.counter_account ?? parsed?.iban ?? null;
   const pref = preferredType(transaction.amount);
 

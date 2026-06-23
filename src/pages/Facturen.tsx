@@ -141,7 +141,7 @@ function scorePurchaseCandidates(
     const bankUnallocated = Math.abs(tx.amount) - bankAllocated;
     if (bankUnallocated < 0.01) continue;
     const suggestedAmount = Math.min(invoiceOpen, bankUnallocated);
-    const displayDesc = getDisplayDescription(tx.description);
+    const displayDesc = getDisplayDescription(tx.description, { counterAccount: tx.counter_account, reference: tx.reference });
     const rawDesc = tx.description ?? "";
     let score = 0;
     const reasons: string[] = [];
@@ -1015,7 +1015,7 @@ export default function Facturen() {
                             <div className="font-mono text-xs text-muted-foreground">
                               {tx?.transaction_date ? new Date(tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
                             </div>
-                            <div className="truncate">{tx ? getDisplayDescription(tx.description) : "—"}</div>
+                            <div className="truncate">{tx ? getDisplayDescription(tx.description, { counterAccount: tx.counter_account, reference: tx.reference }) : "—"}</div>
                           </div>
                           <div className="font-mono font-medium shrink-0">{formatCurrency(a.amount)}</div>
                         </div>
@@ -1045,7 +1045,7 @@ export default function Facturen() {
                           <div className="font-mono text-xs text-muted-foreground">
                             {c.tx.transaction_date ? new Date(c.tx.transaction_date).toLocaleDateString("nl-NL") : "—"}
                           </div>
-                          <div className="truncate font-medium">{getDisplayDescription(c.tx.description)}</div>
+                          <div className="truncate font-medium">{getDisplayDescription(c.tx.description, { counterAccount: c.tx.counter_account, reference: c.tx.reference })}</div>
                           {c.reasons.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1">
                               {c.reasons.map(r => <Badge key={r} variant="secondary" className="text-[10px] px-1.5 py-0">{r}</Badge>)}
@@ -1083,7 +1083,7 @@ export default function Facturen() {
               <DialogTitle>Koppeling bevestigen</DialogTitle>
               <DialogDescription>
                 {linkTarget.tx.transaction_date ? new Date(linkTarget.tx.transaction_date).toLocaleDateString("nl-NL") : "—"}{" "}
-                — {getDisplayDescription(linkTarget.tx.description)}
+                — {getDisplayDescription(linkTarget.tx.description, { counterAccount: linkTarget.tx.counter_account, reference: linkTarget.tx.reference })}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-2">
