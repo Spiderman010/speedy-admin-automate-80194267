@@ -158,7 +158,17 @@ export function BankAfletteringDrawer({
           {/* Transaction identity */}
           <div className="px-6 pb-3 space-y-1">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-sm font-medium break-words leading-snug">{displayDesc}</span>
+              <span className="text-sm font-medium break-words leading-snug">
+                <HighlightedDescription
+                  text={displayDesc}
+                  parts={[
+                    { value: transaction.camt_ustrd, kind: "ustrd" },
+                    { value: transaction.camt_addtl_ntry_inf, kind: "addtl" },
+                    { value: transaction.camt_counterparty_name, kind: "name" },
+                    { value: transaction.reference, kind: "ref" },
+                  ]}
+                />
+              </span>
               <span
                 className={`font-mono text-sm font-semibold shrink-0 ${
                   transaction.amount < 0 ? "text-destructive" : "text-green-600"
@@ -167,6 +177,12 @@ export function BankAfletteringDrawer({
                 {fmt(transaction.amount)}
               </span>
             </div>
+            <HighlightLegend
+              hasUstrd={!!transaction.camt_ustrd}
+              hasAddtl={!!transaction.camt_addtl_ntry_inf}
+              hasName={!!transaction.camt_counterparty_name}
+              hasRef={!!transaction.reference}
+            />
             <div className="text-xs text-muted-foreground space-y-0.5">
               <div>
                 {new Date(transaction.transaction_date).toLocaleDateString("nl-NL", {
