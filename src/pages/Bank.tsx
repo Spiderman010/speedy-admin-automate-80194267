@@ -135,7 +135,15 @@ type SuggestionDetail = {
 export default function Bank() {
   const [searchParams] = useSearchParams();
   const { selectedClientId, setSelectedClientId } = useClientContext();
-  const [clientFilter, setClientFilter] = useState(() => searchParams.get("client") ?? selectedClientId);
+  // Klantselectie: standaard leeg. Gebruiker moet eerst kiezen voordat bankdata laadt.
+  const [clientSelection, setClientSelection] = useState<ClientMultiSelectValue>(() => {
+    const fromUrl = searchParams.get("client");
+    const initial = fromUrl ?? selectedClientId;
+    if (initial && initial !== "all") {
+      return { allMode: false, selectedIds: [initial] };
+    }
+    return { allMode: false, selectedIds: [] };
+  });
   const [statusFilter, setStatusFilter] = useState("all");
   const [vraagpostFilter, setVraagpostFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -170,8 +178,18 @@ export default function Bank() {
   const [exportPreflightOpen, setExportPreflightOpen] = useState(false);
   const [exportPreflightData, setExportPreflightData] = useState<ExportPreflightData | null>(null);
 
+  // Sync van sidebar/context naar lokale multiselect: enkel als de context een
+  // concrete klant aanwijst overrulen we de huidige selectie. "all" via sidebar
+  // wordt bewust genegeerd — gebruiker moet "Alle klanten" expliciet kiezen.
   useEffect(() => {
-    setClientFilter(selectedClientId);
+    if (selectedClientId && selectedClientId !== "all") {
+      setClientSelection((prev) => {
+        if (!prev.allMode && prev.selectedIds.length === 1 && prev.selectedIds[0] === selectedClientId) {
+          return prev;
+        }
+        return { allMode: false, selectedIds: [selectedClientId] };
+      });
+    }
   }, [selectedClientId]);
 
   useEffect(() => {
@@ -184,6 +202,18 @@ export default function Bank() {
   const orgEnabled = isReady && activeOrganizationId !== null;
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
+
+  // ─ Afgeleide klantselectie voor data-laden ─
+  const hasSelection = clientSelection.allMode || clientSelection.selectedIds.length > 0;
+  const singleClientId =
+    !clientSelection.allMode && clientSelection.selectedIds.length === 1
+      ? clientSelection.selectedIds[0]
+      : undefined;
+  const subsetIdSet = useMemo(
+    () => new Set(clientSelection.selectedIds),
+    [clientSelection.selectedIds],
+  );
+
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
@@ -192,10 +222,10 @@ export default function Bank() {
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
   });
-  const { data: transactions, isLoading, refetch } = useBankTransactions({
+  const { data: rawTransactions, isLoading, refetch } = useBankTransactions({
     organizationId: activeOrganizationId ?? undefined,
-    clientId: clientFilter !== "all" ? clientFilter : undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    enabled: orgEnabled && hasSelection,
   });
   const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices({
     organizationId: activeOrganizationId ?? undefined,
@@ -207,18 +237,54 @@ export default function Bank() {
   const updatePurchase = useUpdatePurchaseInvoice();
   const updateSales = useUpdateSalesInvoice();
   const createVraagpost = useCreateVraagpost();
-  const { data: vraagposten } = useVraagposten({
+  const { data: rawVraagposten } = useVraagposten({
     organizationId: activeOrganizationId ?? undefined,
-    clientId: clientFilter !== "all" ? clientFilter : undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    enabled: orgEnabled && hasSelection,
   });
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const deleteAllocationsForTx = useDeleteAllocationsForTransaction();
-  const { data: allAllocations } = useBankTransactionAllocations({
+  const { data: rawAllocations } = useBankTransactionAllocations({
     organizationId: activeOrganizationId ?? undefined,
-    clientId: clientFilter !== "all" ? clientFilter : undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    enabled: orgEnabled && hasSelection,
   });
+
+  // ─ Subset-filter (meerdere klanten geselecteerd, maar geen "Alle klanten") ─
+  const transactions = useMemo(() => {
+    if (!rawTransactions) return rawTransactions;
+    if (!hasSelection) return [];
+    if (clientSelection.allMode || singleClientId) return rawTransactions;
+    return rawTransactions.filter((t) => subsetIdSet.has(t.client_id));
+  }, [rawTransactions, hasSelection, clientSelection.allMode, singleClientId, subsetIdSet]);
+
+  const vraagposten = useMemo(() => {
+    if (!rawVraagposten) return rawVraagposten;
+    if (!hasSelection) return [];
+    if (clientSelection.allMode || singleClientId) return rawVraagposten;
+    return rawVraagposten.filter((v) => subsetIdSet.has(v.client_id));
+  }, [rawVraagposten, hasSelection, clientSelection.allMode, singleClientId, subsetIdSet]);
+
+  const allAllocations = useMemo(() => {
+    if (!rawAllocations) return rawAllocations;
+    if (!hasSelection) return [];
+    if (clientSelection.allMode || singleClientId) return rawAllocations;
+    return rawAllocations.filter((a) => subsetIdSet.has(a.client_id));
+  }, [rawAllocations, hasSelection, clientSelection.allMode, singleClientId, subsetIdSet]);
+
+  const handleClientSelectionChange = useCallback(
+    (next: ClientMultiSelectValue) => {
+      setClientSelection(next);
+      // Houd de sidebar/context in sync: alleen bij precies één klant of "Alle klanten".
+      if (next.allMode) {
+        setSelectedClientId("all");
+      } else if (next.selectedIds.length === 1) {
+        setSelectedClientId(next.selectedIds[0]);
+      }
+    },
+    [setSelectedClientId],
+  );
+
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
