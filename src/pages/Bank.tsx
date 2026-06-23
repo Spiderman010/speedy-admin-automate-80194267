@@ -1472,7 +1472,7 @@ export default function Bank() {
           const blockedManualInvalid = sources.filter(s => s === "blocked_manual_invalid").length;
           const blockedMissing1799 = sources.filter(s => s === "blocked_missing_1799").length;
           const countBlocked = blockedUnconfirmed + blockedUnprocessed + blockedManualInvalid + blockedMissing1799;
-          const clientRecord = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter) : undefined;
+          const clientRecord = singleClientId ? clients?.find(c => c.id === singleClientId) : undefined;
           const clientName = clientRecord?.name;
           const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
           setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName, bankDagboek });
@@ -1481,7 +1481,7 @@ export default function Bank() {
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
         <Button variant="outline" onClick={() => {
-          const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
+          const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
           const rowCount = exportAfletterrapportCSV(
             allAllocations ?? [],
             transactions ?? [],
@@ -2182,7 +2182,7 @@ export default function Bank() {
       <VerwerkingsScherm
         open={verwerkingOpen}
         onOpenChange={setVerwerkingOpen}
-        transactions={transactions?.filter(t => clientFilter === "all" || t.client_id === clientFilter) ?? []}
+        transactions={transactions ?? []}
         purchaseInvoices={invoices ?? []}
         salesInvoices={salesInvs ?? []}
         onBookPrivate={async (id) => {
@@ -2228,7 +2228,7 @@ export default function Bank() {
         onImport={handleImport}
         existingTransactions={transactions ?? []}
         bookingTemplates={bookingTemplates ?? []}
-        defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
+        defaultClientId={singleClientId}
       />
 
       <BankAfletteringDrawer
