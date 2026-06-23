@@ -98,6 +98,9 @@ export type Database = {
       bank_transactions: {
         Row: {
           amount: number
+          camt_addtl_ntry_inf: string | null
+          camt_counterparty_name: string | null
+          camt_ustrd: string | null
           client_id: string
           counter_account: string | null
           created_at: string
@@ -116,6 +119,9 @@ export type Database = {
         }
         Insert: {
           amount: number
+          camt_addtl_ntry_inf?: string | null
+          camt_counterparty_name?: string | null
+          camt_ustrd?: string | null
           client_id: string
           counter_account?: string | null
           created_at?: string
@@ -134,6 +140,9 @@ export type Database = {
         }
         Update: {
           amount?: number
+          camt_addtl_ntry_inf?: string | null
+          camt_counterparty_name?: string | null
+          camt_ustrd?: string | null
           client_id?: string
           counter_account?: string | null
           created_at?: string
