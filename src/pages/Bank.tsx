@@ -1460,7 +1460,7 @@ export default function Bank() {
           value={clientSelection}
           onChange={handleClientSelectionChange}
         />
-        <Button variant="outline" onClick={() => {
+        <Button variant="outline" disabled={!hasSelection} onClick={() => {
           const exportCandidates = transactions ?? [];
           if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
           const gb = grootboekrekeningen ?? [];
@@ -1480,7 +1480,7 @@ export default function Bank() {
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
-        <Button variant="outline" onClick={() => {
+        <Button variant="outline" disabled={!hasSelection} onClick={() => {
           const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
           const rowCount = exportAfletterrapportCSV(
             allAllocations ?? [],
@@ -1505,7 +1505,7 @@ export default function Bank() {
         <Button
           variant="default"
           onClick={() => setVerwerkingOpen(true)}
-          disabled={openCount === 0}
+          disabled={!hasSelection || openCount === 0}
         >
           <Zap className="mr-2 h-4 w-4" />
           Verwerken {openCount > 0 && `(${openCount})`}
