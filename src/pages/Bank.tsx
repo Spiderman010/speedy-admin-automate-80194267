@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp, Landmark } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,6 +34,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
+import { ClientMultiSelect, type ClientMultiSelectValue } from "@/components/ClientMultiSelect";
 import { useToast } from "@/hooks/use-toast";
 import { useBankTransactions, useAddBankTransaction, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
@@ -134,7 +135,15 @@ type SuggestionDetail = {
 export default function Bank() {
   const [searchParams] = useSearchParams();
   const { selectedClientId, setSelectedClientId } = useClientContext();
-  const [clientFilter, setClientFilter] = useState(() => searchParams.get("client") ?? selectedClientId);
+  // Klantselectie: standaard leeg. Gebruiker moet eerst kiezen voordat bankdata laadt.
+  const [clientSelection, setClientSelection] = useState<ClientMultiSelectValue>(() => {
+    const fromUrl = searchParams.get("client");
+    const initial = fromUrl ?? selectedClientId;
+    if (initial && initial !== "all") {
+      return { allMode: false, selectedIds: [initial] };
+    }
+    return { allMode: false, selectedIds: [] };
+  });
   const [statusFilter, setStatusFilter] = useState("all");
   const [vraagpostFilter, setVraagpostFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -169,8 +178,18 @@ export default function Bank() {
   const [exportPreflightOpen, setExportPreflightOpen] = useState(false);
   const [exportPreflightData, setExportPreflightData] = useState<ExportPreflightData | null>(null);
 
+  // Sync van sidebar/context naar lokale multiselect: enkel als de context een
+  // concrete klant aanwijst overrulen we de huidige selectie. "all" via sidebar
+  // wordt bewust genegeerd — gebruiker moet "Alle klanten" expliciet kiezen.
   useEffect(() => {
-    setClientFilter(selectedClientId);
+    if (selectedClientId && selectedClientId !== "all") {
+      setClientSelection((prev) => {
+        if (!prev.allMode && prev.selectedIds.length === 1 && prev.selectedIds[0] === selectedClientId) {
+          return prev;
+        }
+        return { allMode: false, selectedIds: [selectedClientId] };
+      });
+    }
   }, [selectedClientId]);
 
   useEffect(() => {
@@ -183,6 +202,18 @@ export default function Bank() {
   const orgEnabled = isReady && activeOrganizationId !== null;
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
+
+  // ─ Afgeleide klantselectie voor data-laden ─
+  const hasSelection = clientSelection.allMode || clientSelection.selectedIds.length > 0;
+  const singleClientId =
+    !clientSelection.allMode && clientSelection.selectedIds.length === 1
+      ? clientSelection.selectedIds[0]
+      : undefined;
+  const subsetIdSet = useMemo(
+    () => new Set(clientSelection.selectedIds),
+    [clientSelection.selectedIds],
+  );
+
   const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
@@ -191,10 +222,10 @@ export default function Bank() {
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
   });
-  const { data: transactions, isLoading, refetch } = useBankTransactions({
+  const { data: rawTransactions, isLoading, refetch } = useBankTransactions({
     organizationId: activeOrganizationId ?? undefined,
-    clientId: clientFilter !== "all" ? clientFilter : undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    enabled: orgEnabled && hasSelection,
   });
   const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices({
     organizationId: activeOrganizationId ?? undefined,
@@ -206,18 +237,54 @@ export default function Bank() {
   const updatePurchase = useUpdatePurchaseInvoice();
   const updateSales = useUpdateSalesInvoice();
   const createVraagpost = useCreateVraagpost();
-  const { data: vraagposten } = useVraagposten({
+  const { data: rawVraagposten } = useVraagposten({
     organizationId: activeOrganizationId ?? undefined,
-    clientId: clientFilter !== "all" ? clientFilter : undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    enabled: orgEnabled && hasSelection,
   });
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const deleteAllocationsForTx = useDeleteAllocationsForTransaction();
-  const { data: allAllocations } = useBankTransactionAllocations({
+  const { data: rawAllocations } = useBankTransactionAllocations({
     organizationId: activeOrganizationId ?? undefined,
-    clientId: clientFilter !== "all" ? clientFilter : undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    enabled: orgEnabled && hasSelection,
   });
+
+  // ─ Subset-filter (meerdere klanten geselecteerd, maar geen "Alle klanten") ─
+  const transactions = useMemo(() => {
+    if (!rawTransactions) return rawTransactions;
+    if (!hasSelection) return [];
+    if (clientSelection.allMode || singleClientId) return rawTransactions;
+    return rawTransactions.filter((t) => subsetIdSet.has(t.client_id));
+  }, [rawTransactions, hasSelection, clientSelection.allMode, singleClientId, subsetIdSet]);
+
+  const vraagposten = useMemo(() => {
+    if (!rawVraagposten) return rawVraagposten;
+    if (!hasSelection) return [];
+    if (clientSelection.allMode || singleClientId) return rawVraagposten;
+    return rawVraagposten.filter((v) => subsetIdSet.has(v.client_id));
+  }, [rawVraagposten, hasSelection, clientSelection.allMode, singleClientId, subsetIdSet]);
+
+  const allAllocations = useMemo(() => {
+    if (!rawAllocations) return rawAllocations;
+    if (!hasSelection) return [];
+    if (clientSelection.allMode || singleClientId) return rawAllocations;
+    return rawAllocations.filter((a) => subsetIdSet.has(a.client_id));
+  }, [rawAllocations, hasSelection, clientSelection.allMode, singleClientId, subsetIdSet]);
+
+  const handleClientSelectionChange = useCallback(
+    (next: ClientMultiSelectValue) => {
+      setClientSelection(next);
+      // Houd de sidebar/context in sync: alleen bij precies één klant of "Alle klanten".
+      if (next.allMode) {
+        setSelectedClientId("all");
+      } else if (next.selectedIds.length === 1) {
+        setSelectedClientId(next.selectedIds[0]);
+      }
+    },
+    [setSelectedClientId],
+  );
+
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
@@ -1388,14 +1455,12 @@ export default function Bank() {
   return (
     <>
       <PageHeader title="Bankafschriften" description="Upload en match bankafschriften met facturen">
-        <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle klanten</SelectItem>
-            {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Button variant="outline" onClick={() => {
+        <ClientMultiSelect
+          clients={clients ?? []}
+          value={clientSelection}
+          onChange={handleClientSelectionChange}
+        />
+        <Button variant="outline" disabled={!hasSelection} onClick={() => {
           const exportCandidates = transactions ?? [];
           if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
           const gb = grootboekrekeningen ?? [];
@@ -1407,7 +1472,7 @@ export default function Bank() {
           const blockedManualInvalid = sources.filter(s => s === "blocked_manual_invalid").length;
           const blockedMissing1799 = sources.filter(s => s === "blocked_missing_1799").length;
           const countBlocked = blockedUnconfirmed + blockedUnprocessed + blockedManualInvalid + blockedMissing1799;
-          const clientRecord = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter) : undefined;
+          const clientRecord = singleClientId ? clients?.find(c => c.id === singleClientId) : undefined;
           const clientName = clientRecord?.name;
           const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
           setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName, bankDagboek });
@@ -1415,8 +1480,8 @@ export default function Bank() {
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
-        <Button variant="outline" onClick={() => {
-          const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
+        <Button variant="outline" disabled={!hasSelection} onClick={() => {
+          const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
           const rowCount = exportAfletterrapportCSV(
             allAllocations ?? [],
             transactions ?? [],
@@ -1440,7 +1505,7 @@ export default function Bank() {
         <Button
           variant="default"
           onClick={() => setVerwerkingOpen(true)}
-          disabled={openCount === 0}
+          disabled={!hasSelection || openCount === 0}
         >
           <Zap className="mr-2 h-4 w-4" />
           Verwerken {openCount > 0 && `(${openCount})`}
@@ -1450,6 +1515,29 @@ export default function Bank() {
         </Button>
       </PageHeader>
 
+      {!hasSelection ? (
+        <Card className="mt-6">
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            <div className="rounded-full bg-primary/10 p-3">
+              <Landmark className="h-6 w-6 text-primary" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="font-display text-lg font-semibold">Kies eerst één of meer klanten</h3>
+              <p className="text-sm text-muted-foreground max-w-md">
+                Bankafschriften worden pas geladen nadat je een klantselectie hebt gemaakt.
+                Kies één klant, meerdere klanten, of selecteer expliciet alle klanten.
+              </p>
+            </div>
+            <ClientMultiSelect
+              clients={clients ?? []}
+              value={clientSelection}
+              onChange={handleClientSelectionChange}
+              triggerClassName="w-72"
+            />
+          </CardContent>
+        </Card>
+      ) : (
+      <>
       <div className="grid gap-4 sm:grid-cols-4 mb-6">
         <Card><CardContent className="flex items-center gap-3 p-4">
           <CheckCircle2 className="h-5 w-5 text-success" />
@@ -2098,6 +2186,10 @@ export default function Bank() {
           </Button>
         </div>
       )}
+      </>
+      )}
+
+
 
       <AlertDialog open={confirmUnlinkOpen} onOpenChange={setConfirmUnlinkOpen}>
         <AlertDialogContent>
@@ -2117,7 +2209,7 @@ export default function Bank() {
       <VerwerkingsScherm
         open={verwerkingOpen}
         onOpenChange={setVerwerkingOpen}
-        transactions={transactions?.filter(t => clientFilter === "all" || t.client_id === clientFilter) ?? []}
+        transactions={transactions ?? []}
         purchaseInvoices={invoices ?? []}
         salesInvoices={salesInvs ?? []}
         onBookPrivate={async (id) => {
@@ -2163,7 +2255,7 @@ export default function Bank() {
         onImport={handleImport}
         existingTransactions={transactions ?? []}
         bookingTemplates={bookingTemplates ?? []}
-        defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
+        defaultClientId={singleClientId}
       />
 
       <BankAfletteringDrawer
