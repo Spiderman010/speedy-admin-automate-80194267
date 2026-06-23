@@ -8,6 +8,12 @@ export interface ParsedTransaction {
   description: string;
   counterAccount: string | null;
   reference: string | null;
+  /** CAMT.053 Ustrd (unstructured remittance info) — only set for CAMT.053 sources. */
+  ustrd?: string | null;
+  /** CAMT.053 AddtlNtryInf (additional entry information) — only set for CAMT.053 sources. */
+  addtlNtryInf?: string | null;
+  /** CAMT.053 counterparty name from RltdPties (Dbtr/Cdtr <Nm>). */
+  counterpartyName?: string | null;
 }
 
 export interface ParsedStatement {
@@ -221,31 +227,31 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
   }
   if (!dateStr) return null;
 
-  let description = getTextNS(entry, ns, "AddtlNtryInf");
-  if (!description) description = getTextNS(entry, ns, "Ustrd");
-  if (!description) {
-    // Fallback: try counterparty name from RltdPties (Dbtr/Cdtr <Nm>)
-    const rltdPties = ns
-      ? entry.getElementsByTagNameNS(ns, "RltdPties")
-      : entry.getElementsByTagName("RltdPties");
-    for (let i = 0; i < rltdPties.length && !description; i++) {
-      const partyTags = ["Dbtr", "Cdtr", "UltmtDbtr", "UltmtCdtr"];
-      for (const tag of partyTags) {
-        const partyEls = ns
-          ? (rltdPties[i] as Element).getElementsByTagNameNS(ns, tag)
-          : (rltdPties[i] as Element).getElementsByTagName(tag);
-        if (partyEls.length) {
-          const nm = getTextNS(partyEls[0] as Element, ns, "Nm");
-          if (nm) {
-            description = nm;
-            break;
-          }
+  const addtlNtryInf = getTextNS(entry, ns, "AddtlNtryInf") || null;
+  const ustrd = getTextNS(entry, ns, "Ustrd") || null;
+
+  // Counterparty name from RltdPties (Dbtr/Cdtr <Nm>)
+  let counterpartyName: string | null = null;
+  const rltdPties = ns
+    ? entry.getElementsByTagNameNS(ns, "RltdPties")
+    : entry.getElementsByTagName("RltdPties");
+  for (let i = 0; i < rltdPties.length && !counterpartyName; i++) {
+    const partyTags = ["Dbtr", "Cdtr", "UltmtDbtr", "UltmtCdtr"];
+    for (const tag of partyTags) {
+      const partyEls = ns
+        ? (rltdPties[i] as Element).getElementsByTagNameNS(ns, tag)
+        : (rltdPties[i] as Element).getElementsByTagName(tag);
+      if (partyEls.length) {
+        const nm = getTextNS(partyEls[0] as Element, ns, "Nm");
+        if (nm) {
+          counterpartyName = nm;
+          break;
         }
       }
     }
   }
-  if (!description) description = "Geen omschrijving";
 
+  const description = addtlNtryInf || ustrd || counterpartyName || "Geen omschrijving";
 
   let counterAccount: string | null = null;
   const ibanEl = ns ? entry.getElementsByTagNameNS(ns, "IBAN") : entry.getElementsByTagName("IBAN");
@@ -257,7 +263,16 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
     reference = refEl[0].textContent;
   }
 
-  return { date: dateStr, amount: signedAmount, description, counterAccount, reference };
+  return {
+    date: dateStr,
+    amount: signedAmount,
+    description,
+    counterAccount,
+    reference,
+    ustrd,
+    addtlNtryInf,
+    counterpartyName,
+  };
 }
 
 // ─── Auto-detect format ─────────────────────────────────────────────
