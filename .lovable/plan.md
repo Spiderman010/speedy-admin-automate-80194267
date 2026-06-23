@@ -1,33 +1,45 @@
 ## Doel
-Maak de inkoopfactuur-popup net iets prettiger op desktop door alleen layout-aanpassingen in `InvoiceEditDialog.tsx`.
 
-## Wijzigingen
+Op de Bank-pagina mogen banktransacties **niet** standaard zichtbaar zijn voor "Alle klanten". De gebruiker moet eerst expliciet 1 klant, meerdere klanten of "Alle klanten" kiezen. Pas daarna worden transacties, KPI-tegels en de tabel geladen.
 
-### 1. Bredere rechterkolom
-Wijzig de desktop-gridverhouding van 5:7 (≈42:58) naar 2:3 (40:60) zodat het formulier met factuurregels meer ruimte krijgt:
-- Huidig: `lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]`
-- Nieuw: `lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]`
+## Wat verandert er functioneel
 
-### 2. Compactere bovenste sectie
-Verklein verticale spacing tussen blokken in de rechterkolom zodat "Factuurregels" sneller zichtbaar is:
-- `space-y-4` op het scrollbare container-div wordt `space-y-2`
-- `space-y-2` binnen de leverancierkoppeling-kaart wordt `space-y-1`
-- `space-y-3` bij de BTW-sectie wordt `space-y-1.5`
-- `p-3` op de leverancierkoppeling-kaart wordt `p-2`
-- `space-y-2` in de factuurregels-lijst wordt `space-y-1.5`
-- `gap-3` op diverse grid-rijen (leverancier, factuurnummer/datum, bedragen) blijft `gap-3` — geen verdichte layout die onleesbaar wordt
+1. **Klantkeuze bovenaan de Bank-pagina** wordt een multi-select (popover met zoekveld + checkboxes):
+   - Standaard: **geen** klant geselecteerd.
+   - Opties: zoekbaar lijstje van alle klanten met checkboxes + knop "Alles selecteren" / "Wissen".
+   - Toont in de knop bv. *"3 klanten geselecteerd"* of *"Alle klanten"*.
+2. **Lege staat** zolang er niets gekozen is:
+   - KPI-tegels, tabel, blokkade-banner en zoekbalk worden verborgen.
+   - In plaats daarvan komt een nette empty state: *"Kies eerst één of meer klanten om bankafschriften te zien"* met de klantkiezer prominent eronder.
+3. **Verwerken / Export / Aletterrapport / Upload-knoppen** in de header blijven, maar:
+   - Upload-afschrift blijft beschikbaar (vraagt al om klant in dialog).
+   - Export Snelstart en Afletterrapport worden uitgeschakeld (disabled met tooltip "Kies eerst een klant") zolang er geen klantselectie is.
+4. **Data-laden** gebeurt alleen voor de geselecteerde klant-id's; bij "Alle klanten" werkt het zoals nu.
+5. **Onthouden van keuze** binnen de sessie via `useClientContext` (bestaande context) — als de gebruiker via de sidebar al een klant heeft gekozen, wordt die voorgeselecteerd.
 
-### 3. Factuurregels-sectie compacter
-- De border-t/pt-3 rond de factuurregels-sectie wordt `border-t pt-2`
-- De totaalvergelijkingskaart houdt zijn padding (`px-3 py-2`) maar de ruimte eromheen verkleint mee
-- Regel-items (`rounded-md border p-2`) blijven ongewijzigd — al compact genoeg
+## Wat verandert er **niet**
 
-## Niet gewijzigd
-- Geen berekeningen, validatie, logica, hooks, state, events
-- Geen backend/database/export/edge-function wijzigingen
-- Geen andere bestanden dan `InvoiceEditDialog.tsx`
+- Geen wijzigingen in database, RLS of edge functions. RLS regelt de échte toegangsbeperking al; dit is een UI/UX-maatregel zodat een gebruiker niet per ongeluk 60 klanten tegelijk ziet.
+- Andere pagina's (Facturen, Verkoop, Snelle invoer) blijven ongewijzigd. Als je deze gedragsregel later ook daar wilt, doen we dat in een aparte taak.
+- Geen nieuwe libraries; we hergebruiken de bestaande `Popover`, `Command` en `Checkbox` uit `@/components/ui`.
 
-## Validatie
-- `npx tsc --noEmit`
-- `npm run lint`
-- `npm run test`
+## Technische aanpak (kort)
+
+- `src/pages/Bank.tsx`: vervang het bestaande `<Select>` voor klantfilter door een nieuwe `<ClientMultiSelect>`-component die een `string[]` aan klant-id's teruggeeft (lege array = niets gekozen, `["all"]` = alle klanten).
+- Nieuwe component `src/components/ClientMultiSelect.tsx` (popover + search + checkboxes + "Alles" / "Wissen").
+- Pas alle plekken in `Bank.tsx` aan waar nu `clientFilter !== "all" ? clientFilter : undefined` wordt doorgegeven aan `useBankTransactions`, `usePurchaseInvoices`, `useSalesInvoices` en `useBankTransactionAllocations`:
+  - Als selectie leeg → query overslaan (skeleton/empty state tonen).
+  - Als 1 klant → bestaande gedragslijn met die ene `clientId`.
+  - Als meerdere klanten → client-side filteren op `selectedIds.includes(tx.client_id)` (hooks laden dan zonder `clientId` of met `"all"`), zelfde patroon als bestaande "Alle klanten"-flow.
+- Empty-state component bovenaan de pagina-body.
+
+## Verificatie
+
+- `npx tsgo --noEmit`, `npm run lint`, `npm run test` moeten groen blijven.
+- Handmatig in preview: bij verse load geen transacties zichtbaar, na kiezen 1 klant alleen die data, na kiezen meerdere klanten gefilterde data, "Alles" werkt als voorheen.
+
+## Credits-inschatting
+
+Eén gerichte wijziging, één nieuwe kleine component, één bestaande pagina aanpassen, geen migraties of edge functions. Indicatie: **ongeveer 2–4 credits** voor de implementatie + 1 voor verificatie. Definitieve kosten hangen af van hoeveel iteraties nodig zijn (bijv. styling-bijschaaf), maar dit zit ruim binnen een normale feature-taak.
+
+Wil je dat ik dezelfde regel (eerst klant kiezen) ook toepas op **Facturen**, **Verkoopfacturen** en **Vraagposten**? Dat zou dan in een aparte taak (~2–3 credits extra) — laat het weten als je het in één keer wilt meenemen.
