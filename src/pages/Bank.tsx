@@ -1455,13 +1455,11 @@ export default function Bank() {
   return (
     <>
       <PageHeader title="Bankafschriften" description="Upload en match bankafschriften met facturen">
-        <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle klanten</SelectItem>
-            {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <ClientMultiSelect
+          clients={clients ?? []}
+          value={clientSelection}
+          onChange={handleClientSelectionChange}
+        />
         <Button variant="outline" onClick={() => {
           const exportCandidates = transactions ?? [];
           if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
