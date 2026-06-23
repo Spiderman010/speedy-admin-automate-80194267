@@ -34,6 +34,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
+import { ClientMultiSelect, type ClientMultiSelectValue } from "@/components/ClientMultiSelect";
 import { useToast } from "@/hooks/use-toast";
 import { useBankTransactions, useAddBankTransaction, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
