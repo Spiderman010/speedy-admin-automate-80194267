@@ -158,7 +158,17 @@ export function BankAfletteringDrawer({
           {/* Transaction identity */}
           <div className="px-6 pb-3 space-y-1">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="text-sm font-medium break-words leading-snug">{displayDesc}</span>
+              <span className="text-sm font-medium break-words leading-snug">
+                <HighlightedDescription
+                  text={displayDesc}
+                  parts={[
+                    { value: transaction.camt_ustrd, kind: "ustrd" },
+                    { value: transaction.camt_addtl_ntry_inf, kind: "addtl" },
+                    { value: transaction.camt_counterparty_name, kind: "name" },
+                    { value: transaction.reference, kind: "ref" },
+                  ]}
+                />
+              </span>
               <span
                 className={`font-mono text-sm font-semibold shrink-0 ${
                   transaction.amount < 0 ? "text-destructive" : "text-green-600"
@@ -167,6 +177,12 @@ export function BankAfletteringDrawer({
                 {fmt(transaction.amount)}
               </span>
             </div>
+            <HighlightLegend
+              hasUstrd={!!transaction.camt_ustrd}
+              hasAddtl={!!transaction.camt_addtl_ntry_inf}
+              hasName={!!transaction.camt_counterparty_name}
+              hasRef={!!transaction.reference}
+            />
             <div className="text-xs text-muted-foreground space-y-0.5">
               <div>
                 {new Date(transaction.transaction_date).toLocaleDateString("nl-NL", {
@@ -587,6 +603,103 @@ function SuggestionCard({ candidate: c, oppositeDirection = false }: SuggestionC
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Description highlighting ────────────────────────────────────────────
+
+type HighlightKind = "ustrd" | "addtl" | "name" | "ref";
+
+const HIGHLIGHT_STYLES: Record<HighlightKind, { label: string; cls: string }> = {
+  addtl: {
+    label: "AddtlNtryInf",
+    cls: "bg-blue-100 text-blue-900 dark:bg-blue-950/50 dark:text-blue-200 rounded px-0.5",
+  },
+  ustrd: {
+    label: "Ustrd",
+    cls: "bg-purple-100 text-purple-900 dark:bg-purple-950/50 dark:text-purple-200 rounded px-0.5",
+  },
+  name: {
+    label: "Tegenpartij",
+    cls: "bg-green-100 text-green-900 dark:bg-green-950/50 dark:text-green-200 rounded px-0.5",
+  },
+  ref: {
+    label: "Referentie",
+    cls: "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200 rounded px-0.5",
+  },
+};
+
+interface HighlightedDescriptionProps {
+  text: string;
+  parts: Array<{ value: string | null | undefined; kind: HighlightKind }>;
+}
+
+function HighlightedDescription({ text, parts }: HighlightedDescriptionProps) {
+  // Build non-overlapping ranges. Longest matches first so e.g. counterparty name
+  // (often contained inside AddtlNtryInf) doesn't get clobbered by a shorter one.
+  type Range = { start: number; end: number; kind: HighlightKind };
+  const ranges: Range[] = [];
+  const lower = text.toLowerCase();
+
+  const candidates = parts
+    .filter((p): p is { value: string; kind: HighlightKind } => !!p.value && p.value.trim().length > 1)
+    .map(p => ({ kind: p.kind, value: p.value.trim() }))
+    .sort((a, b) => b.value.length - a.value.length);
+
+  for (const c of candidates) {
+    const needle = c.value.toLowerCase();
+    let from = 0;
+    while (from <= lower.length) {
+      const idx = lower.indexOf(needle, from);
+      if (idx === -1) break;
+      const end = idx + needle.length;
+      const overlaps = ranges.some(r => idx < r.end && end > r.start);
+      if (!overlaps) ranges.push({ start: idx, end, kind: c.kind });
+      from = end;
+    }
+  }
+
+  if (ranges.length === 0) return <>{text}</>;
+
+  ranges.sort((a, b) => a.start - b.start);
+  const out: React.ReactNode[] = [];
+  let cursor = 0;
+  ranges.forEach((r, i) => {
+    if (r.start > cursor) out.push(text.slice(cursor, r.start));
+    const style = HIGHLIGHT_STYLES[r.kind];
+    out.push(
+      <mark key={i} className={style.cls} title={style.label}>
+        {text.slice(r.start, r.end)}
+      </mark>
+    );
+    cursor = r.end;
+  });
+  if (cursor < text.length) out.push(text.slice(cursor));
+  return <>{out}</>;
+}
+
+interface HighlightLegendProps {
+  hasUstrd: boolean;
+  hasAddtl: boolean;
+  hasName: boolean;
+  hasRef: boolean;
+}
+
+function HighlightLegend({ hasUstrd, hasAddtl, hasName, hasRef }: HighlightLegendProps) {
+  const items: HighlightKind[] = [];
+  if (hasAddtl) items.push("addtl");
+  if (hasUstrd) items.push("ustrd");
+  if (hasName) items.push("name");
+  if (hasRef) items.push("ref");
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1 pt-0.5">
+      {items.map(k => (
+        <span key={k} className={`text-[10px] font-medium ${HIGHLIGHT_STYLES[k].cls}`}>
+          {HIGHLIGHT_STYLES[k].label}
+        </span>
+      ))}
     </div>
   );
 }
