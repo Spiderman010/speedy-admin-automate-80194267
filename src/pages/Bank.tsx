@@ -1603,9 +1603,9 @@ export default function Bank() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span
                           className="text-xs font-medium text-foreground truncate max-w-[200px]"
-                          title={getDisplayDescription(tx.description)}
+                          title={getDisplayDescription(tx.description, { counterAccount: tx.counter_account, reference: tx.reference })}
                         >
-                          {getDisplayDescription(tx.description)}
+                          {getDisplayDescription(tx.description, { counterAccount: tx.counter_account, reference: tx.reference })}
                         </span>
                         <span className={`text-xs font-mono shrink-0 ${tx.amount < 0 ? "text-destructive" : "text-success"}`}>
                           {formatCurrency(tx.amount)}
@@ -1680,7 +1680,7 @@ export default function Bank() {
                       <TableCell>{new Date(t.transaction_date).toLocaleDateString("nl-NL")}</TableCell>
                       <TableCell className="max-w-xs">
                         <div className="flex items-center gap-1">
-                          <span className="truncate">{getDisplayDescription(t.description)}</span>
+                          <span className="truncate">{getDisplayDescription(t.description, { counterAccount: t.counter_account, reference: t.reference })}</span>
                           {t.description && (() => {
                             const p = parseMT940Description(t.description);
                             return (p.name || p.iban || p.reference) ? (

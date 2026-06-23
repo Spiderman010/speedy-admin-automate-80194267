@@ -52,9 +52,23 @@ export function parseMT940Description(description: string | null): ParsedMT940De
   return { name, iban, reference, raw };
 }
 
-/** Get best display label: parsed name or truncated raw */
-export function getDisplayDescription(description: string | null): string {
-  if (!description) return "—";
+type DescriptionFallback = {
+  counterAccount?: string | null;
+  reference?: string | null;
+};
+
+const isEmptyDescription = (value: string | null | undefined) => {
+  const normalized = value?.trim().toLowerCase();
+  return !normalized || normalized === "geen omschrijving";
+};
+
+/** Get best display label: parsed name, description, reference, counter account or fallback text. */
+export function getDisplayDescription(description: string | null, fallback?: DescriptionFallback): string {
+  if (isEmptyDescription(description)) {
+    if (!isEmptyDescription(fallback?.reference)) return fallback!.reference!.trim();
+    if (!isEmptyDescription(fallback?.counterAccount)) return fallback!.counterAccount!.trim();
+    return "Geen omschrijving";
+  }
   const parsed = parseMT940Description(description);
   return parsed.name || description;
 }
