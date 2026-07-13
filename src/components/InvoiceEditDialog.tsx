@@ -748,6 +748,33 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   };
 
+  // Commit een bedrag-draft naar form.* op blur. Herbereken automatisch het
+  // BTW-bedrag wanneer excl/incl beide bekend zijn (behalve als de gebruiker
+  // net het BTW-veld zelf editeerde).
+  const commitAmountDraft = (field: "excl" | "incl" | "btw", raw: string) => {
+    focusedAmountField.current = null;
+    const trimmed = (raw ?? "").trim();
+    const n = parseAmountInput(raw);
+    const str = trimmed === "" ? "" : String(n);
+    setForm((prev) => {
+      const next = { ...prev };
+      if (field === "excl") next.amount_excl = str;
+      else if (field === "incl") next.amount_incl = str;
+      else next.btw_amount = str;
+      if (field !== "btw") {
+        const excl = parseFloat(next.amount_excl);
+        const incl = parseFloat(next.amount_incl);
+        if (!isNaN(excl) && !isNaN(incl)) {
+          next.btw_amount = (incl - excl).toFixed(2);
+        }
+      }
+      return next;
+    });
+    if (field === "excl") setAmountExclDraft(str);
+    else if (field === "incl") setAmountInclDraft(str);
+    else setBtwAmountDraft(str);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={hasFile ? "sm:max-w-[1400px] lg:max-w-[1600px] w-[98vw] max-h-[94vh] flex flex-col overflow-hidden p-4 sm:p-6" : "sm:max-w-3xl w-[92vw] max-h-[92vh] flex flex-col overflow-hidden"}>
