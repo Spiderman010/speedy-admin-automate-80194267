@@ -215,6 +215,13 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const lineAmountExcl = (line: LineRow): number => parseAmountInput(line._amountInput);
   const linesInitInvoiceIdRef = useRef<string | null>(null);
   const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
+  // Lokale drafts voor de bedrag-invoervelden zodat typen niet gehinderd wordt
+  // door effects die form.amount_excl/incl/btw_amount tijdens keystrokes zouden
+  // overschrijven. Commit gebeurt pas op blur.
+  const [amountExclDraft, setAmountExclDraft] = useState("");
+  const [amountInclDraft, setAmountInclDraft] = useState("");
+  const [btwAmountDraft, setBtwAmountDraft] = useState("");
+  const focusedAmountField = useRef<"excl" | "incl" | "btw" | null>(null);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
