@@ -1390,7 +1390,7 @@ export default function Bank() {
 
         if (isExact && !best.isPartialPayment) {
           // Veilig: direct bevestigen + factuur op betaald + allocatie schrijven.
-          if (t.match_status === "gematcht" && t.matched_invoice_id === best.id) continue;
+          if (t.match_status === "suggestie" && t.matched_invoice_id === best.id && (t.match_confidence ?? 0) >= 100) continue;
           await updateTx.mutateAsync({
             id: t.id,
             match_status: "gematcht",
