@@ -28,6 +28,8 @@ const QUERY_KEY = ["bank_transaction_allocations"] as const;
 export interface UseBankTransactionAllocationsOptions {
   organizationId?: string;
   clientId?: string;
+  /** Beperk de query server-side tot deze klant-IDs. Leeg = geen resultaten. */
+  clientIds?: string[];
   enabled?: boolean;
 }
 
@@ -37,10 +39,11 @@ export interface UseBankTransactionAllocationsOptions {
  * for the Bankafschriften table.
  */
 export function useBankTransactionAllocations(options: UseBankTransactionAllocationsOptions = {}) {
-  const { organizationId, clientId, enabled = true } = options;
+  const { organizationId, clientId, clientIds, enabled = true } = options;
   const { user } = useAuth();
+  const clientIdsKey = clientIds ? [...clientIds].sort().join(",") : "";
   return useQuery({
-    queryKey: [...QUERY_KEY, organizationId ?? "all", clientId ?? "all"],
+    queryKey: [...QUERY_KEY, organizationId ?? "all", clientId ?? "all", clientIdsKey],
     queryFn: async () => {
       let query = supabase
         .from(TABLE)
@@ -48,6 +51,10 @@ export function useBankTransactionAllocations(options: UseBankTransactionAllocat
         .order("created_at", { ascending: true });
       if (organizationId) query = query.eq("organization_id", organizationId);
       if (clientId) query = query.eq("client_id", clientId);
+      if (clientIds) {
+        if (clientIds.length === 0) return [] as BankTransactionAllocation[];
+        query = query.in("client_id", clientIds);
+      }
       const { data, error } = await query;
       if (error) throw error;
       return data as BankTransactionAllocation[];

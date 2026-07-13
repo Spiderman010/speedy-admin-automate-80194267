@@ -9,18 +9,25 @@ type BankTransactionInsert = TablesInsert<"bank_transactions">;
 export interface UseBankTransactionsOptions {
   organizationId?: string;
   clientId?: string;
+  /** Beperk de query server-side tot deze klant-IDs. Leeg = geen resultaten. */
+  clientIds?: string[];
   enabled?: boolean;
 }
 
 export function useBankTransactions(options: UseBankTransactionsOptions = {}) {
-  const { organizationId, clientId, enabled = true } = options;
+  const { organizationId, clientId, clientIds, enabled = true } = options;
   const { user } = useAuth();
+  const clientIdsKey = clientIds ? [...clientIds].sort().join(",") : "";
   return useQuery({
-    queryKey: ["bank_transactions", organizationId ?? "all", clientId ?? "all"],
+    queryKey: ["bank_transactions", organizationId ?? "all", clientId ?? "all", clientIdsKey],
     queryFn: async () => {
       let query = supabase.from("bank_transactions").select("*").order("transaction_date", { ascending: false });
       if (organizationId) query = query.eq("organization_id", organizationId);
       if (clientId) query = query.eq("client_id", clientId);
+      if (clientIds) {
+        if (clientIds.length === 0) return [] as BankTransaction[];
+        query = query.in("client_id", clientIds);
+      }
       const { data, error } = await query;
       if (error) throw error;
       return data as BankTransaction[];
