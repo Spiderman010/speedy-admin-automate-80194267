@@ -740,13 +740,6 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     onOpenChange(false);
   };
 
-  const recalcBtw = () => {
-    const excl = parseFloat(form.amount_excl);
-    const incl = parseFloat(form.amount_incl);
-    if (!isNaN(excl) && !isNaN(incl)) {
-      set("btw_amount", (incl - excl).toFixed(2));
-    }
-  };
 
   // Commit een bedrag-draft naar form.* op blur. Herbereken automatisch het
   // BTW-bedrag wanneer excl/incl beide bekend zijn (behalve als de gebruiker
