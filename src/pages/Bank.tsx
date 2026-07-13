@@ -1362,6 +1362,80 @@ export default function Bank() {
     }
   }, [selectedIds, transactions, grootboekrekeningen, createVraagpost, toast, refetch]);
 
+  // Automatische stap-na-klantselectie: scan alle open transacties, bevestig veilige
+  // matches direct (exact bedrag + juiste richting + geen deelbetaling) en zet
+  // onzekere kandidaten klaar als "suggestie" ter beoordeling. Eén klik — de rest
+  // hoeft de gebruiker alleen te bevestigen.
+  const [autoScanRunning, setAutoScanRunning] = useState(false);
+  const handleAutoScan = useCallback(async () => {
+    if (!transactions || !invoices || !salesInvs || autoScanRunning) return;
+    setAutoScanRunning(true);
+    let confirmed = 0;
+    let proposed = 0;
+    const errors: string[] = [];
+    for (const t of transactions) {
+      if (t.match_status !== "niet_gematcht" && t.match_status !== "suggestie") continue;
+      try {
+        const expectedType = expectedInvoiceTypeForTx(t);
+        const candidates = rankCandidates(
+          t,
+          invoices.filter(i => i.client_id === t.client_id),
+          salesInvs.filter(i => i.client_id === t.client_id),
+        );
+        const best = candidates.find(c => c.score > 0 && c.type === expectedType);
+        if (!best) continue;
+        const txAmt = Math.abs(t.amount);
+        const invAmt = best.amount != null ? Math.abs(best.amount) : null;
+        const isExact = invAmt != null && Math.abs(txAmt - invAmt) <= 0.01;
+
+        if (isExact && !best.isPartialPayment) {
+          // Veilig: direct bevestigen + factuur op betaald + allocatie schrijven.
+          if (t.match_status === "gematcht" && t.matched_invoice_id === best.id) continue;
+          await updateTx.mutateAsync({
+            id: t.id,
+            match_status: "gematcht",
+            matched_invoice_id: best.id,
+            match_confidence: 100,
+          });
+          if (best.type === "inkoop") {
+            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
+          } else {
+            await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+          }
+          await upsertSingleAllocationForMatch(t, best.id);
+          confirmed++;
+        } else if (t.match_status === "niet_gematcht") {
+          // Onzeker: als suggestie klaarzetten voor menselijke controle.
+          const conf = best.isPartialPayment ? 60 : 80;
+          await updateTx.mutateAsync({
+            id: t.id,
+            match_status: "suggestie",
+            matched_invoice_id: best.id,
+            match_confidence: conf,
+          });
+          proposed++;
+        }
+      } catch (e: any) {
+        errors.push(e.message || "Onbekende fout");
+      }
+    }
+    setAutoScanRunning(false);
+    await refetch();
+    await refetchPurchase();
+    await refetchSales();
+
+    const parts: string[] = [];
+    if (confirmed > 0) parts.push(`${confirmed} automatisch bevestigd`);
+    if (proposed > 0) parts.push(`${proposed} klaargezet ter bevestiging`);
+    if (parts.length === 0) parts.push("Geen nieuwe voorstellen gevonden");
+    toast({
+      title: "Automatisch voorstellen klaar",
+      description: parts.join(" · ") + (errors.length ? ` · ${errors.length} fout(en)` : ""),
+    });
+  }, [transactions, invoices, salesInvs, autoScanRunning, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
+
+
+
   // Safe one-click confirm path. Re-evaluates all safe criteria at mutation time
   // so the UI label and the actual write are always in sync. Falls back to opening
   // BankMatchDialog when the criteria are not met (unsafe suggestion or stale data).
