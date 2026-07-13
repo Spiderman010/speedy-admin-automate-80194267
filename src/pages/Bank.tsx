@@ -1672,6 +1672,29 @@ export default function Bank() {
         </CardContent></Card>
       </div>
 
+      {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0) && (
+        <div className="mb-4 rounded-lg border border-primary/40 bg-primary/5 p-4 flex flex-wrap items-center gap-3">
+          <Zap className="h-5 w-5 text-primary shrink-0" />
+          <div className="flex-1 min-w-[200px]">
+            <p className="text-sm font-medium">Automatisch afletteren beschikbaar</p>
+            <p className="text-xs text-muted-foreground">
+              {autoScanPreview.autoConfirm > 0 && <>{autoScanPreview.autoConfirm} veilige match{autoScanPreview.autoConfirm !== 1 ? "es" : ""} → direct bevestigen</>}
+              {autoScanPreview.autoConfirm > 0 && autoScanPreview.toReview > 0 && " · "}
+              {autoScanPreview.toReview > 0 && <>{autoScanPreview.toReview} kandidaat/kandidaten → klaarzetten ter beoordeling</>}
+            </p>
+          </div>
+          <Button size="sm" onClick={handleAutoScan} disabled={autoScanRunning}>
+            {autoScanRunning ? (
+              <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Bezig…</>
+            ) : (
+              <><Zap className="mr-2 h-4 w-4" />Automatisch voorstellen</>
+            )}
+          </Button>
+        </div>
+      )}
+
+
+
       <div className="flex gap-3 mb-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
