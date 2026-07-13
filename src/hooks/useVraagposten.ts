@@ -10,18 +10,25 @@ export type VraagpostStatus = "open" | "in_behandeling" | "opgelost" | "genegeer
 export interface UseVraagpostenOptions {
   organizationId?: string;
   clientId?: string;
+  /** Beperk de query server-side tot deze klant-IDs. Leeg = geen resultaten. */
+  clientIds?: string[];
   enabled?: boolean;
 }
 
 export function useVraagposten(options: UseVraagpostenOptions = {}) {
-  const { organizationId, clientId, enabled = true } = options;
+  const { organizationId, clientId, clientIds, enabled = true } = options;
   const { user } = useAuth();
+  const clientIdsKey = clientIds ? [...clientIds].sort().join(",") : "";
   return useQuery({
-    queryKey: ["vraagposten", organizationId ?? "all", clientId ?? "all"],
+    queryKey: ["vraagposten", organizationId ?? "all", clientId ?? "all", clientIdsKey],
     queryFn: async () => {
       let q = supabase.from("vraagposten").select("*").order("created_at", { ascending: false });
       if (organizationId) q = q.eq("organization_id", organizationId);
       if (clientId && clientId !== "all") q = q.eq("client_id", clientId);
+      if (clientIds) {
+        if (clientIds.length === 0) return [] as Vraagpost[];
+        q = q.in("client_id", clientIds);
+      }
       const { data, error } = await q;
       if (error) throw error;
       return data as Vraagpost[];
