@@ -222,9 +222,16 @@ export default function Bank() {
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
   });
+  // Server-side scope: bij "Alle klanten" geen clientIds meegeven (RLS scope = org),
+  // bij subset altijd .in(client_id, [...]) op de server toepassen zodat er nooit
+  // bankgegevens binnenkomen zonder expliciete klantkeuze.
+  const clientIdsForQuery = clientSelection.allMode
+    ? undefined
+    : clientSelection.selectedIds;
   const { data: rawTransactions, isLoading, refetch } = useBankTransactions({
     organizationId: activeOrganizationId ?? undefined,
     clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
     enabled: orgEnabled && hasSelection,
   });
   const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices({
@@ -240,6 +247,7 @@ export default function Bank() {
   const { data: rawVraagposten } = useVraagposten({
     organizationId: activeOrganizationId ?? undefined,
     clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
     enabled: orgEnabled && hasSelection,
   });
   const upsertAllocation = useUpsertBankTransactionAllocation();
@@ -247,6 +255,7 @@ export default function Bank() {
   const { data: rawAllocations } = useBankTransactionAllocations({
     organizationId: activeOrganizationId ?? undefined,
     clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
     enabled: orgEnabled && hasSelection,
   });
 
