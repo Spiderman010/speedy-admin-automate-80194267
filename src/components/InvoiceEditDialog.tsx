@@ -215,6 +215,13 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   const lineAmountExcl = (line: LineRow): number => parseAmountInput(line._amountInput);
   const linesInitInvoiceIdRef = useRef<string | null>(null);
   const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
+  // Lokale drafts voor de bedrag-invoervelden zodat typen niet gehinderd wordt
+  // door effects die form.amount_excl/incl/btw_amount tijdens keystrokes zouden
+  // overschrijven. Commit gebeurt pas op blur.
+  const [amountExclDraft, setAmountExclDraft] = useState("");
+  const [amountInclDraft, setAmountInclDraft] = useState("");
+  const [btwAmountDraft, setBtwAmountDraft] = useState("");
+  const focusedAmountField = useRef<"excl" | "incl" | "btw" | null>(null);
   const [leverancierId, setLeverancierId] = useState<string | null>(null);
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false);
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
@@ -338,6 +345,18 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       setPrefilledFromHeader(false);
     }
   }, [invoice]);
+
+  // Sync drafts vanuit form.* wanneer die extern wijzigen (OCR, vangnet, recalc),
+  // maar niet terwijl de gebruiker in het betreffende veld typt.
+  useEffect(() => {
+    if (focusedAmountField.current !== "excl") setAmountExclDraft(form.amount_excl);
+  }, [form.amount_excl]);
+  useEffect(() => {
+    if (focusedAmountField.current !== "incl") setAmountInclDraft(form.amount_incl);
+  }, [form.amount_incl]);
+  useEffect(() => {
+    if (focusedAmountField.current !== "btw") setBtwAmountDraft(form.btw_amount);
+  }, [form.btw_amount]);
 
   // Vangnet: bij BTW-vrijgesteld moet het verschil tussen excl en incl in de
   // form-state altijd exact 0 zijn en BTW op 0. Corrigeer wanneer iets (OCR,
@@ -721,12 +740,32 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     onOpenChange(false);
   };
 
-  const recalcBtw = () => {
-    const excl = parseFloat(form.amount_excl);
-    const incl = parseFloat(form.amount_incl);
-    if (!isNaN(excl) && !isNaN(incl)) {
-      set("btw_amount", (incl - excl).toFixed(2));
-    }
+
+  // Commit een bedrag-draft naar form.* op blur. Herbereken automatisch het
+  // BTW-bedrag wanneer excl/incl beide bekend zijn (behalve als de gebruiker
+  // net het BTW-veld zelf editeerde).
+  const commitAmountDraft = (field: "excl" | "incl" | "btw", raw: string) => {
+    focusedAmountField.current = null;
+    const trimmed = (raw ?? "").trim();
+    const n = parseAmountInput(raw);
+    const str = trimmed === "" ? "" : String(n);
+    setForm((prev) => {
+      const next = { ...prev };
+      if (field === "excl") next.amount_excl = str;
+      else if (field === "incl") next.amount_incl = str;
+      else next.btw_amount = str;
+      if (field !== "btw") {
+        const excl = parseFloat(next.amount_excl);
+        const incl = parseFloat(next.amount_incl);
+        if (!isNaN(excl) && !isNaN(incl)) {
+          next.btw_amount = (incl - excl).toFixed(2);
+        }
+      }
+      return next;
+    });
+    if (field === "excl") setAmountExclDraft(str);
+    else if (field === "incl") setAmountInclDraft(str);
+    else setBtwAmountDraft(str);
   };
 
   return (
@@ -913,20 +952,43 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label>Bedrag excl.</Label>
-                <Input type="number" step="0.01" value={form.amount_excl}
-                  onChange={e => set("amount_excl", e.target.value)} onBlur={recalcBtw} />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={amountExclDraft}
+                  onFocus={() => { focusedAmountField.current = "excl"; }}
+                  onChange={e => setAmountExclDraft(e.target.value)}
+                  onBlur={e => commitAmountDraft("excl", e.target.value)}
+                />
               </div>
               <div>
                 <Label>Bedrag incl.</Label>
-                <Input type="number" step="0.01" value={form.amount_incl}
-                  onChange={e => set("amount_incl", e.target.value)} onBlur={recalcBtw} />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={amountInclDraft}
+                  onFocus={() => { focusedAmountField.current = "incl"; }}
+                  onChange={e => setAmountInclDraft(e.target.value)}
+                  onBlur={e => commitAmountDraft("incl", e.target.value)}
+                />
               </div>
               <div>
                 <Label>BTW-bedrag</Label>
-                <Input type="number" step="0.01" value={form.btw_amount}
-                  onChange={e => set("btw_amount", e.target.value)} disabled={isBtwVrijgesteld} />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={btwAmountDraft}
+                  disabled={isBtwVrijgesteld}
+                  onFocus={() => { focusedAmountField.current = "btw"; }}
+                  onChange={e => setBtwAmountDraft(e.target.value)}
+                  onBlur={e => commitAmountDraft("btw", e.target.value)}
+                />
               </div>
             </div>
+
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
