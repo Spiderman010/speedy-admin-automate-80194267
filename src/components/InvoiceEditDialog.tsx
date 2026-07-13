@@ -959,20 +959,43 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label>Bedrag excl.</Label>
-                <Input type="number" step="0.01" value={form.amount_excl}
-                  onChange={e => set("amount_excl", e.target.value)} onBlur={recalcBtw} />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={amountExclDraft}
+                  onFocus={() => { focusedAmountField.current = "excl"; }}
+                  onChange={e => setAmountExclDraft(e.target.value)}
+                  onBlur={e => commitAmountDraft("excl", e.target.value)}
+                />
               </div>
               <div>
                 <Label>Bedrag incl.</Label>
-                <Input type="number" step="0.01" value={form.amount_incl}
-                  onChange={e => set("amount_incl", e.target.value)} onBlur={recalcBtw} />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={amountInclDraft}
+                  onFocus={() => { focusedAmountField.current = "incl"; }}
+                  onChange={e => setAmountInclDraft(e.target.value)}
+                  onBlur={e => commitAmountDraft("incl", e.target.value)}
+                />
               </div>
               <div>
                 <Label>BTW-bedrag</Label>
-                <Input type="number" step="0.01" value={form.btw_amount}
-                  onChange={e => set("btw_amount", e.target.value)} disabled={isBtwVrijgesteld} />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={btwAmountDraft}
+                  disabled={isBtwVrijgesteld}
+                  onFocus={() => { focusedAmountField.current = "btw"; }}
+                  onChange={e => setBtwAmountDraft(e.target.value)}
+                  onBlur={e => commitAmountDraft("btw", e.target.value)}
+                />
               </div>
             </div>
+
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
