@@ -605,6 +605,38 @@ export default function Bank() {
     return ids;
   }, [suggestionDetailMap]);
 
+  // Voorspelling van wat één klik op "Automatisch voorstellen" zou doen:
+  // - autoConfirm: veilige matches (exacte richting + bedrag, geen deelbetaling) → direct bevestigd
+  // - toReview: onzekere kandidaten → als suggestie klaargezet ter beoordeling
+  const autoScanPreview = useMemo(() => {
+    if (!transactions || !invoices || !salesInvs) return { autoConfirm: 0, toReview: 0 };
+    let autoConfirm = 0;
+    let toReview = 0;
+    for (const t of transactions) {
+      if (t.match_status !== "niet_gematcht" && t.match_status !== "suggestie") continue;
+      const expectedType = expectedInvoiceTypeForTx(t);
+      const candidates = rankCandidates(
+        t,
+        invoices.filter(i => i.client_id === t.client_id),
+        salesInvs.filter(i => i.client_id === t.client_id),
+      );
+      const best = candidates.find(c => c.score > 0 && c.type === expectedType);
+      if (!best) continue;
+      const txAmt = Math.abs(t.amount);
+      const invAmt = best.amount != null ? Math.abs(best.amount) : null;
+      const isExact = invAmt != null && Math.abs(txAmt - invAmt) <= 0.01;
+      if (isExact && !best.isPartialPayment) {
+        // Alleen tellen als "auto-bevestigen" wanneer het nog niet gematcht is.
+        if (t.match_status === "niet_gematcht" || (t.match_status === "suggestie" && (t.match_confidence ?? 0) < 100)) {
+          autoConfirm++;
+        }
+      } else if (t.match_status === "niet_gematcht") {
+        toReview++;
+      }
+    }
+    return { autoConfirm, toReview };
+  }, [transactions, invoices, salesInvs]);
+
   const filteredSorted = useMemo(() => {
     if (!transactions) return [];
     let result = [...transactions];
