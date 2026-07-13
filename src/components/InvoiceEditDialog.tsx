@@ -346,6 +346,18 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     }
   }, [invoice]);
 
+  // Sync drafts vanuit form.* wanneer die extern wijzigen (OCR, vangnet, recalc),
+  // maar niet terwijl de gebruiker in het betreffende veld typt.
+  useEffect(() => {
+    if (focusedAmountField.current !== "excl") setAmountExclDraft(form.amount_excl);
+  }, [form.amount_excl]);
+  useEffect(() => {
+    if (focusedAmountField.current !== "incl") setAmountInclDraft(form.amount_incl);
+  }, [form.amount_incl]);
+  useEffect(() => {
+    if (focusedAmountField.current !== "btw") setBtwAmountDraft(form.btw_amount);
+  }, [form.btw_amount]);
+
   // Vangnet: bij BTW-vrijgesteld moet het verschil tussen excl en incl in de
   // form-state altijd exact 0 zijn en BTW op 0. Corrigeer wanneer iets (OCR,
   // herberekening, handmatige invoer) toch een verschil introduceert.
