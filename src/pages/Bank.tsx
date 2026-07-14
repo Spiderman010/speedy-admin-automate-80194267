@@ -1367,12 +1367,25 @@ export default function Bank() {
   // onzekere kandidaten klaar als "suggestie" ter beoordeling. Eén klik — de rest
   // hoeft de gebruiker alleen te bevestigen.
   const [autoScanRunning, setAutoScanRunning] = useState(false);
+  const [undoingBatch, setUndoingBatch] = useState(false);
+  type UndoEntry = {
+    txBefore: { id: string; match_status: string; matched_invoice_id: string | null; match_confidence: number | null };
+    invoiceBefore?:
+      | { type: "inkoop"; id: string; remaining_amount: number | null }
+      | { type: "verkoop"; id: string; remaining_amount: number | null; status: string };
+    allocation?:
+      | { kind: "created"; invoiceId: string }
+      | { kind: "existed"; invoiceId: string; amount: number };
+  };
+  const [lastBatch, setLastBatch] = useState<UndoEntry[] | null>(null);
+
   const handleAutoScan = useCallback(async () => {
     if (!transactions || !invoices || !salesInvs || autoScanRunning) return;
     setAutoScanRunning(true);
     let confirmed = 0;
     let proposed = 0;
     const errors: string[] = [];
+    const undoLog: UndoEntry[] = [];
     for (const t of transactions) {
       if (t.match_status !== "niet_gematcht" && t.match_status !== "suggestie") continue;
       try {
@@ -1391,6 +1404,28 @@ export default function Bank() {
         if (isExact && !best.isPartialPayment) {
           // Veilig: direct bevestigen + factuur op betaald + allocatie schrijven.
           if (t.match_status === "suggestie" && t.matched_invoice_id === best.id && (t.match_confidence ?? 0) >= 100) continue;
+
+          // Snapshot vóór mutaties voor undo.
+          const entry: UndoEntry = {
+            txBefore: {
+              id: t.id,
+              match_status: t.match_status,
+              matched_invoice_id: t.matched_invoice_id,
+              match_confidence: t.match_confidence,
+            },
+          };
+          if (best.type === "inkoop") {
+            const inv = invoices.find(i => i.id === best.id);
+            entry.invoiceBefore = { type: "inkoop", id: best.id, remaining_amount: inv?.remaining_amount ?? null };
+          } else {
+            const inv = salesInvs.find(i => i.id === best.id);
+            entry.invoiceBefore = { type: "verkoop", id: best.id, remaining_amount: inv?.remaining_amount ?? null, status: inv?.status ?? "openstaand" };
+          }
+          const existingAlloc = (allocationsByTxId.get(t.id) ?? []).find(a => a.invoice_id === best.id);
+          entry.allocation = existingAlloc
+            ? { kind: "existed", invoiceId: best.id, amount: existingAlloc.amount }
+            : { kind: "created", invoiceId: best.id };
+
           await updateTx.mutateAsync({
             id: t.id,
             match_status: "gematcht",
@@ -1403,16 +1438,26 @@ export default function Bank() {
             await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
           }
           await upsertSingleAllocationForMatch(t, best.id);
+          undoLog.push(entry);
           confirmed++;
         } else if (t.match_status === "niet_gematcht") {
           // Onzeker: als suggestie klaarzetten voor menselijke controle.
           const conf = best.isPartialPayment ? 60 : 80;
+          const entry: UndoEntry = {
+            txBefore: {
+              id: t.id,
+              match_status: t.match_status,
+              matched_invoice_id: t.matched_invoice_id,
+              match_confidence: t.match_confidence,
+            },
+          };
           await updateTx.mutateAsync({
             id: t.id,
             match_status: "suggestie",
             matched_invoice_id: best.id,
             match_confidence: conf,
           });
+          undoLog.push(entry);
           proposed++;
         }
       } catch (e: any) {
@@ -1420,6 +1465,7 @@ export default function Bank() {
       }
     }
     setAutoScanRunning(false);
+    setLastBatch(undoLog.length > 0 ? undoLog : null);
     await refetch();
     await refetchPurchase();
     await refetchSales();
@@ -1432,7 +1478,73 @@ export default function Bank() {
       title: "Automatisch voorstellen klaar",
       description: parts.join(" · ") + (errors.length ? ` · ${errors.length} fout(en)` : ""),
     });
-  }, [transactions, invoices, salesInvs, autoScanRunning, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
+  }, [transactions, invoices, salesInvs, autoScanRunning, allocationsByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
+
+  const handleUndoLastBatch = useCallback(async () => {
+    if (!lastBatch || lastBatch.length === 0 || undoingBatch) return;
+    setUndoingBatch(true);
+    let reverted = 0;
+    const errors: string[] = [];
+    // In omgekeerde volgorde terugdraaien.
+    for (let i = lastBatch.length - 1; i >= 0; i--) {
+      const entry = lastBatch[i];
+      try {
+        // Allocatie eerst terugdraaien.
+        if (entry.allocation) {
+          if (entry.allocation.kind === "created") {
+            const { error } = await supabase
+              .from("bank_transaction_allocations")
+              .delete()
+              .eq("bank_transaction_id", entry.txBefore.id)
+              .eq("invoice_id", entry.allocation.invoiceId);
+            if (error) throw error;
+          } else {
+            const { error } = await supabase
+              .from("bank_transaction_allocations")
+              .update({ amount: entry.allocation.amount })
+              .eq("bank_transaction_id", entry.txBefore.id)
+              .eq("invoice_id", entry.allocation.invoiceId);
+            if (error) throw error;
+          }
+        }
+        // Factuur terugzetten.
+        if (entry.invoiceBefore) {
+          if (entry.invoiceBefore.type === "inkoop") {
+            await updatePurchase.mutateAsync({
+              id: entry.invoiceBefore.id,
+              remaining_amount: entry.invoiceBefore.remaining_amount,
+            });
+          } else {
+            await updateSales.mutateAsync({
+              id: entry.invoiceBefore.id,
+              remaining_amount: entry.invoiceBefore.remaining_amount,
+              status: entry.invoiceBefore.status,
+            });
+          }
+        }
+        // Transactie terugzetten.
+        await updateTx.mutateAsync({
+          id: entry.txBefore.id,
+          match_status: entry.txBefore.match_status,
+          matched_invoice_id: entry.txBefore.matched_invoice_id,
+          match_confidence: entry.txBefore.match_confidence,
+        });
+        reverted++;
+      } catch (e: any) {
+        errors.push(e.message || "Onbekende fout");
+      }
+    }
+    setUndoingBatch(false);
+    setLastBatch(null);
+    await refetch();
+    await refetchPurchase();
+    await refetchSales();
+    toast({
+      title: "Laatste batch teruggedraaid",
+      description: `${reverted} transactie(s) hersteld` + (errors.length ? ` · ${errors.length} fout(en)` : ""),
+      variant: errors.length ? "destructive" : undefined,
+    });
+  }, [lastBatch, undoingBatch, updateTx, updatePurchase, updateSales, refetch, refetchPurchase, refetchSales, toast]);
 
 
 
@@ -1672,24 +1784,38 @@ export default function Bank() {
         </CardContent></Card>
       </div>
 
-      {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0) && (
+      {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0 || (lastBatch && lastBatch.length > 0)) && (
         <div className="mb-4 rounded-lg border border-primary/40 bg-primary/5 p-4 flex flex-wrap items-center gap-3">
           <Zap className="h-5 w-5 text-primary shrink-0" />
           <div className="flex-1 min-w-[200px]">
-            <p className="text-sm font-medium">Automatisch afletteren beschikbaar</p>
+            <p className="text-sm font-medium">Automatisch afletteren</p>
             <p className="text-xs text-muted-foreground">
               {autoScanPreview.autoConfirm > 0 && <>{autoScanPreview.autoConfirm} veilige match{autoScanPreview.autoConfirm !== 1 ? "es" : ""} → direct bevestigen</>}
               {autoScanPreview.autoConfirm > 0 && autoScanPreview.toReview > 0 && " · "}
               {autoScanPreview.toReview > 0 && <>{autoScanPreview.toReview} kandidaat/kandidaten → klaarzetten ter beoordeling</>}
+              {autoScanPreview.autoConfirm === 0 && autoScanPreview.toReview === 0 && lastBatch && (
+                <>Laatste batch: {lastBatch.length} transactie(s) — herstelbaar</>
+              )}
             </p>
           </div>
-          <Button size="sm" onClick={handleAutoScan} disabled={autoScanRunning}>
-            {autoScanRunning ? (
-              <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Bezig…</>
-            ) : (
-              <><Zap className="mr-2 h-4 w-4" />Automatisch voorstellen</>
-            )}
-          </Button>
+          {lastBatch && lastBatch.length > 0 && (
+            <Button size="sm" variant="outline" onClick={handleUndoLastBatch} disabled={undoingBatch || autoScanRunning}>
+              {undoingBatch ? (
+                <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Terugdraaien…</>
+              ) : (
+                <><Unlink className="mr-2 h-4 w-4" />Undo laatste batch ({lastBatch.length})</>
+              )}
+            </Button>
+          )}
+          {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0) && (
+            <Button size="sm" onClick={handleAutoScan} disabled={autoScanRunning || undoingBatch}>
+              {autoScanRunning ? (
+                <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Bezig…</>
+              ) : (
+                <><Zap className="mr-2 h-4 w-4" />Automatisch voorstellen</>
+              )}
+            </Button>
+          )}
         </div>
       )}
 
