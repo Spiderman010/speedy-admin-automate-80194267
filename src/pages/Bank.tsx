@@ -1784,24 +1784,38 @@ export default function Bank() {
         </CardContent></Card>
       </div>
 
-      {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0) && (
+      {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0 || (lastBatch && lastBatch.length > 0)) && (
         <div className="mb-4 rounded-lg border border-primary/40 bg-primary/5 p-4 flex flex-wrap items-center gap-3">
           <Zap className="h-5 w-5 text-primary shrink-0" />
           <div className="flex-1 min-w-[200px]">
-            <p className="text-sm font-medium">Automatisch afletteren beschikbaar</p>
+            <p className="text-sm font-medium">Automatisch afletteren</p>
             <p className="text-xs text-muted-foreground">
               {autoScanPreview.autoConfirm > 0 && <>{autoScanPreview.autoConfirm} veilige match{autoScanPreview.autoConfirm !== 1 ? "es" : ""} → direct bevestigen</>}
               {autoScanPreview.autoConfirm > 0 && autoScanPreview.toReview > 0 && " · "}
               {autoScanPreview.toReview > 0 && <>{autoScanPreview.toReview} kandidaat/kandidaten → klaarzetten ter beoordeling</>}
+              {autoScanPreview.autoConfirm === 0 && autoScanPreview.toReview === 0 && lastBatch && (
+                <>Laatste batch: {lastBatch.length} transactie(s) — herstelbaar</>
+              )}
             </p>
           </div>
-          <Button size="sm" onClick={handleAutoScan} disabled={autoScanRunning}>
-            {autoScanRunning ? (
-              <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Bezig…</>
-            ) : (
-              <><Zap className="mr-2 h-4 w-4" />Automatisch voorstellen</>
-            )}
-          </Button>
+          {lastBatch && lastBatch.length > 0 && (
+            <Button size="sm" variant="outline" onClick={handleUndoLastBatch} disabled={undoingBatch || autoScanRunning}>
+              {undoingBatch ? (
+                <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Terugdraaien…</>
+              ) : (
+                <><Unlink className="mr-2 h-4 w-4" />Undo laatste batch ({lastBatch.length})</>
+              )}
+            </Button>
+          )}
+          {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0) && (
+            <Button size="sm" onClick={handleAutoScan} disabled={autoScanRunning || undoingBatch}>
+              {autoScanRunning ? (
+                <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Bezig…</>
+              ) : (
+                <><Zap className="mr-2 h-4 w-4" />Automatisch voorstellen</>
+              )}
+            </Button>
+          )}
         </div>
       )}
 
