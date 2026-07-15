@@ -1,103 +1,73 @@
+# Nulmeting BoekAssist — 14 juli 2026
 
-# Nulmeting BoekAssist — 13 juli 2026
-
-Snapshot van de huidige staat. Geen wijzigingen — dit is puur meten.
-
----
+Peildatum: dinsdag 14 juli 2026. Meting alleen; geen codewijzigingen.
 
 ## 1. Technische gezondheid
 
 | Check | Resultaat |
 |---|---|
-| TypeScript (`tsgo --noEmit`) | Groen, geen fouten |
-| ESLint | 0 errors, 19 warnings (react-hooks/exhaustive-deps + 1 react-refresh) |
-| Unit tests (Vitest) | 76 / 76 geslaagd, 5 testbestanden |
-| Console (preview) | Alleen 1 onschuldige `RESET_BLANK_CHECK`-warning |
-| Runtime errors | Geen |
+| Typecheck (`tsgo --noEmit`) | Groen — 0 fouten |
+| Lint (`npm run lint`) | 0 errors, **19 warnings** (ongewijzigd t.o.v. vorige nulmeting) |
+| Tests (`npm run test`) | **76/76 groen** (5 bestanden: example, snelstart-export, client-readiness, purchase-line-validation, bank-statement-parser) |
 
-Lint-warnings van betekenis:
-- `src/pages/Bank.tsx:1439` — onnodige dep `salesInvs` in useCallback
-- `src/pages/Grootboek.tsx:76` — ontbrekende dep `seedRek`
-- `src/pages/Verkoop.tsx:300` — ontbrekende dep `getClientName`
-- `src/hooks/useClientContext.tsx:23` — export mix (fast-refresh)
+Lint-warnings blijven twee categorieën:
+- `react-refresh/only-export-components` in UI-primitives en context-hooks (badge, button, form, navigation-menu, sidebar, sonner, toggle, `useActiveOrganization`, `useAuth`, `useClientContext`) — geen bug, alleen hot-reload optimalisatie.
+- `react-hooks/exhaustive-deps` op drie plekken: `Bank.tsx:1657` (`salesInvs` overbodig), `Grootboek.tsx:76` (`seedRek` ontbreekt), `Verkoop.tsx:300` (`getClientName` ontbreekt).
 
-Niet-blokkerend, wel schuld die op termijn verdient te worden opgeruimd.
+## 2. Database (Lovable Cloud)
 
----
-
-## 2. Backend / Lovable Cloud
-
-**Database health**
-- DB + PgBouncer up, 0 restarts
-- Memory 55%, disk 3%, DB-grootte 16 MB, WAL 64 MB
-- Connecties 10/60, pool 1/200 → ruim binnen budget
-- 6 rolled-back transactions since boot → normaal
-
-**Supabase linter — 3 WARN's**
-- 3× "Signed-in users can execute SECURITY DEFINER function". Betreft waarschijnlijk `set_organization_id`, `prevent_org_user_rebind`, `update_updated_at_column`. Deze zijn bedoeld als triggers en niet als API-endpoints — fix = `REVOKE EXECUTE ... FROM authenticated, anon` op deze functies. Geen acuut lek, wel aan te raden.
-- `has_role`, `has_min_role`, `is_organization_member`, `role_rank` zijn terecht EXECUTE-bar (RLS-hulpfuncties).
-
-**Auth / RLS**
-- RLS-policies aanwezig op elke publieke tabel (4 policies per user-facing tabel).
-- `has_role` gebruikt aparte `user_roles`-tabel met SECURITY DEFINER — conform Lovable-standaard.
-- `set_organization_id`-trigger dwingt `organization_id` af bij insert — sluit multi-tenant lekken.
-
-**Storage** — bucket `invoices` (private). OK.
-
-**Secrets** — LOVABLE_API_KEY + Supabase-set aanwezig, geen missing.
-
----
-
-## 3. Data & functionele status
-
-**Volumes**
-| Tabel | Rijen |
+| Metriek | Waarde |
 |---|---|
-| clients | 10 |
-| leveranciers | 25 |
-| grootboekrekeningen | 457 |
-| booking_templates | 34 |
-| purchase_invoices | 48 |
-| sales_invoices | 48 |
-| bank_transactions | 2 055 |
-| bank_transaction_allocations | 12 |
-| journal_entries | 3 |
-| vraagposten | 138 |
-| organizations / profiles / user_roles | 2 / 2 / 3 |
+| Database + PgBouncer | up |
+| Restarts sinds boot | 0 |
+| Geheugen | 50% |
+| Data-disk | 3% |
+| Verbindingen | 9/60 |
+| Pool clients | 1/200 |
+| DB-grootte | 16 MB |
+| WAL | 64 MB |
+| Teruggerolde transacties sinds boot | 7 |
 
-**Inkoopfacturen (48)**: 13 te_controleren · 24 gecontroleerd · 11 geëxporteerd
-**Verkoopfacturen (48)**: 12 concept · 21 gecontroleerd · 15 betaald
-**Banktransacties (2 055)**: 25 gematcht · 1 474 handmatig geboekt · **553 niet_gematcht** · 3 suggestie
+Ruim binnen limieten; geen capaciteitszorg.
 
-De 553 niet-gematchte + 3 suggesties zijn de openstaande werkvoorraad in de Verwerkingsscherm-flow.
+## 3. Database-linter
 
-**Journal_entries = 3** valt op: verhouding tot 1 499 verwerkte banktx + 45 afgeronde facturen suggereert dat het journaal nog niet consequent wordt gevuld — potentiële gap in de export/afrondingsketen.
+3× `WARN 0029` — `SECURITY DEFINER`-functies uitvoerbaar door ingelogde gebruikers. Dit betreft de trigger-helpers `set_organization_id`, `prevent_org_user_rebind`, `update_updated_at_column`. Ze zijn triggers (geen API-endpoints); ongewijzigd t.o.v. vorige meting.
 
----
+## 4. Datavolumes
 
-## 4. Codebase-schaal (informatief)
+| Tabel | Aantal | Δ t.o.v. vorige nulmeting |
+|---|---|---|
+| clients | 10 | = |
+| leveranciers | 25 | = |
+| grootboekrekeningen | 457 | = |
+| booking_templates | 34 | = |
+| purchase_invoices | 48 | = |
+| sales_invoices | 48 | = |
+| bank_transactions | 2.055 | = |
+| bank_transaction_allocations | 12 | = |
+| journal_entries | 3 | = |
+| vraagposten | 138 | = |
 
-- 7 hoofdroutes actief: `/dashboard /klanten /facturen /bank /verkoopfacturen /snelle-invoer /overzichten` + auth
-- 2 edge functions: `process-invoice`, `process-sales-invoice`
-- UBL (NLCIUS) + Snelstart-CSV export aanwezig, met dedicated tests
-- Testdekking beperkt tot: bank-parser, snelstart-export, purchase-line-validation, client-readiness (geen component/integration tests)
+**Bank-transacties per status:**
+- `handmatig_geboekt` 1.474
+- `niet_gematcht` 553
+- `gematcht` 25
+- `suggestie` 3
 
----
+**Inkoopfacturen:** `te_controleren` 13 · `gecontroleerd` 24 · `geexporteerd` 11
+**Verkoopfacturen:** `concept` 12 · `gecontroleerd` 21 · `betaald` 15
 
-## 5. Aandachtspunten voor volgende iteratie (geen actie nu)
+## 5. Waarnemingen (geen actie zonder opdracht)
 
-Prioriteit hoog → laag, puur observatie:
+1. **553 niet-gematchte + 3 suggesties = 556 open banktransacties.** Onveranderd sinds vorige meting. Het nieuwe "Automatisch voorstellen" (met undo) is nog niet zichtbaar toegepast op deze backlog.
+2. **`journal_entries` blijft op 3** terwijl 1.474 transacties `handmatig_geboekt` zijn en 11 inkoopfacturen `geexporteerd`. Sterk signaal dat de boekingsregel-schrijver hier geen rijen wegschrijft — nog steeds openstaand.
+3. **3× `SECURITY DEFINER` WARN** ongewijzigd. Betreft trigger-functies, geen exposed endpoints.
+4. **19 lint-warnings** ongewijzigd — cosmetisch, blokkeert niets.
+5. **Geen component-/integratietests**; alleen pure lib-tests (76 stuks).
 
-1. **Journal_entries only 3** — controleer of boekingsregels wel schrijven bij "handmatig_geboekt" / geëxporteerd.
-2. **553 openstaande banktransacties** — grootste werkbacklog; Verwerkingsscherm is hiervoor gebouwd, meten of hij op productiedata werkzaam is.
-3. **3× SECURITY DEFINER linter-warning** — REVOKE EXECUTE op trigger-only functies.
-4. **19 lint-warnings** — technische schuld in hooks van Bank/Grootboek/Verkoop.
-5. **Geen component/integration tests** — huidige suite dekt alleen pure libs.
+## Conclusie
 
----
+Sinds de vorige nulmeting is er geen zichtbare beweging in data of health-metrics. Alle recente wijzigingen (server-side klantfilter, automatisch voorstellen, undo laatste batch) draaien groen door typecheck, lint en tests, maar zijn nog niet in de productiedata terug te zien (554 open banktransacties ongewijzigd, journal_entries nog steeds 3).
 
-## Volgende stap
-
-Zeg welk punt je wil oppakken (bv. "fix de SECURITY DEFINER warnings" of "onderzoek waarom journal_entries leeg blijft"), dan maak ik daar een gerichte plan voor.
-
-Dit is een read-only nulmeting; er zijn geen bestanden gewijzigd.
+Zeg welk aandachtspunt je wil oppakken (bijv. onderzoeken waarom `journal_entries` leeg blijft, of de openstaande banktransacties in één sessie wegwerken met de nieuwe knop) en ik maak daar een gericht plan voor.
