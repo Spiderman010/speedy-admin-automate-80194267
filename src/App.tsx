@@ -44,7 +44,10 @@ function ProtectedRoutes() {
 function AuthRoute() {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/" replace />;
+  if (user) {
+    const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+    return <Navigate to={next} replace />;
+  }
   return <Auth />;
 }
 
