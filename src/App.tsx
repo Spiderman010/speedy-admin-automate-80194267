@@ -61,6 +61,7 @@ const App = () => (
           <Routes>
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/auth" element={<AuthRoute />} />
+            <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
             <Route element={<ProtectedRoutes />}>
               <Route path="/" element={<Index />} />
               <Route path="/klanten" element={<Klanten />} />
