@@ -30,10 +30,6 @@ export default function Auth() {
     e.preventDefault();
     if (loading) return;
     setLoading(true);
-  const handleSignUp = async (e: FormEvent) => {
-    e.preventDefault();
-    if (loading) return;
-    setLoading(true);
     const next = new URLSearchParams(window.location.search).get("next");
     const emailRedirectTo =
       next && next.startsWith("/") && !next.startsWith("//")
