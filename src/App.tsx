@@ -19,6 +19,18 @@ import Instellingen from "./pages/Instellingen";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
+import OAuthConsent from "./pages/OAuthConsent";
+
+function safeNextPath(raw: string | null): string {
+  if (!raw) return "/";
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (!decoded.startsWith("/") || decoded.startsWith("//")) return "/";
+    return decoded;
+  } catch {
+    return "/";
+  }
+}
 
 const queryClient = new QueryClient();
 
