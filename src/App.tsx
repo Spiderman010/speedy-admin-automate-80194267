@@ -19,6 +19,18 @@ import Instellingen from "./pages/Instellingen";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
+import OAuthConsent from "./pages/OAuthConsent";
+
+function safeNextPath(raw: string | null): string {
+  if (!raw) return "/";
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (!decoded.startsWith("/") || decoded.startsWith("//")) return "/";
+    return decoded;
+  } catch {
+    return "/";
+  }
+}
 
 const queryClient = new QueryClient();
 
@@ -32,7 +44,10 @@ function ProtectedRoutes() {
 function AuthRoute() {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/" replace />;
+  if (user) {
+    const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+    return <Navigate to={next} replace />;
+  }
   return <Auth />;
 }
 
@@ -46,6 +61,7 @@ const App = () => (
           <Routes>
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/auth" element={<AuthRoute />} />
+            <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
             <Route element={<ProtectedRoutes />}>
               <Route path="/" element={<Index />} />
               <Route path="/klanten" element={<Klanten />} />

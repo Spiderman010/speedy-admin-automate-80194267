@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "sdk_version": "0.23.0",
+  "path": "/functions/v1/mcp",
+  "auth": {
+    "type": "oauth",
+    "issuer": "https://alxlbdhpbwlehbdbfejw.supabase.co/auth/v1",
+    "accepted_audiences": [
+      "authenticated"
+    ]
+  },
+  "mcp": {
+    "server": {
+      "name": "boekassist-mcp",
+      "version": "0.1.0",
+      "title": "BoekAssist MCP"
+    },
+    "tools": [
+      {
+        "name": "list_clients",
+        "title": "Lijst klanten",
+        "description": "Geef alle klanten (boekhoudkantoor) waar de ingelogde gebruiker toegang toe heeft.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "properties": {}
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_open_purchase_invoices",
+        "title": "Openstaande inkoopfacturen",
+        "description": "Geef inkoopfacturen met status 'te_controleren' voor de ingelogde gebruiker, optioneel gefilterd op klant.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "client_id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Optioneel klant-id om op te filteren"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "Maximaal aantal (standaard 50)"
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_open_sales_invoices",
+        "title": "Openstaande verkoopfacturen",
+        "description": "Geef verkoopfacturen met een openstaand bedrag (remaining_amount > 0), optioneel gefilterd op klant.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "client_id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Optioneel klant-id om op te filteren"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "Maximaal aantal (standaard 50)"
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      },
+      {
+        "name": "list_unmatched_bank_transactions",
+        "title": "Niet-gematchte banktransacties",
+        "description": "Geef banktransacties met status 'niet_gematcht' voor de ingelogde gebruiker, optioneel gefilterd op klant.",
+        "annotations": {
+          "readOnlyHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        },
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "client_id": {
+              "type": "string",
+              "format": "uuid",
+              "description": "Optioneel klant-id om op te filteren"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "description": "Maximaal aantal (standaard 50)"
+            }
+          },
+          "additionalProperties": false,
+          "$schema": "http://json-schema.org/draft-07/schema#"
+        },
+        "outputSchema": null
+      }
+    ]
+  }
+}

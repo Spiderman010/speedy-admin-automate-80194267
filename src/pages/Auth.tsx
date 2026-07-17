@@ -30,10 +30,15 @@ export default function Auth() {
     e.preventDefault();
     if (loading) return;
     setLoading(true);
+    const next = new URLSearchParams(window.location.search).get("next");
+    const emailRedirectTo =
+      next && next.startsWith("/") && !next.startsWith("//")
+        ? `${window.location.origin}/auth?next=${encodeURIComponent(next)}`
+        : window.location.origin;
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo },
     });
 
     const isDuplicate =
