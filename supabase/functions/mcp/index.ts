@@ -8,8 +8,17 @@ import { auth, defineMcp } from "npm:@lovable.dev/mcp-js@0.23.0";
 // src/lib/mcp/tools/list-clients.ts
 import { createClient } from "npm:@supabase/supabase-js@^2.103.0";
 import { defineTool } from "npm:@lovable.dev/mcp-js@0.23.0";
+
+// src/lib/mcp/_env.ts
+function getEnv(name) {
+  const d = globalThis.Deno;
+  const v = d?.env?.get?.(name) ?? (typeof process !== "undefined" ? process.env?.[name] : void 0);
+  return v ?? "";
+}
+
+// src/lib/mcp/tools/list-clients.ts
 function supabaseForUser(ctx) {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
+  return createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_PUBLISHABLE_KEY") || getEnv("SUPABASE_ANON_KEY"), {
     global: { headers: { Authorization: `Bearer ${ctx.getToken()}` } },
     auth: { persistSession: false, autoRefreshToken: false }
   });
