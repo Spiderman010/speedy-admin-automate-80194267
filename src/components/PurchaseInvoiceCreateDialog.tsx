@@ -13,7 +13,7 @@ import { Loader2, Save } from "lucide-react";
 import { useAddPurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
 import { useToast } from "@/hooks/use-toast";
-import { parseAmountInput } from "@/lib/amount-input";
+import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import type { Tables } from "@/integrations/supabase/types";
 
 interface Props {
