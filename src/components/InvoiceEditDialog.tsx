@@ -27,6 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
 import { computeLineDiffs, validatePurchaseLines, derivePrefillLine } from "@/lib/purchase-line-validation";
+import { parseAmountInput as parseAmountInputHelper, parseAmountInputOrZero, formatAmountInput as formatAmountInputHelper } from "@/lib/amount-input";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
