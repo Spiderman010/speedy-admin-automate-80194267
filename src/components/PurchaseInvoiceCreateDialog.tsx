@@ -252,6 +252,7 @@ export function PurchaseInvoiceCreateDialog({
               inputMode="decimal"
               value={form.amount_excl}
               onChange={(e) => update({ amount_excl: e.target.value })}
+              onBlur={recalcFromExcl}
               placeholder="0,00"
             />
           </div>
@@ -270,6 +271,7 @@ export function PurchaseInvoiceCreateDialog({
               inputMode="decimal"
               value={form.amount_incl}
               onChange={(e) => update({ amount_incl: e.target.value })}
+              onBlur={recalcFromIncl}
               placeholder="0,00"
             />
           </div>
@@ -277,7 +279,7 @@ export function PurchaseInvoiceCreateDialog({
             <Label>BTW %</Label>
             <Select
               value={form.btw_percentage}
-              onValueChange={(v) => update({ btw_percentage: v })}
+              onValueChange={handleBtwPctChange}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -287,6 +289,7 @@ export function PurchaseInvoiceCreateDialog({
               </SelectContent>
             </Select>
           </div>
+
 
           <div className="col-span-2">
             <Label>Notities</Label>
