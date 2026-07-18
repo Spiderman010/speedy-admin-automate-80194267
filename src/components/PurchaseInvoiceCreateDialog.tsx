@@ -70,9 +70,58 @@ export function PurchaseInvoiceCreateDialog({
 
   const update = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
-  const canSave = useMemo(() => {
-    return !!form.client_id && form.supplier.trim().length > 0 && !addInvoice.isPending;
-  }, [form.client_id, form.supplier, addInvoice.isPending]);
+  const recalcFromExcl = () => {
+    setForm((f) => {
+      const excl = parseAmountInput(f.amount_excl);
+      const pct = parseAmountInput(f.btw_percentage);
+      if (excl === null || pct === null) return f;
+      const btw = Math.round(excl * pct) / 100;
+      const incl = Math.round((excl + btw) * 100) / 100;
+      return {
+        ...f,
+        amount_excl: formatAmountInput(excl),
+        btw_amount: formatAmountInput(btw),
+        amount_incl: formatAmountInput(incl),
+      };
+    });
+  };
+
+  const recalcFromIncl = () => {
+    setForm((f) => {
+      const incl = parseAmountInput(f.amount_incl);
+      const pct = parseAmountInput(f.btw_percentage);
+      if (incl === null || pct === null) return f;
+      const excl = Math.round((incl / (1 + pct / 100)) * 100) / 100;
+      const btw = Math.round((incl - excl) * 100) / 100;
+      return {
+        ...f,
+        amount_incl: formatAmountInput(incl),
+        amount_excl: formatAmountInput(excl),
+        btw_amount: formatAmountInput(btw),
+      };
+    });
+  };
+
+  const handleBtwPctChange = (v: string) => {
+    setForm((f) => {
+      const next = { ...f, btw_percentage: v };
+      const pct = parseAmountInput(v);
+      const excl = parseAmountInput(f.amount_excl);
+      const incl = parseAmountInput(f.amount_incl);
+      if (pct === null) return next;
+      if (excl !== null) {
+        const btw = Math.round(excl * pct) / 100;
+        next.btw_amount = formatAmountInput(btw);
+        next.amount_incl = formatAmountInput(Math.round((excl + btw) * 100) / 100);
+      } else if (incl !== null) {
+        const e = Math.round((incl / (1 + pct / 100)) * 100) / 100;
+        next.amount_excl = formatAmountInput(e);
+        next.btw_amount = formatAmountInput(Math.round((incl - e) * 100) / 100);
+      }
+      return next;
+    });
+  };
+
 
   const handleLeverancierChange = (id: string) => {
     if (id === "__none__") {
