@@ -26,8 +26,8 @@ export default defineTool({
     }
     let q = supabaseForUser(ctx)
       .from("bank_transactions")
-      .select("id, transaction_date, amount, description, counter_account, reference, status, client_id")
-      .eq("status", "niet_gematcht")
+      .select("id, transaction_date, amount, description, counter_account, reference, match_status, client_id")
+      .eq("match_status", "niet_gematcht")
       .order("transaction_date", { ascending: false })
       .limit(limit ?? 50);
     if (client_id) q = q.eq("client_id", client_id);

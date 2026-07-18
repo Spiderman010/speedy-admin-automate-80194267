@@ -67,7 +67,7 @@ var list_open_purchase_invoices_default = defineTool2({
     if (!ctx.isAuthenticated()) {
       return { content: [{ type: "text", text: "Niet geauthenticeerd" }], isError: true };
     }
-    let q = supabaseForUser2(ctx).from("purchase_invoices").select("id, invoice_number, invoice_date, amount_incl, amount_excl, btw_amount, status, client_id, supplier_name").eq("status", "te_controleren").order("invoice_date", { ascending: false }).limit(limit ?? 50);
+    let q = supabaseForUser2(ctx).from("purchase_invoices").select("id, invoice_number, invoice_date, amount_incl, amount_excl, btw_amount, status, client_id, supplier").eq("status", "te_controleren").order("invoice_date", { ascending: false }).limit(limit ?? 50);
     if (client_id) q = q.eq("client_id", client_id);
     const { data, error } = await q;
     if (error) {
@@ -139,7 +139,7 @@ var list_unmatched_bank_transactions_default = defineTool4({
     if (!ctx.isAuthenticated()) {
       return { content: [{ type: "text", text: "Niet geauthenticeerd" }], isError: true };
     }
-    let q = supabaseForUser4(ctx).from("bank_transactions").select("id, transaction_date, amount, description, counter_account, reference, status, client_id").eq("status", "niet_gematcht").order("transaction_date", { ascending: false }).limit(limit ?? 50);
+    let q = supabaseForUser4(ctx).from("bank_transactions").select("id, transaction_date, amount, description, counter_account, reference, match_status, client_id").eq("match_status", "niet_gematcht").order("transaction_date", { ascending: false }).limit(limit ?? 50);
     if (client_id) q = q.eq("client_id", client_id);
     const { data, error } = await q;
     if (error) {
