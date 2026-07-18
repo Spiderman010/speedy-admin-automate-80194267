@@ -729,9 +729,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   };
 
   const persistLines = async () => {
+    // Filter volledig lege regels weg. Volgorde blijft zoals in de UI; sort_order
+    // wordt door de mutation herberekend uit de array-index.
+    const toPersist = meaningfulLines();
     await replaceLines.mutateAsync({
       invoiceId: invoice.id,
-      lines: lines.map((l) => ({
+      lines: toPersist.map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: lineAmountExcl(l),
         btw_percentage: isBtwVrijgesteld ? 0 : l.btw_percentage,
