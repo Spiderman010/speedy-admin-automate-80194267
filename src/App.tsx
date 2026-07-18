@@ -8,6 +8,7 @@ import { AppLayout } from "@/components/AppLayout";
 import Index from "./pages/Index";
 import Klanten from "./pages/Klanten";
 import Facturen from "./pages/Facturen";
+import PurchaseInvoiceWorkspace from "./pages/PurchaseInvoiceWorkspace";
 import Bank from "./pages/Bank";
 import Verkoop from "./pages/Verkoop";
 import Boekingen from "./pages/Boekingen";
