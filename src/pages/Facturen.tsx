@@ -10,7 +10,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2, Landmark } from "lucide-react";
+import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2, Landmark, Plus } from "lucide-react";
+import { PurchaseInvoiceCreateDialog } from "@/components/PurchaseInvoiceCreateDialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
