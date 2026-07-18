@@ -1076,7 +1076,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
               {lines.length > 0 && (() => {
                 const header = headerTotalsForLines();
-                const lineInputs = lines.map((l) => ({
+                // Alleen ingevulde regels tellen mee — volledig lege regels
+                // moeten totalen en verschil nooit beïnvloeden.
+                const lineInputs = meaningfulLines().map((l) => ({
                   omschrijving: l.omschrijving,
                   amount_excl: lineAmountExcl(l),
                   btw_percentage: Number(l.btw_percentage || 0),
