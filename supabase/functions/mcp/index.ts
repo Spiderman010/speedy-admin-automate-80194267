@@ -8,8 +8,17 @@ import { auth, defineMcp } from "npm:@lovable.dev/mcp-js@0.23.0";
 // src/lib/mcp/tools/list-clients.ts
 import { createClient } from "npm:@supabase/supabase-js@^2.103.0";
 import { defineTool } from "npm:@lovable.dev/mcp-js@0.23.0";
+
+// src/lib/mcp/_env.ts
+function getEnv(name) {
+  const d = globalThis.Deno;
+  const v = d?.env?.get?.(name) ?? (typeof process !== "undefined" ? process.env?.[name] : void 0);
+  return v ?? "";
+}
+
+// src/lib/mcp/tools/list-clients.ts
 function supabaseForUser(ctx) {
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
+  return createClient(getEnv("SUPABASE_URL"), getEnv("SUPABASE_PUBLISHABLE_KEY") || getEnv("SUPABASE_ANON_KEY"), {
     global: { headers: { Authorization: `Bearer ${ctx.getToken()}` } },
     auth: { persistSession: false, autoRefreshToken: false }
   });
@@ -40,7 +49,7 @@ import { createClient as createClient2 } from "npm:@supabase/supabase-js@^2.103.
 import { defineTool as defineTool2 } from "npm:@lovable.dev/mcp-js@0.23.0";
 import { z } from "npm:zod@^3.25.76";
 function supabaseForUser2(ctx) {
-  return createClient2(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
+  return createClient2(getEnv("SUPABASE_URL"), getEnv("SUPABASE_PUBLISHABLE_KEY") || getEnv("SUPABASE_ANON_KEY"), {
     global: { headers: { Authorization: `Bearer ${ctx.getToken()}` } },
     auth: { persistSession: false, autoRefreshToken: false }
   });
@@ -76,7 +85,7 @@ import { createClient as createClient3 } from "npm:@supabase/supabase-js@^2.103.
 import { defineTool as defineTool3 } from "npm:@lovable.dev/mcp-js@0.23.0";
 import { z as z2 } from "npm:zod@^3.25.76";
 function supabaseForUser3(ctx) {
-  return createClient3(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
+  return createClient3(getEnv("SUPABASE_URL"), getEnv("SUPABASE_PUBLISHABLE_KEY") || getEnv("SUPABASE_ANON_KEY"), {
     global: { headers: { Authorization: `Bearer ${ctx.getToken()}` } },
     auth: { persistSession: false, autoRefreshToken: false }
   });
@@ -112,7 +121,7 @@ import { createClient as createClient4 } from "npm:@supabase/supabase-js@^2.103.
 import { defineTool as defineTool4 } from "npm:@lovable.dev/mcp-js@0.23.0";
 import { z as z3 } from "npm:zod@^3.25.76";
 function supabaseForUser4(ctx) {
-  return createClient4(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
+  return createClient4(getEnv("SUPABASE_URL"), getEnv("SUPABASE_PUBLISHABLE_KEY") || getEnv("SUPABASE_ANON_KEY"), {
     global: { headers: { Authorization: `Bearer ${ctx.getToken()}` } },
     auth: { persistSession: false, autoRefreshToken: false }
   });
