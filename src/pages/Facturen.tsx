@@ -550,6 +550,9 @@ export default function Facturen() {
             {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />Nieuwe inkoopfactuur
+        </Button>
         <Button variant="outline" onClick={() => {
           const exportable = invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [];
           if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
