@@ -126,8 +126,7 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
         {isPdf ? (
           <iframe src={url} className="w-full h-full min-h-[500px]" title="Factuur PDF" />
         ) : (
-          // eslint-disable-next-line jsx-a11y/img-redundant-alt
-          <img src={url} alt="Factuur" className="w-full h-auto" />
+          <img src={url} alt="Factuurdocument" className="w-full h-auto" />
         )}
       </div>
     </div>
