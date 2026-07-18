@@ -22,6 +22,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
+import {
+  buildBookingTemplateMutationPayload,
+  createEmptyBookingTemplateFormState,
+  getBookingTemplateLedgerLabel,
+  resolveBookingTemplateLedger,
+  toBookingTemplateFormState,
+} from "@/lib/booking-template-utils";
 import { Pencil, Trash2, Plus, RefreshCw, User, LogOut, Loader2 } from "lucide-react";
 
 // ──── Tab 0: Profiel ────
@@ -257,15 +264,6 @@ interface RetroPreviewResult {
   sample: PreviewItem[];
 }
 
-// Pure helpers used by both preview and apply steps.
-
-function resolveTemplateLedger(rule: any, accounts: any[] | undefined) {
-  if (rule.actie !== "grootboek" || !accounts) return null;
-  if (rule.ledger_account_id) return accounts.find((a: any) => a.id === rule.ledger_account_id) ?? null;
-  if (rule.ledger_account_text) return accounts.find((a: any) => `${a.nummer} - ${a.omschrijving}` === rule.ledger_account_text) ?? null;
-  return null;
-}
-
 function matchTransactionToTemplate(tx: any, activeRules: any[]) {
   for (const rule of activeRules) {
     // Scope: client-specific rules must only match transactions from that client.
@@ -311,13 +309,13 @@ function HerkenningsregelsTab() {
   const [previewResult, setPreviewResult] = useState<RetroPreviewResult | null>(null);
   const [applying, setApplying] = useState(false);
 
-  const emptyForm = { zoekterm: "", zoek_in: "alles", actie: "grootboek", ledger_account_text: "", geldt_voor: "alle", client_id_filter: null as string | null, prioriteit: 0, actief: true };
+  const emptyForm = createEmptyBookingTemplateFormState();
   const [form, setForm] = useState(emptyForm);
 
   const openNew = () => { setEditId(null); setForm(emptyForm); setDialogOpen(true); };
   const openEdit = (t: any) => {
     setEditId(t.id);
-    setForm({ zoekterm: t.zoekterm || "", zoek_in: t.zoek_in || "alles", actie: t.actie || "grootboek", ledger_account_text: t.ledger_account_text || "", geldt_voor: t.geldt_voor || "alle", client_id_filter: t.client_id_filter, prioriteit: t.prioriteit || 0, actief: t.actief ?? true });
+    setForm(toBookingTemplateFormState(t, accounts));
     setDialogOpen(true);
   };
 
@@ -330,9 +328,7 @@ function HerkenningsregelsTab() {
       });
       return;
     }
-    const payload: any = { ...form };
-    if (form.actie !== "grootboek") { payload.ledger_account_text = null; payload.ledger_account_id = null; }
-    if (form.geldt_voor !== "specifieke_klant") payload.client_id_filter = null;
+    const payload: any = buildBookingTemplateMutationPayload(form);
     if (editId) {
       updateMut.mutate(
         { id: editId, ...payload },
@@ -402,7 +398,7 @@ function HerkenningsregelsTab() {
         }
 
         if (rule.actie === "grootboek") {
-          const ledger = resolveTemplateLedger(rule, accounts);
+          const ledger = resolveBookingTemplateLedger(rule, accounts);
           if (!ledger) { skippedNoLedger++; continue; }
           totalWouldUpdate++;
           if (sample.length < 10) {
@@ -489,7 +485,7 @@ function HerkenningsregelsTab() {
         }
 
         if (rule.actie === "grootboek") {
-          const ledger = resolveTemplateLedger(rule, accounts);
+          const ledger = resolveBookingTemplateLedger(rule, accounts);
           if (!ledger) { skipped++; continue; }
           // .eq("match_status","niet_gematcht") prevents overwriting rows that changed
           // status between preview and apply. .select("id") lets us confirm the row was
@@ -559,7 +555,7 @@ function HerkenningsregelsTab() {
 
   const filtered = (templates || []).filter(t =>
     (t.zoekterm || "").toLowerCase().includes(search.toLowerCase()) ||
-    (t.ledger_account_text || "").toLowerCase().includes(search.toLowerCase())
+    getBookingTemplateLedgerLabel(t, accounts).toLowerCase().includes(search.toLowerCase())
   );
 
   const actieLabel = (a: string | null) => {
@@ -619,7 +615,7 @@ function HerkenningsregelsTab() {
                 <TableCell className="font-medium">{t.zoekterm || "-"}</TableCell>
                 <TableCell>{zoekInLabel(t.zoek_in)}</TableCell>
                 <TableCell>{actieLabel(t.actie)}</TableCell>
-                <TableCell>{t.ledger_account_text || "-"}</TableCell>
+                <TableCell>{getBookingTemplateLedgerLabel(t, accounts) || "-"}</TableCell>
                 <TableCell>{geldtVoorLabel(t.geldt_voor)}</TableCell>
                 <TableCell>{t.prioriteit ?? 0}</TableCell>
                 <TableCell>
@@ -671,7 +667,11 @@ function HerkenningsregelsTab() {
               {form.actie === "grootboek" && (
                 <div className="space-y-1">
                   <Label>Grootboekrekening</Label>
-                  <GrootboekCombobox value={form.ledger_account_text} onValueChange={v => setForm(f => ({ ...f, ledger_account_text: v }))} />
+                  <GrootboekCombobox
+                    value={form.ledger_account_text}
+                    onValueChange={(v) => setForm((f) => ({ ...f, ledger_account_text: v }))}
+                    onIdChange={(id) => setForm((f) => ({ ...f, grootboekrekening_id: id || null }))}
+                  />
                 </div>
               )}
               <div className="space-y-1">

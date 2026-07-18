@@ -14,6 +14,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, AlertTriangle, Copy } from "lucide-react";
 import { parseBankStatementFull, detectDuplicates, type ParsedTransaction, type DuplicateInfo } from "@/lib/bank-statement-parser";
+import { applyBookingTemplatesToTransactions } from "@/lib/booking-template-utils";
 import type { Tables } from "@/integrations/supabase/types";
 import type { BookingTemplate } from "@/hooks/useBookingTemplates";
 
@@ -92,58 +93,6 @@ function autoMatch(
   });
 }
 
-// Pas herkenningsregels toe op transacties die nog niet gematcht zijn
-function applyTemplates(
-  transactions: MatchedTransaction[],
-  templates: BookingTemplate[],
-  clientId: string
-): MatchedTransaction[] {
-  const activeTemplates = templates
-    .filter(t => t.actief && t.zoekterm)
-    .filter(t => !t.client_id_filter || t.client_id_filter === clientId)
-    .sort((a, b) => (b.prioriteit ?? 0) - (a.prioriteit ?? 0));
-
-  if (!activeTemplates.length) return transactions;
-
-  return transactions.map(tx => {
-    // Factuurmatches niet overschrijven
-    if (tx.matchStatus === "gematcht") return tx;
-
-    const desc = (tx.description || "").toLowerCase();
-    const ref = (tx.reference || "").toLowerCase();
-    const counter = (tx.counterAccount || "").toLowerCase();
-
-    for (const template of activeTemplates) {
-      const zoekterm = (template.zoekterm || "").toLowerCase();
-      const zoekIn = template.zoek_in || "alles";
-
-      let found = false;
-      if (zoekIn === "alles" || zoekIn === "omschrijving") {
-        if (desc.includes(zoekterm)) found = true;
-      }
-      if (zoekIn === "alles" || zoekIn === "referentie") {
-        if (ref.includes(zoekterm)) found = true;
-      }
-      if (zoekIn === "alles" || zoekIn === "naam") {
-        if (counter.includes(zoekterm)) found = true;
-      }
-
-      if (found) {
-        return {
-          ...tx,
-          matchStatus: "handmatig_geboekt" as const,
-          matchConfidence: 100,
-          grootboekrekeningId: template.ledger_account_id ?? null,
-          grootboekText: template.ledger_account_text ?? null,
-          templateName: template.zoekterm || template.name,
-        };
-      }
-    }
-
-    return tx;
-  });
-}
-
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
 
@@ -185,7 +134,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     // Only match against invoices for the selected client
     const clientInvoices = clientId ? invoices.filter(i => i.client_id === clientId) : invoices;
     const matched = autoMatch(statement.transactions, clientInvoices);
-    const withTemplates = applyTemplates(matched, bookingTemplates, clientId);
+    const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, clientId);
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(
