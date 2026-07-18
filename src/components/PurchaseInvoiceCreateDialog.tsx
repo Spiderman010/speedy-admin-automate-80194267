@@ -234,8 +234,7 @@ export function PurchaseInvoiceCreateDialog({
             <Input
               inputMode="decimal"
               value={form.amount_excl}
-              onChange={(e) => update({ amount_excl: e.target.value })}
-              onBlur={recalcFromExcl}
+              onChange={(e) => { setLastEdited("excl"); update({ amount_excl: e.target.value }); }}
               placeholder="0,00"
             />
           </div>
@@ -244,7 +243,7 @@ export function PurchaseInvoiceCreateDialog({
             <Input
               inputMode="decimal"
               value={form.btw_amount}
-              onChange={(e) => update({ btw_amount: e.target.value })}
+              onChange={(e) => { setLastEdited("btw"); update({ btw_amount: e.target.value }); }}
               placeholder="0,00"
             />
           </div>
@@ -253,8 +252,7 @@ export function PurchaseInvoiceCreateDialog({
             <Input
               inputMode="decimal"
               value={form.amount_incl}
-              onChange={(e) => update({ amount_incl: e.target.value })}
-              onBlur={recalcFromIncl}
+              onChange={(e) => { setLastEdited("incl"); update({ amount_incl: e.target.value }); }}
               placeholder="0,00"
             />
           </div>
@@ -262,7 +260,7 @@ export function PurchaseInvoiceCreateDialog({
             <Label>BTW %</Label>
             <Select
               value={form.btw_percentage}
-              onValueChange={handleBtwPctChange}
+              onValueChange={(v) => { if (lastEdited === "btw") setLastEdited("excl"); update({ btw_percentage: v }); }}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -272,6 +270,7 @@ export function PurchaseInvoiceCreateDialog({
               </SelectContent>
             </Select>
           </div>
+
 
 
           <div className="col-span-2">
