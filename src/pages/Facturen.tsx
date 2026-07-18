@@ -10,7 +10,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2, Landmark } from "lucide-react";
+import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2, Landmark, Plus } from "lucide-react";
+import { PurchaseInvoiceCreateDialog } from "@/components/PurchaseInvoiceCreateDialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
@@ -211,6 +212,7 @@ export default function Facturen() {
   const [bankSearchQuery, setBankSearchQuery] = useState("");
   const [linkTarget, setLinkTarget] = useState<PurchaseTxCandidate | null>(null);
   const [linkAmount, setLinkAmount] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const updateBankTx = useUpdateBankTransaction();
@@ -548,6 +550,9 @@ export default function Facturen() {
             {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />Nieuwe inkoopfactuur
+        </Button>
         <Button variant="outline" onClick={() => {
           const exportable = invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [];
           if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
@@ -903,6 +908,19 @@ export default function Facturen() {
         onPrev={() => editInvoiceIdx > 0 && setEditInvoice(filteredSorted[editInvoiceIdx - 1])}
         onNext={() => editInvoiceIdx >= 0 && editInvoiceIdx < filteredSorted.length - 1 && setEditInvoice(filteredSorted[editInvoiceIdx + 1])}
       />
+
+      <PurchaseInvoiceCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        clients={clients ?? []}
+        organizationId={activeOrganizationId}
+        defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
+        onCreated={(inv) => {
+          queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
+          setEditInvoice(inv);
+        }}
+      />
+
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
