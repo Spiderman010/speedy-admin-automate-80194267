@@ -447,7 +447,7 @@ export default function PurchaseInvoiceWorkspace() {
         title: "Opslaan mislukt",
         description: isLedgerFk
           ? "De geselecteerde grootboekrekening is niet geldig. Kies de rekening opnieuw."
-          : raw,
+          : "Opslaan mislukt. De bestaande boekingsregels zijn niet gewijzigd." + (raw ? ` (${raw})` : ""),
         variant: "destructive",
       });
     } finally {
