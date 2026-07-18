@@ -8,6 +8,7 @@ import { AppLayout } from "@/components/AppLayout";
 import Index from "./pages/Index";
 import Klanten from "./pages/Klanten";
 import Facturen from "./pages/Facturen";
+import PurchaseInvoiceWorkspace from "./pages/PurchaseInvoiceWorkspace";
 import Bank from "./pages/Bank";
 import Verkoop from "./pages/Verkoop";
 import Boekingen from "./pages/Boekingen";
@@ -67,6 +68,7 @@ const App = () => (
               <Route path="/klanten" element={<Klanten />} />
               <Route path="/leveranciers" element={<Leveranciers />} />
               <Route path="/facturen" element={<Facturen />} />
+              <Route path="/facturen/inkoop/:invoiceId" element={<PurchaseInvoiceWorkspace />} />
               <Route path="/bank" element={<Bank />} />
               <Route path="/verkoop" element={<Verkoop />} />
               <Route path="/boekingen" element={<Boekingen />} />

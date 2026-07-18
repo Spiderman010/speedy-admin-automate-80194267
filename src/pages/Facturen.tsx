@@ -740,7 +740,7 @@ export default function Facturen() {
                       const linkedVraagpost = vraagpostByPurchaseInvoiceId.get(inv.id);
                       const vraagpostBadge = linkedVraagpost ? getVraagpostBadgeProps(linkedVraagpost.status) : null;
                       return (
-                        <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setEditInvoice(inv)}>
+                        <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/facturen/inkoop/${inv.id}`)}>
                           <TableCell className="font-medium">
                             <div className="flex flex-col gap-1">
                               <span>{inv.supplier}</span>
@@ -920,7 +920,7 @@ export default function Facturen() {
         defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
         onCreated={(inv) => {
           queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
-          setEditInvoice(inv);
+          navigate(`/facturen/inkoop/${inv.id}`);
         }}
       />
 
