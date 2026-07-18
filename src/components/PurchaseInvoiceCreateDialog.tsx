@@ -122,6 +122,9 @@ export function PurchaseInvoiceCreateDialog({
     });
   };
 
+  const canSave = !!form.client_id && form.supplier.trim().length > 0 && !addInvoice.isPending;
+
+
 
   const handleLeverancierChange = (id: string) => {
     if (id === "__none__") {
