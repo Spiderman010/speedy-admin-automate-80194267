@@ -402,7 +402,11 @@ export default function PurchaseInvoiceWorkspace() {
     btw_amount: parseAmountInput(header.btw_amount),
     amount_incl: parseAmountInput(header.amount_incl),
     btw_percentage: parseAmountInput(header.btw_percentage),
-    ledger_account_id: header.ledger_id,
+    // NOTE: ledger_account_id is intentionally NOT persisted here.
+    // purchase_invoices.ledger_account_id has a FK to public.ledger_accounts,
+    // but the workspace "Standaard grootboek" combobox picks IDs from
+    // public.grootboekrekeningen. Writing that ID would trigger a FK error.
+    // The per-line ledger is stored on purchase_invoice_lines.grootboekrekening_id.
     ledger_account_text: header.ledger_label || null,
     notes: header.notes.trim() || null,
   });
