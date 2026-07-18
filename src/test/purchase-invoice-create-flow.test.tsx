@@ -89,6 +89,8 @@ function Harness() {
         invoice={edit}
         open={!!edit}
         onOpenChange={(o: boolean) => !o && setEdit(null)}
+        onSave={async () => {}}
+        onApprove={async () => {}}
       />
     </>
   );
