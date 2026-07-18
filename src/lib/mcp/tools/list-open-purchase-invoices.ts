@@ -26,7 +26,7 @@ export default defineTool({
     }
     let q = supabaseForUser(ctx)
       .from("purchase_invoices")
-      .select("id, invoice_number, invoice_date, amount_incl, amount_excl, btw_amount, status, client_id, supplier_name")
+      .select("id, invoice_number, invoice_date, amount_incl, amount_excl, btw_amount, status, client_id, supplier")
       .eq("status", "te_controleren")
       .order("invoice_date", { ascending: false })
       .limit(limit ?? 50);
