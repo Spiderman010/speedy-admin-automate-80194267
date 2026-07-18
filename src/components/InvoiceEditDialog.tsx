@@ -637,8 +637,17 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     };
   };
 
-  const validateLines = (): string | null =>
-    validatePurchaseLines(
+  const validateLines = (): string | null => {
+    // Blokkeer stille 0-regels: een leeg of onparseerbaar bedragveld mag niet
+    // silently als geldige 0-regel worden opgeslagen.
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      const parsed = parseAmountInputHelper(l._amountInput);
+      if (parsed === null) {
+        return `Regel ${i + 1}: vul een geldig bedrag excl. in (of verwijder de regel).`;
+      }
+    }
+    return validatePurchaseLines(
       lines.map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: lineAmountExcl(l),
@@ -646,6 +655,7 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       })),
       headerTotalsForLines(),
     );
+  };
 
   if (!invoice) return null;
 
