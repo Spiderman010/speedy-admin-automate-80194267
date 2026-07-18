@@ -32,6 +32,7 @@ import {
   isBlankLine,
   isPartiallyFilledLine,
 } from "@/lib/purchase-line-validation";
+import { deriveHeaderFromLines } from "@/lib/purchase-header-derivation";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import { round2 } from "@/lib/btw-calc";
 import { formatEuro } from "@/lib/format";
