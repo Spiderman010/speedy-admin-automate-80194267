@@ -30,7 +30,6 @@ import { useClients } from "@/hooks/useClients";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useQueryClient } from "@tanstack/react-query";
-import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
 import { InvoiceNumberCopyButton } from "@/components/InvoiceNumberCopyButton";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
@@ -205,7 +204,6 @@ export default function Facturen() {
   const updateInvoice = useUpdatePurchaseInvoice();
   const deleteInvoice = useDeletePurchaseInvoice();
   const [dragActive, setDragActive] = useState(false);
-  const [editInvoice, setEditInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Tables<"purchase_invoices"> | null>(null);
   const deleteHasExportWarning = deleteTarget?.status === "geexporteerd";
   const [afletteringInvoice, setAfletteringInvoice] = useState<Tables<"purchase_invoices"> | null>(null);
@@ -259,16 +257,6 @@ export default function Facturen() {
     setClientFilter(selectedClientId);
     setUploadClientId(selectedClientId !== "all" ? selectedClientId : "");
   }, [selectedClientId]);
-
-  const handleSaveInvoice = async (id: string, updates: Partial<Tables<"purchase_invoices">>) => {
-    await updateInvoice.mutateAsync({ id, ...updates });
-    toast({ title: "Factuur opgeslagen" });
-  };
-
-  const handleApproveInvoice = async (id: string, updates: Partial<Tables<"purchase_invoices">>) => {
-    await updateInvoice.mutateAsync({ id, ...updates });
-    toast({ title: "Factuur goedgekeurd" });
-  };
 
   const handlePurchaseLink = async () => {
     if (!afletteringInvoice || !linkTarget) return;
@@ -401,11 +389,6 @@ export default function Facturen() {
     });
     return list;
   }, [searchFiltered, workflowFilter, paymentFilter, routeFilter, sortField, sortDir]);
-
-  const editInvoiceIdx = useMemo(() => {
-    if (!editInvoice) return -1;
-    return filteredSorted.findIndex((inv) => inv.id === editInvoice.id);
-  }, [editInvoice, filteredSorted]);
 
   const duplicateIds = useMemo(() => {
     const result = new Set<string>();
@@ -895,23 +878,6 @@ export default function Facturen() {
         </TabsContent>
       </Tabs>
 
-      <InvoiceEditDialog
-        invoice={editInvoice}
-        open={!!editInvoice}
-        onOpenChange={(open) => !open && setEditInvoice(null)}
-        onSave={handleSaveInvoice}
-        onApprove={handleApproveInvoice}
-        client={editInvoice ? clients?.find(c => c.id === editInvoice.client_id) ?? null : null}
-        onOpenExisting={(id) => {
-          const found = invoices?.find((inv) => inv.id === id);
-          if (found) setEditInvoice(found);
-        }}
-        hasPrev={editInvoiceIdx > 0}
-        hasNext={editInvoiceIdx >= 0 && editInvoiceIdx < filteredSorted.length - 1}
-        onPrev={() => editInvoiceIdx > 0 && setEditInvoice(filteredSorted[editInvoiceIdx - 1])}
-        onNext={() => editInvoiceIdx >= 0 && editInvoiceIdx < filteredSorted.length - 1 && setEditInvoice(filteredSorted[editInvoiceIdx + 1])}
-      />
-
       <PurchaseInvoiceCreateDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
@@ -975,7 +941,6 @@ export default function Facturen() {
                           description: "Alleen de upload/registratie in BoekAssist is verwijderd.",
                         }
                   );
-                  if (editInvoice?.id === deleteTarget.id) setEditInvoice(null);
                   setDeleteTarget(null);
                 } catch (err: any) {
                   toast({ title: "Verwijderen mislukt", description: err?.message, variant: "destructive" });
