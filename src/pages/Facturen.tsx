@@ -638,14 +638,19 @@ export default function Facturen() {
 
         <TabsContent value="overview" className="mt-6">
           <div className="mb-5 space-y-2.5">
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="relative max-w-md flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />Nieuwe inkoopfactuur
+              </Button>
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
