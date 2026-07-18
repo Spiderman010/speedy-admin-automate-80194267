@@ -33,7 +33,7 @@ var list_clients_default = defineTool({
     if (!ctx.isAuthenticated()) {
       return { content: [{ type: "text", text: "Niet geauthenticeerd" }], isError: true };
     }
-    const { data, error } = await supabaseForUser(ctx).from("clients").select("id, name, btw_regime, organization_id").order("name");
+    const { data, error } = await supabaseForUser(ctx).from("clients").select("id, name, organization_id").order("name");
     if (error) {
       return { content: [{ type: "text", text: error.message }], isError: true };
     }
