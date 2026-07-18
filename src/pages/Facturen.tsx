@@ -909,6 +909,19 @@ export default function Facturen() {
         onNext={() => editInvoiceIdx >= 0 && editInvoiceIdx < filteredSorted.length - 1 && setEditInvoice(filteredSorted[editInvoiceIdx + 1])}
       />
 
+      <PurchaseInvoiceCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        clients={clients ?? []}
+        organizationId={activeOrganizationId}
+        defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
+        onCreated={(inv) => {
+          queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
+          setEditInvoice(inv);
+        }}
+      />
+
+
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
