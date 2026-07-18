@@ -211,7 +211,6 @@ export default function PurchaseInvoiceWorkspace() {
         nextHeader.amount_incl = formatAmountInput(chosen);
       }
     }
-    setHeader(nextHeader);
 
     let nextLines: LineRow[];
     if (storedLines && storedLines.length > 0) {
