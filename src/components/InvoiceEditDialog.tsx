@@ -644,18 +644,37 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     };
   };
 
+  /** Regels waar de gebruiker daadwerkelijk iets in heeft ingevuld. Volledig
+   * lege regels (geen omschrijving, geen bedrag, geen grootboekrekening) tellen
+   * niet mee in totalen, validatie of het opslaan. */
+  const meaningfulLines = () => lines.filter((l) => !isBlankLine({
+    omschrijving: l.omschrijving,
+    amount_input: l._amountInput,
+    grootboekrekening_id: l.grootboekrekening_id,
+  }));
+
   const validateLines = (): string | null => {
-    // Blokkeer stille 0-regels: een leeg of onparseerbaar bedragveld mag niet
-    // silently als geldige 0-regel worden opgeslagen.
+    // Sta volledig lege regels toe (ze worden bij het opslaan gefilterd).
+    // Deels ingevulde regels blokkeren save met een duidelijke melding.
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
+      const cand = {
+        omschrijving: l.omschrijving,
+        amount_input: l._amountInput,
+        grootboekrekening_id: l.grootboekrekening_id,
+      };
+      if (isBlankLine(cand)) continue;
+      if (isPartiallyFilledLine(cand)) {
+        return `Regel ${i + 1} is niet compleet. Vul bedrag en omschrijving in of verwijder de regel.`;
+      }
       const parsed = parseAmountInputHelper(l._amountInput);
       if (parsed === null) {
         return `Regel ${i + 1}: vul een geldig bedrag excl. in (of verwijder de regel).`;
       }
     }
+    const meaningful = meaningfulLines();
     return validatePurchaseLines(
-      lines.map((l) => ({
+      meaningful.map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: lineAmountExcl(l),
         btw_percentage: Number(l.btw_percentage || 0),
