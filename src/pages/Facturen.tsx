@@ -920,7 +920,7 @@ export default function Facturen() {
         defaultClientId={clientFilter !== "all" ? clientFilter : undefined}
         onCreated={(inv) => {
           queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
-          setEditInvoice(inv);
+          navigate(`/facturen/inkoop/${inv.id}`);
         }}
       />
 
