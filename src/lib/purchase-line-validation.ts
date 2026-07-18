@@ -150,3 +150,38 @@ export function derivePrefillLine(header: PrefillHeader): PrefillLine | null {
   return { amount_excl: r2(excl), btw_percentage: pct };
 }
 
+// -----------------------------------------------------------------------------
+// Blank-line predicate — a line is "completely empty" when it has no meaningful
+// user input: no description, no amount input, no ledger account. The VAT
+// percentage is a select with a default value (21% or 0% bij BTW-vrijgesteld)
+// and therefore never counts as user-entered by itself; without an amount the
+// derived VAT is €0 regardless of percentage.
+// -----------------------------------------------------------------------------
+
+export interface BlankLineCandidate {
+  omschrijving: string;
+  /** Raw text from the amount input field. Empty string = user typed nothing. */
+  amount_input: string;
+  grootboekrekening_id: string | null;
+}
+
+export function isBlankLine(l: BlankLineCandidate): boolean {
+  const noDesc = !l.omschrijving || l.omschrijving.trim() === "";
+  const noAmount = !l.amount_input || l.amount_input.trim() === "";
+  const noLedger = !l.grootboekrekening_id;
+  return noDesc && noAmount && noLedger;
+}
+
+/**
+ * A line is "partially filled" when it is not blank but is still missing a
+ * required field (description or a usable amount input). Save must be blocked
+ * so we never persist half-filled ghost lines.
+ */
+export function isPartiallyFilledLine(l: BlankLineCandidate): boolean {
+  if (isBlankLine(l)) return false;
+  const noDesc = !l.omschrijving || l.omschrijving.trim() === "";
+  const noAmount = !l.amount_input || l.amount_input.trim() === "";
+  return noDesc || noAmount;
+}
+
+
