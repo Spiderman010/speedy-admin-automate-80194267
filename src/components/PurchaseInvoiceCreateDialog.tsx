@@ -14,6 +14,7 @@ import { useAddPurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
 import { useToast } from "@/hooks/use-toast";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
+import { deriveFromExcl, deriveFromIncl } from "@/lib/btw-calc";
 import type { Tables } from "@/integrations/supabase/types";
 
 interface Props {
@@ -83,8 +84,7 @@ export function PurchaseInvoiceCreateDialog({
     if (lastEdited === "incl") {
       const incl = parseAmountInput(form.amount_incl);
       if (incl === null) return;
-      const excl = Math.round((incl / (1 + pct / 100)) * 100) / 100;
-      const btw = Math.round((incl - excl) * 100) / 100;
+      const { excl, btw } = deriveFromIncl(incl, pct);
       const nextExcl = formatAmountInput(excl);
       const nextBtw = formatAmountInput(btw);
       if (nextExcl !== form.amount_excl || nextBtw !== form.btw_amount) {
@@ -94,8 +94,7 @@ export function PurchaseInvoiceCreateDialog({
       // 'excl' of pct-wijziging → bereken btw + incl vanuit excl
       const excl = parseAmountInput(form.amount_excl);
       if (excl === null) return;
-      const btw = Math.round(excl * pct) / 100;
-      const incl = Math.round((excl + btw) * 100) / 100;
+      const { btw, incl } = deriveFromExcl(excl, pct);
       const nextBtw = formatAmountInput(btw);
       const nextIncl = formatAmountInput(incl);
       if (nextBtw !== form.btw_amount || nextIncl !== form.amount_incl) {
