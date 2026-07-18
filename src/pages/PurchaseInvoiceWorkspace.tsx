@@ -213,8 +213,9 @@ export default function PurchaseInvoiceWorkspace() {
     }
     setHeader(nextHeader);
 
+    let nextLines: LineRow[];
     if (storedLines && storedLines.length > 0) {
-      setLines(storedLines.map((l) => {
+      nextLines = storedLines.map((l) => {
         const ledger = ledgers?.find((g) => g.id === l.grootboekrekening_id);
         return {
           omschrijving: l.omschrijving,
@@ -223,7 +224,7 @@ export default function PurchaseInvoiceWorkspace() {
           grootboekrekening_id: l.grootboekrekening_id,
           grootboek_label: ledger ? `${ledger.nummer} - ${ledger.omschrijving}` : "",
         };
-      }));
+      });
     } else {
       // Derive prefill from header totals — one line only, never a hidden default.
       const prefill = derivePrefillLine({
@@ -234,17 +235,51 @@ export default function PurchaseInvoiceWorkspace() {
       });
       if (prefill) {
         const ledger = ledgers?.find((g) => g.id === invoice.ledger_account_id);
-        setLines([{
+        nextLines = [{
           omschrijving: invoice.supplier || "Factuurregel",
           amount_input: formatAmountInput(prefill.amount_excl),
           btw_percentage: String(prefill.btw_percentage),
           grootboekrekening_id: invoice.ledger_account_id ?? null,
           grootboek_label: ledger ? `${ledger.nummer} - ${ledger.omschrijving}` : (invoice.ledger_account_text ?? ""),
-        }]);
+        }];
       } else {
-        setLines([]);
+        nextLines = [];
       }
     }
+
+    // Header normalisation: when the manually-entered header is incomplete
+    // (btw missing, incl null or equal to excl) but the lines carry VAT,
+    // derive header totals from the lines so there is no artificial gap.
+    if (!isBtwVrijgesteld && nextLines.length > 0) {
+      const parsed = nextLines
+        .filter((l) => !isBlankLine({
+          omschrijving: l.omschrijving,
+          amount_input: l.amount_input,
+          grootboekrekening_id: l.grootboekrekening_id,
+        }))
+        .map((l) => ({
+          omschrijving: l.omschrijving,
+          amount_excl: parseAmountInput(l.amount_input) ?? 0,
+          btw_percentage: parseAmountInput(l.btw_percentage) ?? 0,
+        }));
+      const lineTotalsInit = computeLineTotals(parsed);
+      const derived = deriveHeaderFromLines(
+        {
+          amount_excl: parseAmountInput(nextHeader.amount_excl),
+          btw_amount: parseAmountInput(nextHeader.btw_amount),
+          amount_incl: parseAmountInput(nextHeader.amount_incl),
+        },
+        lineTotalsInit,
+      );
+      if (derived.btw_amount != null) {
+        nextHeader.amount_excl = formatAmountInput(derived.amount_excl);
+        nextHeader.btw_amount = formatAmountInput(derived.btw_amount);
+        nextHeader.amount_incl = formatAmountInput(derived.amount_incl);
+      }
+    }
+
+    setHeader(nextHeader);
+    setLines(nextLines);
     setInitialized(true);
   }, [invoice, storedLines, ledgers, invoiceLoading, linesLoading, initialized, isBtwVrijgesteld]);
 
