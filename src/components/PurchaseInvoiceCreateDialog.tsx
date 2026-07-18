@@ -13,7 +13,7 @@ import { Loader2, Save } from "lucide-react";
 import { useAddPurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
 import { useToast } from "@/hooks/use-toast";
-import { parseAmountInput } from "@/lib/amount-input";
+import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import type { Tables } from "@/integrations/supabase/types";
 
 interface Props {
@@ -70,9 +70,61 @@ export function PurchaseInvoiceCreateDialog({
 
   const update = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
-  const canSave = useMemo(() => {
-    return !!form.client_id && form.supplier.trim().length > 0 && !addInvoice.isPending;
-  }, [form.client_id, form.supplier, addInvoice.isPending]);
+  const recalcFromExcl = () => {
+    setForm((f) => {
+      const excl = parseAmountInput(f.amount_excl);
+      const pct = parseAmountInput(f.btw_percentage);
+      if (excl === null || pct === null) return f;
+      const btw = Math.round(excl * pct) / 100;
+      const incl = Math.round((excl + btw) * 100) / 100;
+      return {
+        ...f,
+        amount_excl: formatAmountInput(excl),
+        btw_amount: formatAmountInput(btw),
+        amount_incl: formatAmountInput(incl),
+      };
+    });
+  };
+
+  const recalcFromIncl = () => {
+    setForm((f) => {
+      const incl = parseAmountInput(f.amount_incl);
+      const pct = parseAmountInput(f.btw_percentage);
+      if (incl === null || pct === null) return f;
+      const excl = Math.round((incl / (1 + pct / 100)) * 100) / 100;
+      const btw = Math.round((incl - excl) * 100) / 100;
+      return {
+        ...f,
+        amount_incl: formatAmountInput(incl),
+        amount_excl: formatAmountInput(excl),
+        btw_amount: formatAmountInput(btw),
+      };
+    });
+  };
+
+  const handleBtwPctChange = (v: string) => {
+    setForm((f) => {
+      const next = { ...f, btw_percentage: v };
+      const pct = parseAmountInput(v);
+      const excl = parseAmountInput(f.amount_excl);
+      const incl = parseAmountInput(f.amount_incl);
+      if (pct === null) return next;
+      if (excl !== null) {
+        const btw = Math.round(excl * pct) / 100;
+        next.btw_amount = formatAmountInput(btw);
+        next.amount_incl = formatAmountInput(Math.round((excl + btw) * 100) / 100);
+      } else if (incl !== null) {
+        const e = Math.round((incl / (1 + pct / 100)) * 100) / 100;
+        next.amount_excl = formatAmountInput(e);
+        next.btw_amount = formatAmountInput(Math.round((incl - e) * 100) / 100);
+      }
+      return next;
+    });
+  };
+
+  const canSave = !!form.client_id && form.supplier.trim().length > 0 && !addInvoice.isPending;
+
+
 
   const handleLeverancierChange = (id: string) => {
     if (id === "__none__") {
@@ -200,6 +252,7 @@ export function PurchaseInvoiceCreateDialog({
               inputMode="decimal"
               value={form.amount_excl}
               onChange={(e) => update({ amount_excl: e.target.value })}
+              onBlur={recalcFromExcl}
               placeholder="0,00"
             />
           </div>
@@ -218,6 +271,7 @@ export function PurchaseInvoiceCreateDialog({
               inputMode="decimal"
               value={form.amount_incl}
               onChange={(e) => update({ amount_incl: e.target.value })}
+              onBlur={recalcFromIncl}
               placeholder="0,00"
             />
           </div>
@@ -225,7 +279,7 @@ export function PurchaseInvoiceCreateDialog({
             <Label>BTW %</Label>
             <Select
               value={form.btw_percentage}
-              onValueChange={(v) => update({ btw_percentage: v })}
+              onValueChange={handleBtwPctChange}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -235,6 +289,7 @@ export function PurchaseInvoiceCreateDialog({
               </SelectContent>
             </Select>
           </div>
+
 
           <div className="col-span-2">
             <Label>Notities</Label>
