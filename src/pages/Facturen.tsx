@@ -212,6 +212,7 @@ export default function Facturen() {
   const [bankSearchQuery, setBankSearchQuery] = useState("");
   const [linkTarget, setLinkTarget] = useState<PurchaseTxCandidate | null>(null);
   const [linkAmount, setLinkAmount] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const updateBankTx = useUpdateBankTransaction();
