@@ -570,18 +570,24 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
           grootboekrekening_id: l.grootboekrekening_id,
           _ledgerLabel: "",
-          _amountInput: formatAmountInput(Number(l.amount_excl)),
+          _amountInput: formatAmountInputHelper(Number(l.amount_excl)),
         }))
       );
       setPrefilledFromHeader(false);
       return;
     }
 
-    // No stored lines → prefill one default line from header totals.
+    // No stored lines → prefill one populated proposal line straight from the
+    // invoice header. We deliberately read invoice.* here instead of form.*
+    // so this effect is not racing the form-init effect: an empty first line
+    // used to appear when this effect fired before form.amount_excl was set.
+    const invExcl = invoice.amount_excl != null ? Number(invoice.amount_excl) : null;
+    const invIncl = invoice.amount_incl != null ? Number(invoice.amount_incl) : null;
+    const invPct = invoice.btw_percentage != null ? Number(invoice.btw_percentage) : null;
     const prefill = derivePrefillLine({
-      amount_excl: form.amount_excl ? parseFloat(form.amount_excl) : null,
-      amount_incl: form.amount_incl ? parseFloat(form.amount_incl) : null,
-      btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
+      amount_excl: Number.isFinite(invExcl as number) ? invExcl : null,
+      amount_incl: Number.isFinite(invIncl as number) ? invIncl : null,
+      btw_percentage: Number.isFinite(invPct as number) ? invPct : null,
       isBtwVrijgesteld,
     });
     if (!prefill) {
@@ -589,20 +595,21 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       setPrefilledFromHeader(false);
       return;
     }
-    const headerLedger = grootboekrekeningen?.find(
-      (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
-    ) ?? null;
-    const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
+    const ledgerText = invoice.ledger_account_text || "";
+    const headerLedger = ledgerText
+      ? (grootboekrekeningen?.find((g) => `${g.nummer} - ${g.omschrijving}` === ledgerText) ?? null)
+      : null;
+    const omschrijving = invoice.supplier?.trim() || "Inkoopfactuur";
     setLines([{
       omschrijving,
       amount_excl: prefill.amount_excl,
       btw_percentage: prefill.btw_percentage,
       grootboekrekening_id: headerLedger?.id ?? null,
-      _ledgerLabel: headerLedger ? form.ledger_account_text : "",
-      _amountInput: formatAmountInput(prefill.amount_excl),
+      _ledgerLabel: headerLedger ? ledgerText : "",
+      _amountInput: formatAmountInputHelper(prefill.amount_excl),
     }]);
     setPrefilledFromHeader(true);
-  }, [existingLines, invoice?.id, isBtwVrijgesteld, grootboekrekeningen, form.amount_excl, form.amount_incl, form.btw_percentage, form.ledger_account_text, form.supplier]);
+  }, [existingLines, invoice, isBtwVrijgesteld, grootboekrekeningen]);
 
 
   const addLine = () => { setPrefilledFromHeader(false); setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "", _amountInput: "" }]); };
