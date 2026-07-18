@@ -26,7 +26,7 @@ import JSZip from "jszip";
 import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
-import { computeLineDiffs, validatePurchaseLines, derivePrefillLine } from "@/lib/purchase-line-validation";
+import { computeLineDiffs, validatePurchaseLines, derivePrefillLine, isBlankLine, isPartiallyFilledLine } from "@/lib/purchase-line-validation";
 import { parseAmountInput as parseAmountInputHelper, parseAmountInputOrZero, formatAmountInput as formatAmountInputHelper } from "@/lib/amount-input";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
@@ -570,18 +570,24 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
           btw_percentage: isBtwVrijgesteld ? 0 : (l.btw_percentage != null ? Number(l.btw_percentage) : null),
           grootboekrekening_id: l.grootboekrekening_id,
           _ledgerLabel: "",
-          _amountInput: formatAmountInput(Number(l.amount_excl)),
+          _amountInput: formatAmountInputHelper(Number(l.amount_excl)),
         }))
       );
       setPrefilledFromHeader(false);
       return;
     }
 
-    // No stored lines → prefill one default line from header totals.
+    // No stored lines → prefill one populated proposal line straight from the
+    // invoice header. We deliberately read invoice.* here instead of form.*
+    // so this effect is not racing the form-init effect: an empty first line
+    // used to appear when this effect fired before form.amount_excl was set.
+    const invExcl = invoice.amount_excl != null ? Number(invoice.amount_excl) : null;
+    const invIncl = invoice.amount_incl != null ? Number(invoice.amount_incl) : null;
+    const invPct = invoice.btw_percentage != null ? Number(invoice.btw_percentage) : null;
     const prefill = derivePrefillLine({
-      amount_excl: form.amount_excl ? parseFloat(form.amount_excl) : null,
-      amount_incl: form.amount_incl ? parseFloat(form.amount_incl) : null,
-      btw_percentage: form.btw_percentage ? parseFloat(form.btw_percentage) : null,
+      amount_excl: Number.isFinite(invExcl as number) ? invExcl : null,
+      amount_incl: Number.isFinite(invIncl as number) ? invIncl : null,
+      btw_percentage: Number.isFinite(invPct as number) ? invPct : null,
       isBtwVrijgesteld,
     });
     if (!prefill) {
@@ -589,20 +595,21 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
       setPrefilledFromHeader(false);
       return;
     }
-    const headerLedger = grootboekrekeningen?.find(
-      (g) => `${g.nummer} - ${g.omschrijving}` === form.ledger_account_text
-    ) ?? null;
-    const omschrijving = form.supplier?.trim() || invoice.supplier?.trim() || "Inkoopfactuur";
+    const ledgerText = invoice.ledger_account_text || "";
+    const headerLedger = ledgerText
+      ? (grootboekrekeningen?.find((g) => `${g.nummer} - ${g.omschrijving}` === ledgerText) ?? null)
+      : null;
+    const omschrijving = invoice.supplier?.trim() || "Inkoopfactuur";
     setLines([{
       omschrijving,
       amount_excl: prefill.amount_excl,
       btw_percentage: prefill.btw_percentage,
       grootboekrekening_id: headerLedger?.id ?? null,
-      _ledgerLabel: headerLedger ? form.ledger_account_text : "",
-      _amountInput: formatAmountInput(prefill.amount_excl),
+      _ledgerLabel: headerLedger ? ledgerText : "",
+      _amountInput: formatAmountInputHelper(prefill.amount_excl),
     }]);
     setPrefilledFromHeader(true);
-  }, [existingLines, invoice?.id, isBtwVrijgesteld, grootboekrekeningen, form.amount_excl, form.amount_incl, form.btw_percentage, form.ledger_account_text, form.supplier]);
+  }, [existingLines, invoice, isBtwVrijgesteld, grootboekrekeningen]);
 
 
   const addLine = () => { setPrefilledFromHeader(false); setLines((p) => [...p, { omschrijving: "", amount_excl: 0, btw_percentage: isBtwVrijgesteld ? 0 : 21, grootboekrekening_id: null, _ledgerLabel: "", _amountInput: "" }]); };
@@ -637,18 +644,37 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
     };
   };
 
+  /** Regels waar de gebruiker daadwerkelijk iets in heeft ingevuld. Volledig
+   * lege regels (geen omschrijving, geen bedrag, geen grootboekrekening) tellen
+   * niet mee in totalen, validatie of het opslaan. */
+  const meaningfulLines = () => lines.filter((l) => !isBlankLine({
+    omschrijving: l.omschrijving,
+    amount_input: l._amountInput,
+    grootboekrekening_id: l.grootboekrekening_id,
+  }));
+
   const validateLines = (): string | null => {
-    // Blokkeer stille 0-regels: een leeg of onparseerbaar bedragveld mag niet
-    // silently als geldige 0-regel worden opgeslagen.
+    // Sta volledig lege regels toe (ze worden bij het opslaan gefilterd).
+    // Deels ingevulde regels blokkeren save met een duidelijke melding.
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
+      const cand = {
+        omschrijving: l.omschrijving,
+        amount_input: l._amountInput,
+        grootboekrekening_id: l.grootboekrekening_id,
+      };
+      if (isBlankLine(cand)) continue;
+      if (isPartiallyFilledLine(cand)) {
+        return `Regel ${i + 1} is niet compleet. Vul bedrag en omschrijving in of verwijder de regel.`;
+      }
       const parsed = parseAmountInputHelper(l._amountInput);
       if (parsed === null) {
         return `Regel ${i + 1}: vul een geldig bedrag excl. in (of verwijder de regel).`;
       }
     }
+    const meaningful = meaningfulLines();
     return validatePurchaseLines(
-      lines.map((l) => ({
+      meaningful.map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: lineAmountExcl(l),
         btw_percentage: Number(l.btw_percentage || 0),
@@ -703,9 +729,12 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   };
 
   const persistLines = async () => {
+    // Filter volledig lege regels weg. Volgorde blijft zoals in de UI; sort_order
+    // wordt door de mutation herberekend uit de array-index.
+    const toPersist = meaningfulLines();
     await replaceLines.mutateAsync({
       invoiceId: invoice.id,
-      lines: lines.map((l) => ({
+      lines: toPersist.map((l) => ({
         omschrijving: l.omschrijving,
         amount_excl: lineAmountExcl(l),
         btw_percentage: isBtwVrijgesteld ? 0 : l.btw_percentage,
@@ -1047,7 +1076,9 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
 
               {lines.length > 0 && (() => {
                 const header = headerTotalsForLines();
-                const lineInputs = lines.map((l) => ({
+                // Alleen ingevulde regels tellen mee — volledig lege regels
+                // moeten totalen en verschil nooit beïnvloeden.
+                const lineInputs = meaningfulLines().map((l) => ({
                   omschrijving: l.omschrijving,
                   amount_excl: lineAmountExcl(l),
                   btw_percentage: Number(l.btw_percentage || 0),
