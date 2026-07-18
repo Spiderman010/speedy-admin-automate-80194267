@@ -439,7 +439,17 @@ export default function PurchaseInvoiceWorkspace() {
       toast({ title: approve ? "Factuur goedgekeurd" : "Factuur opgeslagen" });
       if (approve && hasNext) goNext();
     } catch (e: any) {
-      toast({ title: "Opslaan mislukt", description: e?.message, variant: "destructive" });
+      const raw = String(e?.message ?? "");
+      const isLedgerFk =
+        raw.includes("purchase_invoices_ledger_account_id_fkey") ||
+        (raw.includes("foreign key") && raw.includes("ledger_account_id"));
+      toast({
+        title: "Opslaan mislukt",
+        description: isLedgerFk
+          ? "De geselecteerde grootboekrekening is niet geldig. Kies de rekening opnieuw."
+          : raw,
+        variant: "destructive",
+      });
     } finally {
       setSaving(false);
     }
