@@ -38,7 +38,7 @@ const createdInvoice: Tables<"purchase_invoices"> = {
   updated_at: new Date().toISOString(),
 } as unknown as Tables<"purchase_invoices">;
 
-const mutateAsync = vi.fn(async () => createdInvoice);
+const mutateAsync = vi.fn<any, any>(async () => createdInvoice);
 
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { id: "u1" } }),
