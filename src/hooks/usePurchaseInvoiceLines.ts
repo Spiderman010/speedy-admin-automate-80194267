@@ -36,23 +36,28 @@ export function useReplacePurchaseInvoiceLines() {
   return useMutation({
     mutationFn: async ({ invoiceId, lines }: { invoiceId: string; lines: InvoiceLineInput[] }) => {
       if (!user) throw new Error("Not authenticated");
-      const { error: delErr } = await supabase
-        .from("purchase_invoice_lines")
-        .delete()
-        .eq("purchase_invoice_id", invoiceId);
-      if (delErr) throw delErr;
-      if (lines.length === 0) return;
-      const rows = lines.map((l, idx) => ({
-        purchase_invoice_id: invoiceId,
-        user_id: user.id,
+      // Atomic replace via RPC — delete + insert run in a single transaction.
+      // If any step fails the existing lines remain untouched.
+      const payload = lines.map((l, idx) => ({
         omschrijving: l.omschrijving,
         amount_excl: l.amount_excl,
         btw_percentage: l.btw_percentage,
         grootboekrekening_id: l.grootboekrekening_id,
         sort_order: idx,
       }));
-      const { error } = await supabase.from("purchase_invoice_lines").insert(rows);
-      if (error) throw error;
+      // Generated types don't yet include this RPC — cast the client locally.
+      // See supabase/migrations/*_add-replace-purchase-invoice-lines-rpc.sql
+      const client = supabase as unknown as {
+        rpc: (
+          fn: "replace_purchase_invoice_lines",
+          args: { _invoice_id: string; _lines: unknown },
+        ) => Promise<{ data: PurchaseInvoiceLine[] | null; error: { message: string } | null }>;
+      };
+      const { error } = await client.rpc("replace_purchase_invoice_lines", {
+        _invoice_id: invoiceId,
+        _lines: payload,
+      });
+      if (error) throw new Error(error.message);
     },
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["purchase_invoice_lines", vars.invoiceId] });
