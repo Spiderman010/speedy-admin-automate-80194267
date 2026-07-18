@@ -14,6 +14,7 @@ import { useAddPurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
 import { useToast } from "@/hooks/use-toast";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
+import { deriveFromExcl, deriveFromIncl } from "@/lib/btw-calc";
 import type { Tables } from "@/integrations/supabase/types";
 
 interface Props {
