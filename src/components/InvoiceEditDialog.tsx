@@ -1144,15 +1144,22 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               className="h-8"
                               type="text"
                               inputMode="decimal"
-                              placeholder="0,00"
-                              value={l._amountInput}
+                              placeholder="bedrag"
+                              value={l._amountInput ?? ""}
                               onChange={(e) => {
-                                const raw = e.target.value;
-                                updateLine(i, { _amountInput: raw });
+                                // Sla de ruwe tekst op tijdens typen; parse pas op blur.
+                                updateLine(i, { _amountInput: e.target.value });
                               }}
                               onBlur={(e) => {
-                                const n = parseAmountInput(e.target.value);
-                                updateLine(i, { _amountInput: e.target.value.trim() === "" ? "" : formatAmountInput(n), amount_excl: n });
+                                const raw = e.target.value;
+                                if (raw.trim() === "") {
+                                  // Lege invoer blijft leeg; amount_excl wordt 0 voor totalen.
+                                  updateLine(i, { _amountInput: "", amount_excl: 0 });
+                                  return;
+                                }
+                                const parsed = parseAmountInputHelper(raw);
+                                const n = parsed === null ? 0 : parsed;
+                                updateLine(i, { _amountInput: parsed === null ? raw : formatAmountInputHelper(n), amount_excl: n });
                               }}
                             />
                           </div>
