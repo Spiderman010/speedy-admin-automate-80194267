@@ -27,6 +27,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
 import { DOCUMENT_ROUTE_OPTIONS, getDocumentRoute, getDocumentRouteLabel, type DocumentRoute } from "@/lib/document-route";
 import { computeLineDiffs, validatePurchaseLines, derivePrefillLine } from "@/lib/purchase-line-validation";
+import { parseAmountInput as parseAmountInputHelper, parseAmountInputOrZero, formatAmountInput as formatAmountInputHelper } from "@/lib/amount-input";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 type Client = Tables<"clients">;
@@ -198,21 +199,10 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
   type LineRow = InvoiceLineInput & { _ledgerLabel: string; _amountInput: string };
   const [lines, setLines] = useState<LineRow[]>([]);
   // Houd het invoerveld als tekst leidend, zodat bedragen zoals "", "3," en
-  // "3.99" tijdens typen niet teruggezet worden naar 0.
-  const parseAmountInput = (raw: string): number => {
-    const s = (raw ?? "")
-      .toString()
-      .trim()
-      .replace(/\s/g, "")
-      .replace(/[^0-9,.-]/g, "")
-      .replace(",", ".");
-    if (s === "" || s === "-" || s === "." || s === "-.") return 0;
-    const n = Number(s);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const formatAmountInput = (n: number | null | undefined): string =>
-    n === null || n === undefined || !Number.isFinite(Number(n)) ? "" : String(n);
-  const lineAmountExcl = (line: LineRow): number => parseAmountInput(line._amountInput);
+  // "3.99" tijdens typen niet teruggezet worden naar 0. Parse pas op blur/save/berekening.
+  const parseAmountInput = (raw: string): number => parseAmountInputOrZero(raw);
+  const formatAmountInput = (n: number | null | undefined): string => formatAmountInputHelper(n);
+  const lineAmountExcl = (line: LineRow): number => parseAmountInputOrZero(line._amountInput);
   const linesInitInvoiceIdRef = useRef<string | null>(null);
   const [prefilledFromHeader, setPrefilledFromHeader] = useState(false);
   // Lokale drafts voor de bedrag-invoervelden zodat typen niet gehinderd wordt
@@ -1154,15 +1144,22 @@ export function InvoiceEditDialog({ invoice, open, onOpenChange, onSave, onAppro
                               className="h-8"
                               type="text"
                               inputMode="decimal"
-                              placeholder="0,00"
-                              value={l._amountInput}
+                              placeholder="bedrag"
+                              value={l._amountInput ?? ""}
                               onChange={(e) => {
-                                const raw = e.target.value;
-                                updateLine(i, { _amountInput: raw });
+                                // Sla de ruwe tekst op tijdens typen; parse pas op blur.
+                                updateLine(i, { _amountInput: e.target.value });
                               }}
                               onBlur={(e) => {
-                                const n = parseAmountInput(e.target.value);
-                                updateLine(i, { _amountInput: e.target.value.trim() === "" ? "" : formatAmountInput(n), amount_excl: n });
+                                const raw = e.target.value;
+                                if (raw.trim() === "") {
+                                  // Lege invoer blijft leeg; amount_excl wordt 0 voor totalen.
+                                  updateLine(i, { _amountInput: "", amount_excl: 0 });
+                                  return;
+                                }
+                                const parsed = parseAmountInputHelper(raw);
+                                const n = parsed === null ? 0 : parsed;
+                                updateLine(i, { _amountInput: parsed === null ? raw : formatAmountInputHelper(n), amount_excl: n });
                               }}
                             />
                           </div>
