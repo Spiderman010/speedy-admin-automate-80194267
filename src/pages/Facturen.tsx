@@ -213,6 +213,7 @@ export default function Facturen() {
   const [linkTarget, setLinkTarget] = useState<PurchaseTxCandidate | null>(null);
   const [linkAmount, setLinkAmount] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
 
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const updateBankTx = useUpdateBankTransaction();
@@ -550,9 +551,6 @@ export default function Facturen() {
             {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" />Nieuwe inkoopfactuur
-        </Button>
         <Button variant="outline" onClick={() => {
           const exportable = invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [];
           if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
@@ -565,7 +563,7 @@ export default function Facturen() {
         </Button>
       </PageHeader>
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="overview">Overzicht</TabsTrigger>
           <TabsTrigger value="upload">Upload</TabsTrigger>
@@ -640,14 +638,19 @@ export default function Facturen() {
 
         <TabsContent value="overview" className="mt-6">
           <div className="mb-5 space-y-2.5">
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="relative max-w-md flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Button onClick={() => setCreateOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />Nieuwe inkoopfactuur
+              </Button>
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
