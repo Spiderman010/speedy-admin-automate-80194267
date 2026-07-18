@@ -1050,6 +1050,27 @@ export type Database = {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
       }
+      replace_purchase_invoice_lines: {
+        Args: { _invoice_id: string; _lines: Json }
+        Returns: {
+          amount_excl: number
+          btw_percentage: number | null
+          created_at: string
+          grootboekrekening_id: string | null
+          id: string
+          omschrijving: string
+          organization_id: string | null
+          purchase_invoice_id: string
+          sort_order: number
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "purchase_invoice_lines"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       role_rank: {
         Args: { _role: Database["public"]["Enums"]["app_role"] }
         Returns: number
