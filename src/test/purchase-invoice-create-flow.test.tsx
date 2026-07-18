@@ -1,9 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { useState } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { MemoryRouter, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import type { Tables } from "@/integrations/supabase/types";
 
-// Polyfills voor Radix in jsdom
 if (!(globalThis as any).ResizeObserver) {
   (globalThis as any).ResizeObserver = class {
     observe() {}
@@ -56,49 +55,43 @@ vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
-// Stub InvoiceEditDialog: toont supplier + factuurregel prefill preview
-vi.mock("@/components/InvoiceEditDialog", () => ({
-  InvoiceEditDialog: ({ invoice, open }: any) =>
-    open && invoice ? (
-      <div data-testid="edit-dialog">
-        <div data-testid="edit-supplier">{invoice.supplier}</div>
-        <div data-testid="edit-line">
-          Regel: {invoice.supplier} — €{Number(invoice.amount_excl).toFixed(2)} excl., BTW {invoice.btw_percentage}%
-        </div>
-      </div>
-    ) : null,
-}));
-
 import { PurchaseInvoiceCreateDialog } from "@/components/PurchaseInvoiceCreateDialog";
-import { InvoiceEditDialog } from "@/components/InvoiceEditDialog";
+
+function WorkspaceStub() {
+  const { invoiceId } = useParams<{ invoiceId: string }>();
+  return <div data-testid="workspace-route">Workspace voor {invoiceId}</div>;
+}
 
 function Harness() {
-  const [createOpen, setCreateOpen] = useState(true);
-  const [edit, setEdit] = useState<Tables<"purchase_invoices"> | null>(null);
+  const navigate = useNavigate();
+
   return (
-    <>
-      <PurchaseInvoiceCreateDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        clients={[{ id: "client-1", name: "Klant Een" }]}
-        organizationId="org-1"
-        defaultClientId="client-1"
-        onCreated={(inv) => setEdit(inv)}
+    <Routes>
+      <Route
+        path="/facturen"
+        element={
+          <PurchaseInvoiceCreateDialog
+            open
+            onOpenChange={() => {}}
+            clients={[{ id: "client-1", name: "Klant Een" }]}
+            organizationId="org-1"
+            defaultClientId="client-1"
+            onCreated={(inv) => navigate(`/facturen/inkoop/${inv.id}`)}
+          />
+        }
       />
-      <InvoiceEditDialog
-        invoice={edit}
-        open={!!edit}
-        onOpenChange={(o: boolean) => !o && setEdit(null)}
-        onSave={async () => {}}
-        onApprove={async () => {}}
-      />
-    </>
+      <Route path="/facturen/inkoop/:invoiceId" element={<WorkspaceStub />} />
+    </Routes>
   );
 }
 
-describe("Nieuwe inkoopfactuur → InvoiceEditDialog flow", () => {
-  it("maakt factuur aan en opent direct de edit-dialog met de juiste regel", async () => {
-    render(<Harness />);
+describe("Nieuwe inkoopfactuur → PurchaseInvoiceWorkspace flow", () => {
+  it("maakt factuur aan en navigeert direct naar de workspace-route", async () => {
+    render(
+      <MemoryRouter initialEntries={["/facturen"]}>
+        <Harness />
+      </MemoryRouter>,
+    );
 
     const supplierInput = screen.getByPlaceholderText(/of typ leveranciernaam/i);
     fireEvent.change(supplierInput, { target: { value: "Test Leverancier BV" } });
@@ -124,11 +117,7 @@ describe("Nieuwe inkoopfactuur → InvoiceEditDialog flow", () => {
     expect(payload.status).toBe("te_controleren");
 
     await waitFor(() => {
-      expect(screen.getByTestId("edit-dialog")).toBeInTheDocument();
+      expect(screen.getByTestId("workspace-route")).toHaveTextContent("Workspace voor inv-new-1");
     });
-    expect(screen.getByTestId("edit-supplier")).toHaveTextContent("Test Leverancier BV");
-    expect(screen.getByTestId("edit-line")).toHaveTextContent(
-      "Regel: Test Leverancier BV — €100.00 excl., BTW 21%",
-    );
   });
 });
