@@ -55,6 +55,7 @@ export function PurchaseInvoiceCreateDialog({
   open, onOpenChange, clients, organizationId, defaultClientId, onCreated,
 }: Props) {
   const [form, setForm] = useState<FormState>(() => empty(defaultClientId));
+  const [lastEdited, setLastEdited] = useState<"excl" | "incl" | "btw" | null>(null);
   const { toast } = useToast();
   const addInvoice = useAddPurchaseInvoice();
 
@@ -65,64 +66,46 @@ export function PurchaseInvoiceCreateDialog({
   });
 
   useEffect(() => {
-    if (open) setForm(empty(defaultClientId));
+    if (open) {
+      setForm(empty(defaultClientId));
+      setLastEdited(null);
+    }
   }, [open, defaultClientId]);
 
   const update = (patch: Partial<FormState>) => setForm((f) => ({ ...f, ...patch }));
 
-  const recalcFromExcl = () => {
-    setForm((f) => {
-      const excl = parseAmountInput(f.amount_excl);
-      const pct = parseAmountInput(f.btw_percentage);
-      if (excl === null || pct === null) return f;
-      const btw = Math.round(excl * pct) / 100;
-      const incl = Math.round((excl + btw) * 100) / 100;
-      return {
-        ...f,
-        amount_excl: formatAmountInput(excl),
-        btw_amount: formatAmountInput(btw),
-        amount_incl: formatAmountInput(incl),
-      };
-    });
-  };
+  // Live BTW-berekening: afhankelijk van welk veld laatst is aangepast.
+  useEffect(() => {
+    const pct = parseAmountInput(form.btw_percentage);
+    if (pct === null) return;
+    if (lastEdited === "btw") return;
 
-  const recalcFromIncl = () => {
-    setForm((f) => {
-      const incl = parseAmountInput(f.amount_incl);
-      const pct = parseAmountInput(f.btw_percentage);
-      if (incl === null || pct === null) return f;
+    if (lastEdited === "incl") {
+      const incl = parseAmountInput(form.amount_incl);
+      if (incl === null) return;
       const excl = Math.round((incl / (1 + pct / 100)) * 100) / 100;
       const btw = Math.round((incl - excl) * 100) / 100;
-      return {
-        ...f,
-        amount_incl: formatAmountInput(incl),
-        amount_excl: formatAmountInput(excl),
-        btw_amount: formatAmountInput(btw),
-      };
-    });
-  };
-
-  const handleBtwPctChange = (v: string) => {
-    setForm((f) => {
-      const next = { ...f, btw_percentage: v };
-      const pct = parseAmountInput(v);
-      const excl = parseAmountInput(f.amount_excl);
-      const incl = parseAmountInput(f.amount_incl);
-      if (pct === null) return next;
-      if (excl !== null) {
-        const btw = Math.round(excl * pct) / 100;
-        next.btw_amount = formatAmountInput(btw);
-        next.amount_incl = formatAmountInput(Math.round((excl + btw) * 100) / 100);
-      } else if (incl !== null) {
-        const e = Math.round((incl / (1 + pct / 100)) * 100) / 100;
-        next.amount_excl = formatAmountInput(e);
-        next.btw_amount = formatAmountInput(Math.round((incl - e) * 100) / 100);
+      const nextExcl = formatAmountInput(excl);
+      const nextBtw = formatAmountInput(btw);
+      if (nextExcl !== form.amount_excl || nextBtw !== form.btw_amount) {
+        setForm((f) => ({ ...f, amount_excl: nextExcl, btw_amount: nextBtw }));
       }
-      return next;
-    });
-  };
+    } else {
+      // 'excl' of pct-wijziging → bereken btw + incl vanuit excl
+      const excl = parseAmountInput(form.amount_excl);
+      if (excl === null) return;
+      const btw = Math.round(excl * pct) / 100;
+      const incl = Math.round((excl + btw) * 100) / 100;
+      const nextBtw = formatAmountInput(btw);
+      const nextIncl = formatAmountInput(incl);
+      if (nextBtw !== form.btw_amount || nextIncl !== form.amount_incl) {
+        setForm((f) => ({ ...f, btw_amount: nextBtw, amount_incl: nextIncl }));
+      }
+    }
+  }, [form.amount_excl, form.amount_incl, form.btw_percentage, lastEdited, form.amount_excl, form.btw_amount]);
 
   const canSave = !!form.client_id && form.supplier.trim().length > 0 && !addInvoice.isPending;
+
 
 
 
@@ -251,8 +234,7 @@ export function PurchaseInvoiceCreateDialog({
             <Input
               inputMode="decimal"
               value={form.amount_excl}
-              onChange={(e) => update({ amount_excl: e.target.value })}
-              onBlur={recalcFromExcl}
+              onChange={(e) => { setLastEdited("excl"); update({ amount_excl: e.target.value }); }}
               placeholder="0,00"
             />
           </div>
@@ -261,7 +243,7 @@ export function PurchaseInvoiceCreateDialog({
             <Input
               inputMode="decimal"
               value={form.btw_amount}
-              onChange={(e) => update({ btw_amount: e.target.value })}
+              onChange={(e) => { setLastEdited("btw"); update({ btw_amount: e.target.value }); }}
               placeholder="0,00"
             />
           </div>
@@ -270,8 +252,7 @@ export function PurchaseInvoiceCreateDialog({
             <Input
               inputMode="decimal"
               value={form.amount_incl}
-              onChange={(e) => update({ amount_incl: e.target.value })}
-              onBlur={recalcFromIncl}
+              onChange={(e) => { setLastEdited("incl"); update({ amount_incl: e.target.value }); }}
               placeholder="0,00"
             />
           </div>
@@ -279,7 +260,7 @@ export function PurchaseInvoiceCreateDialog({
             <Label>BTW %</Label>
             <Select
               value={form.btw_percentage}
-              onValueChange={handleBtwPctChange}
+              onValueChange={(v) => { if (lastEdited === "btw") setLastEdited("excl"); update({ btw_percentage: v }); }}
             >
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -289,6 +270,7 @@ export function PurchaseInvoiceCreateDialog({
               </SelectContent>
             </Select>
           </div>
+
 
 
           <div className="col-span-2">
