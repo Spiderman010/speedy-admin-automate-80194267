@@ -13,8 +13,9 @@ import {
 } from "@/hooks/useBookingTemplates";
 
 const accounts = [
-  { id: "gb-4400", nummer: 4400, omschrijving: "Kantoorkosten" },
-  { id: "gb-7000", nummer: 7000, omschrijving: "Overige kosten" },
+  { id: "gb-4400", nummer: 4400, omschrijving: "Kantoorkosten", organization_id: "org-1" },
+  { id: "gb-7000", nummer: 7000, omschrijving: "Overige kosten", organization_id: "org-1" },
+  { id: "gb-4400-other", nummer: 4400, omschrijving: "Kantoorkosten", organization_id: "org-2" },
 ];
 
 const bookingTemplate: BookingTemplate = {
@@ -38,6 +39,22 @@ const bookingTemplate: BookingTemplate = {
   created_at: "2026-07-18T00:00:00Z",
   organization_id: "org-1",
 };
+
+function findSafeBackfillMatch(
+  template: Pick<BookingTemplate, "organization_id" | "ledger_account_text" | "grootboekrekening_id">,
+  ledgerRows: Array<{ id: string; nummer: number; omschrijving: string; organization_id: string | null }>,
+) {
+  if (template.grootboekrekening_id) return null;
+  if (!template.ledger_account_text || !template.ledger_account_text.trim()) return null;
+
+  const normalizedTemplateLabel = template.ledger_account_text.trim().toLowerCase();
+  const matches = ledgerRows.filter((row) => {
+    const normalizedLedgerLabel = `${row.nummer} - ${row.omschrijving}`.trim().toLowerCase();
+    return row.organization_id === (template.organization_id ?? null) && normalizedLedgerLabel === normalizedTemplateLabel;
+  });
+
+  return matches.length === 1 ? matches[0].id : null;
+}
 
 describe("booking template grootboekrekening flow", () => {
   it("builds create and update payloads without ledger_account_id", () => {
@@ -112,5 +129,35 @@ describe("booking template grootboekrekening flow", () => {
 
     expect(applied.matchStatus).toBe("niet_gematcht");
     expect(applied.grootboekrekeningId).toBeUndefined();
+  });
+
+  it("backfill only matches a unique normalized label within the same organization", () => {
+    const templateForBackfill: BookingTemplate = {
+      ...bookingTemplate,
+      grootboekrekening_id: null,
+      ledger_account_text: " 4400 - Kantoorkosten ",
+    };
+
+    expect(findSafeBackfillMatch(templateForBackfill, accounts)).toBe("gb-4400");
+  });
+
+  it("backfill leaves templates without text or without a unique match untouched", () => {
+    const noTextTemplate: BookingTemplate = {
+      ...bookingTemplate,
+      grootboekrekening_id: null,
+      ledger_account_text: null,
+    };
+    const duplicateAccounts = [
+      { id: "gb-7000-a", nummer: 7000, omschrijving: "Overige kosten", organization_id: "org-1" },
+      { id: "gb-7000-b", nummer: 7000, omschrijving: "Overige kosten", organization_id: "org-1" },
+    ];
+    const duplicateTemplate: BookingTemplate = {
+      ...bookingTemplate,
+      grootboekrekening_id: null,
+      ledger_account_text: "7000 - Overige kosten",
+    };
+
+    expect(findSafeBackfillMatch(noTextTemplate, accounts)).toBeNull();
+    expect(findSafeBackfillMatch(duplicateTemplate, duplicateAccounts)).toBeNull();
   });
 });

@@ -7,6 +7,26 @@
 ALTER TABLE public.booking_templates
   ADD COLUMN IF NOT EXISTS grootboekrekening_id uuid;
 
+WITH backfill_candidates AS (
+  SELECT
+    template.id AS template_id,
+    grootboek.id AS grootboekrekening_id,
+    COUNT(*) OVER (PARTITION BY template.id) AS match_count
+  FROM public.booking_templates AS template
+  JOIN public.grootboekrekeningen AS grootboek
+    ON grootboek.organization_id = template.organization_id
+   AND lower(trim(template.ledger_account_text)) = lower(trim(grootboek.nummer::text || ' - ' || grootboek.omschrijving))
+  WHERE template.grootboekrekening_id IS NULL
+    AND template.ledger_account_text IS NOT NULL
+    AND btrim(template.ledger_account_text) <> ''
+)
+UPDATE public.booking_templates AS template
+SET grootboekrekening_id = candidate.grootboekrekening_id
+FROM backfill_candidates AS candidate
+WHERE template.id = candidate.template_id
+  AND template.grootboekrekening_id IS NULL
+  AND candidate.match_count = 1;
+
 CREATE INDEX IF NOT EXISTS idx_booking_templates_grootboekrekening_id
   ON public.booking_templates (grootboekrekening_id);
 
