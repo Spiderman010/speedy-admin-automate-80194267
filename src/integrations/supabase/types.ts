@@ -209,6 +209,7 @@ export type Database = {
           default_amount: number | null
           description: string | null
           geldt_voor: string | null
+          grootboekrekening_id: string | null
           id: string
           ledger_account_id: string | null
           ledger_account_text: string | null
@@ -229,6 +230,7 @@ export type Database = {
           default_amount?: number | null
           description?: string | null
           geldt_voor?: string | null
+          grootboekrekening_id?: string | null
           id?: string
           ledger_account_id?: string | null
           ledger_account_text?: string | null
@@ -249,6 +251,7 @@ export type Database = {
           default_amount?: number | null
           description?: string | null
           geldt_voor?: string | null
+          grootboekrekening_id?: string | null
           id?: string
           ledger_account_id?: string | null
           ledger_account_text?: string | null
@@ -265,6 +268,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "booking_templates_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
             referencedColumns: ["id"]
           },
           {
@@ -744,7 +754,15 @@ export type Database = {
           sort_order?: number
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "purchase_invoice_lines_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       purchase_invoices: {
         Row: {
