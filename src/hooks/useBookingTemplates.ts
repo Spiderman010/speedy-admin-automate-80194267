@@ -9,6 +9,7 @@ export interface BookingTemplate {
   description: string | null;
   default_amount: number | null;
   btw_percentage: number | null;
+  grootboekrekening_id: string | null;
   ledger_account_text: string | null;
   ledger_account_id: string | null;
   client_id: string | null;
@@ -26,6 +27,29 @@ export interface BookingTemplate {
 export interface UseBookingTemplatesOptions {
   organizationId?: string;
   enabled?: boolean;
+}
+
+function stripLegacyWriteFields(template: Partial<BookingTemplate>) {
+  const {
+    id: _id,
+    user_id: _userId,
+    created_at: _createdAt,
+    ledger_account_id: _legacyLedgerAccountId,
+    ...rest
+  } = template;
+
+  return rest;
+}
+
+export function buildBookingTemplateInsertPayload(template: Partial<BookingTemplate>) {
+  return {
+    ...stripLegacyWriteFields(template),
+    name: template.name ?? template.zoekterm ?? "Regel",
+  };
+}
+
+export function buildBookingTemplateUpdatePayload(template: Partial<BookingTemplate>) {
+  return stripLegacyWriteFields(template);
 }
 
 export function useBookingTemplates(options: UseBookingTemplatesOptions = {}) {
@@ -53,9 +77,10 @@ export function useAddBookingTemplate() {
   return useMutation({
     mutationFn: async (template: Partial<BookingTemplate>) => {
       if (!user) throw new Error("Niet ingelogd");
+      const payload = buildBookingTemplateInsertPayload(template);
       const { error } = await supabase
         .from("booking_templates")
-        .insert({ ...template, user_id: user.id, name: template.zoekterm || "Regel" } as any);
+        .insert({ ...payload, user_id: user.id } as any);
       if (error) throw error;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["booking_templates"] }),
@@ -66,9 +91,10 @@ export function useUpdateBookingTemplate() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<BookingTemplate> & { id: string }) => {
+      const payload = buildBookingTemplateUpdatePayload(updates);
       const { error } = await supabase
         .from("booking_templates")
-        .update(updates as any)
+        .update(payload as any)
         .eq("id", id);
       if (error) throw error;
     },
