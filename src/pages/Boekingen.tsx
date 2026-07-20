@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type MouseEvent } from "react";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,14 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { Save, Download } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Save, Download, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
-import { useAddJournalEntry, useJournalEntries } from "@/hooks/useJournalEntries";
+import { useAddJournalEntry, useDeleteJournalEntry, useJournalEntries } from "@/hooks/useJournalEntries";
 import { exportJournalEntriesCSV } from "@/lib/snelstart-export";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
@@ -25,6 +29,7 @@ import { NoClientBanner } from "@/components/NoClientBanner";
 import {
   buildJournalEntryInsertPayload,
   createEmptyJournalEntryFormState,
+  type JournalEntryRecord,
   resolveJournalEntryLedgerLabel,
 } from "@/lib/journal-entry-utils";
 
@@ -45,8 +50,10 @@ export default function Boekingen() {
     enabled: orgEnabled,
   });
   const addEntry = useAddJournalEntry();
+  const deleteEntry = useDeleteJournalEntry();
 
   const hasSpecificClient = !!selectedClientId && selectedClientId !== "all";
+  const [deleteTarget, setDeleteTarget] = useState<JournalEntryRecord | null>(null);
 
   const [form, setForm] = useState(() =>
     createEmptyJournalEntryFormState(hasSpecificClient ? selectedClientId : "")
@@ -107,6 +114,23 @@ export default function Boekingen() {
   const formatDatum = (d: string) => {
     const [y, m, day] = d.split("-");
     return `${day}-${m}-${y}`;
+  };
+
+  const handleDeleteConfirm = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    if (!deleteTarget) return;
+
+    try {
+      await deleteEntry.mutateAsync(deleteTarget.id);
+      toast({ title: "Boeking verwijderd" });
+      setDeleteTarget(null);
+    } catch (error: any) {
+      toast({
+        title: "Verwijderen mislukt",
+        description: error?.message,
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -240,6 +264,7 @@ export default function Boekingen() {
                         <TableHead className="text-right">Bedrag</TableHead>
                         <TableHead className="text-right">BTW %</TableHead>
                         <TableHead className="text-right">BTW-bedrag</TableHead>
+                        <TableHead className="text-right">Acties</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -253,6 +278,19 @@ export default function Boekingen() {
                           <TableCell className="text-right">{formatBedrag(Number(e.amount))}</TableCell>
                           <TableCell className="text-right">{e.btw_percentage ?? 0}%</TableCell>
                           <TableCell className="text-right">{formatBedrag(Number(e.btw_amount))}</TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              title="Verwijder boeking"
+                              aria-label="Verwijder boeking"
+                              disabled={deleteEntry.isPending}
+                              onClick={() => setDeleteTarget(e)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -262,6 +300,34 @@ export default function Boekingen() {
             </CardContent>
           </Card>
       </div>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleteEntry.isPending) {
+            setDeleteTarget(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Boeking verwijderen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deze actie kan niet ongedaan worden gemaakt.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteEntry.isPending}>Annuleren</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteEntry.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDeleteConfirm}
+            >
+              {deleteEntry.isPending ? "Verwijderen..." : "Verwijderen"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
