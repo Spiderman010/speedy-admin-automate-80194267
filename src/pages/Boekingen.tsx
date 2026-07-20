@@ -18,9 +18,15 @@ import { useAddJournalEntry, useJournalEntries } from "@/hooks/useJournalEntries
 import { exportJournalEntriesCSV } from "@/lib/snelstart-export";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
+import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { formatGetal } from "@/lib/format";
 import { NoClientBanner } from "@/components/NoClientBanner";
+import {
+  buildJournalEntryInsertPayload,
+  createEmptyJournalEntryFormState,
+  resolveJournalEntryLedgerLabel,
+} from "@/lib/journal-entry-utils";
 
 const btwOptions = [
   { label: "0%", value: 0 },
@@ -34,20 +40,17 @@ export default function Boekingen() {
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const orgEnabled = isReady && activeOrganizationId !== null;
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
+  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
   const addEntry = useAddJournalEntry();
 
   const hasSpecificClient = !!selectedClientId && selectedClientId !== "all";
 
-  const [form, setForm] = useState({
-    client_id: hasSpecificClient ? selectedClientId : "",
-    entry_date: new Date().toISOString().split("T")[0],
-    ledger_account_id: "" as string,
-    ledger_account_text: "",
-    btw_percentage: 21,
-    amount: "",
-    invoice_number: "",
-    description: "",
-  });
+  const [form, setForm] = useState(() =>
+    createEmptyJournalEntryFormState(hasSpecificClient ? selectedClientId : "")
+  );
 
   // Sync local form client to global selected client
   useEffect(() => {
@@ -82,22 +85,18 @@ export default function Boekingen() {
     const btwAmount = amountIncl - amountIncl / (1 + form.btw_percentage / 100);
 
     try {
-      await addEntry.mutateAsync({
-        client_id: form.client_id,
-        entry_date: form.entry_date,
-        // FK journal_entries.ledger_account_id verwijst naar ledger_accounts (niet grootboekrekeningen).
-        // We slaan daarom alleen de leesbare tekst op en laten id leeg om FK-fouten te voorkomen.
-        ledger_account_id: null,
-        ledger_account_text: form.ledger_account_text,
-        btw_percentage: form.btw_percentage,
-        amount: amountIncl,
-        btw_amount: Math.round(btwAmount * 100) / 100,
-        invoice_number: form.invoice_number || null,
-        description: form.description || null,
-        entry_type: "handmatig",
-      });
+      await addEntry.mutateAsync(
+        buildJournalEntryInsertPayload(form, amountIncl, Math.round(btwAmount * 100) / 100)
+      );
       toast({ title: "Boeking opgeslagen" });
-      setForm({ ...form, amount: "", invoice_number: "", description: "", ledger_account_id: "", ledger_account_text: "" });
+      setForm((prev) => ({
+        ...prev,
+        amount: "",
+        invoice_number: "",
+        description: "",
+        grootboekrekening_id: null,
+        ledger_account_text: "",
+      }));
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
@@ -166,7 +165,7 @@ export default function Boekingen() {
                   <GrootboekCombobox
                     value={form.ledger_account_text}
                     onValueChange={(v) => setForm((prev) => ({ ...prev, ledger_account_text: v }))}
-                    onIdChange={(id) => setForm((prev) => ({ ...prev, ledger_account_id: id }))}
+                    onIdChange={(id) => setForm((prev) => ({ ...prev, grootboekrekening_id: id || null }))}
                   />
                 </div>
                 <div className="grid gap-2">
@@ -197,7 +196,17 @@ export default function Boekingen() {
               </div>
 
               <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setForm({ ...form, amount: "", invoice_number: "", description: "", ledger_account_id: "", ledger_account_text: "" })}>
+                <Button
+                  variant="outline"
+                  onClick={() => setForm((prev) => ({
+                    ...prev,
+                    amount: "",
+                    invoice_number: "",
+                    description: "",
+                    grootboekrekening_id: null,
+                    ledger_account_text: "",
+                  }))}
+                >
                   Wissen
                 </Button>
                 <Button onClick={handleSave} disabled={addEntry.isPending || !hasSpecificClient}>
@@ -238,7 +247,9 @@ export default function Boekingen() {
                         <TableRow key={e.id}>
                           <TableCell>{formatDatum(e.entry_date)}</TableCell>
                           <TableCell className="max-w-[260px] truncate">{e.description ?? "-"}</TableCell>
-                          <TableCell className="max-w-[220px] truncate">{e.ledger_account_text ?? "-"}</TableCell>
+                          <TableCell className="max-w-[220px] truncate">
+                            {resolveJournalEntryLedgerLabel(e, grootboekrekeningen) || "-"}
+                          </TableCell>
                           <TableCell className="text-right">{formatBedrag(Number(e.amount))}</TableCell>
                           <TableCell className="text-right">{e.btw_percentage ?? 0}%</TableCell>
                           <TableCell className="text-right">{formatBedrag(Number(e.btw_amount))}</TableCell>
