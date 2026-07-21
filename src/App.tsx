@@ -21,6 +21,7 @@ import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 import OAuthConsent from "./pages/OAuthConsent";
+import AIChat from "./pages/AIChat";
 
 function safeNextPath(raw: string | null): string {
   if (!raw) return "/";
@@ -75,6 +76,7 @@ const App = () => (
               <Route path="/overzichten" element={<Overzichten />} />
               <Route path="/grootboek" element={<Grootboek />} />
               <Route path="/vraagposten" element={<Vraagposten />} />
+              <Route path="/ai-chat" element={<AIChat />} />
               <Route path="/instellingen" element={<Instellingen />} />
             </Route>
             <Route path="*" element={<NotFound />} />
