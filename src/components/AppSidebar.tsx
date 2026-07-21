@@ -14,6 +14,7 @@ import {
   BookOpen,
   Settings,
   LogOut,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import {
@@ -39,6 +40,7 @@ const navItems = [
   { to: "/boekingen", icon: PenLine, label: "Snelle Invoer" },
   { to: "/grootboek", icon: BookOpen, label: "Grootboek" },
   { to: "/overzichten", icon: BarChart3, label: "Overzichten" },
+  { to: "/ai-chat", icon: Sparkles, label: "AI-assistent" },
 ];
 
 export function AppSidebar() {
