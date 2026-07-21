@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { generateText } from "npm:ai@^4.0.0";
+import { generateText } from "npm:ai@^5.0.0";
 import { createLovableAiGatewayProvider, getLovableAiGatewayRunId } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {

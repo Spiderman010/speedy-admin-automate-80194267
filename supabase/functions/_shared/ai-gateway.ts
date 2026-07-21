@@ -1,4 +1,4 @@
-import { createOpenAICompatible } from "npm:@ai-sdk/openai-compatible@^1.0.0";
+import { createOpenAICompatible } from "npm:@ai-sdk/openai-compatible@^2.0.0";
 
 const LOVABLE_AIG_RUN_ID_HEADER = "X-Lovable-AIG-Run-ID";
 
