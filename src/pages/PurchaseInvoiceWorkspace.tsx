@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,8 +21,13 @@ import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { useClients } from "@/hooks/useClients";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
-import { useUpdatePurchaseInvoice, usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
-import { usePurchaseInvoiceLines, useReplacePurchaseInvoiceLines, type InvoiceLineInput } from "@/hooks/usePurchaseInvoiceLines";
+import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
+import {
+  usePurchaseInvoiceLines,
+  useSavePurchaseInvoiceWithLines,
+  type InvoiceLineInput,
+  type PurchaseInvoiceHeaderSaveInput,
+} from "@/hooks/usePurchaseInvoiceLines";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -156,7 +161,6 @@ export default function PurchaseInvoiceWorkspace() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const queryClient = useQueryClient();
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const orgEnabled = isReady && activeOrganizationId !== null;
 
@@ -178,8 +182,7 @@ export default function PurchaseInvoiceWorkspace() {
     enabled: orgEnabled && !!invoice?.client_id,
   });
 
-  const updateInvoice = useUpdatePurchaseInvoice();
-  const replaceLines = useReplacePurchaseInvoiceLines();
+  const saveInvoiceWithLines = useSavePurchaseInvoiceWithLines();
 
   const client = useMemo(
     () => clients?.find((c) => c.id === invoice?.client_id) ?? null,
@@ -392,8 +395,8 @@ export default function PurchaseInvoiceWorkspace() {
       grootboekrekening_id: l.grootboekrekening_id,
     }));
 
-  const buildHeaderUpdates = (): Partial<PurchaseInvoice> => ({
-    client_id: header.client_id || undefined,
+  const buildHeaderUpdates = (approve = false): PurchaseInvoiceHeaderSaveInput => ({
+    client_id: header.client_id || invoice?.client_id || undefined,
     leverancier_id: header.leverancier_id || null,
     supplier: header.supplier.trim(),
     invoice_number: header.invoice_number.trim() || null,
@@ -409,6 +412,7 @@ export default function PurchaseInvoiceWorkspace() {
     // The per-line ledger is stored on purchase_invoice_lines.grootboekrekening_id.
     ledger_account_text: header.ledger_label || null,
     notes: header.notes.trim() || null,
+    ...(approve ? { status: "gecontroleerd" } : {}),
   });
 
   const handleSave = async (approve = false) => {
@@ -431,23 +435,18 @@ export default function PurchaseInvoiceWorkspace() {
     }
     setSaving(true);
     try {
-      const updates = buildHeaderUpdates();
-      if (approve) updates.status = "gecontroleerd";
-      await updateInvoice.mutateAsync({ id: invoiceId, ...updates });
-      await replaceLines.mutateAsync({ invoiceId, lines: buildLinesPayload() });
-      queryClient.invalidateQueries({ queryKey: ["purchase_invoice", invoiceId] });
+      await saveInvoiceWithLines.mutateAsync({
+        invoiceId,
+        headerUpdates: buildHeaderUpdates(approve),
+        lines: buildLinesPayload(),
+      });
       toast({ title: approve ? "Factuur goedgekeurd" : "Factuur opgeslagen" });
       if (approve && hasNext) goNext();
     } catch (e: any) {
       const raw = String(e?.message ?? "");
-      const isLedgerFk =
-        raw.includes("purchase_invoices_ledger_account_id_fkey") ||
-        (raw.includes("foreign key") && raw.includes("ledger_account_id"));
       toast({
         title: "Opslaan mislukt",
-        description: isLedgerFk
-          ? "De geselecteerde grootboekrekening is niet geldig. Kies de rekening opnieuw."
-          : "Opslaan mislukt. De bestaande boekingsregels zijn niet gewijzigd." + (raw ? ` (${raw})` : ""),
+        description: "Opslaan mislukt. De bestaande factuur en boekingsregels zijn niet gewijzigd." + (raw ? ` (${raw})` : ""),
         variant: "destructive",
       });
     } finally {
