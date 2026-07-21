@@ -1,17 +1,10 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { generateText } from "npm:ai@^5.0.0";
-import { createLovableAiGatewayProvider, getLovableAiGatewayRunId } from "../_shared/ai-gateway.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
-
-const MessageSchema = {
-  role: "string",
-  content: "string",
 };
 
 serve(async (req) => {
@@ -75,21 +68,55 @@ serve(async (req) => {
       });
     }
 
-    const initialRunId = getLovableAiGatewayRunId(req);
-    const gateway = createLovableAiGatewayProvider(LOVABLE_API_KEY, initialRunId);
-    const model = gateway("google/gemini-3-flash-preview");
-
-    const { text } = await generateText({
-      model,
-      system:
+    const systemMessage = {
+      role: "system",
+      content:
         "Je bent BoekAssist AI, een behulpzame assistent voor een Nederlandse boekhoudkantoor. Geef beknopte, praktische antwoorden over boekhouden, Snelstart, BTW, inkoopfacturen, bankafschriften en gerelateerde werkzaamheden.",
-      messages: messages.map((m) => ({ role: m.role as any, content: m.content })),
+    };
+
+    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+        "X-Lovable-AIG-SDK": "vercel-ai-sdk",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [systemMessage, ...messages],
+      }),
     });
 
-    return Response.json(
-      { text },
-      { headers: getLovableAiGatewayResponseHeaders(undefined, corsHeaders) },
-    );
+    if (!aiResponse.ok) {
+      const errText = await aiResponse.text();
+      console.error("AI error:", aiResponse.status, errText);
+
+      if (aiResponse.status === 429) {
+        return new Response(JSON.stringify({ error: "AI rate limit bereikt, probeer het later opnieuw." }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (aiResponse.status === 402) {
+        return new Response(JSON.stringify({ error: "AI-tegoed op. Voeg credits toe in Workspace instellingen." }), {
+          status: 402,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({ error: "AI processing failed" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const aiData = await aiResponse.json();
+    const text = aiData.choices?.[0]?.message?.content ?? "";
+
+    return new Response(JSON.stringify({ text }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error) {
     console.error("ai-chat error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -99,35 +126,3 @@ serve(async (req) => {
     });
   }
 });
-
-function getLovableAiGatewayResponseHeaders(
-  providerHeaders: HeadersInit | undefined,
-  init?: HeadersInit,
-) {
-  const headers = new Headers(init);
-  const exposedHeaders = new Set(
-    (headers.get("Access-Control-Expose-Headers") ?? "")
-      .split(",")
-      .map((header) => header.trim())
-      .filter(Boolean),
-  );
-
-  new Headers(providerHeaders).forEach((value, name) => {
-    if (name.toLowerCase().startsWith("x-lovable-aig-")) {
-      headers.set(name, value);
-      exposedHeaders.add(name);
-    }
-  });
-
-  headers.forEach((_, name) => {
-    if (name.toLowerCase().startsWith("x-lovable-aig-")) {
-      exposedHeaders.add(name);
-    }
-  });
-
-  if (exposedHeaders.size > 0) {
-    headers.set("Access-Control-Expose-Headers", Array.from(exposedHeaders).join(", "));
-  }
-
-  return headers;
-}
