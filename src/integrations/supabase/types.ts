@@ -463,6 +463,7 @@ export type Database = {
           description: string | null
           entry_date: string
           entry_type: string
+          grootboekrekening_id: string | null
           id: string
           invoice_number: string | null
           ledger_account_id: string | null
@@ -480,6 +481,7 @@ export type Database = {
           description?: string | null
           entry_date: string
           entry_type?: string
+          grootboekrekening_id?: string | null
           id?: string
           invoice_number?: string | null
           ledger_account_id?: string | null
@@ -497,6 +499,7 @@ export type Database = {
           description?: string | null
           entry_date?: string
           entry_type?: string
+          grootboekrekening_id?: string | null
           id?: string
           invoice_number?: string | null
           ledger_account_id?: string | null
@@ -511,6 +514,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_entries_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
             referencedColumns: ["id"]
           },
           {
