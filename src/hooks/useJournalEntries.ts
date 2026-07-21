@@ -43,3 +43,20 @@ export function useAddJournalEntry() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["journal_entries"] }),
   });
 }
+
+export function useDeleteJournalEntry() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      if (!user) throw new Error("Not authenticated");
+      const { error } = await supabase
+        .from("journal_entries")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+      return id;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["journal_entries"] }),
+  });
+}
