@@ -15,6 +15,8 @@ DECLARE
   v_org uuid;
   v_invoice public.purchase_invoices%ROWTYPE;
   v_invalid_keys text[];
+  v_client_id uuid;
+  v_leverancier_id uuid;
 BEGIN
   IF v_uid IS NULL THEN
     RAISE EXCEPTION 'niet geauthenticeerd' USING ERRCODE = '28000';
@@ -61,6 +63,43 @@ BEGIN
   IF v_org IS NULL THEN
     RAISE EXCEPTION 'inkoopfactuur niet gevonden of geen toegang'
       USING ERRCODE = '42501';
+  END IF;
+
+  v_client_id := NULLIF(_header_updates->>'client_id', '')::uuid;
+  IF v_client_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM public.clients c
+    WHERE c.id = v_client_id
+      AND c.organization_id = v_org
+  ) THEN
+    RAISE EXCEPTION 'client bestaat niet binnen deze organisatie'
+      USING ERRCODE = '23503';
+  END IF;
+
+  v_leverancier_id := NULLIF(_header_updates->>'leverancier_id', '')::uuid;
+  IF v_leverancier_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1
+    FROM public.leveranciers l
+    WHERE l.id = v_leverancier_id
+      AND l.organization_id = v_org
+  ) THEN
+    RAISE EXCEPTION 'leverancier bestaat niet binnen deze organisatie'
+      USING ERRCODE = '23503';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(_lines) AS elem
+    WHERE NULLIF(elem->>'grootboekrekening_id', '') IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.grootboekrekeningen g
+        WHERE g.id = NULLIF(elem->>'grootboekrekening_id', '')::uuid
+          AND g.organization_id = v_org
+      )
+  ) THEN
+    RAISE EXCEPTION 'grootboekrekening bestaat niet binnen deze organisatie'
+      USING ERRCODE = '23503';
   END IF;
 
   UPDATE public.purchase_invoices
