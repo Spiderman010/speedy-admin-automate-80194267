@@ -15,7 +15,10 @@ export interface UsePurchaseInvoicesOptions {
 
 export const PURCHASE_INVOICES_PAGE_SIZE = 50;
 
-export type PurchaseInvoiceSortField = "supplier" | "invoice_number" | "date" | "amount" | "btw" | "status";
+// "status" is intentionally not sortable: the column stores the workflow
+// status while the table displays a payment status derived from
+// remaining_amount, so a server sort on the column would look wrong.
+export type PurchaseInvoiceSortField = "supplier" | "invoice_number" | "date" | "amount" | "btw";
 
 const SORT_COLUMNS: Record<PurchaseInvoiceSortField, string> = {
   supplier: "supplier",
@@ -23,7 +26,6 @@ const SORT_COLUMNS: Record<PurchaseInvoiceSortField, string> = {
   date: "invoice_date",
   amount: "amount_incl",
   btw: "btw_amount",
-  status: "status",
 };
 
 // PostgREST or() syntax breaks on commas/parens and ilike treats % and _ as
@@ -108,6 +110,143 @@ export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoic
     },
     placeholderData: keepPreviousData,
     enabled: !!user && enabled,
+  });
+}
+
+export const EXPORT_BATCH_SIZE = 1000;
+export const EXPORTABLE_STATUSES = ["gecontroleerd", "betaald"] as const;
+
+// Fetches every exportable invoice in deterministic id-ordered batches so
+// exports are complete even past PostgREST's max-rows cap. Only call this
+// on demand (export click), never on mount.
+export async function fetchAllExportablePurchaseInvoices(opts: {
+  organizationId?: string;
+  clientId?: string;
+}): Promise<PurchaseInvoice[]> {
+  const all: PurchaseInvoice[] = [];
+  for (let offset = 0; ; offset += EXPORT_BATCH_SIZE) {
+    let query = supabase
+      .from("purchase_invoices")
+      .select("*")
+      .in("status", [...EXPORTABLE_STATUSES]);
+    if (opts.organizationId) query = query.eq("organization_id", opts.organizationId);
+    if (opts.clientId) query = query.eq("client_id", opts.clientId);
+    const { data, error } = await query
+      .order("id", { ascending: true })
+      .range(offset, offset + EXPORT_BATCH_SIZE - 1);
+    if (error) throw error;
+    const batch = (data ?? []) as PurchaseInvoice[];
+    all.push(...batch);
+    if (batch.length < EXPORT_BATCH_SIZE) return all;
+  }
+}
+
+export const DUPLICATE_LOOKUP_BATCH_SIZE = 25;
+
+export type DuplicateCandidate = Pick<
+  PurchaseInvoice,
+  "id" | "client_id" | "invoice_number" | "supplier" | "supplier_btw_number" | "leverancier_id"
+>;
+
+// Looks up potential duplicates for the invoice numbers on the current page
+// across the entire table (so duplicates on other pages are found), fetching
+// only the columns the duplicate check needs, in small batches.
+export async function fetchPurchaseInvoiceDuplicateCandidates(
+  pageInvoices: ReadonlyArray<DuplicateCandidate>,
+  opts: { organizationId?: string } = {},
+): Promise<DuplicateCandidate[]> {
+  const numbers = [...new Set(
+    pageInvoices
+      .filter(inv => (inv.invoice_number || "").trim() && inv.client_id)
+      .map(inv => inv.invoice_number!.trim())
+  )];
+  const clientIds = [...new Set(
+    pageInvoices.filter(inv => inv.client_id).map(inv => inv.client_id!)
+  )];
+  if (!numbers.length || !clientIds.length) return [];
+
+  const out: DuplicateCandidate[] = [];
+  for (let i = 0; i < numbers.length; i += DUPLICATE_LOOKUP_BATCH_SIZE) {
+    const batch = numbers.slice(i, i + DUPLICATE_LOOKUP_BATCH_SIZE);
+    let query = supabase
+      .from("purchase_invoices")
+      .select("id, client_id, invoice_number, supplier, supplier_btw_number, leverancier_id")
+      .in("invoice_number", batch)
+      .in("client_id", clientIds);
+    if (opts.organizationId) query = query.eq("organization_id", opts.organizationId);
+    const { data, error } = await query;
+    if (error) throw error;
+    out.push(...((data ?? []) as DuplicateCandidate[]));
+  }
+  return out;
+}
+
+// Same duplicate semantics the overview always used: group on
+// client_id + trimmed invoice_number, then match on leverancier_id,
+// normalized BTW number or normalized supplier name; rows without any
+// identity count as a match within their group.
+export function computeDuplicateIds(candidates: ReadonlyArray<DuplicateCandidate>): Set<string> {
+  const result = new Set<string>();
+  const normBtw = (s: string | null | undefined) =>
+    (s || "").toUpperCase().replace(/[\s.\-]/g, "");
+  const normName = (s: string | null | undefined) =>
+    (s || "").toLowerCase().trim().replace(/\s+/g, " ");
+  const groups = new Map<string, DuplicateCandidate[]>();
+  for (const inv of candidates) {
+    const num = (inv.invoice_number || "").trim();
+    if (!num || !inv.client_id) continue;
+    const key = `${inv.client_id}|${num}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(inv);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length; i++) {
+      const a = group[i];
+      const aBtw = normBtw(a.supplier_btw_number);
+      const aName = normName(a.supplier);
+      const aHasIdentity = !!a.leverancier_id || !!aBtw || !!aName;
+      for (let j = i + 1; j < group.length; j++) {
+        const b = group[j];
+        const bBtw = normBtw(b.supplier_btw_number);
+        const bName = normName(b.supplier);
+        const bHasIdentity = !!b.leverancier_id || !!bBtw || !!bName;
+        let match = false;
+        if (a.leverancier_id && b.leverancier_id && a.leverancier_id === b.leverancier_id) match = true;
+        else if (aBtw && bBtw && aBtw === bBtw) match = true;
+        else if (aName && bName && aName === bName) match = true;
+        else if (!aHasIdentity || !bHasIdentity) match = true;
+        if (match) {
+          result.add(a.id);
+          result.add(b.id);
+        }
+      }
+    }
+  }
+  return result;
+}
+
+export function usePurchaseInvoiceDuplicates(
+  pageInvoices: PurchaseInvoice[] | undefined,
+  organizationId?: string,
+) {
+  const pairsKey = (pageInvoices ?? [])
+    .filter(inv => (inv.invoice_number || "").trim() && inv.client_id)
+    .map(inv => `${inv.client_id}|${inv.invoice_number!.trim()}`)
+    .sort()
+    .join(",");
+
+  return useQuery<Set<string>>({
+    queryKey: ["purchase_invoices", "duplicates", organizationId ?? "all", pairsKey],
+    queryFn: async () => {
+      const fetched = await fetchPurchaseInvoiceDuplicateCandidates(pageInvoices ?? [], { organizationId });
+      // Merge the page rows in so the check still works if the lookup misses them.
+      const byId = new Map<string, DuplicateCandidate>();
+      for (const inv of pageInvoices ?? []) byId.set(inv.id, inv);
+      for (const c of fetched) byId.set(c.id, c);
+      return computeDuplicateIds([...byId.values()]);
+    },
+    enabled: (pageInvoices?.length ?? 0) > 0,
   });
 }
 

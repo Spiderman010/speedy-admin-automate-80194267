@@ -15,11 +15,12 @@ import { PurchaseInvoiceCreateDialog } from "@/components/PurchaseInvoiceCreateD
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import {
-  usePurchaseInvoices,
   usePaginatedPurchaseInvoices,
+  usePurchaseInvoiceDuplicates,
   useResetPageOnChange,
   useUpdatePurchaseInvoice,
   useDeletePurchaseInvoice,
+  fetchAllExportablePurchaseInvoices,
   PURCHASE_INVOICES_PAGE_SIZE,
 } from "@/hooks/usePurchaseInvoices";
 import { useVraagposten } from "@/hooks/useVraagposten";
@@ -107,7 +108,9 @@ function calcOcrScore(inv: Tables<"purchase_invoices">): number {
   ].filter(Boolean).length;
 }
 
-type SortField = "supplier" | "invoice_number" | "date" | "amount" | "btw" | "status";
+// "status" is not sortable: the table shows a derived payment status that
+// differs from the stored workflow status a server sort would use.
+type SortField = "supplier" | "invoice_number" | "date" | "amount" | "btw";
 type SortDir = "asc" | "desc";
 
 import { useClientContext } from "@/hooks/useClientContext";
@@ -205,12 +208,6 @@ export default function Facturen() {
 
   const orgEnabled = isReady && activeOrganizationId !== null;
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
-  // Full (unpaginated) list: still needed for the export tab and duplicate detection.
-  const { data: invoices } = usePurchaseInvoices({
-    organizationId: activeOrganizationId ?? undefined,
-    clientId: clientFilter !== "all" ? clientFilter : undefined,
-    enabled: orgEnabled,
-  });
   // Paginated, server-filtered list for the overview table.
   const {
     data: pageData,
@@ -231,6 +228,13 @@ export default function Facturen() {
   });
   const pageInvoices = pageData?.invoices;
   const totalCount = pageData?.total ?? 0;
+  const [exporting, setExporting] = useState(false);
+  // Server-backed duplicate lookup for the invoice numbers on this page —
+  // finds duplicates even when they live on another page.
+  const { data: duplicateIds } = usePurchaseInvoiceDuplicates(
+    pageInvoices,
+    activeOrganizationId ?? undefined,
+  );
 
   useResetPageOnChange(
     () => setPage(1),
@@ -359,38 +363,6 @@ export default function Facturen() {
   // usePaginatedPurchaseInvoices; this is the current page of results.
   const searchFiltered = useMemo(() => pageInvoices ?? [], [pageInvoices]);
 
-  // Each count-base applies all OTHER active filters so chip numbers show "what you'd see if you clicked this"
-  const forPaymentCounts = useMemo(() => {
-    let list = searchFiltered;
-    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
-    if (routeFilter !== "all") list = list.filter(inv => (inv as any).document_route === routeFilter);
-    return list;
-  }, [searchFiltered, workflowFilter, routeFilter]);
-
-  const forWorkflowCounts = useMemo(() => {
-    let list = searchFiltered;
-    if (paymentFilter !== "all") list = list.filter(inv => {
-      const ds = getPurchaseInvoiceDisplayStatus(inv);
-      if (paymentFilter === "paid") return ds === "betaald";
-      if (paymentFilter === "partial") return ds === "deelbetaling";
-      return ds !== "betaald" && ds !== "deelbetaling";
-    });
-    if (routeFilter !== "all") list = list.filter(inv => (inv as any).document_route === routeFilter);
-    return list;
-  }, [searchFiltered, paymentFilter, routeFilter]);
-
-  const forRouteCounts = useMemo(() => {
-    let list = searchFiltered;
-    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
-    if (paymentFilter !== "all") list = list.filter(inv => {
-      const ds = getPurchaseInvoiceDisplayStatus(inv);
-      if (paymentFilter === "paid") return ds === "betaald";
-      if (paymentFilter === "partial") return ds === "deelbetaling";
-      return ds !== "betaald" && ds !== "deelbetaling";
-    });
-    return list;
-  }, [searchFiltered, workflowFilter, paymentFilter]);
-
   // With server-side status filtering the current page may contain only one
   // status, so chips are rendered from the static order (plus any unknowns).
   const uniqueStatuses = useMemo(() => {
@@ -412,48 +384,6 @@ export default function Facturen() {
       return ds !== "betaald" && ds !== "deelbetaling";
     });
   }, [searchFiltered, paymentFilter]);
-
-  const duplicateIds = useMemo(() => {
-    const result = new Set<string>();
-    if (!invoices) return result;
-    const normBtw = (s: string | null | undefined) =>
-      (s || "").toUpperCase().replace(/[\s.\-]/g, "");
-    const normName = (s: string | null | undefined) =>
-      (s || "").toLowerCase().trim().replace(/\s+/g, " ");
-    const groups = new Map<string, typeof invoices>();
-    for (const inv of invoices) {
-      const num = (inv.invoice_number || "").trim();
-      if (!num || !inv.client_id) continue;
-      const key = `${inv.client_id}|${num}`;
-      if (!groups.has(key)) groups.set(key, [] as any);
-      groups.get(key)!.push(inv);
-    }
-    for (const group of groups.values()) {
-      if (group.length < 2) continue;
-      for (let i = 0; i < group.length; i++) {
-        const a = group[i];
-        const aBtw = normBtw(a.supplier_btw_number);
-        const aName = normName(a.supplier);
-        const aHasIdentity = !!a.leverancier_id || !!aBtw || !!aName;
-        for (let j = i + 1; j < group.length; j++) {
-          const b = group[j];
-          const bBtw = normBtw(b.supplier_btw_number);
-          const bName = normName(b.supplier);
-          const bHasIdentity = !!b.leverancier_id || !!bBtw || !!bName;
-          let match = false;
-          if (a.leverancier_id && b.leverancier_id && a.leverancier_id === b.leverancier_id) match = true;
-          else if (aBtw && bBtw && aBtw === bBtw) match = true;
-          else if (aName && bName && aName === bName) match = true;
-          else if (!aHasIdentity || !bHasIdentity) match = true;
-          if (match) {
-            result.add(a.id);
-            result.add(b.id);
-          }
-        }
-      }
-    }
-    return result;
-  }, [invoices]);
 
   const processFiles = useCallback(async (files: File[]) => {
     if (!uploadClientId) {
@@ -557,15 +487,26 @@ export default function Facturen() {
             {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="outline" onClick={() => {
-          const exportable = invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [];
-          if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
-          const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-          const ids = exportPurchaseInvoicesCSV(exportable, clientName);
-          ids.forEach(id => updateInvoice.mutateAsync({ id, status: "geexporteerd" }));
-          toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
+        <Button variant="outline" disabled={exporting} onClick={async () => {
+          if (exporting) return;
+          setExporting(true);
+          try {
+            const exportable = await fetchAllExportablePurchaseInvoices({
+              organizationId: activeOrganizationId ?? undefined,
+              clientId: clientFilter !== "all" ? clientFilter : undefined,
+            });
+            if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
+            const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
+            const ids = exportPurchaseInvoicesCSV(exportable, clientName);
+            ids.forEach(id => updateInvoice.mutateAsync({ id, status: "geexporteerd" }));
+            toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
+          } catch (e: any) {
+            toast({ title: "Export mislukt", description: e?.message, variant: "destructive" });
+          } finally {
+            setExporting(false);
+          }
         }}>
-          <Download className="mr-2 h-4 w-4" />Export Snelstart
+          {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}Export Snelstart
         </Button>
       </PageHeader>
 
@@ -660,42 +601,37 @@ export default function Facturen() {
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
-              <FilterChip label="Alle" active={paymentFilter === "all"} count={forPaymentCounts.length}
+              <FilterChip label="Alle" active={paymentFilter === "all"}
                 onClick={() => setPaymentFilter("all")} />
               <FilterChip label="Openstaand" active={paymentFilter === "open"}
-                count={forPaymentCounts.filter(inv => { const ds = getPurchaseInvoiceDisplayStatus(inv); return ds !== "betaald" && ds !== "deelbetaling"; }).length}
                 onClick={() => setPaymentFilter(paymentFilter === "open" ? "all" : "open")}
                 activeClassName="border-orange-400 bg-orange-50 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200" />
               <FilterChip label="Deelbetaling" active={paymentFilter === "partial"}
-                count={forPaymentCounts.filter(inv => getPurchaseInvoiceDisplayStatus(inv) === "deelbetaling").length}
                 onClick={() => setPaymentFilter(paymentFilter === "partial" ? "all" : "partial")}
                 activeClassName="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" />
               <FilterChip label="Betaald" active={paymentFilter === "paid"}
-                count={forPaymentCounts.filter(inv => getPurchaseInvoiceDisplayStatus(inv) === "betaald").length}
                 onClick={() => setPaymentFilter(paymentFilter === "paid" ? "all" : "paid")}
                 activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
-              <FilterChip label="Alle statussen" active={workflowFilter === "all"} count={forWorkflowCounts.length}
+              <FilterChip label="Alle statussen" active={workflowFilter === "all"}
                 onClick={() => setWorkflowFilter("all")} />
               {uniqueStatuses.map(s => (
                 <FilterChip
                   key={s}
                   label={statusConfig[s as keyof typeof statusConfig]?.label ?? s}
                   active={workflowFilter === s}
-                  count={forWorkflowCounts.filter(inv => inv.status === s).length}
                   onClick={() => setWorkflowFilter(workflowFilter === s ? "all" : s)}
                 />
               ))}
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Route</span>
-              <FilterChip label="Alle" active={routeFilter === "all"} count={forRouteCounts.length}
+              <FilterChip label="Alle" active={routeFilter === "all"}
                 onClick={() => setRouteFilter("all")} />
               {DOCUMENT_ROUTE_OPTIONS.map(opt => (
                 <FilterChip key={opt.value} label={opt.label} active={routeFilter === opt.value}
-                  count={forRouteCounts.filter(inv => (inv as any).document_route === opt.value).length}
                   onClick={() => setRouteFilter(routeFilter === opt.value ? "all" : opt.value)} />
               ))}
             </div>
@@ -738,7 +674,7 @@ export default function Facturen() {
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
                       <TableHead>Grootboek</TableHead>
                       <TableHead>Route</TableHead>
-                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
+                      <TableHead>Status</TableHead>
                       <TableHead className="w-20"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -805,7 +741,7 @@ export default function Facturen() {
                               ) : (
                                 <span>—</span>
                               )}
-                              {duplicateIds.has(inv.id) && (
+                              {duplicateIds?.has(inv.id) && (
                                 <Badge variant="outline" className="border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200 text-xs font-normal">
                                   Mogelijk dubbel
                                 </Badge>
