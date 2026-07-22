@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp, Landmark } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Landmark } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,7 +36,14 @@ import { Input } from "@/components/ui/input";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
 import { ClientMultiSelect, type ClientMultiSelectValue } from "@/components/ClientMultiSelect";
 import { useToast } from "@/hooks/use-toast";
-import { useBankTransactions, useAddBankTransaction, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
+import {
+  useBankTransactions,
+  usePaginatedBankTransactions,
+  useAddBankTransaction,
+  useUpdateBankTransaction,
+  isServerFilterableBankStatus,
+  BANK_TRANSACTIONS_PAGE_SIZE,
+} from "@/hooks/useBankTransactions";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
 import { exportBankTransactionsCSV, resolveBankExportGrootboek } from "@/lib/snelstart-export";
@@ -147,8 +154,15 @@ export default function Bank() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [vraagpostFilter, setVraagpostFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
   const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high" | "medium" | "low" | "none">("all");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
@@ -228,12 +242,22 @@ export default function Bank() {
   const clientIdsForQuery = clientSelection.allMode
     ? undefined
     : clientSelection.selectedIds;
-  const { data: rawTransactions, isLoading, refetch } = useBankTransactions({
+  // Whole-dataset query — powers stats, suggestions, blockers, automatic
+  // matching, processing and exports. These must wait for this to load.
+  const {
+    data: rawTransactions,
+    isLoading: wholeSetLoading,
+    isError: wholeSetError,
+    refetch: refetchWholeSet,
+  } = useBankTransactions({
     organizationId: activeOrganizationId ?? undefined,
     clientId: singleClientId,
     clientIds: singleClientId ? undefined : clientIdsForQuery,
     enabled: orgEnabled && hasSelection,
   });
+  // Whole-dataset is "ready" only after a successful load; gate all
+  // whole-set-dependent UI on this.
+  const wholeSetReady = hasSelection && !wholeSetLoading && !wholeSetError && !!rawTransactions;
   const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices({
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
@@ -722,6 +746,65 @@ export default function Bank() {
   }, [transactions, statusFilter, confidenceFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir, grootboekrekeningen]);
 
   const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
+
+  // Derived filters (blokkeert_export / niet_in_bankexport, confidence,
+  // vraagpost) depend on computed values PostgREST cannot express, so those
+  // views paginate the whole in-memory set client-side. Everything else uses
+  // the server-paginated query below.
+  const computedFilterActive =
+    !isServerFilterableBankStatus(statusFilter) ||
+    (statusFilter === "open" && confidenceFilter !== "all") ||
+    vraagpostFilter !== "all";
+
+  const {
+    data: pagedData,
+    isLoading: isPageLoading,
+    isFetching: isPageFetching,
+    isError: isPageError,
+    refetch: refetchPage,
+  } = usePaginatedBankTransactions({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
+    enabled: orgEnabled && hasSelection && !computedFilterActive,
+    page,
+    search: debouncedSearch,
+    status: statusFilter,
+    sortField,
+    sortDir,
+  });
+
+  // Refresh both the whole-dataset query (stats/matching) and the current page.
+  const refetch = useCallback(async () => {
+    await Promise.all([refetchWholeSet(), refetchPage()]);
+  }, [refetchWholeSet, refetchPage]);
+
+  // Table rows + total: server page for simple filters, client-paginated whole
+  // set for computed filters.
+  const tableRows = computedFilterActive
+    ? filteredSorted.slice((page - 1) * BANK_TRANSACTIONS_PAGE_SIZE, page * BANK_TRANSACTIONS_PAGE_SIZE)
+    : (pagedData?.transactions ?? []);
+  const tableTotal = computedFilterActive ? filteredSorted.length : (pagedData?.total ?? 0);
+  const totalPages = Math.max(1, Math.ceil(tableTotal / BANK_TRANSACTIONS_PAGE_SIZE));
+
+  // Page-data readiness is independent of whole-dataset matching readiness:
+  // simple filters wait only for the paginated query; derived filters depend
+  // on the whole dataset, so they follow its loading/error state.
+  const tableLoading = computedFilterActive ? wholeSetLoading : isPageLoading;
+  const tableError = computedFilterActive ? wholeSetError : isPageError;
+  const retryTable = computedFilterActive ? refetchWholeSet : refetchPage;
+
+  // Reset to page 1 when filters, search, sorting or client selection change
+  // (not on mount).
+  const filterSignature = JSON.stringify([
+    debouncedSearch, statusFilter, confidenceFilter, vraagpostFilter, sortField, sortDir,
+    clientSelection.allMode, [...subsetIdSet].sort(), activeOrganizationId,
+  ]);
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) { firstFilterRun.current = false; return; }
+    setPage(1);
+  }, [filterSignature]);
 
   const handleConfirm = useCallback(async (id: string) => {
     try {
@@ -1666,10 +1749,10 @@ export default function Bank() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === filteredSorted.length) {
+    if (tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredSorted.map(t => t.id)));
+      setSelectedIds(new Set(tableRows.map(t => t.id)));
     }
   };
 
@@ -1687,7 +1770,7 @@ export default function Bank() {
           value={clientSelection}
           onChange={handleClientSelectionChange}
         />
-        <Button variant="outline" disabled={!hasSelection} onClick={() => {
+        <Button variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
           const exportCandidates = transactions ?? [];
           if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
           const gb = grootboekrekeningen ?? [];
@@ -1707,7 +1790,7 @@ export default function Bank() {
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
-        <Button variant="outline" disabled={!hasSelection} onClick={() => {
+        <Button variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
           const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
           const rowCount = exportAfletterrapportCSV(
             allAllocations ?? [],
@@ -1732,7 +1815,7 @@ export default function Bank() {
         <Button
           variant="default"
           onClick={() => setVerwerkingOpen(true)}
-          disabled={!hasSelection || openCount === 0}
+          disabled={!hasSelection || !wholeSetReady || openCount === 0}
         >
           <Zap className="mr-2 h-4 w-4" />
           Verwerken {openCount > 0 && `(${openCount})`}
@@ -1765,26 +1848,35 @@ export default function Bank() {
         </Card>
       ) : (
       <>
+      {wholeSetError && (
+        <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 flex items-center gap-3">
+          <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
+          <p className="text-sm text-destructive flex-1">
+            Bankgegevens voor matching, statistieken en export laden mislukt.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => refetchWholeSet()}>Opnieuw laden</Button>
+        </div>
+      )}
       <div className="grid gap-4 sm:grid-cols-4 mb-6">
         <Card><CardContent className="flex items-center gap-3 p-4">
           <CheckCircle2 className="h-5 w-5 text-success" />
-          <div><p className="font-display text-xl font-bold">{matched}</p><p className="text-xs text-muted-foreground">Gematcht</p></div>
+          <div><p className="font-display text-xl font-bold">{wholeSetReady ? matched : "–"}</p><p className="text-xs text-muted-foreground">Gematcht</p></div>
         </CardContent></Card>
         <Card><CardContent className="flex items-center gap-3 p-4">
           <Link2 className="h-5 w-5 text-warning" />
-          <div><p className="font-display text-xl font-bold">{suggested}</p><p className="text-xs text-muted-foreground">Suggesties</p></div>
+          <div><p className="font-display text-xl font-bold">{wholeSetReady ? suggested : "–"}</p><p className="text-xs text-muted-foreground">Suggesties</p></div>
         </CardContent></Card>
         <Card><CardContent className="flex items-center gap-3 p-4">
           <Download className="h-5 w-5 text-muted-foreground" />
-          <div><p className="font-display text-xl font-bold">{transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
+          <div><p className="font-display text-xl font-bold">{wholeSetReady ? (transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0) : "–"}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
         </CardContent></Card>
         <Card><CardContent className="flex items-center gap-3 p-4">
           <HelpCircle className="h-5 w-5 text-destructive" />
-          <div><p className="font-display text-xl font-bold">{unmatched}</p><p className="text-xs text-muted-foreground">Niet gematcht</p></div>
+          <div><p className="font-display text-xl font-bold">{wholeSetReady ? unmatched : "–"}</p><p className="text-xs text-muted-foreground">Niet gematcht</p></div>
         </CardContent></Card>
       </div>
 
-      {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0 || (lastBatch && lastBatch.length > 0)) && (
+      {wholeSetReady && (autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0 || (lastBatch && lastBatch.length > 0)) && (
         <div className="mb-4 rounded-lg border border-primary/40 bg-primary/5 p-4 flex flex-wrap items-center gap-3">
           <Zap className="h-5 w-5 text-primary shrink-0" />
           <div className="flex-1 min-w-[200px]">
@@ -1879,8 +1971,18 @@ export default function Bank() {
         </div>
       )}
 
-      {/* Export blocker queue */}
+      {/* Export blocker queue — only meaningful once the whole dataset loaded.
+          Never claim "Geen bankblokkades" while loading or after a failure. */}
       {(() => {
+        if (wholeSetError) return null; // the error banner above covers this
+        if (!wholeSetReady) {
+          return (
+            <div className="mb-4 rounded-lg border bg-muted/30 p-3 flex items-center gap-2">
+              <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />
+              <p className="text-sm text-muted-foreground">Bankblokkades controleren…</p>
+            </div>
+          );
+        }
         const { rows, unconfirmed, unprocessed, manualInvalid, missing1799 } = blockerQueue;
         const DISPLAY_LIMIT = 20;
         const shown = rows.slice(0, DISPLAY_LIMIT);
@@ -1990,11 +2092,16 @@ export default function Bank() {
 
       <Card>
         <CardContent className="overflow-x-auto p-6">
-          {isLoading ? (
+          {tableLoading ? (
             <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : !filteredSorted.length ? (
+          ) : tableError ? (
+            <div className="py-12 text-center text-muted-foreground space-y-3">
+              <p className="text-destructive">Banktransacties laden mislukt.</p>
+              <Button variant="outline" size="sm" onClick={() => retryTable()}>Opnieuw proberen</Button>
+            </div>
+          ) : !tableRows.length ? (
             <div className="py-12 text-center text-muted-foreground">
-              {transactions?.length ? "Geen transacties gevonden met deze filters." : "Nog geen transacties. Upload een bankafschrift om te beginnen."}
+              {tableTotal || transactions?.length ? "Geen transacties gevonden met deze filters." : "Nog geen transacties. Upload een bankafschrift om te beginnen."}
             </div>
           ) : (
             <Table>
@@ -2002,7 +2109,7 @@ export default function Bank() {
                 <TableRow>
                   <TableHead className="w-10">
                     <Checkbox
-                      checked={filteredSorted.length > 0 && selectedIds.size === filteredSorted.length}
+                      checked={tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))}
                       onCheckedChange={toggleSelectAll}
                     />
                   </TableHead>
@@ -2016,7 +2123,7 @@ export default function Bank() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredSorted.map((t) => {
+                {tableRows.map((t) => {
                   const isOpen = isOpenTransactionStatus(t.match_status);
                   const isSuggestion = suggestionIds.has(t.id);
                   const txAbsAmt = Math.abs(t.amount);
@@ -2370,6 +2477,24 @@ export default function Bank() {
                 })}
               </TableBody>
             </Table>
+          )}
+          {!tableLoading && !tableError && tableTotal > 0 && (
+            <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
+              <span className="text-sm text-muted-foreground">
+                {(page - 1) * BANK_TRANSACTIONS_PAGE_SIZE + 1}–{Math.min(page * BANK_TRANSACTIONS_PAGE_SIZE, tableTotal)} van {tableTotal} transacties
+                {computedFilterActive ? " · afgeleide filter binnen huidige selectie" : ""}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page === 1 || isPageFetching}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}>
+                  <ChevronLeft className="h-4 w-4 mr-1" />Vorige
+                </Button>
+                <Button variant="outline" size="sm" disabled={page >= totalPages || isPageFetching}
+                  onClick={() => setPage(p => p + 1)}>
+                  Volgende<ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
