@@ -147,7 +147,11 @@ export async function fetchAllBankTransactions(
     let query: any = supabase.from("bank_transactions").select("*");
     query = applyScope(query, opts);
     if (query === null) return [];
+    // Preserve the previous whole-dataset ordering (transaction_date DESC),
+    // with id ASC as a deterministic tiebreaker so batch windows never overlap
+    // or skip rows. Applied to every batch.
     const { data, error } = await query
+      .order("transaction_date", { ascending: false })
       .order("id", { ascending: true })
       .range(offset, offset + BANK_FETCH_BATCH_SIZE - 1);
     if (error) throw error;

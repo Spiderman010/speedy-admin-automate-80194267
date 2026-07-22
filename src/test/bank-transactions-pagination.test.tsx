@@ -160,7 +160,23 @@ describe("fetchAllBankTransactions", () => {
       [BANK_FETCH_BATCH_SIZE, 2 * BANK_FETCH_BATCH_SIZE - 1],
       [2 * BANK_FETCH_BATCH_SIZE, 3 * BANK_FETCH_BATCH_SIZE - 1],
     ]);
-    callsFor("order").forEach(c => expect(c.args).toEqual(["id", { ascending: true }]));
+  });
+
+  it("orders every batch by transaction_date DESC with id ASC as tiebreaker", async () => {
+    state.batchResponses = [
+      { data: Array.from({ length: 1000 }, (_, i) => ({ id: `t-${i}` })), error: null },
+      { data: Array.from({ length: 10 }, (_, i) => ({ id: `t-${1000 + i}` })), error: null },
+    ];
+    await fetchAllBankTransactions({ organizationId: "org-1" });
+
+    const orderArgs = callsFor("order").map(c => c.args);
+    // two order clauses per batch, in exactly this sequence
+    expect(orderArgs).toEqual([
+      ["transaction_date", { ascending: false }],
+      ["id", { ascending: true }],
+      ["transaction_date", { ascending: false }],
+      ["id", { ascending: true }],
+    ]);
   });
 
   it("returns immediately for an empty client subset", async () => {
@@ -185,11 +201,15 @@ describe("helpers", () => {
 });
 
 describe("Bank overview source guarantees", () => {
-  it("does not run an unbounded full-list select on mount and wires the pager", async () => {
+  let source = "";
+  beforeEach(async () => {
+    if (source) return;
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const source = readFileSync(resolve(process.cwd(), "src/pages/Bank.tsx"), "utf-8");
+    source = readFileSync(resolve(process.cwd(), "src/pages/Bank.tsx"), "utf-8");
+  });
 
+  it("does not run an unbounded full-list select on mount and wires the pager", () => {
     // table renders from the paginated hook, not the whole-set memo
     expect(source).toContain("usePaginatedBankTransactions(");
     expect(source).toContain("tableRows.map((t) => {");
@@ -199,5 +219,48 @@ describe("Bank overview source guarantees", () => {
     expect(source).toContain("van {tableTotal} transacties");
     // page reset wired
     expect(source).toContain("setPage(1)");
+  });
+
+  it("separates page readiness from whole-dataset readiness", () => {
+    // simple filters use the paginated query's states; derived filters use the whole set's
+    expect(source).toContain("const tableLoading = computedFilterActive ? wholeSetLoading : isPageLoading;");
+    expect(source).toContain("const tableError = computedFilterActive ? wholeSetError : isPageError;");
+    expect(source).toContain("const retryTable = computedFilterActive ? refetchWholeSet : refetchPage;");
+    // table conditionals actually consume the split states
+    expect(source).toContain("{tableLoading ? (");
+    expect(source).toMatch(/\) : tableError \? \(/);
+  });
+
+  it("gates stats, auto-matching, processing and exports on whole-dataset readiness", () => {
+    expect(source).toContain(
+      "const wholeSetReady = hasSelection && !wholeSetLoading && !wholeSetError && !!rawTransactions;",
+    );
+    // stat cards show a placeholder until ready
+    expect(source).toContain('{wholeSetReady ? matched : "–"}');
+    expect(source).toContain('{wholeSetReady ? suggested : "–"}');
+    expect(source).toContain('{wholeSetReady ? unmatched : "–"}');
+    // auto-scan banner gated
+    expect(source).toContain("{wholeSetReady && (autoScanPreview.autoConfirm > 0");
+    // export, afletterrapport and verwerken buttons disabled until ready
+    const disabledGates = source.match(/disabled=\{!hasSelection \|\| !wholeSetReady/g) ?? [];
+    expect(disabledGates.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("never shows 'Geen bankblokkades' while the whole dataset is loading or failed", () => {
+    const blockerIdx = source.indexOf("Export blocker queue");
+    const greenIdx = source.indexOf("Geen bankblokkades voor export");
+    const loadingGuardIdx = source.indexOf("if (!wholeSetReady) {", blockerIdx);
+    const errorGuardIdx = source.indexOf("if (wholeSetError) return null;", blockerIdx);
+    expect(blockerIdx).toBeGreaterThan(-1);
+    expect(errorGuardIdx).toBeGreaterThan(blockerIdx);
+    expect(loadingGuardIdx).toBeGreaterThan(blockerIdx);
+    // both guards come before the success message
+    expect(errorGuardIdx).toBeLessThan(greenIdx);
+    expect(loadingGuardIdx).toBeLessThan(greenIdx);
+    // loading state shown instead
+    expect(source).toContain("Bankblokkades controleren…");
+    // whole-set failure surfaces a retry
+    expect(source).toContain("Bankgegevens voor matching, statistieken en export laden mislukt.");
+    expect(source).toMatch(/onClick=\{\(\) => refetchWholeSet\(\)\}/);
   });
 });
