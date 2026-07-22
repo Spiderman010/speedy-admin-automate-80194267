@@ -21,10 +21,20 @@ import { Separator } from "@/components/ui/separator";
 import type { Tables } from "@/integrations/supabase/types";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
-import { Plus, Download, FileText, CheckCircle2, Clock, Send, Upload, Loader2, Eye, ArrowUp, ArrowDown, Search, Landmark, Trash2 } from "lucide-react";
+import { Plus, Download, FileText, CheckCircle2, Clock, Send, Upload, Loader2, Eye, ArrowUp, ArrowDown, Search, Landmark, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
-import { useSalesInvoices, useAddSalesInvoice, useUpdateSalesInvoice, useDeleteSalesInvoice } from "@/hooks/useSalesInvoices";
+import {
+  usePaginatedSalesInvoices,
+  useSalesReceivablesSummary,
+  useSalesInvoiceDuplicates,
+  useAddSalesInvoice,
+  useUpdateSalesInvoice,
+  useDeleteSalesInvoice,
+  fetchAllSalesInvoices,
+  SALES_INVOICES_PAGE_SIZE,
+} from "@/hooks/useSalesInvoices";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { exportSalesInvoicesCSV } from "@/lib/snelstart-export";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SalesInvoiceDialog, type SalesInvoiceFormData } from "@/components/SalesInvoiceDialog";
@@ -61,7 +71,9 @@ function getSalesInvoiceDisplayStatus(inv: { status: string | null; remaining_am
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
 
-type SortField = "invoice_number" | "client" | "customer_name" | "date" | "due_date" | "amount" | "btw" | "status";
+// "client" (cross-table name lookup) and "status" (the table shows a derived
+// payment status, not the stored column) are intentionally not sortable.
+type SortField = "invoice_number" | "customer_name" | "date" | "due_date" | "amount" | "btw";
 type SortDir = "asc" | "desc";
 
 type SalesTxCandidate = {
@@ -135,16 +147,61 @@ export default function Verkoop() {
   const [uploadProgress, setUploadProgress] = useState<string[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [workflowFilter, setWorkflowFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [page, setPage] = useState(1);
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const { session } = useAuth();
   const queryClient = useQueryClient();
   const { data: clients } = useClients();
-  const { data: invoices, isLoading } = useSalesInvoices(clientFilter !== "all" ? clientFilter : undefined);
+  const { activeOrganizationId } = useActiveOrganization();
+  const scopedClientId = clientFilter !== "all" ? clientFilter : undefined;
+  // Server-paginated page for the overview table — no full-list query on mount.
+  const {
+    data: pageData,
+    isLoading,
+    isFetching: isPageFetching,
+    isError: isPageError,
+    refetch: refetchPage,
+  } = usePaginatedSalesInvoices({
+    clientId: scopedClientId,
+    page,
+    search: debouncedSearch,
+    status: workflowFilter,
+    sortField,
+    sortDir,
+  });
+  const pageInvoices = pageData?.invoices;
+  const totalCount = pageData?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / SALES_INVOICES_PAGE_SIZE));
+  // Whole-dataset aggregate via narrow-column batched fetch (5 columns only).
+  const { data: receivablesSummary } = useSalesReceivablesSummary({
+    clientId: scopedClientId,
+    search: debouncedSearch,
+  });
+  // Server-backed duplicate lookup for the numbers on this page — finds
+  // duplicates on other pages too.
+  const { data: duplicateIds } = useSalesInvoiceDuplicates(pageInvoices, scopedClientId);
+
+  // Reset to page 1 when filters, search, sorting, client or org changes.
+  const filterSignature = JSON.stringify([
+    debouncedSearch, workflowFilter, paymentFilter, sortField, sortDir, clientFilter, activeOrganizationId,
+  ]);
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) { firstFilterRun.current = false; return; }
+    setPage(1);
+  }, [filterSignature]);
   const addInvoice = useAddSalesInvoice();
   const updateInvoice = useUpdateSalesInvoice();
   const deleteInvoice = useDeleteSalesInvoice();
@@ -166,25 +223,6 @@ export default function Verkoop() {
 
   const { data: allAllocations } = useBankTransactionAllocations({ clientId: clientFilter !== "all" ? clientFilter : undefined });
   const { data: allBankTransactions } = useBankTransactions({ clientId: clientFilter !== "all" ? clientFilter : undefined });
-
-  const duplicateIds = useMemo(() => {
-    if (!invoices) return new Set<string>();
-    const groups = new Map<string, string[]>();
-    for (const inv of invoices) {
-      const normName = inv.customer_name?.trim().toLowerCase() ?? "";
-      const normNum = inv.invoice_number?.trim().toLowerCase() ?? "";
-      if (!normName || !normNum) continue;
-      const key = `${normName}||${normNum}`;
-      const group = groups.get(key) ?? [];
-      group.push(inv.id);
-      groups.set(key, group);
-    }
-    const result = new Set<string>();
-    for (const ids of groups.values()) {
-      if (ids.length >= 2) ids.forEach(id => result.add(id));
-    }
-    return result;
-  }, [invoices]);
 
   const allocationsByInvoiceId = useMemo(() => {
     const m = new Map<string, typeof allAllocations[number][]>();
@@ -219,24 +257,23 @@ export default function Verkoop() {
     return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
   };
 
-  const searchFiltered = useMemo(() => {
-    if (!invoices) return [];
-    if (!searchQuery.trim()) return invoices;
-    const q = searchQuery.toLowerCase();
-    return invoices.filter(inv =>
-      (inv.invoice_number || "").toLowerCase().includes(q) ||
-      (inv.customer_name || "").toLowerCase().includes(q) ||
-      (inv.status || "").toLowerCase().includes(q)
-    );
-  }, [invoices, searchQuery]);
+  // Search, workflow status and sorting are applied server-side by
+  // usePaginatedSalesInvoices; this is the current page of results.
+  const searchFiltered = useMemo(() => pageInvoices ?? [], [pageInvoices]);
 
-  // Each count-base applies all OTHER active filters so chip numbers show "what you'd see if you clicked this"
-  const forPaymentCounts = useMemo(() => {
-    if (workflowFilter === "all") return searchFiltered;
-    return searchFiltered.filter(inv => inv.status === workflowFilter);
-  }, [searchFiltered, workflowFilter]);
+  // With server-side status filtering the page may contain a single status,
+  // so chips render from the static order (plus any unknowns on the page).
+  const uniqueStatuses = useMemo(() => {
+    const present = new Set(searchFiltered.map(inv => inv.status).filter(Boolean));
+    const ordered = [...STATUS_ORDER];
+    present.forEach(s => { if (!STATUS_ORDER.includes(s)) ordered.push(s); });
+    return ordered;
+  }, [searchFiltered]);
 
-  const forWorkflowCounts = useMemo(() => {
+  // Payment state derives from remaining_amount vs total (a column-to-column
+  // comparison PostgREST cannot filter on), so it stays client-side within
+  // the current page. All other filters and sorting are server-side.
+  const filteredSorted = useMemo(() => {
     if (paymentFilter === "all") return searchFiltered;
     return searchFiltered.filter(inv => {
       const state = getInvoicePaymentState(inv);
@@ -245,59 +282,6 @@ export default function Verkoop() {
       return state === "open" || state === "unknown";
     });
   }, [searchFiltered, paymentFilter]);
-
-  const uniqueStatuses = useMemo(() => {
-    const present = new Set(searchFiltered.map(inv => inv.status).filter(Boolean));
-    const ordered = STATUS_ORDER.filter(s => present.has(s));
-    present.forEach(s => { if (!STATUS_ORDER.includes(s)) ordered.push(s); });
-    return ordered;
-  }, [searchFiltered]);
-
-  const receivablesSummary = useMemo(() => {
-    let openTotal = 0;
-    let countOpen = 0;
-    let countPartial = 0;
-    let countPaid = 0;
-    for (const inv of searchFiltered) {
-      const state = getInvoicePaymentState(inv);
-      if (state === "paid") {
-        countPaid++;
-      } else if (state === "partial") {
-        countPartial++;
-        openTotal += getInvoiceRemainingAmount(inv) ?? 0;
-      } else {
-        countOpen++;
-        openTotal += getInvoiceRemainingAmount(inv) ?? getInvoiceTotalAmount(inv) ?? 0;
-      }
-    }
-    return { openTotal, countOpen, countPartial, countPaid };
-  }, [searchFiltered]);
-
-  const filteredSorted = useMemo(() => {
-    let list = [...searchFiltered];
-    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
-    if (paymentFilter !== "all") list = list.filter(inv => {
-      const state = getInvoicePaymentState(inv);
-      if (paymentFilter === "paid") return state === "paid";
-      if (paymentFilter === "partial") return state === "partial";
-      return state === "open" || state === "unknown";
-    });
-    list.sort((a, b) => {
-      let cmp = 0;
-      switch (sortField) {
-        case "invoice_number": cmp = (a.invoice_number || "").localeCompare(b.invoice_number || ""); break;
-        case "client": cmp = getClientName(a.client_id).localeCompare(getClientName(b.client_id)); break;
-        case "customer_name": cmp = (a.customer_name || "").localeCompare(b.customer_name || ""); break;
-        case "date": cmp = (a.invoice_date || "").localeCompare(b.invoice_date || ""); break;
-        case "due_date": cmp = (a.due_date || "").localeCompare(b.due_date || ""); break;
-        case "amount": cmp = (a.amount_incl ?? 0) - (b.amount_incl ?? 0); break;
-        case "btw": cmp = (a.btw_amount ?? 0) - (b.btw_amount ?? 0); break;
-        case "status": cmp = (a.status || "").localeCompare(b.status || ""); break;
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return list;
-  }, [searchFiltered, workflowFilter, paymentFilter, sortField, sortDir, clients]);
 
   const handleManualSave = async (form: SalesInvoiceFormData, file: File | null) => {
     let pdfPath: string | null = null;
@@ -469,25 +453,41 @@ export default function Verkoop() {
             {clients?.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="outline" onClick={() => {
-          const exportable = invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [];
-          if (!exportable.length) {
-            toast({ title: "Geen exporteerbare verkoopfacturen", description: "Alleen gecontroleerde en betaalde facturen worden geëxporteerd.", variant: "destructive" });
+        <Button variant="outline" disabled={exporting} onClick={async () => {
+          if (exporting) return;
+          if (!activeOrganizationId) {
+            toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
             return;
           }
-          if (exportable.some(i => i.btw_verlegd)) {
-            toast({
-              title: "Export geblokkeerd",
-              description: "Deze selectie bevat verkoopfacturen met btw verlegd. De juiste SnelStart-exportcode is nog niet ingesteld. Controleer dit eerst voordat je exporteert.",
-              variant: "destructive",
+          setExporting(true);
+          try {
+            const exportable = await fetchAllSalesInvoices({
+              organizationId: activeOrganizationId,
+              clientId: scopedClientId,
+              statuses: ["gecontroleerd", "betaald"],
             });
-            return;
+            if (!exportable.length) {
+              toast({ title: "Geen exporteerbare verkoopfacturen", description: "Alleen gecontroleerde en betaalde facturen worden geëxporteerd.", variant: "destructive" });
+              return;
+            }
+            if (exportable.some(i => i.btw_verlegd)) {
+              toast({
+                title: "Export geblokkeerd",
+                description: "Deze selectie bevat verkoopfacturen met btw verlegd. De juiste SnelStart-exportcode is nog niet ingesteld. Controleer dit eerst voordat je exporteert.",
+                variant: "destructive",
+              });
+              return;
+            }
+            const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
+            exportSalesInvoicesCSV(exportable, clientName);
+            toast({ title: `${exportable.length} verkoopfacturen geëxporteerd voor Snelstart` });
+          } catch (e: any) {
+            toast({ title: "Export mislukt", description: e?.message, variant: "destructive" });
+          } finally {
+            setExporting(false);
           }
-          const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-          exportSalesInvoicesCSV(exportable, clientName);
-          toast({ title: `${exportable.length} verkoopfacturen geëxporteerd voor Snelstart` });
         }}>
-          <Download className="mr-2 h-4 w-4" />Export
+          {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}Export
         </Button>
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />Handmatig toevoegen
@@ -553,7 +553,7 @@ export default function Verkoop() {
         </TabsContent>
 
         <TabsContent value="overview" className="mt-6">
-          {!isLoading && (invoices?.length ?? 0) > 0 && (
+          {receivablesSummary && receivablesSummary.totalInvoices > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
               <div className="rounded-lg border bg-card px-4 py-3">
                 <p className="text-xs text-muted-foreground">Openstaand totaal</p>
@@ -591,31 +591,27 @@ export default function Verkoop() {
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
-              <FilterChip label="Alle" active={paymentFilter === "all"} count={forPaymentCounts.length}
+              <FilterChip label="Alle" active={paymentFilter === "all"}
                 onClick={() => setPaymentFilter("all")} />
               <FilterChip label="Openstaand" active={paymentFilter === "open"}
-                count={forPaymentCounts.filter(inv => { const s = getInvoicePaymentState(inv); return s === "open" || s === "unknown"; }).length}
                 onClick={() => setPaymentFilter(paymentFilter === "open" ? "all" : "open")}
                 activeClassName="border-orange-400 bg-orange-50 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200" />
               <FilterChip label="Deelbetaling" active={paymentFilter === "partial"}
-                count={forPaymentCounts.filter(inv => getInvoicePaymentState(inv) === "partial").length}
                 onClick={() => setPaymentFilter(paymentFilter === "partial" ? "all" : "partial")}
                 activeClassName="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200" />
               <FilterChip label="Betaald" active={paymentFilter === "paid"}
-                count={forPaymentCounts.filter(inv => getInvoicePaymentState(inv) === "paid").length}
                 onClick={() => setPaymentFilter(paymentFilter === "paid" ? "all" : "paid")}
                 activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
-              <FilterChip label="Alle statussen" active={workflowFilter === "all"} count={forWorkflowCounts.length}
+              <FilterChip label="Alle statussen" active={workflowFilter === "all"}
                 onClick={() => setWorkflowFilter("all")} />
               {uniqueStatuses.map(s => (
                 <FilterChip
                   key={s}
                   label={statusConfig[s]?.label ?? s}
                   active={workflowFilter === s}
-                  count={forWorkflowCounts.filter(inv => inv.status === s).length}
                   onClick={() => setWorkflowFilter(workflowFilter === s ? "all" : s)}
                 />
               ))}
@@ -625,6 +621,11 @@ export default function Verkoop() {
             <CardContent className="overflow-x-auto p-6">
               {isLoading ? (
                 <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+              ) : isPageError ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                  <p className="text-sm text-destructive">Verkoopfacturen laden mislukt.</p>
+                  <Button variant="outline" size="sm" onClick={() => refetchPage()}>Opnieuw proberen</Button>
+                </div>
               ) : !filteredSorted.length ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
@@ -642,14 +643,14 @@ export default function Verkoop() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("invoice_number")}>Factuurnummer<SortIcon field="invoice_number" /></TableHead>
-                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("client")}>Klant<SortIcon field="client" /></TableHead>
+                      <TableHead>Klant</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("customer_name")}>Klantnaam<SortIcon field="customer_name" /></TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("date")}>Datum<SortIcon field="date" /></TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("due_date")}>Vervaldatum<SortIcon field="due_date" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
                       <TableHead className="text-right">Openstaand</TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
-                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>Status<SortIcon field="status" /></TableHead>
+                      <TableHead>Status</TableHead>
                       <TableHead className="w-20"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -672,7 +673,7 @@ export default function Verkoop() {
                               ) : (
                                 <span>—</span>
                               )}
-                              {duplicateIds.has(inv.id) && (
+                              {duplicateIds?.has(inv.id) && (
                                 <Badge variant="outline" className="text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                                   Mogelijk dubbel
                                 </Badge>
@@ -770,6 +771,24 @@ export default function Verkoop() {
                   </TableBody>
                 </Table>
               )}
+              {!isLoading && !isPageError && totalCount > 0 && (
+                <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
+                  <span className="text-sm text-muted-foreground">
+                    {(page - 1) * SALES_INVOICES_PAGE_SIZE + 1}–{Math.min(page * SALES_INVOICES_PAGE_SIZE, totalCount)} van {totalCount} verkoopfacturen
+                    {paymentFilter !== "all" ? " · betaalstatusfilter geldt binnen de huidige pagina" : ""}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" disabled={page === 1 || isPageFetching}
+                      onClick={() => setPage(p => Math.max(1, p - 1))}>
+                      <ChevronLeft className="h-4 w-4 mr-1" />Vorige
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={page >= totalPages || isPageFetching}
+                      onClick={() => setPage(p => p + 1)}>
+                      Volgende<ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -786,7 +805,8 @@ export default function Verkoop() {
         invoice={editInvoice}
         open={editOpen}
         onOpenChange={setEditOpen}
-        allInvoices={invoices ?? []}
+        allInvoices={pageInvoices ?? []}
+        knownDuplicate={editInvoice ? duplicateIds?.has(editInvoice.id) ?? false : false}
         onSave={async (id, updates) => {
           try {
             await updateInvoice.mutateAsync({ id, ...updates } as any);

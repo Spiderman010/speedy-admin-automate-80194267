@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import { useActiveOrganization } from "./useActiveOrganization";
@@ -7,25 +7,330 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 type SalesInvoice = Tables<"sales_invoices">;
 type SalesInvoiceInsert = TablesInsert<"sales_invoices">;
 
+export const SALES_INVOICES_PAGE_SIZE = 50;
+export const SALES_FETCH_BATCH_SIZE = 1000;
+
+// PostgREST or() breaks on commas/parens and ilike treats % and _ as
+// wildcards; strip the former and escape the latter so input stays literal.
+export function salesSanitizeSearchTerm(raw: string): string {
+  return raw
+    .trim()
+    .replace(/[,()"']/g, " ")
+    .replace(/[%_]/g, (m) => `\\${m}`)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// "client" (cross-table name lookup) and "status" (the table displays a
+// derived payment status, not the stored workflow status) are intentionally
+// not sortable server-side.
+export type SalesInvoiceSortField =
+  | "invoice_number" | "customer_name" | "date" | "due_date" | "amount" | "btw";
+
+const SALES_SORT_COLUMNS: Record<SalesInvoiceSortField, string> = {
+  invoice_number: "invoice_number",
+  customer_name: "customer_name",
+  date: "invoice_date",
+  due_date: "due_date",
+  amount: "amount_incl",
+  btw: "btw_amount",
+};
+
+function applySearch(query: any, cleanSearch: string) {
+  if (!cleanSearch) return query;
+  return query.or(
+    `invoice_number.ilike.%${cleanSearch}%,customer_name.ilike.%${cleanSearch}%,status.ilike.%${cleanSearch}%`
+  );
+}
+
+export interface UsePaginatedSalesInvoicesOptions {
+  clientId?: string;
+  enabled?: boolean;
+  page: number; // 1-based
+  pageSize?: number;
+  search?: string;
+  status?: string; // "all" disables the filter
+  sortField?: SalesInvoiceSortField;
+  sortDir?: "asc" | "desc";
+}
+
+export interface PaginatedSalesInvoices {
+  invoices: SalesInvoice[];
+  total: number;
+}
+
+export function usePaginatedSalesInvoices(options: UsePaginatedSalesInvoicesOptions) {
+  const {
+    clientId,
+    enabled = true,
+    page,
+    pageSize = SALES_INVOICES_PAGE_SIZE,
+    search = "",
+    status = "all",
+    sortField = "date",
+    sortDir = "desc",
+  } = options;
+  const { user } = useAuth();
+  const { activeOrganizationId } = useActiveOrganization();
+  const cleanSearch = salesSanitizeSearchTerm(search);
+
+  return useQuery<PaginatedSalesInvoices>({
+    queryKey: [
+      "sales_invoices",
+      "page",
+      activeOrganizationId ?? "none",
+      clientId ?? "all",
+      page,
+      pageSize,
+      cleanSearch,
+      status,
+      sortField,
+      sortDir,
+    ],
+    queryFn: async () => {
+      let query: any = supabase
+        .from("sales_invoices")
+        .select("*", { count: "exact" })
+        .eq("organization_id", activeOrganizationId!);
+      if (clientId) query = query.eq("client_id", clientId);
+      if (status !== "all") query = query.eq("status", status);
+      query = applySearch(query, cleanSearch);
+      const from = (page - 1) * pageSize;
+      const { data, error, count } = await query
+        .order(SALES_SORT_COLUMNS[sortField], { ascending: sortDir === "asc", nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      return { invoices: (data ?? []) as SalesInvoice[], total: count ?? 0 };
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!user && !!activeOrganizationId && enabled,
+  });
+}
+
+// Fetches every matching sales invoice in deterministic batches, preserving
+// the previous invoice_date DESC ordering with id ASC as tiebreaker so batch
+// windows never overlap or skip rows. Correct beyond PostgREST's max-rows cap.
+// organizationId is required: every read stays org-scoped.
+export async function fetchAllSalesInvoices(opts: {
+  organizationId: string;
+  clientId?: string;
+  statuses?: readonly string[];
+}): Promise<SalesInvoice[]> {
+  if (!opts.organizationId) {
+    throw new Error("Geen actieve organisatie: verkoopfacturen kunnen niet worden geladen");
+  }
+  const all: SalesInvoice[] = [];
+  for (let offset = 0; ; offset += SALES_FETCH_BATCH_SIZE) {
+    let query: any = supabase
+      .from("sales_invoices")
+      .select("*")
+      .eq("organization_id", opts.organizationId);
+    if (opts.clientId) query = query.eq("client_id", opts.clientId);
+    if (opts.statuses) query = query.in("status", [...opts.statuses]);
+    const { data, error } = await query
+      .order("invoice_date", { ascending: false })
+      .order("id", { ascending: true })
+      .range(offset, offset + SALES_FETCH_BATCH_SIZE - 1);
+    if (error) throw error;
+    const batch = (data ?? []) as SalesInvoice[];
+    all.push(...batch);
+    if (batch.length < SALES_FETCH_BATCH_SIZE) return all;
+  }
+}
+
+// Whole-dataset hook. Kept for consumers that genuinely need every invoice
+// (Bank.tsx matching/aflettering). Now batched, so it is correct beyond 1000
+// rows. Signature unchanged.
 export function useSalesInvoices(clientId?: string) {
   const { user } = useAuth();
   const { activeOrganizationId } = useActiveOrganization();
   return useQuery({
     queryKey: ["sales_invoices", activeOrganizationId ?? "none", clientId ?? "all"],
-    queryFn: async () => {
-      let query = supabase
-        .from("sales_invoices")
-        .select("*")
-        .eq("organization_id", activeOrganizationId!)
-        .order("invoice_date", { ascending: false });
-      if (clientId) query = query.eq("client_id", clientId);
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as SalesInvoice[];
-    },
+    queryFn: () => fetchAllSalesInvoices({ organizationId: activeOrganizationId!, clientId }),
     enabled: !!user && !!activeOrganizationId,
   });
 }
+
+// ── Receivables summary ─────────────────────────────────────────────────────
+// Whole-dataset aggregate (open totals depend on every invoice). Fetches only
+// the five columns the computation needs, in deterministic batches — never the
+// complete table rows.
+
+export type ReceivableRow = Pick<
+  SalesInvoice,
+  "id" | "status" | "amount_excl" | "amount_incl" | "remaining_amount"
+>;
+
+export interface ReceivablesSummary {
+  openTotal: number;
+  countOpen: number;
+  countPartial: number;
+  countPaid: number;
+  totalInvoices: number;
+}
+
+function paymentStateOf(inv: ReceivableRow): "paid" | "partial" | "open" {
+  if (inv.status === "betaald") return "paid";
+  const total = inv.amount_incl ?? inv.amount_excl ?? null;
+  const remaining = inv.remaining_amount ?? total;
+  if (remaining === 0) return "paid";
+  if (total != null && remaining != null && remaining > 0 && remaining < total) return "partial";
+  return "open";
+}
+
+export function computeReceivablesSummary(rows: readonly ReceivableRow[]): ReceivablesSummary {
+  let openTotal = 0, countOpen = 0, countPartial = 0, countPaid = 0;
+  for (const inv of rows) {
+    const state = paymentStateOf(inv);
+    const total = inv.amount_incl ?? inv.amount_excl ?? 0;
+    const remaining = inv.remaining_amount ?? total;
+    if (state === "paid") countPaid++;
+    else if (state === "partial") { countPartial++; openTotal += remaining ?? 0; }
+    else { countOpen++; openTotal += remaining ?? 0; }
+  }
+  return { openTotal, countOpen, countPartial, countPaid, totalInvoices: rows.length };
+}
+
+export async function fetchReceivableRows(opts: {
+  organizationId: string;
+  clientId?: string;
+  search?: string;
+}): Promise<ReceivableRow[]> {
+  if (!opts.organizationId) {
+    throw new Error("Geen actieve organisatie: samenvatting kan niet worden geladen");
+  }
+  const cleanSearch = salesSanitizeSearchTerm(opts.search ?? "");
+  const all: ReceivableRow[] = [];
+  for (let offset = 0; ; offset += SALES_FETCH_BATCH_SIZE) {
+    let query: any = supabase
+      .from("sales_invoices")
+      .select("id, status, amount_excl, amount_incl, remaining_amount")
+      .eq("organization_id", opts.organizationId);
+    if (opts.clientId) query = query.eq("client_id", opts.clientId);
+    query = applySearch(query, cleanSearch);
+    const { data, error } = await query
+      .order("id", { ascending: true })
+      .range(offset, offset + SALES_FETCH_BATCH_SIZE - 1);
+    if (error) throw error;
+    const batch = (data ?? []) as ReceivableRow[];
+    all.push(...batch);
+    if (batch.length < SALES_FETCH_BATCH_SIZE) return all;
+  }
+}
+
+export function useSalesReceivablesSummary(opts: {
+  clientId?: string;
+  search?: string;
+  enabled?: boolean;
+}) {
+  const { user } = useAuth();
+  const { activeOrganizationId } = useActiveOrganization();
+  const cleanSearch = salesSanitizeSearchTerm(opts.search ?? "");
+  return useQuery<ReceivablesSummary>({
+    queryKey: [
+      "sales_invoices",
+      "receivables",
+      activeOrganizationId ?? "none",
+      opts.clientId ?? "all",
+      cleanSearch,
+    ],
+    queryFn: async () => {
+      const rows = await fetchReceivableRows({
+        organizationId: activeOrganizationId!,
+        clientId: opts.clientId,
+        search: cleanSearch,
+      });
+      return computeReceivablesSummary(rows);
+    },
+    enabled: !!user && !!activeOrganizationId && (opts.enabled ?? true),
+  });
+}
+
+// ── Duplicate detection ─────────────────────────────────────────────────────
+// Same semantics the overview always used: normalized customer_name +
+// invoice_number pairs with two or more invoices are duplicates. Candidates
+// for the current page are looked up server-side in small batches (minimal
+// columns), so duplicates on other pages are found without a full-list load.
+
+export const SALES_DUPLICATE_LOOKUP_BATCH_SIZE = 25;
+
+export type SalesDuplicateCandidate = Pick<SalesInvoice, "id" | "customer_name" | "invoice_number">;
+
+export function computeSalesDuplicateIds(rows: readonly SalesDuplicateCandidate[]): Set<string> {
+  const groups = new Map<string, string[]>();
+  for (const inv of rows) {
+    const normName = inv.customer_name?.trim().toLowerCase() ?? "";
+    const normNum = inv.invoice_number?.trim().toLowerCase() ?? "";
+    if (!normName || !normNum) continue;
+    const key = `${normName}||${normNum}`;
+    const group = groups.get(key) ?? [];
+    group.push(inv.id);
+    groups.set(key, group);
+  }
+  const result = new Set<string>();
+  for (const ids of groups.values()) {
+    if (ids.length >= 2) ids.forEach(id => result.add(id));
+  }
+  return result;
+}
+
+export async function fetchSalesDuplicateCandidates(
+  pageInvoices: ReadonlyArray<SalesDuplicateCandidate>,
+  opts: { organizationId: string; clientId?: string },
+): Promise<SalesDuplicateCandidate[]> {
+  if (!opts.organizationId) return [];
+  const numbers = [...new Set(
+    pageInvoices
+      .filter(inv => (inv.invoice_number || "").trim() && (inv.customer_name || "").trim())
+      .map(inv => inv.invoice_number!.trim())
+  )];
+  if (!numbers.length) return [];
+  const out: SalesDuplicateCandidate[] = [];
+  for (let i = 0; i < numbers.length; i += SALES_DUPLICATE_LOOKUP_BATCH_SIZE) {
+    const batch = numbers.slice(i, i + SALES_DUPLICATE_LOOKUP_BATCH_SIZE);
+    let query: any = supabase
+      .from("sales_invoices")
+      .select("id, customer_name, invoice_number")
+      .eq("organization_id", opts.organizationId)
+      .in("invoice_number", batch);
+    if (opts.clientId) query = query.eq("client_id", opts.clientId);
+    const { data, error } = await query;
+    if (error) throw error;
+    out.push(...((data ?? []) as SalesDuplicateCandidate[]));
+  }
+  return out;
+}
+
+export function useSalesInvoiceDuplicates(
+  pageInvoices: SalesInvoice[] | undefined,
+  clientId?: string,
+) {
+  const { user } = useAuth();
+  const { activeOrganizationId } = useActiveOrganization();
+  const pairsKey = (pageInvoices ?? [])
+    .filter(inv => (inv.invoice_number || "").trim() && (inv.customer_name || "").trim())
+    .map(inv => `${inv.customer_name!.trim().toLowerCase()}||${inv.invoice_number!.trim().toLowerCase()}`)
+    .sort()
+    .join(",");
+
+  return useQuery<Set<string>>({
+    queryKey: ["sales_invoices", "duplicates", activeOrganizationId ?? "none", clientId ?? "all", pairsKey],
+    queryFn: async () => {
+      const fetched = await fetchSalesDuplicateCandidates(pageInvoices ?? [], {
+        organizationId: activeOrganizationId!,
+        clientId,
+      });
+      const byId = new Map<string, SalesDuplicateCandidate>();
+      for (const inv of pageInvoices ?? []) byId.set(inv.id, inv);
+      for (const c of fetched) byId.set(c.id, c);
+      return computeSalesDuplicateIds([...byId.values()]);
+    },
+    enabled: !!user && !!activeOrganizationId && (pageInvoices?.length ?? 0) > 0,
+  });
+}
+
+// ── Mutations (unchanged semantics; family-wide invalidation) ───────────────
 
 export function useAddSalesInvoice() {
   const qc = useQueryClient();

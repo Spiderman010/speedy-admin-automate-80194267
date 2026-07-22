@@ -81,9 +81,11 @@ interface Props {
   onSave: (id: string, updates: Partial<SalesInvoice>) => Promise<void>;
   onApprove: (id: string, updates: Partial<SalesInvoice>) => Promise<void>;
   allInvoices?: SalesInvoice[];
+  /** Server-computed duplicate signal; takes precedence over the allInvoices scan. */
+  knownDuplicate?: boolean;
 }
 
-export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, allInvoices }: Props) {
+export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, allInvoices, knownDuplicate }: Props) {
   const { toast } = useToast();
   const { data: clients } = useClients();
   const [form, setForm] = useState({
@@ -105,6 +107,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
   const [vraagpostOpen, setVraagpostOpen] = useState(false);
 
   const isDuplicate = useMemo(() => {
+    if (knownDuplicate !== undefined) return knownDuplicate;
     if (!invoice || !allInvoices) return false;
     const normName = invoice.customer_name?.trim().toLowerCase() ?? "";
     const normNum = invoice.invoice_number?.trim().toLowerCase() ?? "";
@@ -115,7 +118,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
         (other.customer_name?.trim().toLowerCase() ?? "") === normName &&
         (other.invoice_number?.trim().toLowerCase() ?? "") === normNum,
     );
-  }, [invoice, allInvoices]);
+  }, [invoice, allInvoices, knownDuplicate]);
 
   const currentClient = useMemo(
     () => clients?.find((client) => client.id === invoice?.client_id) ?? null,
