@@ -10,11 +10,18 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2, Landmark, Plus } from "lucide-react";
+import { Upload, FileText, Download, CheckCircle2, Clock, Loader2, ArrowUp, ArrowDown, Search, Trash2, Landmark, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { PurchaseInvoiceCreateDialog } from "@/components/PurchaseInvoiceCreateDialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { usePurchaseInvoices, useUpdatePurchaseInvoice, useDeletePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import {
+  usePurchaseInvoices,
+  usePaginatedPurchaseInvoices,
+  useResetPageOnChange,
+  useUpdatePurchaseInvoice,
+  useDeletePurchaseInvoice,
+  PURCHASE_INVOICES_PAGE_SIZE,
+} from "@/hooks/usePurchaseInvoices";
 import { useVraagposten } from "@/hooks/useVraagposten";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -179,11 +186,18 @@ export default function Facturen() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [workflowFilter, setWorkflowFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [routeFilter, setRouteFilter] = useState("all");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
   const { toast } = useToast();
   const { session } = useAuth();
   const queryClient = useQueryClient();
@@ -191,11 +205,37 @@ export default function Facturen() {
 
   const orgEnabled = isReady && activeOrganizationId !== null;
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
-  const { data: invoices, isLoading } = usePurchaseInvoices({
+  // Full (unpaginated) list: still needed for the export tab and duplicate detection.
+  const { data: invoices } = usePurchaseInvoices({
     organizationId: activeOrganizationId ?? undefined,
     clientId: clientFilter !== "all" ? clientFilter : undefined,
     enabled: orgEnabled,
   });
+  // Paginated, server-filtered list for the overview table.
+  const {
+    data: pageData,
+    isLoading,
+    isFetching: isListFetching,
+    isError: isListError,
+    refetch: refetchList,
+  } = usePaginatedPurchaseInvoices({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: clientFilter !== "all" ? clientFilter : undefined,
+    enabled: orgEnabled,
+    page,
+    search: debouncedSearch,
+    status: workflowFilter,
+    documentRoute: routeFilter,
+    sortField,
+    sortDir,
+  });
+  const pageInvoices = pageData?.invoices;
+  const totalCount = pageData?.total ?? 0;
+
+  useResetPageOnChange(
+    () => setPage(1),
+    [debouncedSearch, workflowFilter, paymentFilter, routeFilter, sortField, sortDir, clientFilter, activeOrganizationId],
+  );
   const { data: vraagposten } = useVraagposten({
     organizationId: activeOrganizationId ?? undefined,
     clientId: clientFilter !== "all" ? clientFilter : undefined,
@@ -315,16 +355,9 @@ export default function Facturen() {
     return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
   };
 
-  const searchFiltered = useMemo(() => {
-    if (!invoices) return [];
-    if (!searchQuery.trim()) return invoices;
-    const q = searchQuery.toLowerCase();
-    return invoices.filter(inv =>
-      (inv.supplier || "").toLowerCase().includes(q) ||
-      (inv.invoice_number || "").toLowerCase().includes(q) ||
-      (inv.ledger_account_text || "").toLowerCase().includes(q)
-    );
-  }, [invoices, searchQuery]);
+  // Search, workflow-status, route and sorting are applied server-side by
+  // usePaginatedPurchaseInvoices; this is the current page of results.
+  const searchFiltered = useMemo(() => pageInvoices ?? [], [pageInvoices]);
 
   // Each count-base applies all OTHER active filters so chip numbers show "what you'd see if you clicked this"
   const forPaymentCounts = useMemo(() => {
@@ -358,37 +391,27 @@ export default function Facturen() {
     return list;
   }, [searchFiltered, workflowFilter, paymentFilter]);
 
+  // With server-side status filtering the current page may contain only one
+  // status, so chips are rendered from the static order (plus any unknowns).
   const uniqueStatuses = useMemo(() => {
     const present = new Set(searchFiltered.map(inv => inv.status).filter(Boolean));
-    const ordered = STATUS_ORDER.filter(s => present.has(s));
+    const ordered = [...STATUS_ORDER];
     present.forEach(s => { if (!STATUS_ORDER.includes(s)) ordered.push(s); });
     return ordered;
   }, [searchFiltered]);
 
+  // Payment state derives from remaining_amount vs total (a column-to-column
+  // comparison PostgREST cannot filter on), so it stays client-side within the
+  // current page. All other filters and sorting are applied server-side.
   const filteredSorted = useMemo(() => {
-    let list = [...searchFiltered];
-    if (workflowFilter !== "all") list = list.filter(inv => inv.status === workflowFilter);
-    if (paymentFilter !== "all") list = list.filter(inv => {
+    if (paymentFilter === "all") return searchFiltered;
+    return searchFiltered.filter(inv => {
       const ds = getPurchaseInvoiceDisplayStatus(inv);
       if (paymentFilter === "paid") return ds === "betaald";
       if (paymentFilter === "partial") return ds === "deelbetaling";
       return ds !== "betaald" && ds !== "deelbetaling";
     });
-    if (routeFilter !== "all") list = list.filter(inv => (inv as any).document_route === routeFilter);
-    list.sort((a, b) => {
-      let cmp = 0;
-      switch (sortField) {
-        case "supplier": cmp = (a.supplier || "").localeCompare(b.supplier || ""); break;
-        case "invoice_number": cmp = (a.invoice_number || "").localeCompare(b.invoice_number || ""); break;
-        case "date": cmp = (a.invoice_date || "").localeCompare(b.invoice_date || ""); break;
-        case "amount": cmp = (a.amount_incl ?? 0) - (b.amount_incl ?? 0); break;
-        case "btw": cmp = (a.btw_amount ?? 0) - (b.btw_amount ?? 0); break;
-        case "status": cmp = getPurchaseInvoiceDisplayStatus(a).localeCompare(getPurchaseInvoiceDisplayStatus(b)); break;
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return list;
-  }, [searchFiltered, workflowFilter, paymentFilter, routeFilter, sortField, sortDir]);
+  }, [searchFiltered, paymentFilter]);
 
   const duplicateIds = useMemo(() => {
     const result = new Set<string>();
@@ -681,6 +704,11 @@ export default function Facturen() {
             <CardContent className="overflow-x-auto p-6">
               {isLoading ? (
                 <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+              ) : isListError ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+                  <p className="text-sm text-destructive">Inkoopfacturen laden mislukt.</p>
+                  <Button variant="outline" size="sm" onClick={() => refetchList()}>Opnieuw proberen</Button>
+                </div>
               ) : !filteredSorted.length ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                   <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
@@ -872,6 +900,32 @@ export default function Facturen() {
                     })}
                   </TableBody>
                 </Table>
+              )}
+              {!isLoading && !isListError && totalCount > 0 && (
+                <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
+                  <span className="text-sm text-muted-foreground">
+                    {(page - 1) * PURCHASE_INVOICES_PAGE_SIZE + 1}–{Math.min(page * PURCHASE_INVOICES_PAGE_SIZE, totalCount)} van {totalCount} facturen
+                    {paymentFilter !== "all" ? " · betaalstatusfilter geldt binnen de huidige pagina" : ""}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page === 1 || isListFetching}
+                      onClick={() => setPage(p => Math.max(1, p - 1))}
+                    >
+                      <ChevronLeft className="h-4 w-4 mr-1" />Vorige
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page * PURCHASE_INVOICES_PAGE_SIZE >= totalCount || isListFetching}
+                      onClick={() => setPage(p => p + 1)}
+                    >
+                      Volgende<ChevronRight className="h-4 w-4 ml-1" />
+                    </Button>
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>

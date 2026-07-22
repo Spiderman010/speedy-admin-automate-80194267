@@ -1,4 +1,5 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
@@ -10,6 +11,118 @@ export interface UsePurchaseInvoicesOptions {
   organizationId?: string;
   clientId?: string;
   enabled?: boolean;
+}
+
+export const PURCHASE_INVOICES_PAGE_SIZE = 50;
+
+export type PurchaseInvoiceSortField = "supplier" | "invoice_number" | "date" | "amount" | "btw" | "status";
+
+const SORT_COLUMNS: Record<PurchaseInvoiceSortField, string> = {
+  supplier: "supplier",
+  invoice_number: "invoice_number",
+  date: "invoice_date",
+  amount: "amount_incl",
+  btw: "btw_amount",
+  status: "status",
+};
+
+// PostgREST or() syntax breaks on commas/parens and ilike treats % and _ as
+// wildcards; strip the former and escape the latter so user input stays literal.
+export function sanitizeSearchTerm(raw: string): string {
+  return raw
+    .trim()
+    .replace(/[,()"']/g, " ")
+    .replace(/[%_]/g, (m) => `\\${m}`)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export interface UsePaginatedPurchaseInvoicesOptions {
+  organizationId?: string;
+  clientId?: string;
+  enabled?: boolean;
+  page: number; // 1-based
+  pageSize?: number;
+  search?: string;
+  status?: string; // "all" disables the filter
+  documentRoute?: string; // "all" disables the filter
+  sortField?: PurchaseInvoiceSortField;
+  sortDir?: "asc" | "desc";
+}
+
+export interface PaginatedPurchaseInvoices {
+  invoices: PurchaseInvoice[];
+  total: number;
+}
+
+export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoicesOptions) {
+  const {
+    organizationId,
+    clientId,
+    enabled = true,
+    page,
+    pageSize = PURCHASE_INVOICES_PAGE_SIZE,
+    search = "",
+    status = "all",
+    documentRoute = "all",
+    sortField = "date",
+    sortDir = "desc",
+  } = options;
+  const { user } = useAuth();
+  const cleanSearch = sanitizeSearchTerm(search);
+
+  return useQuery<PaginatedPurchaseInvoices>({
+    queryKey: [
+      "purchase_invoices",
+      "page",
+      organizationId ?? "all",
+      clientId ?? "all",
+      page,
+      pageSize,
+      cleanSearch,
+      status,
+      documentRoute,
+      sortField,
+      sortDir,
+    ],
+    queryFn: async () => {
+      let query = supabase
+        .from("purchase_invoices")
+        .select("*", { count: "exact" });
+      if (organizationId) query = query.eq("organization_id", organizationId);
+      if (clientId) query = query.eq("client_id", clientId);
+      if (status !== "all") query = query.eq("status", status);
+      if (documentRoute !== "all") query = query.eq("document_route", documentRoute);
+      if (cleanSearch) {
+        query = query.or(
+          `supplier.ilike.%${cleanSearch}%,invoice_number.ilike.%${cleanSearch}%,ledger_account_text.ilike.%${cleanSearch}%`
+        );
+      }
+      const from = (page - 1) * pageSize;
+      const { data, error, count } = await query
+        .order(SORT_COLUMNS[sortField], { ascending: sortDir === "asc", nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      if (error) throw error;
+      return { invoices: (data ?? []) as PurchaseInvoice[], total: count ?? 0 };
+    },
+    placeholderData: keepPreviousData,
+    enabled: !!user && enabled,
+  });
+}
+
+// Reset pagination whenever any filter/sort dependency changes, but not on mount.
+export function useResetPageOnChange(reset: () => void, deps: readonly unknown[]) {
+  const firstRun = useRef(true);
+  const signature = JSON.stringify(deps);
+  useEffect(() => {
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
 }
 
 export function usePurchaseInvoices(options: UsePurchaseInvoicesOptions = {}) {
