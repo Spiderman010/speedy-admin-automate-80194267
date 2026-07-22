@@ -273,9 +273,62 @@ describe("literal search escaping", () => {
     expect(buildIlikeOrFilter(["customer_name"], "   ")).toBe("");
   });
 
-  it("searchCacheKey trims and collapses whitespace but keeps punctuation", () => {
-    expect(searchCacheKey("  ACME,  BV  ")).toBe("ACME, BV");
+  it("searchCacheKey trims only the ends and preserves internal whitespace + punctuation", () => {
+    // leading/trailing trimmed, internal spacing kept exactly
+    expect(searchCacheKey("  ACME,  BV  ")).toBe("ACME,  BV");
     expect(searchCacheKey("O'Reilly (x)")).toBe("O'Reilly (x)");
+  });
+
+  it("searchCacheKey distinguishes single vs double internal spaces (matches backend term)", () => {
+    const single = searchCacheKey("ACME BV");
+    const doubled = searchCacheKey("ACME  BV");
+    expect(single).toBe("ACME BV");
+    expect(doubled).toBe("ACME  BV");
+    expect(single).not.toBe(doubled);
+    // and each key equals exactly the trimmed term applySearch/buildIlikeOrFilter sends
+    expect(single).toBe("ACME BV".trim());
+    expect(doubled).toBe("ACME  BV".trim());
+  });
+});
+
+describe("search cache-key isolation (hook-level)", () => {
+  it("dedupes an identical search but issues a new query when only internal whitespace changes", async () => {
+    // staleTime: Infinity ⇒ an identical query key would NOT refetch, so any
+    // extra backend call proves the key actually differs.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+
+    const a = renderHook(
+      () => usePaginatedSalesInvoices({ page: 1, search: "ACME BV" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(a.result.current.isSuccess).toBe(true));
+    const afterFirst = callsFor("range").length;
+
+    // same term again → identical key → served from cache, no new backend query
+    const same = renderHook(
+      () => usePaginatedSalesInvoices({ page: 1, search: "ACME BV" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(same.result.current.isSuccess).toBe(true));
+    expect(callsFor("range").length).toBe(afterFirst);
+
+    // only internal whitespace changed → distinct key → a new backend query
+    const b = renderHook(
+      () => usePaginatedSalesInvoices({ page: 1, search: "ACME  BV" }),
+      { wrapper },
+    );
+    await waitFor(() => expect(b.result.current.isSuccess).toBe(true));
+    expect(callsFor("range").length).toBe(afterFirst + 1);
+
+    // and the two backend searches carried the exact (different) ilike values
+    const orValues = callsFor("or").map(c => c.args[0] as string);
+    expect(orValues.some(v => v.includes('"%ACME BV%"'))).toBe(true);
+    expect(orValues.some(v => v.includes('"%ACME  BV%"'))).toBe(true);
   });
 });
 

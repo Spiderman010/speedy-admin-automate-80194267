@@ -35,10 +35,13 @@ export function buildIlikeOrFilter(columns: readonly string[], term: string): st
   return columns.map((c) => `${c}.ilike.${value}`).join(",");
 }
 
-// Stable cache-key fragment for a search term: trimmed and whitespace-collapsed,
-// but punctuation preserved (it is part of what the user searched for).
+// Cache-key fragment for a search term. Must represent EXACTLY the term sent to
+// the backend: applySearch()/buildIlikeOrFilter only trim leading/trailing space
+// (they preserve internal whitespace and punctuation), so this trims only too.
+// Collapsing internal whitespace here would let "ACME  BV" and "ACME BV" — which
+// are different backend queries — share one React Query cache entry.
 export function searchCacheKey(raw: string): string {
-  return raw.trim().replace(/\s+/g, " ");
+  return raw.trim();
 }
 
 const SALES_SEARCH_COLUMNS = ["invoice_number", "customer_name", "status"] as const;
