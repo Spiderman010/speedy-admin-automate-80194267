@@ -1103,6 +1103,45 @@ export type Database = {
         Args: { _role: Database["public"]["Enums"]["app_role"] }
         Returns: number
       }
+      save_purchase_invoice_with_lines: {
+        Args: { _header_updates: Json; _invoice_id: string; _lines: Json }
+        Returns: {
+          amount_excl: number | null
+          amount_incl: number | null
+          btw_amount: number | null
+          btw_percentage: number | null
+          client_id: string
+          created_at: string
+          document_route: string
+          file_path: string | null
+          grootboekrekening_id: string | null
+          id: string
+          invoice_date: string | null
+          invoice_number: string | null
+          ledger_account_id: string | null
+          ledger_account_text: string | null
+          leverancier_id: string | null
+          notes: string | null
+          ocr_data: Json | null
+          organization_id: string | null
+          original_ubl_path: string | null
+          remaining_amount: number | null
+          route_reason: string | null
+          snelstart_package_download_count: number
+          snelstart_package_downloaded_at: string | null
+          status: string
+          supplier: string
+          supplier_btw_number: string | null
+          updated_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "purchase_invoices"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       app_role: "owner" | "accountant" | "assistant" | "read_only"
