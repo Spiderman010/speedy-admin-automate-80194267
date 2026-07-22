@@ -10,16 +10,38 @@ type SalesInvoiceInsert = TablesInsert<"sales_invoices">;
 export const SALES_INVOICES_PAGE_SIZE = 50;
 export const SALES_FETCH_BATCH_SIZE = 1000;
 
-// PostgREST or() breaks on commas/parens and ilike treats % and _ as
-// wildcards; strip the former and escape the latter so input stays literal.
-export function salesSanitizeSearchTerm(raw: string): string {
-  return raw
-    .trim()
-    .replace(/[,()"']/g, " ")
-    .replace(/[%_]/g, (m) => `\\${m}`)
-    .replace(/\s+/g, " ")
-    .trim();
+// Escape a term so it matches literally inside a PostgREST .or() ilike filter,
+// WITHOUT dropping any of the user's characters:
+//  - `\`, `%`, `_` are escaped so LIKE treats them as literals;
+//  - the value is wrapped in double quotes so PostgREST reserved characters
+//    (`,` `.` `:` `(` `)`) are preserved literally instead of parsed as syntax;
+//  - `"` inside the value is backslash-escaped.
+// Apostrophes and other punctuation pass through unchanged.
+export function escapeIlikeValue(term: string): string {
+  const likeEscaped = term
+    .replace(/\\/g, "\\\\")
+    .replace(/%/g, "\\%")
+    .replace(/_/g, "\\_")
+    .replace(/"/g, '\\"');
+  return `"%${likeEscaped}%"`;
 }
+
+// Build a PostgREST or() argument that matches `term` as a literal substring
+// across the given columns. Returns "" when the term is blank.
+export function buildIlikeOrFilter(columns: readonly string[], term: string): string {
+  const trimmed = term.trim();
+  if (!trimmed) return "";
+  const value = escapeIlikeValue(trimmed);
+  return columns.map((c) => `${c}.ilike.${value}`).join(",");
+}
+
+// Stable cache-key fragment for a search term: trimmed and whitespace-collapsed,
+// but punctuation preserved (it is part of what the user searched for).
+export function searchCacheKey(raw: string): string {
+  return raw.trim().replace(/\s+/g, " ");
+}
+
+const SALES_SEARCH_COLUMNS = ["invoice_number", "customer_name", "status"] as const;
 
 // "client" (cross-table name lookup) and "status" (the table displays a
 // derived payment status, not the stored workflow status) are intentionally
@@ -36,11 +58,19 @@ const SALES_SORT_COLUMNS: Record<SalesInvoiceSortField, string> = {
   btw: "btw_amount",
 };
 
-function applySearch(query: any, cleanSearch: string) {
-  if (!cleanSearch) return query;
-  return query.or(
-    `invoice_number.ilike.%${cleanSearch}%,customer_name.ilike.%${cleanSearch}%,status.ilike.%${cleanSearch}%`
-  );
+function applySearch(query: any, term: string) {
+  const filter = buildIlikeOrFilter(SALES_SEARCH_COLUMNS, term);
+  if (!filter) return query;
+  return query.or(filter);
+}
+
+// Clamp a 1-based page into [1, totalPages]; used to recover after a deletion
+// or mutation shrinks the result set below the current page.
+export function clampPage(page: number, totalPages: number): number {
+  const max = Math.max(1, totalPages);
+  if (page < 1) return 1;
+  if (page > max) return max;
+  return page;
 }
 
 export interface UsePaginatedSalesInvoicesOptions {
@@ -72,7 +102,7 @@ export function usePaginatedSalesInvoices(options: UsePaginatedSalesInvoicesOpti
   } = options;
   const { user } = useAuth();
   const { activeOrganizationId } = useActiveOrganization();
-  const cleanSearch = salesSanitizeSearchTerm(search);
+  const searchKey = searchCacheKey(search);
 
   return useQuery<PaginatedSalesInvoices>({
     queryKey: [
@@ -82,7 +112,7 @@ export function usePaginatedSalesInvoices(options: UsePaginatedSalesInvoicesOpti
       clientId ?? "all",
       page,
       pageSize,
-      cleanSearch,
+      searchKey,
       status,
       sortField,
       sortDir,
@@ -94,7 +124,7 @@ export function usePaginatedSalesInvoices(options: UsePaginatedSalesInvoicesOpti
         .eq("organization_id", activeOrganizationId!);
       if (clientId) query = query.eq("client_id", clientId);
       if (status !== "all") query = query.eq("status", status);
-      query = applySearch(query, cleanSearch);
+      query = applySearch(query, search);
       const from = (page - 1) * pageSize;
       const { data, error, count } = await query
         .order(SALES_SORT_COLUMNS[sortField], { ascending: sortDir === "asc", nullsFirst: false })
@@ -115,11 +145,13 @@ export function usePaginatedSalesInvoices(options: UsePaginatedSalesInvoicesOpti
 export async function fetchAllSalesInvoices(opts: {
   organizationId: string;
   clientId?: string;
+  clientIds?: string[];
   statuses?: readonly string[];
 }): Promise<SalesInvoice[]> {
   if (!opts.organizationId) {
     throw new Error("Geen actieve organisatie: verkoopfacturen kunnen niet worden geladen");
   }
+  if (opts.clientIds && opts.clientIds.length === 0) return []; // empty subset ⇒ no rows
   const all: SalesInvoice[] = [];
   for (let offset = 0; ; offset += SALES_FETCH_BATCH_SIZE) {
     let query: any = supabase
@@ -127,6 +159,7 @@ export async function fetchAllSalesInvoices(opts: {
       .select("*")
       .eq("organization_id", opts.organizationId);
     if (opts.clientId) query = query.eq("client_id", opts.clientId);
+    if (opts.clientIds) query = query.in("client_id", opts.clientIds);
     if (opts.statuses) query = query.in("status", [...opts.statuses]);
     const { data, error } = await query
       .order("invoice_date", { ascending: false })
@@ -139,16 +172,25 @@ export async function fetchAllSalesInvoices(opts: {
   }
 }
 
-// Whole-dataset hook. Kept for consumers that genuinely need every invoice
-// (Bank.tsx matching/aflettering). Now batched, so it is correct beyond 1000
-// rows. Signature unchanged.
-export function useSalesInvoices(clientId?: string) {
+export interface UseSalesInvoicesOptions {
+  clientId?: string;
+  clientIds?: string[];
+  enabled?: boolean;
+}
+
+// Whole-dataset hook for consumers that genuinely need every invoice
+// (Bank.tsx matching/aflettering). Batched, correct beyond 1000 rows.
+// Callers MUST gate it: without `enabled` it would fetch the whole org
+// dataset on mount. Empty `clientIds` yields no rows.
+export function useSalesInvoices(options: UseSalesInvoicesOptions = {}) {
+  const { clientId, clientIds, enabled = true } = options;
   const { user } = useAuth();
   const { activeOrganizationId } = useActiveOrganization();
+  const clientIdsKey = clientIds ? [...clientIds].sort().join(",") : "";
   return useQuery({
-    queryKey: ["sales_invoices", activeOrganizationId ?? "none", clientId ?? "all"],
-    queryFn: () => fetchAllSalesInvoices({ organizationId: activeOrganizationId!, clientId }),
-    enabled: !!user && !!activeOrganizationId,
+    queryKey: ["sales_invoices", "all", activeOrganizationId ?? "none", clientId ?? "all", clientIdsKey],
+    queryFn: () => fetchAllSalesInvoices({ organizationId: activeOrganizationId!, clientId, clientIds }),
+    enabled: !!user && !!activeOrganizationId && enabled,
   });
 }
 
@@ -200,7 +242,6 @@ export async function fetchReceivableRows(opts: {
   if (!opts.organizationId) {
     throw new Error("Geen actieve organisatie: samenvatting kan niet worden geladen");
   }
-  const cleanSearch = salesSanitizeSearchTerm(opts.search ?? "");
   const all: ReceivableRow[] = [];
   for (let offset = 0; ; offset += SALES_FETCH_BATCH_SIZE) {
     let query: any = supabase
@@ -208,7 +249,7 @@ export async function fetchReceivableRows(opts: {
       .select("id, status, amount_excl, amount_incl, remaining_amount")
       .eq("organization_id", opts.organizationId);
     if (opts.clientId) query = query.eq("client_id", opts.clientId);
-    query = applySearch(query, cleanSearch);
+    query = applySearch(query, opts.search ?? "");
     const { data, error } = await query
       .order("id", { ascending: true })
       .range(offset, offset + SALES_FETCH_BATCH_SIZE - 1);
@@ -226,20 +267,20 @@ export function useSalesReceivablesSummary(opts: {
 }) {
   const { user } = useAuth();
   const { activeOrganizationId } = useActiveOrganization();
-  const cleanSearch = salesSanitizeSearchTerm(opts.search ?? "");
+  const searchKey = searchCacheKey(opts.search ?? "");
   return useQuery<ReceivablesSummary>({
     queryKey: [
       "sales_invoices",
       "receivables",
       activeOrganizationId ?? "none",
       opts.clientId ?? "all",
-      cleanSearch,
+      searchKey,
     ],
     queryFn: async () => {
       const rows = await fetchReceivableRows({
         organizationId: activeOrganizationId!,
         clientId: opts.clientId,
-        search: cleanSearch,
+        search: opts.search ?? "",
       });
       return computeReceivablesSummary(rows);
     },
@@ -252,6 +293,12 @@ export function useSalesReceivablesSummary(opts: {
 // invoice_number pairs with two or more invoices are duplicates. Candidates
 // for the current page are looked up server-side in small batches (minimal
 // columns), so duplicates on other pages are found without a full-list load.
+//
+// The lookup is deliberately a *broad* net: a case-insensitive ilike substring
+// match per invoice number catches stored variants like " vf-001 " and "VF-001".
+// It is NOT an exact `.in(...)`. computeSalesDuplicateIds then applies the final
+// normalized (trim + lowercase) customer_name + invoice_number equality so any
+// over-matches (e.g. "VF-0011" when looking up "VF-001") are discarded.
 
 export const SALES_DUPLICATE_LOOKUP_BATCH_SIZE = 25;
 
@@ -289,11 +336,15 @@ export async function fetchSalesDuplicateCandidates(
   const out: SalesDuplicateCandidate[] = [];
   for (let i = 0; i < numbers.length; i += SALES_DUPLICATE_LOOKUP_BATCH_SIZE) {
     const batch = numbers.slice(i, i + SALES_DUPLICATE_LOOKUP_BATCH_SIZE);
+    // Case/whitespace-tolerant candidate net: one ilike substring per number.
+    const filter = batch
+      .map((num) => `invoice_number.ilike.${escapeIlikeValue(num)}`)
+      .join(",");
     let query: any = supabase
       .from("sales_invoices")
       .select("id, customer_name, invoice_number")
       .eq("organization_id", opts.organizationId)
-      .in("invoice_number", batch);
+      .or(filter);
     if (opts.clientId) query = query.eq("client_id", opts.clientId);
     const { data, error } = await query;
     if (error) throw error;

@@ -32,6 +32,7 @@ import {
   useUpdateSalesInvoice,
   useDeleteSalesInvoice,
   fetchAllSalesInvoices,
+  clampPage,
   SALES_INVOICES_PAGE_SIZE,
 } from "@/hooks/useSalesInvoices";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
@@ -202,6 +203,12 @@ export default function Verkoop() {
     if (firstFilterRun.current) { firstFilterRun.current = false; return; }
     setPage(1);
   }, [filterSignature]);
+
+  // If a deletion/mutation shrinks the result set below the current page,
+  // move to the last valid page instead of showing an empty page.
+  useEffect(() => {
+    setPage((p) => clampPage(p, totalPages));
+  }, [totalPages]);
   const addInvoice = useAddSalesInvoice();
   const updateInvoice = useUpdateSalesInvoice();
   const deleteInvoice = useDeleteSalesInvoice();
@@ -806,7 +813,9 @@ export default function Verkoop() {
         open={editOpen}
         onOpenChange={setEditOpen}
         allInvoices={pageInvoices ?? []}
-        knownDuplicate={editInvoice ? duplicateIds?.has(editInvoice.id) ?? false : false}
+        // undefined while the duplicate set is loading/failed → the dialog
+        // falls back to its own scan instead of being forced to "not duplicate".
+        knownDuplicate={editInvoice && duplicateIds ? duplicateIds.has(editInvoice.id) : undefined}
         onSave={async (id, updates) => {
           try {
             await updateInvoice.mutateAsync({ id, ...updates } as any);

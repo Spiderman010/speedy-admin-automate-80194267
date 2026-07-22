@@ -10,7 +10,10 @@ import {
   fetchSalesDuplicateCandidates,
   computeSalesDuplicateIds,
   computeReceivablesSummary,
-  salesSanitizeSearchTerm,
+  escapeIlikeValue,
+  buildIlikeOrFilter,
+  searchCacheKey,
+  clampPage,
   SALES_INVOICES_PAGE_SIZE,
   SALES_FETCH_BATCH_SIZE,
   SALES_DUPLICATE_LOOKUP_BATCH_SIZE,
@@ -122,9 +125,10 @@ describe("usePaginatedSalesInvoices", () => {
     expect(eqCalls).toContainEqual(["status", "concept"]);
 
     const orCall = callsFor("or")[0].args[0] as string;
-    expect(orCall).toContain("invoice_number.ilike.%F-2026%");
-    expect(orCall).toContain("customer_name.ilike.%F-2026%");
-    expect(orCall).toContain("status.ilike.%F-2026%");
+    // literal-safe, double-quoted ilike values
+    expect(orCall).toContain('invoice_number.ilike."%F-2026%"');
+    expect(orCall).toContain('customer_name.ilike."%F-2026%"');
+    expect(orCall).toContain('status.ilike."%F-2026%"');
 
     expect(callsFor("order")[0].args).toEqual(["amount_incl", { ascending: true, nullsFirst: false }]);
     expect(callsFor("order")[1].args).toEqual(["id", { ascending: true }]);
@@ -171,9 +175,9 @@ describe("duplicates across pages", () => {
     id: "s-page", customer_name: "Acme B.V.", invoice_number: "VF-001",
   };
 
-  it("detects a duplicate on another page", async () => {
+  it("detects a normalized duplicate on another page (whitespace + casing)", async () => {
     state.batchResponses = [
-      { data: [pageInv, { id: "s-elders", customer_name: "acme b.v. ", invoice_number: " VF-001" }], error: null },
+      { data: [pageInv, { id: "s-elders", customer_name: "acme b.v. ", invoice_number: " vf-001 " }], error: null },
     ];
     const candidates = await fetchSalesDuplicateCandidates([pageInv], { organizationId: "org-1" });
     const ids = computeSalesDuplicateIds(candidates);
@@ -181,7 +185,33 @@ describe("duplicates across pages", () => {
     expect(ids.has("s-elders")).toBe(true);
   });
 
-  it("queries minimal columns in batches of 25", async () => {
+  it("uses a case-insensitive ilike net (not exact .in) and org/client scoping, minimal columns", async () => {
+    state.batchResponses = [{ data: [], error: null }];
+    await fetchSalesDuplicateCandidates([pageInv], { organizationId: "org-1", clientId: "client-1" });
+
+    // no exact .in on invoice_number — it would miss " vf-001 " / casing
+    expect(callsFor("in").some(c => c.args[0] === "invoice_number")).toBe(false);
+    // minimal columns
+    expect(callsFor("select")[0].args[0]).toBe("id, customer_name, invoice_number");
+    // org + client scoping preserved
+    const eqCalls = callsFor("eq").map(c => c.args);
+    expect(eqCalls).toContainEqual(["organization_id", "org-1"]);
+    expect(eqCalls).toContainEqual(["client_id", "client-1"]);
+    // ilike or() net for the page's number
+    const orArg = callsFor("or")[0].args[0] as string;
+    expect(orArg).toContain('invoice_number.ilike."%VF-001%"');
+  });
+
+  it("discards over-matches via the final normalized check (VF-0011 ≠ VF-001)", () => {
+    // the broad ilike net may return VF-0011; the exact normalized compare drops it
+    const ids = computeSalesDuplicateIds([
+      { id: "a", customer_name: "Acme", invoice_number: "VF-001" },
+      { id: "b", customer_name: "Acme", invoice_number: "VF-0011" },
+    ]);
+    expect(ids.size).toBe(0);
+  });
+
+  it("splits large pages into ilike batches of 25", async () => {
     const many = Array.from({ length: SALES_DUPLICATE_LOOKUP_BATCH_SIZE + 3 }, (_, i) => ({
       id: `s-${i}`, customer_name: "K", invoice_number: `VF-${i}`,
     }));
@@ -191,10 +221,10 @@ describe("duplicates across pages", () => {
     ];
     await fetchSalesDuplicateCandidates(many, { organizationId: "org-1" });
 
-    expect(callsFor("select")[0].args[0]).toBe("id, customer_name, invoice_number");
-    const numberBatches = callsFor("in").filter(c => c.args[0] === "invoice_number");
-    expect(numberBatches).toHaveLength(2);
-    expect((numberBatches[0].args[1] as string[]).length).toBe(SALES_DUPLICATE_LOOKUP_BATCH_SIZE);
+    const orCalls = callsFor("or");
+    expect(orCalls).toHaveLength(2);
+    // first batch packs 25 ilike terms
+    expect((orCalls[0].args[0] as string).split("invoice_number.ilike.").length - 1).toBe(SALES_DUPLICATE_LOOKUP_BATCH_SIZE);
   });
 });
 
@@ -214,10 +244,81 @@ describe("computeReceivablesSummary", () => {
   });
 });
 
-describe("helpers", () => {
-  it("salesSanitizeSearchTerm strips or()-breakers and escapes wildcards", () => {
-    expect(salesSanitizeSearchTerm(" A,B (C) ")).toBe("A B C");
-    expect(salesSanitizeSearchTerm("100%_x")).toBe("100\\%\\_x");
+describe("literal search escaping", () => {
+  it("preserves apostrophes literally (O'Reilly)", () => {
+    expect(escapeIlikeValue("O'Reilly")).toBe('"%O\'Reilly%"');
+    expect(buildIlikeOrFilter(["customer_name"], "O'Reilly")).toBe('customer_name.ilike."%O\'Reilly%"');
+  });
+
+  it("preserves commas by quoting (ACME, BV)", () => {
+    expect(escapeIlikeValue("ACME, BV")).toBe('"%ACME, BV%"');
+    const filter = buildIlikeOrFilter(["invoice_number", "customer_name"], "ACME, BV");
+    expect(filter).toBe('invoice_number.ilike."%ACME, BV%",customer_name.ilike."%ACME, BV%"');
+  });
+
+  it("preserves parentheses literally", () => {
+    expect(escapeIlikeValue("(net)")).toBe('"%(net)%"');
+  });
+
+  it("escapes LIKE wildcards % and _ so they match literally", () => {
+    expect(escapeIlikeValue("50%")).toBe('"%50\\%%"');
+    expect(escapeIlikeValue("a_b")).toBe('"%a\\_b%"');
+  });
+
+  it("escapes embedded backslashes and double quotes", () => {
+    expect(escapeIlikeValue('a\\b"c')).toBe('"%a\\\\b\\"c%"');
+  });
+
+  it("returns an empty filter for blank input", () => {
+    expect(buildIlikeOrFilter(["customer_name"], "   ")).toBe("");
+  });
+
+  it("searchCacheKey trims and collapses whitespace but keeps punctuation", () => {
+    expect(searchCacheKey("  ACME,  BV  ")).toBe("ACME, BV");
+    expect(searchCacheKey("O'Reilly (x)")).toBe("O'Reilly (x)");
+  });
+});
+
+describe("clampPage", () => {
+  it("keeps a valid page unchanged", () => {
+    expect(clampPage(2, 5)).toBe(2);
+  });
+
+  it("moves to the final page when the count shrinks (delete only row on last page)", () => {
+    // was on page 3 (rows 101–150); the only row there is deleted → 100 rows → 2 pages
+    const totalPagesAfterDelete = Math.max(1, Math.ceil(100 / SALES_INVOICES_PAGE_SIZE));
+    expect(clampPage(3, totalPagesAfterDelete)).toBe(2);
+  });
+
+  it("never goes below 1", () => {
+    expect(clampPage(3, 0)).toBe(1);
+    expect(clampPage(0, 5)).toBe(1);
+  });
+});
+
+describe("useSalesInvoices gating (Bank consumer)", () => {
+  it("does not query when disabled (empty selection)", async () => {
+    const { useSalesInvoices } = await import("@/hooks/useSalesInvoices");
+    const { result } = renderHook(
+      () => useSalesInvoices({ enabled: false }),
+      { wrapper: createWrapper() },
+    );
+    // give react-query a tick; the query must stay idle
+    await new Promise(r => setTimeout(r, 10));
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(callsFor("range")).toHaveLength(0);
+  });
+
+  it("returns no rows for an empty client subset without querying", async () => {
+    const rows = await fetchAllSalesInvoices({ organizationId: "org-1", clientIds: [] });
+    expect(rows).toEqual([]);
+    expect(callsFor("range")).toHaveLength(0);
+  });
+
+  it("scopes to a client subset server-side via .in(client_id)", async () => {
+    state.batchResponses = [{ data: [], error: null }];
+    await fetchAllSalesInvoices({ organizationId: "org-1", clientIds: ["c1", "c2"] });
+    expect(callsFor("in").map(c => c.args)).toContainEqual(["client_id", ["c1", "c2"]]);
   });
 });
 
@@ -250,5 +351,23 @@ describe("Verkoop overview source guarantees", () => {
   it("shows no page-scoped chip counts", () => {
     expect(source).not.toContain("forPaymentCounts");
     expect(source).not.toContain("forWorkflowCounts");
+  });
+
+  it("clamps the page when the total shrinks", () => {
+    expect(source).toContain("clampPage(p, totalPages)");
+  });
+
+  it("does not force knownDuplicate=false while the duplicate set is loading", () => {
+    // must pass undefined (not false) when duplicateIds is not yet available
+    expect(source).toContain("editInvoice && duplicateIds ? duplicateIds.has(editInvoice.id) : undefined");
+  });
+});
+
+describe("Bank consumer source guarantee", () => {
+  const source = readFileSync(resolve(process.cwd(), "src/pages/Bank.tsx"), "utf-8");
+  it("gates useSalesInvoices on selection with client scoping", () => {
+    expect(source).toMatch(/useSalesInvoices\(\{[\s\S]*?clientId: singleClientId,[\s\S]*?clientIds: singleClientId \? undefined : clientIdsForQuery,[\s\S]*?enabled: orgEnabled && hasSelection,[\s\S]*?\}\)/);
+    // no bare unbounded call remains
+    expect(source).not.toContain("useSalesInvoices();");
   });
 });

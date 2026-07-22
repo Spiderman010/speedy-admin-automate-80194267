@@ -262,7 +262,14 @@ export default function Bank() {
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
   });
-  const { data: salesInvs, refetch: refetchSales } = useSalesInvoices();
+  // Gate the whole-dataset sales fetch the same way as bank transactions:
+  // empty selection ⇒ no query; subset ⇒ server-scoped; all-mode ⇒ only after
+  // an explicit "all clients" selection.
+  const { data: salesInvs, refetch: refetchSales } = useSalesInvoices({
+    clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
+    enabled: orgEnabled && hasSelection,
+  });
   const addTx = useAddBankTransaction();
   const updateTx = useUpdateBankTransaction();
   const updatePurchase = useUpdatePurchaseInvoice();
