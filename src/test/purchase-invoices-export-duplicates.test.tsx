@@ -5,8 +5,10 @@ import {
   fetchAllExportablePurchaseInvoices,
   fetchPurchaseInvoiceDuplicateCandidates,
   computeDuplicateIds,
+  markPurchaseInvoicesExported,
   EXPORT_BATCH_SIZE,
   DUPLICATE_LOOKUP_BATCH_SIZE,
+  STATUS_UPDATE_BATCH_SIZE,
   type DuplicateCandidate,
 } from "@/hooks/usePurchaseInvoices";
 
@@ -26,6 +28,7 @@ function makeQueryMock() {
       return query;
     });
   query.select = chain("select");
+  query.update = chain("update");
   query.eq = chain("eq");
   query.in = chain("in");
   query.order = chain("order");
@@ -156,6 +159,90 @@ describe("duplicate detection across pages", () => {
     const withBtw = { ...pageInvoice, supplier_btw_number: "NL111111111B11" };
     const ids = computeDuplicateIds([withBtw, other]);
     expect(ids.size).toBe(0);
+  });
+});
+
+describe("markPurchaseInvoicesExported", () => {
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `id-${i}`);
+
+  it("updates 2300 invoices in batched requests, not 2300 requests", async () => {
+    await markPurchaseInvoicesExported({ organizationId: "org-1", invoiceIds: ids(2300) });
+
+    const expectedBatches = Math.ceil(2300 / STATUS_UPDATE_BATCH_SIZE);
+    const updateCalls = callsFor("update");
+    expect(updateCalls).toHaveLength(expectedBatches);
+    expect(updateCalls.length).toBeLessThan(20);
+    updateCalls.forEach(c => expect(c.args[0]).toEqual({ status: "geexporteerd" }));
+
+    const idBatches = callsFor("in").filter(c => c.args[0] === "id");
+    expect(idBatches).toHaveLength(expectedBatches);
+    const sizes = idBatches.map(c => (c.args[1] as string[]).length);
+    // all full batches except the remainder, batch size within the safe range
+    expect(STATUS_UPDATE_BATCH_SIZE).toBeGreaterThanOrEqual(100);
+    expect(STATUS_UPDATE_BATCH_SIZE).toBeLessThanOrEqual(200);
+    sizes.slice(0, -1).forEach(s => expect(s).toBe(STATUS_UPDATE_BATCH_SIZE));
+    expect(sizes[sizes.length - 1]).toBe(2300 % STATUS_UPDATE_BATCH_SIZE || STATUS_UPDATE_BATCH_SIZE);
+    expect(sizes.reduce((a, b) => a + b, 0)).toBe(2300);
+  });
+
+  it("scopes every update batch to the organization", async () => {
+    await markPurchaseInvoicesExported({ organizationId: "org-1", invoiceIds: ids(400) });
+
+    const expectedBatches = Math.ceil(400 / STATUS_UPDATE_BATCH_SIZE);
+    const orgScopes = callsFor("eq").filter(
+      c => c.args[0] === "organization_id" && c.args[1] === "org-1",
+    );
+    expect(orgScopes).toHaveLength(expectedBatches);
+  });
+
+  it("refuses to run without an organizationId and performs no requests", async () => {
+    await expect(
+      markPurchaseInvoicesExported({ organizationId: "", invoiceIds: ids(3) }),
+    ).rejects.toThrow(/organisatie/i);
+    expect(callsFor("update")).toHaveLength(0);
+  });
+
+  it("rejects when a batch fails so callers cannot report success early", async () => {
+    state.responses = [
+      { data: [], error: null },
+      { data: [], error: { message: "rls denied" } },
+    ];
+    await expect(
+      markPurchaseInvoicesExported({
+        organizationId: "org-1",
+        invoiceIds: ids(STATUS_UPDATE_BATCH_SIZE + 1),
+      }),
+    ).rejects.toMatchObject({ message: "rls denied" });
+  });
+});
+
+describe("export completion flow source guarantees", () => {
+  const source = readFileSync(
+    resolve(process.cwd(), "src/pages/Facturen.tsx"),
+    "utf-8",
+  );
+  const handler = source.slice(
+    source.indexOf("Export Snelstart") - 3000,
+    source.indexOf("Export Snelstart"),
+  );
+
+  it("aborts before fetching when no organization is active", () => {
+    const guardIdx = handler.indexOf("if (!activeOrganizationId)");
+    const fetchIdx = handler.indexOf("fetchAllExportablePurchaseInvoices");
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(fetchIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(fetchIdx);
+  });
+
+  it("awaits all status batches before the success toast and invalidates once", () => {
+    const awaitIdx = handler.indexOf("await markPurchaseInvoicesExported");
+    const successToastIdx = handler.indexOf("geëxporteerd voor Snelstart");
+    expect(awaitIdx).toBeGreaterThan(-1);
+    expect(successToastIdx).toBeGreaterThan(awaitIdx);
+    // no fire-and-forget per-invoice updates remain
+    expect(source).not.toContain('ids.forEach(id => updateInvoice.mutateAsync');
+    // partial-failure message exists for the CSV-downloaded-but-update-failed case
+    expect(handler).toContain("CSV gedownload, maar status bijwerken mislukt");
   });
 });
 

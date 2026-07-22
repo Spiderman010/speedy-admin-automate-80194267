@@ -21,6 +21,7 @@ import {
   useUpdatePurchaseInvoice,
   useDeletePurchaseInvoice,
   fetchAllExportablePurchaseInvoices,
+  markPurchaseInvoicesExported,
   PURCHASE_INVOICES_PAGE_SIZE,
 } from "@/hooks/usePurchaseInvoices";
 import { useVraagposten } from "@/hooks/useVraagposten";
@@ -489,17 +490,32 @@ export default function Facturen() {
         </Select>
         <Button variant="outline" disabled={exporting} onClick={async () => {
           if (exporting) return;
+          if (!activeOrganizationId) {
+            toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
+            return;
+          }
           setExporting(true);
           try {
             const exportable = await fetchAllExportablePurchaseInvoices({
-              organizationId: activeOrganizationId ?? undefined,
+              organizationId: activeOrganizationId,
               clientId: clientFilter !== "all" ? clientFilter : undefined,
             });
             if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
             const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
             const ids = exportPurchaseInvoicesCSV(exportable, clientName);
-            ids.forEach(id => updateInvoice.mutateAsync({ id, status: "geexporteerd" }));
-            toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
+            try {
+              await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, invoiceIds: ids });
+              queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
+              toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
+            } catch (statusErr: any) {
+              // CSV is already downloaded; earlier batches may be committed.
+              queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
+              toast({
+                title: "CSV gedownload, maar status bijwerken mislukt",
+                description: `Mogelijk staan niet alle facturen op 'geëxporteerd'. Probeer opnieuw of controleer de lijst. (${statusErr?.message ?? "onbekende fout"})`,
+                variant: "destructive",
+              });
+            }
           } catch (e: any) {
             toast({ title: "Export mislukt", description: e?.message, variant: "destructive" });
           } finally {

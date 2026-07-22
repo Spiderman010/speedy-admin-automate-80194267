@@ -141,6 +141,31 @@ export async function fetchAllExportablePurchaseInvoices(opts: {
   }
 }
 
+export const STATUS_UPDATE_BATCH_SIZE = 150;
+
+// Marks exported invoices in safe ID chunks. Every update is scoped to the
+// organization; the caller must invalidate ["purchase_invoices"] once after
+// this resolves. Throws on the first failed batch (earlier batches are
+// already committed — surface a partial-failure message, not success).
+export async function markPurchaseInvoicesExported(opts: {
+  organizationId: string;
+  invoiceIds: readonly string[];
+}): Promise<void> {
+  const { organizationId, invoiceIds } = opts;
+  if (!organizationId) {
+    throw new Error("Geen actieve organisatie: export-status kan niet worden bijgewerkt");
+  }
+  for (let i = 0; i < invoiceIds.length; i += STATUS_UPDATE_BATCH_SIZE) {
+    const batch = invoiceIds.slice(i, i + STATUS_UPDATE_BATCH_SIZE);
+    const { error } = await supabase
+      .from("purchase_invoices")
+      .update({ status: "geexporteerd" })
+      .eq("organization_id", organizationId)
+      .in("id", batch);
+    if (error) throw error;
+  }
+}
+
 export const DUPLICATE_LOOKUP_BATCH_SIZE = 25;
 
 export type DuplicateCandidate = Pick<
