@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp, Landmark } from "lucide-react";
+import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Landmark } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,7 +36,14 @@ import { Input } from "@/components/ui/input";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
 import { ClientMultiSelect, type ClientMultiSelectValue } from "@/components/ClientMultiSelect";
 import { useToast } from "@/hooks/use-toast";
-import { useBankTransactions, useAddBankTransaction, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
+import {
+  useBankTransactions,
+  usePaginatedBankTransactions,
+  useAddBankTransaction,
+  useUpdateBankTransaction,
+  isServerFilterableBankStatus,
+  BANK_TRANSACTIONS_PAGE_SIZE,
+} from "@/hooks/useBankTransactions";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
 import { exportBankTransactionsCSV, resolveBankExportGrootboek } from "@/lib/snelstart-export";
@@ -147,8 +154,15 @@ export default function Bank() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [vraagpostFilter, setVraagpostFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
   const [confidenceFilter, setConfidenceFilter] = useState<"all" | "high" | "medium" | "low" | "none">("all");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [matchTx, setMatchTx] = useState<Tables<"bank_transactions"> | null>(null);
@@ -722,6 +736,52 @@ export default function Bank() {
   }, [transactions, statusFilter, confidenceFilter, vraagpostFilter, vraagpostByBankTransactionId, searchQuery, sortField, sortDir, grootboekrekeningen]);
 
   const openTransactions = filteredSorted.filter((t) => isOpenTransactionStatus(t.match_status));
+
+  // Derived filters (blokkeert_export / niet_in_bankexport, confidence,
+  // vraagpost) depend on computed values PostgREST cannot express, so those
+  // views paginate the whole in-memory set client-side. Everything else uses
+  // the server-paginated query below.
+  const computedFilterActive =
+    !isServerFilterableBankStatus(statusFilter) ||
+    (statusFilter === "open" && confidenceFilter !== "all") ||
+    vraagpostFilter !== "all";
+
+  const {
+    data: pagedData,
+    isFetching: isPageFetching,
+    isError: isPageError,
+    refetch: refetchPage,
+  } = usePaginatedBankTransactions({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
+    enabled: orgEnabled && hasSelection && !computedFilterActive,
+    page,
+    search: debouncedSearch,
+    status: statusFilter,
+    sortField,
+    sortDir,
+  });
+
+  // Table rows + total: server page for simple filters, client-paginated whole
+  // set for computed filters.
+  const tableRows = computedFilterActive
+    ? filteredSorted.slice((page - 1) * BANK_TRANSACTIONS_PAGE_SIZE, page * BANK_TRANSACTIONS_PAGE_SIZE)
+    : (pagedData?.transactions ?? []);
+  const tableTotal = computedFilterActive ? filteredSorted.length : (pagedData?.total ?? 0);
+  const totalPages = Math.max(1, Math.ceil(tableTotal / BANK_TRANSACTIONS_PAGE_SIZE));
+
+  // Reset to page 1 when filters, search, sorting or client selection change
+  // (not on mount).
+  const filterSignature = JSON.stringify([
+    debouncedSearch, statusFilter, confidenceFilter, vraagpostFilter, sortField, sortDir,
+    clientSelection.allMode, [...subsetIdSet].sort(), activeOrganizationId,
+  ]);
+  const firstFilterRun = useRef(true);
+  useEffect(() => {
+    if (firstFilterRun.current) { firstFilterRun.current = false; return; }
+    setPage(1);
+  }, [filterSignature]);
 
   const handleConfirm = useCallback(async (id: string) => {
     try {
@@ -1666,10 +1726,10 @@ export default function Bank() {
   };
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === filteredSorted.length) {
+    if (tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredSorted.map(t => t.id)));
+      setSelectedIds(new Set(tableRows.map(t => t.id)));
     }
   };
 
@@ -1992,9 +2052,14 @@ export default function Bank() {
         <CardContent className="overflow-x-auto p-6">
           {isLoading ? (
             <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : !filteredSorted.length ? (
+          ) : isPageError ? (
+            <div className="py-12 text-center text-muted-foreground space-y-3">
+              <p className="text-destructive">Banktransacties laden mislukt.</p>
+              <Button variant="outline" size="sm" onClick={() => refetchPage()}>Opnieuw proberen</Button>
+            </div>
+          ) : !tableRows.length ? (
             <div className="py-12 text-center text-muted-foreground">
-              {transactions?.length ? "Geen transacties gevonden met deze filters." : "Nog geen transacties. Upload een bankafschrift om te beginnen."}
+              {tableTotal || transactions?.length ? "Geen transacties gevonden met deze filters." : "Nog geen transacties. Upload een bankafschrift om te beginnen."}
             </div>
           ) : (
             <Table>
@@ -2002,7 +2067,7 @@ export default function Bank() {
                 <TableRow>
                   <TableHead className="w-10">
                     <Checkbox
-                      checked={filteredSorted.length > 0 && selectedIds.size === filteredSorted.length}
+                      checked={tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))}
                       onCheckedChange={toggleSelectAll}
                     />
                   </TableHead>
@@ -2016,7 +2081,7 @@ export default function Bank() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredSorted.map((t) => {
+                {tableRows.map((t) => {
                   const isOpen = isOpenTransactionStatus(t.match_status);
                   const isSuggestion = suggestionIds.has(t.id);
                   const txAbsAmt = Math.abs(t.amount);
@@ -2370,6 +2435,24 @@ export default function Bank() {
                 })}
               </TableBody>
             </Table>
+          )}
+          {!isLoading && !isPageError && tableTotal > 0 && (
+            <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
+              <span className="text-sm text-muted-foreground">
+                {(page - 1) * BANK_TRANSACTIONS_PAGE_SIZE + 1}–{Math.min(page * BANK_TRANSACTIONS_PAGE_SIZE, tableTotal)} van {tableTotal} transacties
+                {computedFilterActive ? " · afgeleide filter binnen huidige selectie" : ""}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page === 1 || isPageFetching}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}>
+                  <ChevronLeft className="h-4 w-4 mr-1" />Vorige
+                </Button>
+                <Button variant="outline" size="sm" disabled={page >= totalPages || isPageFetching}
+                  onClick={() => setPage(p => p + 1)}>
+                  Volgende<ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
