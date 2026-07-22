@@ -1,7 +1,7 @@
 export function FilterChip({
   label, active, count, onClick, activeClassName,
 }: {
-  label: string; active: boolean; count: number;
+  label: string; active: boolean; count?: number;
   onClick: () => void; activeClassName?: string;
 }) {
   return (
@@ -15,9 +15,11 @@ export function FilterChip({
       }`}
     >
       {label}
-      <span className={`rounded-full px-1.5 text-[10px] font-semibold leading-tight ${active ? "bg-black/15" : "bg-muted"}`}>
-        {count}
-      </span>
+      {count !== undefined && (
+        <span className={`rounded-full px-1.5 text-[10px] font-semibold leading-tight ${active ? "bg-black/15" : "bg-muted"}`}>
+          {count}
+        </span>
+      )}
     </button>
   );
 }
