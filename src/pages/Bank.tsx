@@ -265,11 +265,22 @@ export default function Bank() {
   // Gate the whole-dataset sales fetch the same way as bank transactions:
   // empty selection ⇒ no query; subset ⇒ server-scoped; all-mode ⇒ only after
   // an explicit "all clients" selection.
-  const { data: salesInvs, refetch: refetchSales } = useSalesInvoices({
+  const {
+    data: salesInvs,
+    isLoading: salesLoading,
+    isError: salesError,
+    refetch: refetchSales,
+  } = useSalesInvoices({
     clientId: singleClientId,
     clientIds: singleClientId ? undefined : clientIdsForQuery,
     enabled: orgEnabled && hasSelection,
   });
+  // Sales invoices are "ready" only on a successful load. An error must NOT be
+  // treated as an empty successful result (which would silently hide matches).
+  const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;
+  // Invoice-dependent matching / reconciliation / afletter-report actions need
+  // BOTH the bank transactions and the sales invoices successfully loaded.
+  const matchingReady = wholeSetReady && salesReady;
   const addTx = useAddBankTransaction();
   const updateTx = useUpdateBankTransaction();
   const updatePurchase = useUpdatePurchaseInvoice();
@@ -1797,7 +1808,7 @@ export default function Bank() {
         }}>
           <Download className="mr-2 h-4 w-4" />Export Snelstart
         </Button>
-        <Button variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
+        <Button variant="outline" disabled={!hasSelection || !matchingReady} onClick={() => {
           const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
           const rowCount = exportAfletterrapportCSV(
             allAllocations ?? [],
@@ -1822,7 +1833,7 @@ export default function Bank() {
         <Button
           variant="default"
           onClick={() => setVerwerkingOpen(true)}
-          disabled={!hasSelection || !wholeSetReady || openCount === 0}
+          disabled={!hasSelection || !matchingReady || openCount === 0}
         >
           <Zap className="mr-2 h-4 w-4" />
           Verwerken {openCount > 0 && `(${openCount})`}
@@ -1855,13 +1866,23 @@ export default function Bank() {
         </Card>
       ) : (
       <>
-      {wholeSetError && (
+      {(wholeSetError || salesError) && (
         <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 flex items-center gap-3">
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
           <p className="text-sm text-destructive flex-1">
-            Bankgegevens voor matching, statistieken en export laden mislukt.
+            {wholeSetError && salesError
+              ? "Bank- en verkoopgegevens voor matching, statistieken en export laden mislukt."
+              : wholeSetError
+                ? "Bankgegevens voor matching, statistieken en export laden mislukt."
+                : "Verkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."}
           </p>
-          <Button variant="outline" size="sm" onClick={() => refetchWholeSet()}>Opnieuw laden</Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { if (wholeSetError) refetchWholeSet(); if (salesError) refetchSales(); }}
+          >
+            Opnieuw laden
+          </Button>
         </div>
       )}
       <div className="grid gap-4 sm:grid-cols-4 mb-6">
@@ -1883,7 +1904,7 @@ export default function Bank() {
         </CardContent></Card>
       </div>
 
-      {wholeSetReady && (autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0 || (lastBatch && lastBatch.length > 0)) && (
+      {matchingReady && (autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0 || (lastBatch && lastBatch.length > 0)) && (
         <div className="mb-4 rounded-lg border border-primary/40 bg-primary/5 p-4 flex flex-wrap items-center gap-3">
           <Zap className="h-5 w-5 text-primary shrink-0" />
           <div className="flex-1 min-w-[200px]">

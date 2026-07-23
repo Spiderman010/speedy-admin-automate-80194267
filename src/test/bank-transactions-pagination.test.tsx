@@ -239,11 +239,13 @@ describe("Bank overview source guarantees", () => {
     expect(source).toContain('{wholeSetReady ? matched : "–"}');
     expect(source).toContain('{wholeSetReady ? suggested : "–"}');
     expect(source).toContain('{wholeSetReady ? unmatched : "–"}');
-    // auto-scan banner gated
-    expect(source).toContain("{wholeSetReady && (autoScanPreview.autoConfirm > 0");
-    // export, afletterrapport and verwerken buttons disabled until ready
-    const disabledGates = source.match(/disabled=\{!hasSelection \|\| !wholeSetReady/g) ?? [];
-    expect(disabledGates.length).toBeGreaterThanOrEqual(3);
+    // auto-scan banner is invoice-dependent → gated on both datasets ready
+    expect(source).toContain("{matchingReady && (autoScanPreview.autoConfirm > 0");
+    // bank-only export stays on wholeSetReady …
+    expect(source).toContain("disabled={!hasSelection || !wholeSetReady}"); // Export Snelstart
+    // … while invoice-dependent afletter report + verwerken require both datasets
+    expect(source).toContain("disabled={!hasSelection || !matchingReady}"); // Afletterrapport CSV
+    expect(source).toContain("disabled={!hasSelection || !matchingReady || openCount === 0}"); // Verwerken
   });
 
   it("never shows 'Geen bankblokkades' while the whole dataset is loading or failed", () => {
@@ -259,8 +261,8 @@ describe("Bank overview source guarantees", () => {
     expect(loadingGuardIdx).toBeLessThan(greenIdx);
     // loading state shown instead
     expect(source).toContain("Bankblokkades controleren…");
-    // whole-set failure surfaces a retry
+    // whole-set failure surfaces a retry (banner now also covers sales errors)
     expect(source).toContain("Bankgegevens voor matching, statistieken en export laden mislukt.");
-    expect(source).toMatch(/onClick=\{\(\) => refetchWholeSet\(\)\}/);
+    expect(source).toContain("if (wholeSetError) refetchWholeSet();");
   });
 });

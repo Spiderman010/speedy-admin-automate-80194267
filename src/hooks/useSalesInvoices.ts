@@ -11,19 +11,32 @@ export const SALES_INVOICES_PAGE_SIZE = 50;
 export const SALES_FETCH_BATCH_SIZE = 1000;
 
 // Escape a term so it matches literally inside a PostgREST .or() ilike filter,
-// WITHOUT dropping any of the user's characters:
-//  - `\`, `%`, `_` are escaped so LIKE treats them as literals;
-//  - the value is wrapped in double quotes so PostgREST reserved characters
-//    (`,` `.` `:` `(` `)`) are preserved literally instead of parsed as syntax;
-//  - `"` inside the value is backslash-escaped.
-// Apostrophes and other punctuation pass through unchanged.
+// surviving BOTH parsing layers, WITHOUT dropping any user character.
+//
+// The value passes through two parsers in sequence:
+//   1. PostgREST double-quoted-value parser — strips the wrapping quotes and
+//      treats `\` as an escape char (so `\X` → `X`); this is why the value is
+//      wrapped in quotes (to keep `,` `.` `:` `(` `)` literal) and why every
+//      backslash we want to survive must be doubled here.
+//   2. PostgreSQL LIKE/ILIKE — treats `%` `_` as wildcards and `\` as its
+//      escape char, so a literal `%`/`_`/`\` must reach LIKE as `\%`/`\_`/`\\`.
+//
+// So we escape in two stages: first make %, _, \ literal for LIKE, then escape
+// `\` and `"` for the PostgREST quote parser. Example: `%` → LIKE `\%` →
+// PostgREST `\\%` → wrapped `"%\\%%"`. Apostrophes and other punctuation pass
+// through unchanged.
 export function escapeIlikeValue(term: string): string {
+  // Stage 1 — PostgreSQL LIKE literal escaping (backslash first).
   const likeEscaped = term
     .replace(/\\/g, "\\\\")
     .replace(/%/g, "\\%")
-    .replace(/_/g, "\\_")
+    .replace(/_/g, "\\_");
+  const pattern = `%${likeEscaped}%`;
+  // Stage 2 — PostgREST double-quoted-value escaping.
+  const quoteEscaped = pattern
+    .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"');
-  return `"%${likeEscaped}%"`;
+  return `"${quoteEscaped}"`;
 }
 
 // Build a PostgREST or() argument that matches `term` as a literal substring
@@ -150,6 +163,7 @@ export async function fetchAllSalesInvoices(opts: {
   clientId?: string;
   clientIds?: string[];
   statuses?: readonly string[];
+  search?: string;
 }): Promise<SalesInvoice[]> {
   if (!opts.organizationId) {
     throw new Error("Geen actieve organisatie: verkoopfacturen kunnen niet worden geladen");
@@ -164,6 +178,7 @@ export async function fetchAllSalesInvoices(opts: {
     if (opts.clientId) query = query.eq("client_id", opts.clientId);
     if (opts.clientIds) query = query.in("client_id", opts.clientIds);
     if (opts.statuses) query = query.in("status", [...opts.statuses]);
+    query = applySearch(query, opts.search ?? "");
     const { data, error } = await query
       .order("invoice_date", { ascending: false })
       .order("id", { ascending: true })
@@ -173,6 +188,71 @@ export async function fetchAllSalesInvoices(opts: {
     all.push(...batch);
     if (batch.length < SALES_FETCH_BATCH_SIZE) return all;
   }
+}
+
+// ── Payment-status filtering (whole-set) ────────────────────────────────────
+// "Betaald" / "Deels betaald" / "Open" depend on remaining_amount vs total — a
+// column-to-column comparison PostgREST cannot express as a server filter. To
+// keep page rows and the pager total correct, we fetch the whole scoped set
+// (org/client/status/search applied server-side, batched, correct beyond 1000
+// rows) and filter/sort/paginate it in memory. Only used while a payment filter
+// is active; the plain "all" path stays on the efficient server-paginated query.
+
+export type SalesPaymentFilter = "all" | "paid" | "partial" | "open";
+
+export function salesInvoicePaymentState(inv: {
+  status: string | null;
+  amount_excl: number | null;
+  amount_incl: number | null;
+  remaining_amount?: number | null;
+}): "paid" | "partial" | "open" {
+  if (inv.status === "betaald") return "paid";
+  const total = inv.amount_incl ?? inv.amount_excl ?? null;
+  const remaining = inv.remaining_amount ?? total;
+  if (remaining === 0) return "paid";
+  if (total != null && remaining != null && remaining > 0 && remaining < total) return "partial";
+  return "open";
+}
+
+export function matchesSalesPaymentFilter(
+  inv: Parameters<typeof salesInvoicePaymentState>[0],
+  filter: SalesPaymentFilter,
+): boolean {
+  if (filter === "all") return true;
+  return salesInvoicePaymentState(inv) === filter;
+}
+
+// Whole scoped set for the payment-filter path. Query key excludes page/payment
+// /sort so paging and filter toggles don't refetch; the caller filters, sorts
+// and slices in memory.
+export function useScopedSalesInvoices(opts: {
+  clientId?: string;
+  status?: string;
+  search?: string;
+  enabled?: boolean;
+}) {
+  const { user } = useAuth();
+  const { activeOrganizationId } = useActiveOrganization();
+  const searchKey = searchCacheKey(opts.search ?? "");
+  const status = opts.status ?? "all";
+  return useQuery<SalesInvoice[]>({
+    queryKey: [
+      "sales_invoices",
+      "scoped",
+      activeOrganizationId ?? "none",
+      opts.clientId ?? "all",
+      status,
+      searchKey,
+    ],
+    queryFn: () =>
+      fetchAllSalesInvoices({
+        organizationId: activeOrganizationId!,
+        clientId: opts.clientId,
+        statuses: status !== "all" ? [status] : undefined,
+        search: opts.search ?? "",
+      }),
+    enabled: !!user && !!activeOrganizationId && (opts.enabled ?? true),
+  });
 }
 
 export interface UseSalesInvoicesOptions {
@@ -215,19 +295,10 @@ export interface ReceivablesSummary {
   totalInvoices: number;
 }
 
-function paymentStateOf(inv: ReceivableRow): "paid" | "partial" | "open" {
-  if (inv.status === "betaald") return "paid";
-  const total = inv.amount_incl ?? inv.amount_excl ?? null;
-  const remaining = inv.remaining_amount ?? total;
-  if (remaining === 0) return "paid";
-  if (total != null && remaining != null && remaining > 0 && remaining < total) return "partial";
-  return "open";
-}
-
 export function computeReceivablesSummary(rows: readonly ReceivableRow[]): ReceivablesSummary {
   let openTotal = 0, countOpen = 0, countPartial = 0, countPaid = 0;
   for (const inv of rows) {
-    const state = paymentStateOf(inv);
+    const state = salesInvoicePaymentState(inv);
     const total = inv.amount_incl ?? inv.amount_excl ?? 0;
     const remaining = inv.remaining_amount ?? total;
     if (state === "paid") countPaid++;
@@ -304,6 +375,7 @@ export function useSalesReceivablesSummary(opts: {
 // over-matches (e.g. "VF-0011" when looking up "VF-001") are discarded.
 
 export const SALES_DUPLICATE_LOOKUP_BATCH_SIZE = 25;
+export const SALES_DUPLICATE_ROW_BATCH_SIZE = 1000;
 
 export type SalesDuplicateCandidate = Pick<SalesInvoice, "id" | "customer_name" | "invoice_number">;
 
@@ -343,15 +415,25 @@ export async function fetchSalesDuplicateCandidates(
     const filter = batch
       .map((num) => `invoice_number.ilike.${escapeIlikeValue(num)}`)
       .join(",");
-    let query: any = supabase
-      .from("sales_invoices")
-      .select("id, customer_name, invoice_number")
-      .eq("organization_id", opts.organizationId)
-      .or(filter);
-    if (opts.clientId) query = query.eq("client_id", opts.clientId);
-    const { data, error } = await query;
-    if (error) throw error;
-    out.push(...((data ?? []) as SalesDuplicateCandidate[]));
+    // The broad ilike net can match more than PostgREST's max-rows cap, and the
+    // real duplicate may sit beyond the first page — so page through every
+    // matching row (ordered by id) until the batch is exhausted. Never rely on
+    // a single unbounded request that could silently truncate.
+    for (let offset = 0; ; offset += SALES_DUPLICATE_ROW_BATCH_SIZE) {
+      let query: any = supabase
+        .from("sales_invoices")
+        .select("id, customer_name, invoice_number")
+        .eq("organization_id", opts.organizationId)
+        .or(filter);
+      if (opts.clientId) query = query.eq("client_id", opts.clientId);
+      const { data, error } = await query
+        .order("id", { ascending: true })
+        .range(offset, offset + SALES_DUPLICATE_ROW_BATCH_SIZE - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as SalesDuplicateCandidate[];
+      out.push(...rows);
+      if (rows.length < SALES_DUPLICATE_ROW_BATCH_SIZE) break;
+    }
   }
   return out;
 }

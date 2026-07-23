@@ -14,9 +14,12 @@ import {
   buildIlikeOrFilter,
   searchCacheKey,
   clampPage,
+  salesInvoicePaymentState,
+  matchesSalesPaymentFilter,
   SALES_INVOICES_PAGE_SIZE,
   SALES_FETCH_BATCH_SIZE,
   SALES_DUPLICATE_LOOKUP_BATCH_SIZE,
+  SALES_DUPLICATE_ROW_BATCH_SIZE,
   type SalesDuplicateCandidate,
 } from "@/hooks/useSalesInvoices";
 
@@ -226,6 +229,71 @@ describe("duplicates across pages", () => {
     // first batch packs 25 ilike terms
     expect((orCalls[0].args[0] as string).split("invoice_number.ilike.").length - 1).toBe(SALES_DUPLICATE_LOOKUP_BATCH_SIZE);
   });
+
+  it("pages through >1000 broad matches so a duplicate beyond the first batch is still found", async () => {
+    // The broad ilike net returns a full 1000-row first page of non-duplicates
+    // (same number fragment, different customers), and the REAL duplicate sits
+    // in the second page. A single unbounded request would truncate and miss it.
+    const firstPage = Array.from({ length: SALES_DUPLICATE_ROW_BATCH_SIZE }, (_, i) => ({
+      id: `x-${i}`, customer_name: `Other ${i}`, invoice_number: `VF-001${i}`,
+    }));
+    const secondPage = [
+      { id: "s-real", customer_name: "acme b.v. ", invoice_number: " vf-001 " }, // normalized match
+    ];
+    state.batchResponses = [
+      { data: firstPage, error: null },   // range(0, 999) → full ⇒ keep paging
+      { data: secondPage, error: null },  // range(1000, 1999) → short ⇒ stop
+    ];
+
+    const candidates = await fetchSalesDuplicateCandidates([pageInv], { organizationId: "org-1" });
+
+    // two row-pages were requested
+    const ranges = callsFor("range").map(c => c.args);
+    expect(ranges).toEqual([
+      [0, SALES_DUPLICATE_ROW_BATCH_SIZE - 1],
+      [SALES_DUPLICATE_ROW_BATCH_SIZE, 2 * SALES_DUPLICATE_ROW_BATCH_SIZE - 1],
+    ]);
+    // and the duplicate from the second page is detected against the page invoice
+    const ids = computeSalesDuplicateIds([pageInv, ...candidates]);
+    expect(ids.has("s-page")).toBe(true);
+    expect(ids.has("s-real")).toBe(true);
+  });
+});
+
+describe("payment-status filtering (whole set before pagination)", () => {
+  it("classifies paid / partial / open from remaining vs total", () => {
+    expect(salesInvoicePaymentState({ status: "betaald", amount_excl: 100, amount_incl: 121, remaining_amount: 121 })).toBe("paid");
+    expect(salesInvoicePaymentState({ status: "verzonden", amount_excl: 100, amount_incl: 121, remaining_amount: 0 })).toBe("paid");
+    expect(salesInvoicePaymentState({ status: "verzonden", amount_excl: 100, amount_incl: 121, remaining_amount: 60 })).toBe("partial");
+    expect(salesInvoicePaymentState({ status: "concept", amount_excl: 100, amount_incl: 121, remaining_amount: null })).toBe("open");
+  });
+
+  it("filters the WHOLE set and paginates the filtered result (total + page rows are the filtered set)", () => {
+    // 120 invoices: 40 paid, 80 open — the payment filter must produce a total
+    // of 40 and a first page of 40 (not 50 from an unfiltered page).
+    const whole = Array.from({ length: 120 }, (_, i) => ({
+      id: `s-${i}`,
+      status: i < 40 ? "betaald" : "verzonden",
+      amount_excl: 100, amount_incl: 121,
+      remaining_amount: i < 40 ? 121 : 121, // paid via status, open otherwise
+      invoice_number: `VF-${i}`, customer_name: "K", invoice_date: "2026-01-01",
+      due_date: null, btw_amount: 21, client_id: "c1",
+    })) as any[];
+
+    const filtered = whole.filter(inv => matchesSalesPaymentFilter(inv, "paid"));
+    expect(filtered.length).toBe(40);
+
+    // page 1 slice
+    const page1 = filtered.slice(0, SALES_INVOICES_PAGE_SIZE);
+    expect(page1.length).toBe(40); // whole filtered set < one page
+    // total pages derived from the FILTERED length, not the unfiltered 120
+    expect(Math.ceil(filtered.length / SALES_INVOICES_PAGE_SIZE)).toBe(1);
+
+    const open = whole.filter(inv => matchesSalesPaymentFilter(inv, "open"));
+    expect(open.length).toBe(80);
+    expect(open.slice(0, SALES_INVOICES_PAGE_SIZE).length).toBe(SALES_INVOICES_PAGE_SIZE); // first 50 of 80
+    expect(Math.ceil(open.length / SALES_INVOICES_PAGE_SIZE)).toBe(2);
+  });
 });
 
 describe("computeReceivablesSummary", () => {
@@ -260,13 +328,29 @@ describe("literal search escaping", () => {
     expect(escapeIlikeValue("(net)")).toBe('"%(net)%"');
   });
 
-  it("escapes LIKE wildcards % and _ so they match literally", () => {
-    expect(escapeIlikeValue("50%")).toBe('"%50\\%%"');
-    expect(escapeIlikeValue("a_b")).toBe('"%a\\_b%"');
+  it("escapes LIKE wildcards % and _ through BOTH parsers (double-backslash)", () => {
+    // % must reach PostgreSQL LIKE as \% (literal), which means the PostgREST
+    // quoted value must carry \\% so the quote parser leaves one backslash.
+    expect(escapeIlikeValue("50%")).toBe(String.raw`"%50\\%%"`);
+    expect(escapeIlikeValue("a_b")).toBe(String.raw`"%a\\_b%"`);
+    // as a backend filter argument:
+    expect(buildIlikeOrFilter(["invoice_number"], "50%")).toBe(
+      String.raw`invoice_number.ilike."%50\\%%"`,
+    );
   });
 
-  it("escapes embedded backslashes and double quotes", () => {
-    expect(escapeIlikeValue('a\\b"c')).toBe('"%a\\\\b\\"c%"');
+  it("escapes embedded backslashes (doubled for both parsers) and double quotes", () => {
+    // one literal backslash → LIKE \\ → PostgREST \\\\ (four); quote → \"
+    expect(escapeIlikeValue('a\\b"c')).toBe(String.raw`"%a\\\\b\"c%"`);
+  });
+
+  it("keeps comma and parentheses literal via quoting (backend filter args)", () => {
+    expect(buildIlikeOrFilter(["customer_name"], "ACME, BV")).toBe(
+      'customer_name.ilike."%ACME, BV%"',
+    );
+    expect(buildIlikeOrFilter(["customer_name"], "(net) a,b")).toBe(
+      'customer_name.ilike."%(net) a,b%"',
+    );
   });
 
   it("returns an empty filter for blank input", () => {
@@ -329,6 +413,33 @@ describe("search cache-key isolation (hook-level)", () => {
     const orValues = callsFor("or").map(c => c.args[0] as string);
     expect(orValues.some(v => v.includes('"%ACME BV%"'))).toBe(true);
     expect(orValues.some(v => v.includes('"%ACME  BV%"'))).toBe(true);
+  });
+});
+
+describe("stale placeholder data on scope switch (regression)", () => {
+  it("keepPreviousData surfaces the previous client's rows as isPlaceholderData until the new scope loads", async () => {
+    const wrapper = createWrapper();
+
+    state.response = { data: [{ id: "A1" }], error: null, count: 1 };
+    const { result, rerender } = renderHook(
+      ({ clientId }: { clientId: string }) => usePaginatedSalesInvoices({ clientId, page: 1 }),
+      { wrapper, initialProps: { clientId: "client-A" } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.invoices[0].id).toBe("A1");
+    expect(result.current.isPlaceholderData).toBe(false);
+
+    // switch client scope; the new query key has no cache yet
+    state.response = { data: [{ id: "B1" }], error: null, count: 1 };
+    rerender({ clientId: "client-B" });
+
+    // BUG guard: previous scope's rows are still shown, flagged as placeholder
+    expect(result.current.isPlaceholderData).toBe(true);
+    expect(result.current.data?.invoices[0].id).toBe("A1"); // stale A-scope row
+
+    // once the new scope resolves, placeholder clears and rows are B-scope
+    await waitFor(() => expect(result.current.data?.invoices[0].id).toBe("B1"));
+    expect(result.current.isPlaceholderData).toBe(false);
   });
 });
 
@@ -414,6 +525,23 @@ describe("Verkoop overview source guarantees", () => {
     // must pass undefined (not false) when duplicateIds is not yet available
     expect(source).toContain("editInvoice && duplicateIds ? duplicateIds.has(editInvoice.id) : undefined");
   });
+
+  it("disables row actions while placeholder data belongs to a changed scope", () => {
+    expect(source).toContain("const showingStale = !paymentActive && isPlaceholderData;");
+    // TableBody interactions are blocked when stale
+    expect(source).toMatch(/showingStale \? "pointer-events-none opacity-50" : undefined/);
+  });
+
+  it("filters payment status over the whole scoped set, not the current page", () => {
+    // whole-set hook gated on an active payment filter
+    expect(source).toContain("useScopedSalesInvoices(");
+    expect(source).toMatch(/enabled: paymentActive/);
+    // total + page derive from the payment-filtered whole set
+    expect(source).toContain("paymentActive ? paymentWholeSet.length : (pageData?.total ?? 0)");
+    expect(source).toContain("paymentWholeSet.slice((page - 1) * SALES_INVOICES_PAGE_SIZE, page * SALES_INVOICES_PAGE_SIZE)");
+    // no misleading page-local payment note in the pager
+    expect(source).not.toContain("betaalstatusfilter geldt binnen de huidige pagina");
+  });
 });
 
 describe("Bank consumer source guarantee", () => {
@@ -422,5 +550,18 @@ describe("Bank consumer source guarantee", () => {
     expect(source).toMatch(/useSalesInvoices\(\{[\s\S]*?clientId: singleClientId,[\s\S]*?clientIds: singleClientId \? undefined : clientIdsForQuery,[\s\S]*?enabled: orgEnabled && hasSelection,[\s\S]*?\}\)/);
     // no bare unbounded call remains
     expect(source).not.toContain("useSalesInvoices();");
+  });
+
+  it("captures sales loading/error and gates invoice-dependent actions on both datasets", () => {
+    expect(source).toContain("isLoading: salesLoading");
+    expect(source).toContain("isError: salesError");
+    // a sales error is not treated as an empty success
+    expect(source).toContain("const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;");
+    expect(source).toContain("const matchingReady = wholeSetReady && salesReady;");
+    // afletter report + verwerken (reconciliation) require both datasets ready
+    expect(source).toContain("disabled={!hasSelection || !matchingReady}"); // Afletterrapport CSV
+    expect(source).toContain("disabled={!hasSelection || !matchingReady || openCount === 0}"); // Verwerken
+    // sales-invoice error is surfaced with a retry
+    expect(source).toContain("(wholeSetError || salesError)");
   });
 });

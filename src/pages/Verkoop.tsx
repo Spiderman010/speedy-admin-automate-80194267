@@ -26,6 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import {
   usePaginatedSalesInvoices,
+  useScopedSalesInvoices,
   useSalesReceivablesSummary,
   useSalesInvoiceDuplicates,
   useAddSalesInvoice,
@@ -33,6 +34,8 @@ import {
   useDeleteSalesInvoice,
   fetchAllSalesInvoices,
   clampPage,
+  matchesSalesPaymentFilter,
+  type SalesPaymentFilter,
   SALES_INVOICES_PAGE_SIZE,
 } from "@/hooks/useSalesInvoices";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
@@ -167,12 +170,20 @@ export default function Verkoop() {
   const { data: clients } = useClients();
   const { activeOrganizationId } = useActiveOrganization();
   const scopedClientId = clientFilter !== "all" ? clientFilter : undefined;
-  // Server-paginated page for the overview table — no full-list query on mount.
+  // Payment status ("betaald"/"deels betaald"/"open") can't be filtered
+  // server-side (remaining_amount vs total). While such a filter is active we
+  // load the whole scoped set and filter/sort/paginate it in memory so the page
+  // rows AND the pager total reflect the filtered whole set. Otherwise we use
+  // the efficient server-paginated query.
+  const paymentActive = paymentFilter !== "all";
+
+  // Server-paginated page — used when no payment filter is active.
   const {
     data: pageData,
-    isLoading,
+    isLoading: isPageLoading,
     isFetching: isPageFetching,
-    isError: isPageError,
+    isError: isPageQueryError,
+    isPlaceholderData,
     refetch: refetchPage,
   } = usePaginatedSalesInvoices({
     clientId: scopedClientId,
@@ -181,10 +192,57 @@ export default function Verkoop() {
     status: workflowFilter,
     sortField,
     sortDir,
+    enabled: !paymentActive,
   });
-  const pageInvoices = pageData?.invoices;
-  const totalCount = pageData?.total ?? 0;
+
+  // Whole scoped set — used only when a payment filter is active.
+  const {
+    data: scopedInvoices,
+    isLoading: isScopedLoading,
+    isError: isScopedError,
+    refetch: refetchScoped,
+  } = useScopedSalesInvoices({
+    clientId: scopedClientId,
+    status: workflowFilter,
+    search: debouncedSearch,
+    enabled: paymentActive,
+  });
+
+  // Payment-filtered + sorted whole set (only meaningful when paymentActive).
+  const paymentWholeSet = useMemo(() => {
+    if (!paymentActive || !scopedInvoices) return [] as typeof scopedInvoices;
+    const dir = sortDir === "asc" ? 1 : -1;
+    const cmp = (a: any, b: any) => {
+      let c = 0;
+      switch (sortField) {
+        case "invoice_number": c = (a.invoice_number || "").localeCompare(b.invoice_number || ""); break;
+        case "customer_name": c = (a.customer_name || "").localeCompare(b.customer_name || ""); break;
+        case "date": c = (a.invoice_date || "").localeCompare(b.invoice_date || ""); break;
+        case "due_date": c = (a.due_date || "").localeCompare(b.due_date || ""); break;
+        case "amount": c = (a.amount_incl ?? 0) - (b.amount_incl ?? 0); break;
+        case "btw": c = (a.btw_amount ?? 0) - (b.btw_amount ?? 0); break;
+      }
+      if (c !== 0) return dir * c;
+      return (a.id as string).localeCompare(b.id as string); // stable tiebreaker
+    };
+    return scopedInvoices
+      .filter(inv => matchesSalesPaymentFilter(inv, paymentFilter as SalesPaymentFilter))
+      .sort(cmp);
+  }, [paymentActive, scopedInvoices, paymentFilter, sortField, sortDir]);
+
+  // Unified table state — driven by whichever mode is active.
+  const pageInvoices = paymentActive
+    ? paymentWholeSet.slice((page - 1) * SALES_INVOICES_PAGE_SIZE, page * SALES_INVOICES_PAGE_SIZE)
+    : pageData?.invoices;
+  const totalCount = paymentActive ? paymentWholeSet.length : (pageData?.total ?? 0);
   const totalPages = Math.max(1, Math.ceil(totalCount / SALES_INVOICES_PAGE_SIZE));
+  const isLoading = paymentActive ? isScopedLoading : isPageLoading;
+  const isPageError = paymentActive ? isScopedError : isPageQueryError;
+  const retryTable = paymentActive ? refetchScoped : refetchPage;
+  // keepPreviousData can show a previous org/client scope's rows during a
+  // switch; block edit/delete/afletter on those stale rows until fresh data
+  // arrives. (The payment path has no placeholder data.)
+  const showingStale = !paymentActive && isPlaceholderData;
   // Whole-dataset aggregate via narrow-column batched fetch (5 columns only).
   const { data: receivablesSummary } = useSalesReceivablesSummary({
     clientId: scopedClientId,
@@ -277,18 +335,10 @@ export default function Verkoop() {
     return ordered;
   }, [searchFiltered]);
 
-  // Payment state derives from remaining_amount vs total (a column-to-column
-  // comparison PostgREST cannot filter on), so it stays client-side within
-  // the current page. All other filters and sorting are server-side.
-  const filteredSorted = useMemo(() => {
-    if (paymentFilter === "all") return searchFiltered;
-    return searchFiltered.filter(inv => {
-      const state = getInvoicePaymentState(inv);
-      if (paymentFilter === "paid") return state === "paid";
-      if (paymentFilter === "partial") return state === "partial";
-      return state === "open" || state === "unknown";
-    });
-  }, [searchFiltered, paymentFilter]);
+  // Rows to render: the payment-filtered whole-set page, or the server page.
+  // Payment filtering + sorting already happened upstream (whole set) or on the
+  // server (paginated), so no further per-page filtering here.
+  const filteredSorted = searchFiltered;
 
   const handleManualSave = async (form: SalesInvoiceFormData, file: File | null) => {
     let pdfPath: string | null = null;
@@ -631,7 +681,7 @@ export default function Verkoop() {
               ) : isPageError ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                   <p className="text-sm text-destructive">Verkoopfacturen laden mislukt.</p>
-                  <Button variant="outline" size="sm" onClick={() => refetchPage()}>Opnieuw proberen</Button>
+                  <Button variant="outline" size="sm" onClick={() => retryTable()}>Opnieuw proberen</Button>
                 </div>
               ) : !filteredSorted.length ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -661,7 +711,11 @@ export default function Verkoop() {
                       <TableHead className="w-20"></TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody>
+                  {/* While keepPreviousData shows a previous scope's rows during
+                      an org/client switch, block all row interactions (open,
+                      edit, delete, afletter) until fresh data for the current
+                      scope arrives. */}
+                  <TableBody className={showingStale ? "pointer-events-none opacity-50" : undefined}>
                     {filteredSorted.map(inv => {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
                       const displayStatus = getSalesInvoiceDisplayStatus(inv);
@@ -782,14 +836,13 @@ export default function Verkoop() {
                 <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
                   <span className="text-sm text-muted-foreground">
                     {(page - 1) * SALES_INVOICES_PAGE_SIZE + 1}–{Math.min(page * SALES_INVOICES_PAGE_SIZE, totalCount)} van {totalCount} verkoopfacturen
-                    {paymentFilter !== "all" ? " · betaalstatusfilter geldt binnen de huidige pagina" : ""}
                   </span>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" disabled={page === 1 || isPageFetching}
+                    <Button variant="outline" size="sm" disabled={page === 1 || (isPageFetching && !paymentActive)}
                       onClick={() => setPage(p => Math.max(1, p - 1))}>
                       <ChevronLeft className="h-4 w-4 mr-1" />Vorige
                     </Button>
-                    <Button variant="outline" size="sm" disabled={page >= totalPages || isPageFetching}
+                    <Button variant="outline" size="sm" disabled={page >= totalPages || (isPageFetching && !paymentActive)}
                       onClick={() => setPage(p => p + 1)}>
                       Volgende<ChevronRight className="h-4 w-4 ml-1" />
                     </Button>
