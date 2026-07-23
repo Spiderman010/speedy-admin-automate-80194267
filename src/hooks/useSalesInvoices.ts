@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import { useActiveOrganization } from "./useActiveOrganization";
@@ -149,7 +149,10 @@ export function usePaginatedSalesInvoices(options: UsePaginatedSalesInvoicesOpti
       if (error) throw error;
       return { invoices: (data ?? []) as SalesInvoice[], total: count ?? 0 };
     },
-    placeholderData: keepPreviousData,
+    // Deliberately no previous-data placeholder: after an organization/client/
+    // query change the previous scope's rows must never remain visible or
+    // actionable. Consumers show their normal loading state until fresh rows
+    // arrive.
     enabled: !!user && !!activeOrganizationId && enabled,
   });
 }

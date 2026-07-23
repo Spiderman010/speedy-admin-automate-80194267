@@ -25,10 +25,16 @@ import {
 
 type QueryCall = { method: string; args: unknown[] };
 
+type QueryResponse = { data: unknown[]; error: unknown; count?: number };
+
 const state = {
   calls: [] as QueryCall[],
   response: { data: [] as unknown[], error: null as unknown, count: 0 },
   batchResponses: [] as Array<{ data: unknown[]; error: unknown }>,
+  // When true, range() returns an unresolved promise and pushes its resolver
+  // here, so a test can hold a request pending across a scope switch.
+  deferNext: false,
+  pendingResolvers: [] as Array<(v: QueryResponse) => void>,
 };
 
 function makeQueryMock() {
@@ -45,6 +51,11 @@ function makeQueryMock() {
   query.order = chain("order");
   query.range = vi.fn((...args: unknown[]) => {
     state.calls.push({ method: "range", args });
+    if (state.deferNext) {
+      return new Promise<QueryResponse>((resolve) => {
+        state.pendingResolvers.push(resolve);
+      });
+    }
     if (state.batchResponses.length) return Promise.resolve(state.batchResponses.shift());
     return Promise.resolve(state.response);
   });
@@ -79,6 +90,8 @@ beforeEach(() => {
   state.calls = [];
   state.response = { data: [], error: null, count: 0 };
   state.batchResponses = [];
+  state.deferNext = false;
+  state.pendingResolvers = [];
 });
 
 describe("usePaginatedSalesInvoices", () => {
@@ -416,10 +429,11 @@ describe("search cache-key isolation (hook-level)", () => {
   });
 });
 
-describe("stale placeholder data on scope switch (regression)", () => {
-  it("keepPreviousData surfaces the previous client's rows as isPlaceholderData until the new scope loads", async () => {
+describe("no stale rows on scope switch (regression)", () => {
+  it("drops client A's rows the moment the scope switches to client B, even while B's request is pending", async () => {
     const wrapper = createWrapper();
 
+    // 1. client A has invoice A1
     state.response = { data: [{ id: "A1" }], error: null, count: 1 };
     const { result, rerender } = renderHook(
       ({ clientId }: { clientId: string }) => usePaginatedSalesInvoices({ clientId, page: 1 }),
@@ -427,19 +441,36 @@ describe("stale placeholder data on scope switch (regression)", () => {
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data?.invoices[0].id).toBe("A1");
-    expect(result.current.isPlaceholderData).toBe(false);
 
-    // switch client scope; the new query key has no cache yet
-    state.response = { data: [{ id: "B1" }], error: null, count: 1 };
+    // 2. switch to client B while its request stays pending (deferred)
+    state.deferNext = true;
     rerender({ clientId: "client-B" });
+    await waitFor(() => expect(state.pendingResolvers.length).toBe(1));
 
-    // BUG guard: previous scope's rows are still shown, flagged as placeholder
-    expect(result.current.isPlaceholderData).toBe(true);
-    expect(result.current.data?.invoices[0].id).toBe("A1"); // stale A-scope row
-
-    // once the new scope resolves, placeholder clears and rows are B-scope
-    await waitFor(() => expect(result.current.data?.invoices[0].id).toBe("B1"));
+    // 3. A1 must no longer be returned: no placeholder data, normal loading
+    //    state — so nothing stale can be rendered, actioned, or handed to
+    //    useSalesInvoiceDuplicates (which receives undefined and stays idle).
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isLoading).toBe(true);
     expect(result.current.isPlaceholderData).toBe(false);
+
+    // 4. after resolving, only B1 appears
+    state.deferNext = false;
+    state.pendingResolvers.shift()!({ data: [{ id: "B1" }], error: null, count: 1 });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.invoices.map((i) => i.id)).toEqual(["B1"]);
+  });
+
+  it("keeps the duplicates lookup idle while the page has no fresh rows", async () => {
+    const { useSalesInvoiceDuplicates } = await import("@/hooks/useSalesInvoices");
+    const { result } = renderHook(
+      () => useSalesInvoiceDuplicates(undefined, "client-B"),
+      { wrapper: createWrapper() },
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    // enabled-gate: undefined page rows (mid scope switch) ⇒ no query at all
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(callsFor("or")).toHaveLength(0);
   });
 });
 
@@ -526,10 +557,17 @@ describe("Verkoop overview source guarantees", () => {
     expect(source).toContain("editInvoice && duplicateIds ? duplicateIds.has(editInvoice.id) : undefined");
   });
 
-  it("disables row actions while placeholder data belongs to a changed scope", () => {
-    expect(source).toContain("const showingStale = !paymentActive && isPlaceholderData;");
-    // TableBody interactions are blocked when stale
-    expect(source).toMatch(/showingStale \? "pointer-events-none opacity-50" : undefined/);
+  it("has no placeholder-data workaround left: stale rows are prevented at the data layer", () => {
+    // Behavioral coverage lives in "no stale rows on scope switch (regression)":
+    // without placeholderData the hook returns undefined during a scope switch,
+    // so there is nothing stale to render or act on. Guard that the old
+    // pointer-events workaround and keepPreviousData do not come back.
+    expect(source).not.toContain("isPlaceholderData");
+    expect(source).not.toContain("showingStale");
+    expect(source).not.toContain("keepPreviousData");
+    const hookSource = readFileSync(resolve(process.cwd(), "src/hooks/useSalesInvoices.ts"), "utf-8");
+    expect(hookSource).not.toContain("keepPreviousData");
+    expect(hookSource).not.toContain("placeholderData");
   });
 
   it("filters payment status over the whole scoped set, not the current page", () => {

@@ -183,7 +183,6 @@ export default function Verkoop() {
     isLoading: isPageLoading,
     isFetching: isPageFetching,
     isError: isPageQueryError,
-    isPlaceholderData,
     refetch: refetchPage,
   } = usePaginatedSalesInvoices({
     clientId: scopedClientId,
@@ -239,10 +238,10 @@ export default function Verkoop() {
   const isLoading = paymentActive ? isScopedLoading : isPageLoading;
   const isPageError = paymentActive ? isScopedError : isPageQueryError;
   const retryTable = paymentActive ? refetchScoped : refetchPage;
-  // keepPreviousData can show a previous org/client scope's rows during a
-  // switch; block edit/delete/afletter on those stale rows until fresh data
-  // arrives. (The payment path has no placeholder data.)
-  const showingStale = !paymentActive && isPlaceholderData;
+  // The paginated query has no placeholderData: on an organization/client/
+  // query change, pageInvoices is undefined until fresh rows arrive, so the
+  // normal loading state shows and no stale rows are ever rendered, actionable
+  // or passed on to the duplicates lookup.
   // Whole-dataset aggregate via narrow-column batched fetch (5 columns only).
   const { data: receivablesSummary } = useSalesReceivablesSummary({
     clientId: scopedClientId,
@@ -711,11 +710,7 @@ export default function Verkoop() {
                       <TableHead className="w-20"></TableHead>
                     </TableRow>
                   </TableHeader>
-                  {/* While keepPreviousData shows a previous scope's rows during
-                      an org/client switch, block all row interactions (open,
-                      edit, delete, afletter) until fresh data for the current
-                      scope arrives. */}
-                  <TableBody className={showingStale ? "pointer-events-none opacity-50" : undefined}>
+                  <TableBody>
                     {filteredSorted.map(inv => {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
                       const displayStatus = getSalesInvoiceDisplayStatus(inv);
