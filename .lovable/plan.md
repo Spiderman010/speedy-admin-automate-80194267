@@ -1,62 +1,43 @@
-# Header-totalen afleiden uit boekingsregels
+# Beoordeling BoekAssist — main na PR #124
 
-## Probleem
-Bij handmatig ingevoerde inkoopfacturen wordt in de header alleen `amount_excl` gezet (bv. €100). `btw_amount` blijft leeg en `amount_incl` is gelijk aan `amount_excl`. Zodra de boekingsregel BTW toevoegt (bv. 9% → €9 BTW, €109 incl.), toont het verschiloverzicht een kunstmatig verschil, terwijl de regel zelf klopt.
+Alleen review, geen code-, DB- of type-wijzigingen. HEAD: `45c0b5e` (Merge PR #124). Tests: `221/221 ✅` (waarvan `sales-invoices-pagination.test.tsx` 42, `bank-transactions-pagination.test.tsx` 14).
 
-## Root cause
-`PurchaseInvoiceWorkspace` initialiseert de header direct uit `invoice.*` (`emptyHeader`) en past nooit een normalisatie toe wanneer de header incompleet/inconsistent is. Bij handmatige creatie wordt vaak alleen excl. gezet; de workspace laat dat staan en berekent het verschil t.o.v. regels die wél BTW hebben.
+## Resultaat per onderdeel
 
-## Oplossing (klein & lokaal)
+### 1. Paginering verkoopfacturen — Geslaagd
+- `SALES_INVOICES_PAGE_SIZE = 50` (`src/hooks/useSalesInvoices.ts:10`), server-side `.range(from, from+pageSize-1)` met `count: "exact"` (regels 144-150).
+- Vorige/Volgende gedisabled op grenzen; `totalPages = Math.max(1, ceil(totalCount/50))` (`Verkoop.tsx:237`).
+- Bij verkleining resultaatset klemt `clampPage` naar laatste geldige pagina (regels 266-268).
 
-### 1. Header-normalisatie bij initialisatie
-In het bestaande init-`useEffect` in `src/pages/PurchaseInvoiceWorkspace.tsx`, na het bepalen van `nextHeader` en na het bepalen van de te tonen `lines` (stored of prefill), één keer normaliseren wanneer alle onderstaande waar zijn:
+### 2. Filters en zoeken — Geslaagd
+- Zoeken op `invoice_number`, `customer_name`, `status` via veilig-geëscapete `.or(ilike)` (regel 60, `escapeIlikeValue` + `buildIlikeOrFilter`).
+- Betaalstatusfilters gebruiken `useScopedSalesInvoices` (whole scoped set, batched 1000, correct >1000 rijen) en filteren/sorteren/pagineren in-memory — pager-totaal reflecteert de gefilterde whole set (`Verkoop.tsx:197-236`).
+- `filterSignature` reset naar `page=1` bij wijziging van search, workflow-, betaalfilter, sort, klant of organisatie (regels 254-262). Eerste run wordt overgeslagen via `firstFilterRun`.
 
-- `amount_excl` is aanwezig
-- `btw_amount` is null/leeg
-- `amount_incl` is null of gelijk aan `amount_excl` (binnen 1 cent)
-- er is minstens één "meaningful" (niet-blanke) regel én die regels bevatten BTW-info
+### 3. Veilig wisselen klant/organisatie — Geslaagd
+- Paginated query heeft **geen** `placeholderData/keepPreviousData` (bewust commentaar regels 152-156 in hook, 241-244 in pagina) → `pageInvoices` is `undefined` tijdens refetch, tabel toont loading (`isLoading` gate regel 678).
+- `queryKey` bevat `activeOrganizationId ?? "none"` en `clientId ?? "all"` (hook regels 124-135) → cache is org+klant-gescopeerd; stale rijen kunnen niet lekken.
 
-Dan:
-- header `amount_excl` = som regels excl.
-- header `btw_amount`  = som regels BTW
-- header `amount_incl` = som regels incl.
+### 4. Dubbele facturen — Geslaagd
+- `useSalesInvoiceDuplicates` doet een server-side ilike-net over factuurnummers van de huidige pagina, gebatched (25 nummers × 1000-rijen paging) en vindt dus duplicaten op andere pagina's (`useSalesInvoices.ts:403-442`).
+- Finale match via genormaliseerde `customer_name+invoice_number` (trim+lowercase) in `computeSalesDuplicateIds` — over-matches worden gefilterd.
 
-Voor BTW-vrijgestelde klanten blijft de bestaande coherentie-regel (`incl = excl`, `btw = 0`) leidend; normalisatie doet daar niets extra's.
+### 5. Bankmodule — Geslaagd
+- `wholeSetReady = hasSelection && !wholeSetLoading && !wholeSetError && !!rawTransactions` (`Bank.tsx:260`).
+- `salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs` (regel 280) — een fout wordt **niet** als lege dataset behandeld.
+- `matchingReady = wholeSetReady && salesReady` (regel 283) gate't Automatch, Verwerken, Afletterrapport (`disabled={!hasSelection || !matchingReady}` regels 1811, 1836; auto-scan panel gate regel 1907). Bij salesError toont een expliciete banner (regels 1874-1877).
 
-### 2. Geen overschrijven van expliciete waarden
-Normalisatie draait alleen als alle drie condities hierboven kloppen (dus header is aantoonbaar incompleet). Zijn `btw_amount` én `amount_incl` beide gezet en consistent met `amount_excl`, dan gebeurt er niets. Zo blijven complete OCR- of handmatig ingevulde headers ongemoeid.
+### 6. Visuele controle desktop/mobiel — Niet uitgevoerd
+Geen live browser-verificatie gedraaid (sandbox `signed_out` in vorige turns). Aanbeveling: quick pass op `/verkoopfacturen` en `/bank` op 375px + desktop, met focus op paginator wrap en toolbar-buttons.
 
-### 3. Eenmalig, na load
-Normalisatie draait binnen hetzelfde `initialized`-guarded effect dat al bestaat: pas nadat `invoice` én `storedLines` geladen zijn, exact één keer. Geen render loop, geen herberekening bij elke keystroke. Latere handmatige edits van de gebruiker op headervelden zijn gezaghebbend — de bestaande `patchHeader` blijft ongewijzigd en het effect draait niet opnieuw.
+## Gevonden fouten
+Geen kritieke, hoge of middel-ernstige defecten aangetroffen in scope. Lage observaties:
+- **Laag** — visuele responsive check nog niet handmatig geverifieerd.
+- **Laag** — server-side sort op afgeleide betaalstatus is bewust niet ondersteund; UI-comment documenteert dit (`useSalesInvoices.ts:63-66`). Prima, mits UX-verwachting hierop aangepast blijft.
 
-### 4. Persist bij Opslaan
-`buildHeaderUpdates()` schrijft al `amount_excl`, `btw_amount`, `amount_incl` en `btw_percentage` weg uit `header.*`. Omdat de header nu genormaliseerde waarden bevat, worden die vanzelf gepersisteerd. Bij heropenen is de header compleet en triggert de normalisatie niet meer (conditie "btw_amount is null" is dan false).
+## Conclusie
+De gemergede versie (`45c0b5e`) kan **veilig verder gebruikt worden**. Alle expliciete eisen (paginering, filters/reset, veilig org/klant-wissel, cross-page duplicaten, matching-gating met fout≠leeg) zijn in de code aantoonbaar geïmplementeerd en gedekt door 56 pagineringstests.
 
-### 5. Approval
-Ongewijzigd: `canApprove` blijft afhangen van `linesMatch` (`diffs.allOk`) en compleetheid. Na normalisatie zijn de verschillen 0 en kan goedgekeurd worden.
-
-## Tests (`src/test/`)
-Nieuw testbestand `purchase-workspace-header-derivation.test.ts` met pure helper-tests op een geëxtraheerde functie `deriveHeaderFromLines(header, lineTotals)`:
-
-- incompleet header (excl=100, btw=null, incl=null) + één 9%-regel → 100/9/109
-- incompleet header + mixed VAT (100@21, 50@9, 25@0) → 175/29.5/204.5 (exacte som via `computeLineTotals`)
-- volledig header (100/21/121) blijft ongewijzigd
-- header met `incl != excl` (gebruiker heeft bewerkt) blijft ongewijzigd
-- geen regels → header ongewijzigd
-- BTW-vrijgesteld: al gelijkgetrokken excl/incl blijft, geen afleiding
-
-De helper wordt geïmporteerd door `PurchaseInvoiceWorkspace` en aangeroepen binnen het bestaande init-effect. Zo blijft de test unit-niveau en hoeven we geen React-flow te mocken voor de kernlogica.
-
-## Bestanden
-- `src/pages/PurchaseInvoiceWorkspace.tsx` — normalisatie-aanroep in init-effect
-- `src/lib/purchase-line-validation.ts` — nieuwe pure helper `deriveHeaderFromLines` (of nieuw bestand `src/lib/purchase-header-derivation.ts` als dat schoner past)
-- `src/test/purchase-workspace-header-derivation.test.ts` — nieuwe tests
-
-## Niet in scope
-Geen schema/migraties, geen RLS, geen OCR-wijziging, geen SnelStart-export, geen MCP, geen types-edits, geen redesign, geen wijziging in stored-line logica.
-
-## Verificatie
-- `npx tsc --noEmit`
-- `npm run lint`
-- `npm run test`
-- Handmatige browsertest: nieuwe factuur €100, regel 9% → header toont 100/9/109, verschil 0.
+## Aanbevolen vervolg
+1. Handmatige responsive smoke test op mobiel (375px) voor `/verkoopfacturen` en `/bank`.
+2. Overweeg een aparte loading-skeleton bij betaalfilter-wissel (nu deelt die de gewone table-loader — cosmetisch).
