@@ -1927,6 +1927,41 @@ export default function Bank() {
               )}
             </Button>
           )}
+          {(() => {
+            const safeAvailableCount = safeSuggestionIds.size;
+            if (safeAvailableCount === 0) return null;
+            let safeUnselectedCount = 0;
+            for (const id of safeSuggestionIds) {
+              if (!selectedIds.has(id)) safeUnselectedCount++;
+            }
+            const busy = autoScanRunning || undoingBatch;
+            const nothingToAdd = safeUnselectedCount === 0;
+            const label = !matchingReady
+              ? "Selecteer veilige suggesties…"
+              : nothingToAdd
+                ? `Alle veilige suggesties geselecteerd (${safeAvailableCount})`
+                : `Selecteer alle veilige suggesties (${safeUnselectedCount})`;
+            return (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const next = new Set(selectedIds);
+                  for (const id of safeSuggestionIds) next.add(id);
+                  setSelectedIds(next);
+                  toast({
+                    title: `${safeUnselectedCount} veilige suggestie(s) geselecteerd`,
+                    description: "Klik op 'Veilige suggesties bevestigen' in de balk onderaan om te verwerken.",
+                  });
+                }}
+                disabled={!matchingReady || busy || nothingToAdd}
+                aria-label={label}
+              >
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                {label}
+              </Button>
+            );
+          })()}
           {(autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0) && (
             <Button size="sm" onClick={handleAutoScan} disabled={autoScanRunning || undoingBatch}>
               {autoScanRunning ? (
