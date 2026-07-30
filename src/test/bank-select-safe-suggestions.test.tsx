@@ -178,7 +178,7 @@ describe("Bank — Selecteer alle veilige suggesties", () => {
     state.pagedTransactions = state.transactions;
     state.pagedTotal = 1;
     renderBank();
-    await waitFor(() => expect(screen.getByText("Banktransacties")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
     expect(safeButton()).toBeNull();
   });
 
@@ -188,7 +188,7 @@ describe("Bank — Selecteer alle veilige suggesties", () => {
     state.pagedTotal = 1;
     state.salesLoading = true; // matchingReady === false
     renderBank();
-    await waitFor(() => expect(screen.getByText("Banktransacties")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
     // Banner is gegate op matchingReady ⇒ knop niet zichtbaar/actief.
     const btn = safeButton();
     if (btn) expect(btn).toBeDisabled();
