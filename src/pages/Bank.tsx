@@ -43,6 +43,8 @@ import {
   useUpdateBankTransaction,
   isServerFilterableBankStatus,
   BANK_TRANSACTIONS_PAGE_SIZE,
+  BANK_STATUS_MATCH_VALUES,
+  bankSanitizeSearchTerm,
 } from "@/hooks/useBankTransactions";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
@@ -780,6 +782,7 @@ export default function Bank() {
     isLoading: isPageLoading,
     isFetching: isPageFetching,
     isError: isPageError,
+    isPlaceholderData: isPagePlaceholder,
     refetch: refetchPage,
   } = usePaginatedBankTransactions({
     organizationId: activeOrganizationId ?? undefined,
@@ -813,6 +816,17 @@ export default function Bank() {
   const tableError = computedFilterActive ? wholeSetError : isPageError;
   const retryTable = computedFilterActive ? refetchWholeSet : refetchPage;
 
+  // The paginated query keeps previous-query rows visible (keepPreviousData)
+  // while a new page or a new scope loads. During that window the visible rows
+  // may belong to the PREVIOUS filter/client scope, so selection is locked:
+  // row and header checkboxes are disabled and the toggle handlers no-op.
+  // Combined with the selection-scope effect below (which clears selectedIds on
+  // every membership change) this guarantees stale previous-scope ids can never
+  // enter the selection or reach a bulk action. Selection resumes automatically
+  // once the shown rows belong to the current query. The derived-filter path
+  // renders from the whole set and has no placeholder rows.
+  const stalePageData = !computedFilterActive && !!isPagePlaceholder;
+
   // Reset to page 1 when filters, search, sorting or client selection change
   // (not on mount).
   const filterSignature = JSON.stringify([
@@ -824,6 +838,71 @@ export default function Bank() {
     if (firstFilterRun.current) { firstFilterRun.current = false; return; }
     setPage(1);
   }, [filterSignature]);
+
+  // ─ Gmail-stijl "alle gefilterde transacties selecteren" ─
+  // Authoritative id-source for the complete active filtered scope. Membership
+  // only — sorting and pagination change presentation, never membership.
+  // - Derived filters (computedFilterActive): filteredSorted IS the displayed
+  //   whole-set membership, so its ids are exact by construction.
+  // - Server filters: replicate the paginated query's membership predicates
+  //   (match_status mapping + sanitized search over description/reference/
+  //   counter_account) over the same org/client-scoped whole set that query
+  //   reads from, so the id set matches the displayed result across all pages.
+  // Returns null while the whole set is loading or failed — the full-selection
+  // action is then simply not offered; no incomplete id set is ever used.
+  const filteredScopeIds = useMemo(() => {
+    if (!wholeSetReady || !transactions) return null;
+    if (computedFilterActive) return filteredSorted.map(t => t.id);
+    const statusValues = BANK_STATUS_MATCH_VALUES[statusFilter];
+    // Client-side equivalent of `ilike %term%` on the sanitized term: the
+    // sanitizer's \%/\_ escapes match those characters literally, so the plain
+    // unescaped term as a case-insensitive substring is the exact predicate.
+    const needle = bankSanitizeSearchTerm(debouncedSearch)
+      .replace(/\\([%_])/g, "$1")
+      .toLowerCase();
+    const matchesSearch = (t: Tables<"bank_transactions">) =>
+      !needle ||
+      (t.description || "").toLowerCase().includes(needle) ||
+      (t.reference || "").toLowerCase().includes(needle) ||
+      (t.counter_account || "").toLowerCase().includes(needle);
+    return transactions
+      .filter(t => (!statusValues || statusValues.includes(t.match_status)) && matchesSearch(t))
+      .map(t => t.id);
+  }, [wholeSetReady, transactions, computedFilterActive, filteredSorted, statusFilter, debouncedSearch]);
+
+  const handleSelectAllFiltered = useCallback(() => {
+    if (!filteredScopeIds || filteredScopeIds.length === 0) return;
+    // Selection only — never a mutation, booking, upload or export. REPLACE the
+    // selection with exactly the authoritative scope: never union with the
+    // previous selection, so an id picked from stale previous-scope rows can
+    // never survive into the new selection. In-scope manual picks are part of
+    // filteredScopeIds and therefore remain selected.
+    setSelectedIds(new Set(filteredScopeIds));
+    toast({ title: `Alle ${filteredScopeIds.length} gefilterde transacties zijn geselecteerd` });
+  }, [filteredScopeIds, toast]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    setBulkLedger("");
+    setBulkLedgerId("");
+  }, []);
+
+  // Content-based selection scope: whenever result-set MEMBERSHIP can change
+  // (organization, client selection, search, status/confidence/vraagpost
+  // filters), the selection is cleared so stale invisible ids can never feed a
+  // later bulk action. Page and sort order are presentation-only and are
+  // deliberately excluded — they must not drop the user's selection. The
+  // "all filtered selected" notice is derived from selectedIds, so clearing
+  // the set also clears that UI state.
+  const selectionScopeSignature = JSON.stringify([
+    activeOrganizationId, clientSelection.allMode, [...subsetIdSet].sort(),
+    debouncedSearch, statusFilter, confidenceFilter, vraagpostFilter,
+  ]);
+  const firstSelectionScopeRun = useRef(true);
+  useEffect(() => {
+    if (firstSelectionScopeRun.current) { firstSelectionScopeRun.current = false; return; }
+    setSelectedIds(new Set());
+  }, [selectionScopeSignature]);
 
   const handleConfirm = useCallback(async (id: string) => {
     try {
@@ -1759,6 +1838,7 @@ export default function Bank() {
   }, [addTx, invoices, salesInvs, updatePurchase, upsertSingleAllocationForMatch, refetchPurchase, toast]);
 
   const toggleSelect = (id: string) => {
+    if (stalePageData) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1767,12 +1847,22 @@ export default function Bank() {
     });
   };
 
+  // Toggles ONLY the current page's rows: deselecting the page removes just
+  // those ids and preserves every selection outside the page (cross-page safe
+  // matches, full filtered selections, other pages).
   const toggleSelectAll = () => {
-    if (tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(tableRows.map(t => t.id)));
-    }
+    if (stalePageData) return;
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const pageIsFullySelected =
+        tableRows.length > 0 && tableRows.every(row => next.has(row.id));
+      if (pageIsFullySelected) {
+        for (const row of tableRows) next.delete(row.id);
+      } else {
+        for (const row of tableRows) next.add(row.id);
+      }
+      return next;
+    });
   };
 
   const handleRefreshMatching = useCallback(() => {
@@ -2171,6 +2261,52 @@ export default function Bank() {
               {tableTotal || transactions?.length ? "Geen transacties gevonden met deze filters." : "Nog geen transacties. Upload een bankafschrift om te beginnen."}
             </div>
           ) : (
+            <>
+            {(() => {
+              // Gmail-style selection notice. Only rendered when the full
+              // filtered id scope is authoritative (whole set successfully
+              // loaded) — never offered on loading or error.
+              const pageAllSelected = tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id));
+              if (!pageAllSelected || !filteredScopeIds || filteredScopeIds.length === 0) return null;
+              const scopeCount = filteredScopeIds.length;
+              const fullSelected = filteredScopeIds.every(id => selectedIds.has(id));
+              if (!fullSelected && scopeCount <= tableRows.length) return null;
+              const actionClass = "h-auto min-h-[44px] sm:min-h-0 px-2 py-1 font-medium underline underline-offset-2";
+              return (
+                <div
+                  role="status"
+                  className="mb-3 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md border bg-muted/50 px-3 py-2 text-sm text-center"
+                >
+                  {fullSelected ? (
+                    <>
+                      <span>Alle {scopeCount} gefilterde transacties zijn geselecteerd</span>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className={actionClass}
+                        onClick={clearSelection}
+                        aria-label="Selectie wissen"
+                      >
+                        Selectie wissen
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span>Alle {tableRows.length} transacties op deze pagina zijn geselecteerd.</span>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className={actionClass}
+                        onClick={handleSelectAllFiltered}
+                        aria-label={`Selecteer alle ${scopeCount} gefilterde transacties`}
+                      >
+                        Selecteer alle {scopeCount} gefilterde transacties
+                      </Button>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2178,6 +2314,8 @@ export default function Bank() {
                     <Checkbox
                       checked={tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))}
                       onCheckedChange={toggleSelectAll}
+                      disabled={stalePageData}
+                      aria-label="Selecteer alle rijen op deze pagina"
                     />
                   </TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => handleSort("date")}>Datum<SortIcon field="date" /></TableHead>
@@ -2204,6 +2342,7 @@ export default function Bank() {
                         <Checkbox
                           checked={selectedIds.has(t.id)}
                           onCheckedChange={() => toggleSelect(t.id)}
+                          disabled={stalePageData}
                         />
                       </TableCell>
                       <TableCell>{new Date(t.transaction_date).toLocaleDateString("nl-NL")}</TableCell>
@@ -2544,6 +2683,7 @@ export default function Bank() {
                 })}
               </TableBody>
             </Table>
+            </>
           )}
           {!tableLoading && !tableError && tableTotal > 0 && (
             <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
