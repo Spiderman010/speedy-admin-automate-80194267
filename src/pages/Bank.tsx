@@ -108,14 +108,18 @@ function isSafeMatchEligibleStatus(status: string | null): boolean {
 
 /**
  * Single source of truth for safe-match criteria, applied to an already-ranked
- * candidate list. Returns the best invoice candidate iff ALL of the following hold:
+ * candidate list. Returns the HIGHEST-ranked positive-score candidate in the
+ * expected direction iff ALL of the following hold for that exact candidate:
  *   - match_status is niet_gematcht or suggestie (not finally processed)
- *   - candidate has correct direction (inkoop/verkoop)
  *   - candidate is not a partial payment
  *   - |tx_amount − invoice_amount| <= €0.01 (exact match only; ≤€0.50 is NOT safe)
- * Returns null when any criterion fails — caller must fall back to manual review.
- * The banner preview, the global safe-match button, bulk confirm and the auto-scan
- * all derive from this predicate so their counts can never diverge.
+ * When the top correct-direction candidate fails validation this returns null —
+ * it must NEVER fall through to a lower-ranked candidate, because auto-paying a
+ * weaker exact-amount invoice while a stronger candidate exists could mark the
+ * wrong invoice as paid. Caller must fall back to manual review.
+ * The banner preview, the global safe-match button, bulk confirm, auto-scan and
+ * row-level safe confirmation all derive from this predicate so their counts can
+ * never diverge.
  */
 function pickSafeMatchCandidate(
   tx: Tables<"bank_transactions">,
@@ -123,8 +127,9 @@ function pickSafeMatchCandidate(
 ): InvoiceCandidate | null {
   if (!isSafeMatchEligibleStatus(tx.match_status)) return null;
   const expectedType = expectedInvoiceTypeForTx(tx);
-  const best = candidates.find(c => c.score > 0 && c.type === expectedType && !c.isPartialPayment);
+  const best = candidates.find(c => c.score > 0 && c.type === expectedType);
   if (!best) return null;
+  if (best.isPartialPayment) return null;
   const txAmt = Math.abs(tx.amount);
   const invAmt = best.amount != null ? Math.abs(best.amount) : null;
   if (invAmt == null || Math.abs(txAmt - invAmt) > 0.01) return null;

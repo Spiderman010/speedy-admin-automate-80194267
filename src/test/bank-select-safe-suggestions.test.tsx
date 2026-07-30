@@ -113,30 +113,30 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: { from: vi.fn(), rpc: vi.fn() },
 }));
 
-// rankCandidates drives the safe criteria. Per transaction the candidate is
-// configured via a test-only `__candidate` field on the tx:
-//   undefined → exact-amount candidate in the correct direction (safe);
-//   null      → no candidates at all;
-//   object    → overrides (type, amount, isPartialPayment, score).
+// rankCandidates drives the safe criteria. Per transaction the candidates are
+// configured via test-only fields on the tx:
+//   __candidate: undefined → one exact-amount candidate in the correct direction (safe);
+//                null      → no candidates at all;
+//                object    → overrides (type, amount, isPartialPayment, score).
+//   __candidates: array of override objects → multiple candidates, returned in
+//                 the given (already ranked, best-first) order.
 vi.mock("@/components/BankMatchDialog", () => ({
   BankMatchDialog: () => null,
   rankCandidates: (tx: any) => {
     if (tx.__candidate === null) return [];
-    const over = tx.__candidate ?? {};
-    return [
-      {
-        id: `inv-${tx.id}`,
-        type: over.type ?? (tx.amount >= 0 ? "verkoop" : "inkoop"),
-        name: "Klant 1",
-        invoiceNumber: "F-1",
-        amount: over.amount ?? Math.abs(tx.amount),
-        score: over.score ?? 100,
-        isPartialPayment: over.isPartialPayment ?? false,
-        reasons: [],
-        date: "2026-01-01",
-        relation: "Klant 1",
-      },
-    ];
+    const overs: any[] = tx.__candidates ?? [tx.__candidate ?? {}];
+    return overs.map((over, i) => ({
+      id: over.id ?? (i === 0 ? `inv-${tx.id}` : `inv-${tx.id}-${i}`),
+      type: over.type ?? (tx.amount >= 0 ? "verkoop" : "inkoop"),
+      name: "Klant 1",
+      invoiceNumber: "F-1",
+      amount: over.amount ?? Math.abs(tx.amount),
+      score: over.score ?? 100,
+      isPartialPayment: over.isPartialPayment ?? false,
+      reasons: [],
+      date: "2026-01-01",
+      relation: "Klant 1",
+    }));
   },
 }));
 
@@ -352,6 +352,104 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
     renderBank();
     const btn = await screen.findByRole("button", { name: SELECT_RE });
     expect(btn).toHaveAccessibleName("Selecteer alle veilige matches (1)");
+  });
+
+  it("valt nooit terug op een lager gerangschikte factuur als de topkandidaat een deelbetaling is", async () => {
+    // Topkandidaat (score 100): deelbetaling, €200. Lagere kandidaat (score 80):
+    // exact €100, geen deelbetaling. Transactie €100. De topkandidaat faalt de
+    // validatie ⇒ de transactie is NIET veilig; de lagere exacte factuur mag
+    // nooit als betaald worden gemarkeerd.
+    state.transactions = [
+      makeTx({
+        id: "tx-rank",
+        amount: -100,
+        match_status: "niet_gematcht",
+        __candidates: [
+          { score: 100, isPartialPayment: true, amount: 200 },
+          { score: 80, isPartialPayment: false, amount: 100 },
+        ],
+      }),
+    ];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+
+    // Niet in bannertelling, niet in knoptelling.
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(safeButton()).toBeNull();
+
+    // Handmatig selecteren geeft géén bulk-bevestigingsknop (0 veilige ids)
+    // en er vindt geen enkele match-mutatie plaats.
+    const rowCheckboxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(rowCheckboxes[rowCheckboxes.length - 1]);
+    await waitFor(() =>
+      expect(screen.getByText(/1 transactie\(s\) geselecteerd/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: /Veilige matches bevestigen/ })).toBeNull();
+    expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
+  });
+
+  it("valt nooit terug op een lager gerangschikte factuur als de topkandidaat een bedragverschil heeft", async () => {
+    // Topkandidaat (score 100): geen deelbetaling maar €200 op een transactie
+    // van €100. Lagere kandidaat (score 80): exact €100. De topkandidaat faalt
+    // de bedragvalidatie ⇒ NIET veilig; de lagere kandidaat wordt nooit gekozen.
+    state.transactions = [
+      makeTx({
+        id: "tx-rank2",
+        amount: -100,
+        match_status: "suggestie",
+        __candidates: [
+          { score: 100, isPartialPayment: false, amount: 200 },
+          { score: 80, isPartialPayment: false, amount: 100 },
+        ],
+      }),
+    ];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(safeButton()).toBeNull();
+    // Rijknop toont "Controleer" (handmatige beoordeling), niet "✓ Bevestig".
+    expect(screen.getByRole("button", { name: "Controleer" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "✓ Bevestig" })).toBeNull();
+    expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
+  });
+
+  it("verwerkt een exacte, correcte topkandidaat normaal, ook met lagere kandidaten erachter", async () => {
+    state.transactions = [
+      makeTx({
+        id: "tx-top",
+        amount: -100,
+        match_status: "niet_gematcht",
+        __candidates: [
+          { score: 100, isPartialPayment: false, amount: 100 },
+          { score: 80, isPartialPayment: false, amount: 100 },
+        ],
+      }),
+    ];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+
+    const btn = await screen.findByRole("button", { name: SELECT_RE });
+    expect(btn).toHaveAccessibleName("Selecteer alle veilige matches (1)");
+    expect(screen.getByText(BANNER_RE)).toHaveTextContent("1 veilige match → direct bevestigen");
+
+    fireEvent.click(btn);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Veilige matches bevestigen \(1\)/ }),
+    );
+
+    await waitFor(() => {
+      const confirmed = state.updateTxCalls.filter(c => c.match_status === "gematcht");
+      expect(confirmed).toHaveLength(1);
+      // De hoogst gerangschikte kandidaat wordt gekoppeld, niet de lagere.
+      expect(confirmed[0].id).toBe("tx-top");
+      expect(confirmed[0].matched_invoice_id).toBe("inv-tx-top");
+    });
   });
 
   it("heeft op mobiel een interactieve hoogte van minimaal 44px", async () => {
