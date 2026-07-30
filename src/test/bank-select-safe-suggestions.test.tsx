@@ -117,6 +117,7 @@ vi.mock("@/components/BankMatchDialog", () => ({
       amount: Math.abs(tx.amount),
       score: 100,
       isPartialPayment: false,
+      reasons: [],
       date: "2026-01-01",
       relation: "Klant 1",
     },
