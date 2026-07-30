@@ -782,6 +782,7 @@ export default function Bank() {
     isLoading: isPageLoading,
     isFetching: isPageFetching,
     isError: isPageError,
+    isPlaceholderData: isPagePlaceholder,
     refetch: refetchPage,
   } = usePaginatedBankTransactions({
     organizationId: activeOrganizationId ?? undefined,
@@ -814,6 +815,17 @@ export default function Bank() {
   const tableLoading = computedFilterActive ? wholeSetLoading : isPageLoading;
   const tableError = computedFilterActive ? wholeSetError : isPageError;
   const retryTable = computedFilterActive ? refetchWholeSet : refetchPage;
+
+  // The paginated query keeps previous-query rows visible (keepPreviousData)
+  // while a new page or a new scope loads. During that window the visible rows
+  // may belong to the PREVIOUS filter/client scope, so selection is locked:
+  // row and header checkboxes are disabled and the toggle handlers no-op.
+  // Combined with the selection-scope effect below (which clears selectedIds on
+  // every membership change) this guarantees stale previous-scope ids can never
+  // enter the selection or reach a bulk action. Selection resumes automatically
+  // once the shown rows belong to the current query. The derived-filter path
+  // renders from the whole set and has no placeholder rows.
+  const stalePageData = !computedFilterActive && !!isPagePlaceholder;
 
   // Reset to page 1 when filters, search, sorting or client selection change
   // (not on mount).
@@ -860,13 +872,12 @@ export default function Bank() {
 
   const handleSelectAllFiltered = useCallback(() => {
     if (!filteredScopeIds || filteredScopeIds.length === 0) return;
-    // Selection only — never a mutation, booking, upload or export. Union with
-    // the current selection so manual picks in the same scope are preserved.
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      for (const id of filteredScopeIds) next.add(id);
-      return next;
-    });
+    // Selection only — never a mutation, booking, upload or export. REPLACE the
+    // selection with exactly the authoritative scope: never union with the
+    // previous selection, so an id picked from stale previous-scope rows can
+    // never survive into the new selection. In-scope manual picks are part of
+    // filteredScopeIds and therefore remain selected.
+    setSelectedIds(new Set(filteredScopeIds));
     toast({ title: `Alle ${filteredScopeIds.length} gefilterde transacties zijn geselecteerd` });
   }, [filteredScopeIds, toast]);
 
@@ -1827,6 +1838,7 @@ export default function Bank() {
   }, [addTx, invoices, salesInvs, updatePurchase, upsertSingleAllocationForMatch, refetchPurchase, toast]);
 
   const toggleSelect = (id: string) => {
+    if (stalePageData) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -1835,12 +1847,22 @@ export default function Bank() {
     });
   };
 
+  // Toggles ONLY the current page's rows: deselecting the page removes just
+  // those ids and preserves every selection outside the page (cross-page safe
+  // matches, full filtered selections, other pages).
   const toggleSelectAll = () => {
-    if (tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(tableRows.map(t => t.id)));
-    }
+    if (stalePageData) return;
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      const pageIsFullySelected =
+        tableRows.length > 0 && tableRows.every(row => next.has(row.id));
+      if (pageIsFullySelected) {
+        for (const row of tableRows) next.delete(row.id);
+      } else {
+        for (const row of tableRows) next.add(row.id);
+      }
+      return next;
+    });
   };
 
   const handleRefreshMatching = useCallback(() => {
@@ -2292,6 +2314,7 @@ export default function Bank() {
                     <Checkbox
                       checked={tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))}
                       onCheckedChange={toggleSelectAll}
+                      disabled={stalePageData}
                       aria-label="Selecteer alle rijen op deze pagina"
                     />
                   </TableHead>
@@ -2319,6 +2342,7 @@ export default function Bank() {
                         <Checkbox
                           checked={selectedIds.has(t.id)}
                           onCheckedChange={() => toggleSelect(t.id)}
+                          disabled={stalePageData}
                         />
                       </TableCell>
                       <TableCell>{new Date(t.transaction_date).toLocaleDateString("nl-NL")}</TableCell>
