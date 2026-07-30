@@ -53,6 +53,14 @@ vi.mock("@/hooks/useClients", () => ({
 vi.mock("@/hooks/useBankTransactions", () => ({
   BANK_TRANSACTIONS_PAGE_SIZE: 50,
   isServerFilterableBankStatus: () => true,
+  BANK_STATUS_MATCH_VALUES: {
+    all: undefined,
+    open: ["niet_gematcht", "suggestie"],
+    gematcht: ["gematcht"],
+    handmatig: ["handmatig_geboekt"],
+  },
+  bankSanitizeSearchTerm: (raw: string) =>
+    raw.trim().replace(/[,()"']/g, " ").replace(/[%_]/g, (m: string) => `\\${m}`).replace(/\s+/g, " ").trim(),
   useBankTransactions: () => ({
     data: state.wholeSetError ? undefined : state.transactions,
     isLoading: state.wholeSetLoading,
