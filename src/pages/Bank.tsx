@@ -101,35 +101,50 @@ function expectedInvoiceTypeForTx(tx: Tables<"bank_transactions">): "inkoop" | "
   return tx.amount >= 0 ? "verkoop" : "inkoop";
 }
 
+// Statuses that are not yet finally processed and thus eligible for a safe match.
+function isSafeMatchEligibleStatus(status: string | null): boolean {
+  return status === "niet_gematcht" || status === "suggestie";
+}
+
 /**
- * Single source of truth for safe auto-confirm criteria. Returns the best
- * invoice candidate iff ALL of the following hold:
- *   - match_status === "suggestie"
- *   - match_confidence >= 90
+ * Single source of truth for safe-match criteria, applied to an already-ranked
+ * candidate list. Returns the best invoice candidate iff ALL of the following hold:
+ *   - match_status is niet_gematcht or suggestie (not finally processed)
  *   - candidate has correct direction (inkoop/verkoop)
  *   - candidate is not a partial payment
  *   - |tx_amount − invoice_amount| <= €0.01 (exact match only; ≤€0.50 is NOT safe)
  * Returns null when any criterion fails — caller must fall back to manual review.
+ * The banner preview, the global safe-match button, bulk confirm and the auto-scan
+ * all derive from this predicate so their counts can never diverge.
  */
-function getSafeSuggestionCandidate(
+function pickSafeMatchCandidate(
   tx: Tables<"bank_transactions">,
-  purchaseInvoices: Tables<"purchase_invoices">[],
-  salesInvoices: Tables<"sales_invoices">[],
+  candidates: InvoiceCandidate[],
 ): InvoiceCandidate | null {
-  if (tx.match_status !== "suggestie") return null;
-  if ((tx.match_confidence ?? 0) < 90) return null;
+  if (!isSafeMatchEligibleStatus(tx.match_status)) return null;
   const expectedType = expectedInvoiceTypeForTx(tx);
-  const candidates = rankCandidates(
-    tx,
-    purchaseInvoices.filter(i => i.client_id === tx.client_id),
-    salesInvoices.filter(i => i.client_id === tx.client_id),
-  );
   const best = candidates.find(c => c.score > 0 && c.type === expectedType && !c.isPartialPayment);
   if (!best) return null;
   const txAmt = Math.abs(tx.amount);
   const invAmt = best.amount != null ? Math.abs(best.amount) : null;
   if (invAmt == null || Math.abs(txAmt - invAmt) > 0.01) return null;
   return best;
+}
+
+// Convenience wrapper that ranks candidates itself — for mutation-time re-checks
+// where no pre-ranked list is available.
+function getSafeMatchCandidate(
+  tx: Tables<"bank_transactions">,
+  purchaseInvoices: Tables<"purchase_invoices">[],
+  salesInvoices: Tables<"sales_invoices">[],
+): InvoiceCandidate | null {
+  if (!isSafeMatchEligibleStatus(tx.match_status)) return null;
+  const candidates = rankCandidates(
+    tx,
+    purchaseInvoices.filter(i => i.client_id === tx.client_id),
+    salesInvoices.filter(i => i.client_id === tx.client_id),
+  );
+  return pickSafeMatchCandidate(tx, candidates);
 }
 
 type SuggestionDetail = {
@@ -588,14 +603,15 @@ export default function Bank() {
     return ids;
   }, [transactions, grootboekrekeningen]);
 
-  // Pre-computed display details for each suggestie row.
-  // Calls rankCandidates once per suggestion — safeSuggestionIds is then a cheap
-  // derived set, avoiding a second rankCandidates pass.
-  const suggestionDetailMap = useMemo(() => {
+  // Pre-computed match details for every eligible (niet_gematcht + suggestie) row.
+  // Calls rankCandidates once per row — safeMatchIds and autoScanPreview are then
+  // cheap derived values, avoiding extra rankCandidates passes, and all three use
+  // the exact same isSafe verdict from pickSafeMatchCandidate.
+  const matchDetailMap = useMemo(() => {
     const map = new Map<string, SuggestionDetail>();
     if (!transactions || !invoices || !salesInvs) return map;
     for (const t of transactions) {
-      if (t.match_status !== "suggestie") continue;
+      if (!isSafeMatchEligibleStatus(t.match_status)) continue;
       const expectedType = expectedInvoiceTypeForTx(t);
       const candidates = rankCandidates(
         t,
@@ -604,23 +620,15 @@ export default function Bank() {
       );
       const bestCorrectDir = candidates.find(c => c.score > 0 && c.type === expectedType) ?? null;
       const bestAny = candidates.find(c => c.score > 0) ?? null;
-
-      const conf = t.match_confidence ?? 0;
-      const txAmt = Math.abs(t.amount);
-      const invAmt = bestCorrectDir?.amount != null ? Math.abs(bestCorrectDir.amount) : null;
-      const isSafe =
-        conf >= 90 &&
-        bestCorrectDir !== null &&
-        !bestCorrectDir.isPartialPayment &&
-        invAmt != null &&
-        Math.abs(txAmt - invAmt) <= 0.01;
+      const isSafe = pickSafeMatchCandidate(t, candidates) !== null;
 
       const unsafeReasons: string[] = [];
       if (!isSafe) {
-        if (conf < 90) unsafeReasons.push(`Betrouwbaarheid ${conf}% (minimaal 90% vereist)`);
         if (!bestCorrectDir) {
           unsafeReasons.push(bestAny ? "Verkeerde richting (inkoop/verkoop)" : "Geen factuurkandidaat gevonden");
         } else {
+          const txAmt = Math.abs(t.amount);
+          const invAmt = bestCorrectDir.amount != null ? Math.abs(bestCorrectDir.amount) : null;
           if (bestCorrectDir.isPartialPayment) unsafeReasons.push("Deelbetaling");
           if (invAmt != null && Math.abs(txAmt - invAmt) > 0.01) {
             unsafeReasons.push(`Bedragverschil ${formatCurrency(Math.abs(txAmt - invAmt))} (max. €0,01)`);
@@ -638,46 +646,34 @@ export default function Bank() {
     return map;
   }, [transactions, invoices, salesInvs]);
 
-  // Derived from suggestionDetailMap — no extra rankCandidates calls needed.
-  const safeSuggestionIds = useMemo(() => {
+  // Derived from matchDetailMap — no extra rankCandidates calls needed.
+  const safeMatchIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const [id, detail] of suggestionDetailMap.entries()) {
+    for (const [id, detail] of matchDetailMap.entries()) {
       if (detail.isSafe) ids.add(id);
     }
     return ids;
-  }, [suggestionDetailMap]);
+  }, [matchDetailMap]);
 
   // Voorspelling van wat één klik op "Automatisch voorstellen" zou doen:
-  // - autoConfirm: veilige matches (exacte richting + bedrag, geen deelbetaling) → direct bevestigd
+  // - autoConfirm: veilige matches (juiste richting + exact bedrag, geen deelbetaling) → direct bevestigd
   // - toReview: onzekere kandidaten → als suggestie klaargezet ter beoordeling
+  // Derived from the same matchDetailMap as safeMatchIds, so the banner count and
+  // the safe-match button count are identical by construction.
   const autoScanPreview = useMemo(() => {
-    if (!transactions || !invoices || !salesInvs) return { autoConfirm: 0, toReview: 0 };
     let autoConfirm = 0;
     let toReview = 0;
-    for (const t of transactions) {
-      if (t.match_status !== "niet_gematcht" && t.match_status !== "suggestie") continue;
-      const expectedType = expectedInvoiceTypeForTx(t);
-      const candidates = rankCandidates(
-        t,
-        invoices.filter(i => i.client_id === t.client_id),
-        salesInvs.filter(i => i.client_id === t.client_id),
-      );
-      const best = candidates.find(c => c.score > 0 && c.type === expectedType);
-      if (!best) continue;
-      const txAmt = Math.abs(t.amount);
-      const invAmt = best.amount != null ? Math.abs(best.amount) : null;
-      const isExact = invAmt != null && Math.abs(txAmt - invAmt) <= 0.01;
-      if (isExact && !best.isPartialPayment) {
-        // Alleen tellen als "auto-bevestigen" wanneer het nog niet gematcht is.
-        if (t.match_status === "niet_gematcht" || (t.match_status === "suggestie" && (t.match_confidence ?? 0) < 100)) {
-          autoConfirm++;
-        }
-      } else if (t.match_status === "niet_gematcht") {
+    for (const t of transactions ?? []) {
+      const detail = matchDetailMap.get(t.id);
+      if (!detail) continue;
+      if (detail.isSafe) {
+        autoConfirm++;
+      } else if (t.match_status === "niet_gematcht" && detail.best && !detail.bestIsWrongDirection) {
         toReview++;
       }
     }
     return { autoConfirm, toReview };
-  }, [transactions, invoices, salesInvs]);
+  }, [transactions, matchDetailMap]);
 
   const filteredSorted = useMemo(() => {
     if (!transactions) return [];
@@ -1315,9 +1311,9 @@ export default function Bank() {
       const tx = transactions.find(t => t.id === id);
       if (!tx) { skipped++; continue; }
 
-      // Use the shared helper — enforces confidence >= 90, correct direction,
-      // !isPartialPayment, and amount diff <= €0.01 in one place.
-      const best = getSafeSuggestionCandidate(tx, invoices, salesInvs);
+      // Use the shared helper — enforces eligible status (niet_gematcht/suggestie),
+      // correct direction, !isPartialPayment, and amount diff <= €0.01 in one place.
+      const best = getSafeMatchCandidate(tx, invoices, salesInvs);
       if (!best) { skipped++; continue; }
 
       try {
@@ -1347,11 +1343,11 @@ export default function Bank() {
     if (confirmed > 0 || skipped > 0) {
       if (skipped > 0) {
         toast({
-          title: "Suggesties deels bevestigd",
-          description: `${confirmed} suggesties bevestigd. ${skipped} suggesties overgeslagen omdat ze niet veilig genoeg waren.`,
+          title: "Matches deels bevestigd",
+          description: `${confirmed} matches bevestigd. ${skipped} matches overgeslagen omdat ze niet veilig genoeg waren.`,
         });
       } else {
-        toast({ title: `${confirmed} suggestie(s) bevestigd` });
+        toast({ title: `${confirmed} match(es) bevestigd` });
       }
     }
     if (errors.length > 0) {
@@ -1488,7 +1484,7 @@ export default function Bank() {
     const errors: string[] = [];
     const undoLog: UndoEntry[] = [];
     for (const t of transactions) {
-      if (t.match_status !== "niet_gematcht" && t.match_status !== "suggestie") continue;
+      if (!isSafeMatchEligibleStatus(t.match_status)) continue;
       try {
         const expectedType = expectedInvoiceTypeForTx(t);
         const candidates = rankCandidates(
@@ -1496,15 +1492,13 @@ export default function Bank() {
           invoices.filter(i => i.client_id === t.client_id),
           salesInvs.filter(i => i.client_id === t.client_id),
         );
-        const best = candidates.find(c => c.score > 0 && c.type === expectedType);
-        if (!best) continue;
-        const txAmt = Math.abs(t.amount);
-        const invAmt = best.amount != null ? Math.abs(best.amount) : null;
-        const isExact = invAmt != null && Math.abs(txAmt - invAmt) <= 0.01;
+        // Same safe predicate as the banner preview and the safe-match button,
+        // so this handler confirms exactly what the preview announced.
+        const safeCandidate = pickSafeMatchCandidate(t, candidates);
 
-        if (isExact && !best.isPartialPayment) {
+        if (safeCandidate) {
+          const best = safeCandidate;
           // Veilig: direct bevestigen + factuur op betaald + allocatie schrijven.
-          if (t.match_status === "suggestie" && t.matched_invoice_id === best.id && (t.match_confidence ?? 0) >= 100) continue;
 
           // Snapshot vóór mutaties voor undo.
           const entry: UndoEntry = {
@@ -1543,6 +1537,8 @@ export default function Bank() {
           confirmed++;
         } else if (t.match_status === "niet_gematcht") {
           // Onzeker: als suggestie klaarzetten voor menselijke controle.
+          const best = candidates.find(c => c.score > 0 && c.type === expectedType);
+          if (!best) continue;
           const conf = best.isPartialPayment ? 60 : 80;
           const entry: UndoEntry = {
             txBefore: {
@@ -1653,7 +1649,7 @@ export default function Bank() {
   // so the UI label and the actual write are always in sync. Falls back to opening
   // BankMatchDialog when the criteria are not met (unsafe suggestion or stale data).
   const handleSafeSuggestionConfirm = useCallback(async (t: Tables<"bank_transactions">) => {
-    const best = getSafeSuggestionCandidate(t, invoices ?? [], salesInvs ?? []);
+    const best = getSafeMatchCandidate(t, invoices ?? [], salesInvs ?? []);
     if (!best) {
       setMatchTx(t);
       return;
@@ -1928,30 +1924,31 @@ export default function Bank() {
             </Button>
           )}
           {(() => {
-            const safeAvailableCount = safeSuggestionIds.size;
+            const safeAvailableCount = safeMatchIds.size;
             if (safeAvailableCount === 0) return null;
             let safeUnselectedCount = 0;
-            for (const id of safeSuggestionIds) {
+            for (const id of safeMatchIds) {
               if (!selectedIds.has(id)) safeUnselectedCount++;
             }
             const busy = autoScanRunning || undoingBatch;
             const nothingToAdd = safeUnselectedCount === 0;
             const label = !matchingReady
-              ? "Selecteer veilige suggesties…"
+              ? "Selecteer veilige matches…"
               : nothingToAdd
-                ? `Alle veilige suggesties geselecteerd (${safeAvailableCount})`
-                : `Selecteer alle veilige suggesties (${safeUnselectedCount})`;
+                ? `Alle veilige matches geselecteerd (${safeAvailableCount})`
+                : `Selecteer alle veilige matches (${safeUnselectedCount})`;
             return (
               <Button
                 size="sm"
                 variant="outline"
+                className="min-h-[44px] sm:min-h-0"
                 onClick={() => {
                   const next = new Set(selectedIds);
-                  for (const id of safeSuggestionIds) next.add(id);
+                  for (const id of safeMatchIds) next.add(id);
                   setSelectedIds(next);
                   toast({
-                    title: `${safeUnselectedCount} veilige suggestie(s) geselecteerd`,
-                    description: "Klik op 'Veilige suggesties bevestigen' in de balk onderaan om te verwerken.",
+                    title: `${safeUnselectedCount} veilige match(es) geselecteerd`,
+                    description: "Klik op 'Veilige matches bevestigen' in de balk onderaan om te verwerken.",
                   });
                 }}
                 disabled={!matchingReady || busy || nothingToAdd}
@@ -2386,7 +2383,7 @@ export default function Bank() {
                                 >{label}</span>
                               )}
                               {t.match_status === "suggestie" && (() => {
-                                const detail = suggestionDetailMap.get(t.id);
+                                const detail = matchDetailMap.get(t.id);
                                 if (!detail) return <span className="text-sm text-muted-foreground">—</span>;
                                 const { best, bestIsWrongDirection, isSafe, unsafeReasons } = detail;
                                 return (
@@ -2483,13 +2480,13 @@ export default function Bank() {
                             <>
                               <Button
                                 size="sm"
-                                variant={safeSuggestionIds.has(t.id) ? "default" : "outline"}
-                                onClick={() => safeSuggestionIds.has(t.id)
+                                variant={safeMatchIds.has(t.id) ? "default" : "outline"}
+                                onClick={() => safeMatchIds.has(t.id)
                                   ? handleSafeSuggestionConfirm(t)
                                   : setMatchTx(t)
                                 }
                               >
-                                {safeSuggestionIds.has(t.id) ? "✓ Bevestig" : "Controleer"}
+                                {safeMatchIds.has(t.id) ? "✓ Bevestig" : "Controleer"}
                               </Button>
                               <Button
                                 size="sm"
@@ -2569,11 +2566,11 @@ export default function Bank() {
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-background border rounded-lg shadow-lg px-6 py-3 flex items-center gap-4 flex-wrap max-w-5xl">
           <span className="text-sm font-medium">{selectedIds.size} transactie(s) geselecteerd</span>
           {(() => {
-            const safeCount = Array.from(selectedIds).filter(id => safeSuggestionIds.has(id)).length;
+            const safeCount = Array.from(selectedIds).filter(id => safeMatchIds.has(id)).length;
             return safeCount > 0 ? (
               <Button size="sm" variant="default" onClick={handleBulkConfirmSuggestions}>
                 <CheckCircle2 className="mr-1 h-4 w-4" />
-                Veilige suggesties bevestigen ({safeCount})
+                Veilige matches bevestigen ({safeCount})
               </Button>
             ) : null;
           })()}

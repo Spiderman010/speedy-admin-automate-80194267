@@ -12,8 +12,11 @@ const state = {
   wholeSetError: false,
   salesLoading: false,
   salesError: false,
+  updateTxCalls: [] as any[],
 };
 
+// Default confidence is deliberately 80 (< 90): safety must NOT depend on
+// match_confidence — only on direction, exact amount and partial payment.
 const makeTx = (over: Partial<any> = {}) => ({
   id: "tx-1",
   client_id: "c1",
@@ -25,7 +28,7 @@ const makeTx = (over: Partial<any> = {}) => ({
   counter_account_name: null,
   amount: -100,
   match_status: "suggestie",
-  match_confidence: 95,
+  match_confidence: 80,
   matched_invoice_id: null,
   matched_invoice_type: null,
   grootboekrekening_id: null,
@@ -64,12 +67,17 @@ vi.mock("@/hooks/useBankTransactions", () => ({
     refetch: vi.fn(),
   }),
   useAddBankTransaction: () => ({ mutateAsync: vi.fn() }),
-  useUpdateBankTransaction: () => ({ mutateAsync: vi.fn() }),
+  useUpdateBankTransaction: () => ({
+    mutateAsync: vi.fn((args: any) => {
+      state.updateTxCalls.push(args);
+      return Promise.resolve({});
+    }),
+  }),
 }));
 
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
   usePurchaseInvoices: () => ({ data: [], refetch: vi.fn() }),
-  useUpdatePurchaseInvoice: () => ({ mutateAsync: vi.fn() }),
+  useUpdatePurchaseInvoice: () => ({ mutateAsync: vi.fn(() => Promise.resolve({})) }),
 }));
 
 vi.mock("@/hooks/useSalesInvoices", () => ({
@@ -79,7 +87,7 @@ vi.mock("@/hooks/useSalesInvoices", () => ({
     isError: state.salesError,
     refetch: vi.fn(),
   }),
-  useUpdateSalesInvoice: () => ({ mutateAsync: vi.fn() }),
+  useUpdateSalesInvoice: () => ({ mutateAsync: vi.fn(() => Promise.resolve({})) }),
 }));
 
 vi.mock("@/hooks/useGrootboekrekeningen", () => ({
@@ -105,23 +113,31 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: { from: vi.fn(), rpc: vi.fn() },
 }));
 
-// rankCandidates drives the "safe" criteria; return an exact-amount candidate
-// so safety hinges solely on match_confidence in these tests.
+// rankCandidates drives the safe criteria. Per transaction the candidate is
+// configured via a test-only `__candidate` field on the tx:
+//   undefined → exact-amount candidate in the correct direction (safe);
+//   null      → no candidates at all;
+//   object    → overrides (type, amount, isPartialPayment, score).
 vi.mock("@/components/BankMatchDialog", () => ({
   BankMatchDialog: () => null,
-  rankCandidates: (tx: any) => [
-    {
-      id: `inv-${tx.id}`,
-      type: tx.amount >= 0 ? "verkoop" : "inkoop",
-      number: "F-1",
-      amount: Math.abs(tx.amount),
-      score: 100,
-      isPartialPayment: false,
-      reasons: [],
-      date: "2026-01-01",
-      relation: "Klant 1",
-    },
-  ],
+  rankCandidates: (tx: any) => {
+    if (tx.__candidate === null) return [];
+    const over = tx.__candidate ?? {};
+    return [
+      {
+        id: `inv-${tx.id}`,
+        type: over.type ?? (tx.amount >= 0 ? "verkoop" : "inkoop"),
+        name: "Klant 1",
+        invoiceNumber: "F-1",
+        amount: over.amount ?? Math.abs(tx.amount),
+        score: over.score ?? 100,
+        isPartialPayment: over.isPartialPayment ?? false,
+        reasons: [],
+        date: "2026-01-01",
+        relation: "Klant 1",
+      },
+    ];
+  },
 }));
 
 vi.mock("@/components/BankStatementUploadDialog", () => ({
@@ -145,8 +161,9 @@ vi.mock("@/components/GrootboekCombobox", () => ({
 
 import Bank from "@/pages/Bank";
 
-const SELECT_RE = /Selecteer alle veilige suggesties \((\d+)\)/;
-const ALL_SELECTED_RE = /Alle veilige suggesties geselecteerd \((\d+)\)/;
+const SELECT_RE = /Selecteer alle veilige matches \((\d+)\)/;
+const ALL_SELECTED_RE = /Alle veilige matches geselecteerd \((\d+)\)/;
+const BANNER_RE = /(\d+) veilige match(es)? → direct bevestigen/;
 
 function renderBank(): void {
   render(
@@ -159,7 +176,7 @@ function renderBank(): void {
 const safeButton = () =>
   screen.queryByRole("button", { name: SELECT_RE }) ??
   screen.queryByRole("button", { name: ALL_SELECTED_RE }) ??
-  screen.queryByRole("button", { name: /Selecteer veilige suggesties…/ });
+  screen.queryByRole("button", { name: /Selecteer veilige matches…/ });
 
 beforeEach(() => {
   state.transactions = [];
@@ -169,17 +186,75 @@ beforeEach(() => {
   state.wholeSetError = false;
   state.salesLoading = false;
   state.salesError = false;
+  state.updateTxCalls = [];
 });
 
-describe("Bank — Selecteer alle veilige suggesties", () => {
-  it("rendert de knop niet zonder veilige suggesties", async () => {
-    // Alleen een onzekere suggestie (confidence < 90) ⇒ geen veilige ids.
-    state.transactions = [makeTx({ id: "tx-unsafe", match_confidence: 40 })];
+describe("Bank — veilige matches (banner + selectieknop)", () => {
+  it("telt een exacte match met confidence 80 en status niet_gematcht mee in banner én knop", async () => {
+    state.transactions = [makeTx({ id: "tx-1", match_status: "niet_gematcht", match_confidence: 80 })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    const btn = await screen.findByRole("button", { name: SELECT_RE });
+    expect(btn).toHaveAccessibleName("Selecteer alle veilige matches (1)");
+    expect(screen.getByText(BANNER_RE)).toHaveTextContent("1 veilige match → direct bevestigen");
+  });
+
+  it("telt een exacte match met confidence 80 en status suggestie mee in banner én knop", async () => {
+    state.transactions = [makeTx({ id: "tx-1", match_status: "suggestie", match_confidence: 80 })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    const btn = await screen.findByRole("button", { name: SELECT_RE });
+    expect(btn).toHaveAccessibleName("Selecteer alle veilige matches (1)");
+    expect(screen.getByText(BANNER_RE)).toHaveTextContent("1 veilige match → direct bevestigen");
+  });
+
+  it("sluit een kandidaat met verkeerde richting uit", async () => {
+    // Negatief bedrag verwacht inkoop; kandidaat is verkoop → onveilig.
+    state.transactions = [makeTx({ id: "tx-wrong", __candidate: { type: "verkoop" } })];
     state.pagedTransactions = state.transactions;
     state.pagedTotal = 1;
     renderBank();
     await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
     expect(safeButton()).toBeNull();
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+  });
+
+  it("sluit een bedragverschil groter dan €0,01 uit", async () => {
+    state.transactions = [makeTx({ id: "tx-diff", amount: -100, __candidate: { amount: 100.05 } })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+    expect(safeButton()).toBeNull();
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+  });
+
+  it("sluit een deelbetaling uit", async () => {
+    state.transactions = [makeTx({ id: "tx-partial", __candidate: { isPartialPayment: true } })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+    expect(safeButton()).toBeNull();
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+  });
+
+  it("banner-aantal en knop-aantal zijn identiek bij een gemengde set", async () => {
+    state.transactions = [
+      makeTx({ id: "tx-1", match_status: "niet_gematcht" }),
+      makeTx({ id: "tx-2", match_status: "suggestie", amount: -200 }),
+      makeTx({ id: "tx-unsafe", amount: -300, __candidate: { isPartialPayment: true } }),
+    ];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 3;
+    renderBank();
+    const btn = await screen.findByRole("button", { name: SELECT_RE });
+    const bannerCount = Number(screen.getByText(BANNER_RE).textContent!.match(BANNER_RE)![1]);
+    const buttonCount = Number(btn.getAttribute("aria-label")!.match(SELECT_RE)![1]);
+    expect(bannerCount).toBe(2);
+    expect(buttonCount).toBe(bannerCount);
   });
 
   it("is disabled zolang matchingdata niet gereed is", async () => {
@@ -195,26 +270,12 @@ describe("Bank — Selecteer alle veilige suggesties", () => {
     else expect(btn).toBeNull();
   });
 
-  it("toont het aantal nog niet geselecteerde veilige suggesties", async () => {
-    state.transactions = [
-      makeTx({ id: "tx-1" }),
-      makeTx({ id: "tx-2", amount: -200 }),
-      makeTx({ id: "tx-unsafe", match_confidence: 10, amount: -300 }),
-    ];
-    state.pagedTransactions = state.transactions;
-    state.pagedTotal = 3;
-    renderBank();
-    const btn = await screen.findByRole("button", { name: SELECT_RE });
-    expect(btn).toHaveAccessibleName("Selecteer alle veilige suggesties (2)");
-    expect(btn).toBeEnabled();
-  });
-
   it("selecteert veilige ids, ook die niet op de huidige pagina staan, en wordt daarna disabled", async () => {
     state.transactions = [
-      makeTx({ id: "tx-1" }),
+      makeTx({ id: "tx-1", match_status: "niet_gematcht" }),
       makeTx({ id: "tx-2", amount: -200 }),
     ];
-    // Pagina 2 toont maar één rij; tx-2 is niet zichtbaar.
+    // De pagina toont maar één rij; tx-2 is niet zichtbaar.
     state.pagedTransactions = [state.transactions[0]];
     state.pagedTotal = 2;
     renderBank();
@@ -226,14 +287,14 @@ describe("Bank — Selecteer alle veilige suggesties", () => {
       expect(screen.getByText(/2 transactie\(s\) geselecteerd/)).toBeInTheDocument(),
     );
     const after = await screen.findByRole("button", { name: ALL_SELECTED_RE });
-    expect(after).toHaveAccessibleName("Alle veilige suggesties geselecteerd (2)");
+    expect(after).toHaveAccessibleName("Alle veilige matches geselecteerd (2)");
     expect(after).toBeDisabled();
   });
 
   it("laat bestaande handmatige selecties intact", async () => {
     state.transactions = [
       makeTx({ id: "tx-1" }),
-      makeTx({ id: "tx-unsafe", match_confidence: 10, amount: -300 }),
+      makeTx({ id: "tx-unsafe", amount: -300, __candidate: { amount: 350 } }),
     ];
     state.pagedTransactions = state.transactions;
     state.pagedTotal = 2;
@@ -248,18 +309,59 @@ describe("Bank — Selecteer alle veilige suggesties", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: SELECT_RE }));
 
-    // Handmatige selectie blijft staan naast de toegevoegde veilige suggestie.
+    // Handmatige selectie blijft staan naast de toegevoegde veilige match.
     await waitFor(() =>
       expect(screen.getByText(/2 transactie\(s\) geselecteerd/)).toBeInTheDocument(),
     );
   });
 
-  it("toont bij één veilige suggestie het label met (1)", async () => {
+  it("bulk-bevestiging verwerkt exact dezelfde veilige ids, inclusief niet_gematcht", async () => {
+    state.transactions = [
+      makeTx({ id: "tx-1", match_status: "niet_gematcht" }),
+      makeTx({ id: "tx-2", match_status: "suggestie", amount: -200 }),
+      makeTx({ id: "tx-unsafe", amount: -300, __candidate: { isPartialPayment: true } }),
+    ];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 3;
+    renderBank();
+
+    // Selecteer ook de onveilige rij handmatig: bulk-bevestiging moet die overslaan.
+    const rowCheckboxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(rowCheckboxes[rowCheckboxes.length - 1]);
+    fireEvent.click(await screen.findByRole("button", { name: SELECT_RE }));
+    await waitFor(() =>
+      expect(screen.getByText(/3 transactie\(s\) geselecteerd/)).toBeInTheDocument(),
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Veilige matches bevestigen \(2\)/ }),
+    );
+
+    await waitFor(() => expect(state.updateTxCalls.length).toBeGreaterThanOrEqual(2));
+    const confirmed = state.updateTxCalls.filter(c => c.match_status === "gematcht");
+    expect(confirmed.map(c => c.id).sort()).toEqual(["tx-1", "tx-2"]);
+    expect(confirmed.map(c => c.matched_invoice_id).sort()).toEqual(["inv-tx-1", "inv-tx-2"]);
+    // De onveilige rij is nooit bevestigd.
+    expect(state.updateTxCalls.some(c => c.id === "tx-unsafe")).toBe(false);
+  });
+
+  it("toont bij één veilige match het label met (1)", async () => {
     state.transactions = [makeTx({ id: "tx-1" })];
     state.pagedTransactions = state.transactions;
     state.pagedTotal = 1;
     renderBank();
     const btn = await screen.findByRole("button", { name: SELECT_RE });
-    expect(btn).toHaveAccessibleName("Selecteer alle veilige suggesties (1)");
+    expect(btn).toHaveAccessibleName("Selecteer alle veilige matches (1)");
+  });
+
+  it("heeft op mobiel een interactieve hoogte van minimaal 44px", async () => {
+    state.transactions = [makeTx({ id: "tx-1" })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    const btn = await screen.findByRole("button", { name: SELECT_RE });
+    // 44px op mobiel; sm:min-h-0 laat desktop de compacte sm-hoogte behouden.
+    expect(btn.className).toContain("min-h-[44px]");
+    expect(btn.className).toContain("sm:min-h-0");
   });
 });
