@@ -1955,6 +1955,8 @@ export default function Bank() {
                   });
                 }}
                 disabled={!matchingReady || busy || nothingToAdd}
+                aria-disabled={!matchingReady || busy || nothingToAdd}
+                title={!matchingReady ? "Wacht tot bankdata volledig geladen is" : undefined}
                 aria-label={label}
               >
                 <CheckCircle2 className="mr-2 h-4 w-4" />
