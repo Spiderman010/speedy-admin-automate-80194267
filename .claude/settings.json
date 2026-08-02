@@ -1,13 +1,21 @@
 {
   "permissions": {
     "deny": [
-      "Edit(src/integrations/supabase/types.ts)",
-      "Write(src/integrations/supabase/types.ts)",
-      "Edit(.lovable/plan.md)",
-      "Write(.lovable/plan.md)",
-      "Bash(git push origin main)",
-      "Bash(git push origin main:*)",
-      "Bash(git push --force origin main:*)"
+      "Edit(/src/integrations/supabase/types.ts)",
+      "Edit(/.lovable/plan.md)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-main-push.py\""
+          }
+        ]
+      }
     ]
   }
 }
