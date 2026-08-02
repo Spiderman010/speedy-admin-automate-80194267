@@ -27,9 +27,23 @@ and report — do not "adapt" the workflow to a different repository.
 
 ## 2. Git discipline
 
-- `git fetch origin main` and start from `origin/main` — never assume a
-  previously seen commit is still the latest main.
-- All work happens on a feature branch (`feature/<slug>` or `fix/<slug>`).
+Per the branch workflow in `AGENTS.md`:
+
+- **First inspect the current state.** Check the current branch
+  (`git branch --show-current`) and whether the assigned task already has a
+  task branch — locally, on the remote (`git branch -a` after a fetch), or as
+  an open PR. Tasks often name their branch explicitly
+  (e.g. `claude/boekassist-dev-setup-mJmMl` or an amendment to an existing
+  PR).
+- **If a task branch or PR already exists, continue on that same branch.**
+  Do not replace it with a new branch from main — a fresh branch orphans the
+  PR and its review history.
+- **Never reset, rebase or overwrite an existing task branch** unless the
+  task explicitly instructs it. If the branch state surprises you (unexpected
+  HEAD, dirty tree), report the discrepancy instead of "fixing" it.
+- **Only for a genuinely new task**: `git fetch origin main` and create a new
+  `feature/<slug>` or `fix/<slug>` branch from the latest `origin/main` —
+  never assume a previously seen commit is still the latest main.
 - Never commit directly to `main`, never merge a PR yourself, never
   force-push shared history.
 
