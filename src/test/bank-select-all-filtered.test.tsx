@@ -142,6 +142,17 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: { from: vi.fn(), rpc: vi.fn() },
 }));
 
+vi.mock("@/hooks/useBankMatchRejections", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useBankMatchRejections")>();
+  return {
+    ...actual, // keep the real pure helpers (buildRejectionMap, filterRejectedCandidates)
+    useBankMatchRejections: () => ({ data: [], refetch: vi.fn() }),
+    useAddBankMatchRejection: () => ({ mutateAsync: vi.fn(() => Promise.resolve()) }),
+    useClearBankMatchRejection: () => ({ mutateAsync: vi.fn(() => Promise.resolve()) }),
+  };
+});
+
+
 vi.mock("@/components/BankMatchDialog", () => ({
   BankMatchDialog: () => null,
   rankCandidates: (tx: any) => (tx.__candidate === null ? [] : []),
