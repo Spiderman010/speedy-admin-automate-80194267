@@ -132,7 +132,7 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "";
 /** Geeft null terug als het netwerk niet beschikbaar is, zodat offline runs niet falen. */
 async function tryFetch(input: string, init?: RequestInit): Promise<Response | null> {
   try {
-    return await fetch(input, { ...init, signal: AbortSignal.timeout(10000) });
+    return await fetch(input, init);
   } catch {
     return null;
   }
