@@ -125,8 +125,9 @@ describe("storage 'invoices': alleen eigen map of eigen organisatie", () => {
 // Laag 2: live regressie met de anon-sleutel (geen sessie = onbevoegde gebruiker)
 // ---------------------------------------------------------------------------
 
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL ?? "https://alxlbdhpbwlehbdbfejw.supabase.co";
-const ANON_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "";
+const SUPABASE_URL =
+  import.meta.env.VITE_SUPABASE_URL ?? "https://alxlbdhpbwlehbdbfejw.supabase.co";
+const ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "";
 
 async function reachable() {
   try {
