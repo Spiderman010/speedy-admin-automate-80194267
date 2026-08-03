@@ -24,6 +24,7 @@ export type BankMatchRejectionInsert = Omit<
 
 const TABLE = "bank_match_rejections";
 const QUERY_KEY = ["bank_match_rejections"] as const;
+export const REJECTION_FETCH_BATCH_SIZE = 1000;
 
 // The table is not yet in the generated types; cast the accessor until
 // types.ts is regenerated (mirrors the local-type convention above).
@@ -80,18 +81,27 @@ export function useBankMatchRejections(options: UseBankMatchRejectionsOptions = 
   return useQuery({
     queryKey: [...QUERY_KEY, organizationId ?? "all", clientId ?? "all", clientIdsKey],
     queryFn: async () => {
-      let query = rejectionsTable()
-        .select("*")
-        .order("created_at", { ascending: true });
-      if (organizationId) query = query.eq("organization_id", organizationId);
-      if (clientId) query = query.eq("client_id", clientId);
-      if (clientIds) {
-        if (clientIds.length === 0) return [] as BankMatchRejection[];
-        query = query.in("client_id", clientIds);
+      if (clientIds && clientIds.length === 0) return [] as BankMatchRejection[];
+      // Deterministic batched ranges until a short batch is returned — a
+      // single unbounded select would be silently truncated at the PostgREST
+      // max-rows cap, making newer rejections invisible (and thus matchable).
+      const all: BankMatchRejection[] = [];
+      for (let offset = 0; ; offset += REJECTION_FETCH_BATCH_SIZE) {
+        let query = rejectionsTable()
+          .select("*")
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(offset, offset + REJECTION_FETCH_BATCH_SIZE - 1);
+        if (organizationId) query = query.eq("organization_id", organizationId);
+        if (clientId) query = query.eq("client_id", clientId);
+        if (clientIds) query = query.in("client_id", clientIds);
+        const { data, error } = await query;
+        if (error) throw error;
+        const rows = (data ?? []) as unknown as BankMatchRejection[];
+        all.push(...rows);
+        if (rows.length < REJECTION_FETCH_BATCH_SIZE) break;
       }
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as unknown as BankMatchRejection[];
+      return all;
     },
     enabled: !!user && enabled,
   });

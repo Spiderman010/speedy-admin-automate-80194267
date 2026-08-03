@@ -595,11 +595,12 @@ describe("Bank consumer source guarantee", () => {
     expect(source).toContain("isError: salesError");
     // a sales error is not treated as an empty success
     expect(source).toContain("const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;");
-    expect(source).toContain("const matchingReady = wholeSetReady && salesReady;");
+    // matchingReady now also gates on successfully loaded rejection history (PR #128).
+    expect(source).toContain("const matchingReady = wholeSetReady && salesReady && rejectionsReady;");
     // afletter report + verwerken (reconciliation) require both datasets ready
     expect(source).toContain("disabled={!hasSelection || !matchingReady}"); // Afletterrapport CSV
     expect(source).toContain("disabled={!hasSelection || !matchingReady || openCount === 0}"); // Verwerken
     // sales-invoice error is surfaced with a retry
-    expect(source).toContain("(wholeSetError || salesError)");
+    expect(source).toContain("(wholeSetError || salesError || rejectionsError)");
   });
 });

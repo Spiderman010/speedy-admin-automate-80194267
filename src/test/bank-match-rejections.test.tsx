@@ -7,10 +7,15 @@ import type { ReactNode } from "react";
 const state = {
   transactions: [] as any[],
   rejections: [] as any[],
+  rejectionsLoading: false,
+  rejectionsError: false,
   purchaseInvoices: [] as any[],
+  allocations: [] as any[],
   updateTxCalls: [] as any[],
   rejectionAdds: [] as any[],
   rejectionClears: [] as any[],
+  allocationUpserts: [] as any[],
+  failNextClear: false,
 };
 
 const makeTx = (over: Partial<any> = {}) => ({
@@ -127,8 +132,13 @@ vi.mock("@/hooks/useVraagposten", () => ({
 }));
 
 vi.mock("@/hooks/useBankTransactionAllocations", () => ({
-  useBankTransactionAllocations: () => ({ data: [] }),
-  useUpsertBankTransactionAllocation: () => ({ mutateAsync: vi.fn(() => Promise.resolve({})) }),
+  useBankTransactionAllocations: () => ({ data: state.allocations }),
+  useUpsertBankTransactionAllocation: () => ({
+    mutateAsync: vi.fn((args: any) => {
+      state.allocationUpserts.push(args);
+      return Promise.resolve({});
+    }),
+  }),
   useDeleteAllocationsForTransaction: () => ({ mutateAsync: vi.fn(() => Promise.resolve()) }),
 }));
 
@@ -152,7 +162,12 @@ vi.mock("@/hooks/useBankMatchRejections", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useBankMatchRejections")>();
   return {
     ...actual,
-    useBankMatchRejections: () => ({ data: state.rejections, refetch: vi.fn() }),
+    useBankMatchRejections: () => ({
+      data: state.rejectionsLoading || state.rejectionsError ? undefined : state.rejections,
+      isLoading: state.rejectionsLoading,
+      isError: state.rejectionsError,
+      refetch: vi.fn(),
+    }),
     useAddBankMatchRejection: () => ({
       mutateAsync: vi.fn((args: any) => {
         state.rejectionAdds.push(args);
@@ -162,6 +177,10 @@ vi.mock("@/hooks/useBankMatchRejections", async (importOriginal) => {
     useClearBankMatchRejection: () => ({
       mutateAsync: vi.fn((args: any) => {
         state.rejectionClears.push(args);
+        if (state.failNextClear) {
+          state.failNextClear = false;
+          return Promise.reject(new Error("clear mislukt"));
+        }
         return Promise.resolve();
       }),
     }),
@@ -175,12 +194,20 @@ vi.mock("@/hooks/useBankMatchRejections", async (importOriginal) => {
 vi.mock("@/components/BankMatchDialog", () => ({
   BankMatchDialog: ({ open, transaction, onConfirm }: any) =>
     open && transaction ? (
-      <button
-        type="button"
-        onClick={() => onConfirm(transaction.id, "inv-A", "inkoop", true, false, null)}
-      >
-        __dialog-confirm-inv-A
-      </button>
+      <>
+        <button
+          type="button"
+          onClick={() => onConfirm(transaction.id, "inv-A", "inkoop", true, false, null)}
+        >
+          __dialog-confirm-inv-A
+        </button>
+        <button
+          type="button"
+          onClick={() => onConfirm(transaction.id, "inv-A", "inkoop", false, false, null, 60)}
+        >
+          __dialog-confirm-extra-inv-A
+        </button>
+      </>
     ) : null,
   rankCandidates: (tx: any) => {
     if (tx.__candidate === null) return [];
@@ -238,10 +265,15 @@ const gematchtCalls = () => state.updateTxCalls.filter(c => c.match_status === "
 beforeEach(() => {
   state.transactions = [];
   state.rejections = [];
+  state.rejectionsLoading = false;
+  state.rejectionsError = false;
   state.purchaseInvoices = [];
+  state.allocations = [];
   state.updateTxCalls = [];
   state.rejectionAdds = [];
   state.rejectionClears = [];
+  state.allocationUpserts = [];
+  state.failNextClear = false;
 });
 
 describe("pure helpers (shared rejection predicate)", () => {
@@ -404,6 +436,123 @@ describe("Bank — afwijzingen worden vastgelegd en gerespecteerd", () => {
   });
 });
 
+describe("Bank — gating, bulk-ontkoppelen, extra allocatie en foutpaden", () => {
+  it("G1: zolang de afwijzingsgeschiedenis laadt is automatische matching geblokkeerd", async () => {
+    state.transactions = [makeTx({ id: "tx-1" })]; // veilige kandidaat beschikbaar
+    state.rejectionsLoading = true;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(screen.queryByRole("button", { name: SELECT_RE })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Automatisch voorstellen/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "✓ Bevestig" })).toBeNull();
+    expect(gematchtCalls()).toEqual([]);
+  });
+
+  it("G2: een mislukte afwijzingsquery blokkeert matching en toont een fout met retry", async () => {
+    state.transactions = [makeTx({ id: "tx-1" })];
+    state.rejectionsError = true;
+    renderBank();
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Afwijzingsgeschiedenis laden mislukt — automatische matching is uitgeschakeld/),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Opnieuw laden" })).toBeInTheDocument();
+    // undefined data wordt NIET als lege lijst behandeld: geen veilige matches.
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(screen.queryByRole("button", { name: SELECT_RE })).toBeNull();
+    expect(gematchtCalls()).toEqual([]);
+  });
+
+  it("H: bulk-ontkoppelen legt de primaire afwijzing per transactie vast vóór het wissen", async () => {
+    state.transactions = [
+      makeTx({ id: "tx-1", match_status: "gematcht", match_confidence: 100, matched_invoice_id: "inv-A" }),
+      makeTx({ id: "tx-2", match_status: "gematcht", match_confidence: 100, matched_invoice_id: "inv-B" }),
+    ];
+    state.purchaseInvoices = [makePurchaseInvoice("inv-A"), makePurchaseInvoice("inv-B")];
+    renderBank();
+
+    // Selecteer beide rijen en start de bulk-ontkoppeling via de toolbar.
+    const checkboxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(checkboxes[1]);
+    fireEvent.click(checkboxes[2]);
+    await waitFor(() =>
+      expect(screen.getByText("2 transactie(s) geselecteerd")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Ontkoppel geselecteerde/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ontkoppelen" }));
+
+    await waitFor(() => expect(state.rejectionAdds).toHaveLength(2));
+    expect(state.rejectionAdds).toContainEqual(
+      expect.objectContaining({ bank_transaction_id: "tx-1", invoice_id: "inv-A" }),
+    );
+    expect(state.rejectionAdds).toContainEqual(
+      expect.objectContaining({ bank_transaction_id: "tx-2", invoice_id: "inv-B" }),
+    );
+    // De afwijzing is vastgelegd vóór de reset — de auto-matcher kan de
+    // combinatie dus niet direct herstellen (zelfde uitsluiting als test A2).
+  });
+
+  it("I: een geslaagde extra (additional) allocatie van een afgewezen factuur wist die afwijzing", async () => {
+    // Gematchte transactie met een deel-allocatie: de Plus-knop verschijnt.
+    state.transactions = [
+      makeTx({ id: "tx-1", match_status: "gematcht", match_confidence: 100, matched_invoice_id: "inv-X" }),
+    ];
+    state.allocations = [
+      { id: "al-1", bank_transaction_id: "tx-1", invoice_id: "inv-X", invoice_type: "inkoop", client_id: "c1", amount: 40, user_id: "u1", created_at: "", updated_at: "" },
+    ];
+    state.purchaseInvoices = [makePurchaseInvoice("inv-X"), makePurchaseInvoice("inv-A")];
+    state.rejections = [makeRejection("tx-1", "inv-A")];
+    renderBank();
+
+    // Open de extra-allocatie-dialoog via de Plus-knop.
+    await waitFor(() => {
+      const plus = screen
+        .getAllByRole("button")
+        .find(b => b.querySelector('svg[class*="plus" i]'));
+      expect(plus).toBeTruthy();
+      fireEvent.click(plus!);
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "__dialog-confirm-extra-inv-A" }));
+
+    // Wissen gebeurt pas NA de geslaagde allocatie-upsert.
+    await waitFor(() =>
+      expect(state.rejectionClears).toContainEqual({ bankTransactionId: "tx-1", invoiceId: "inv-A" }),
+    );
+    expect(state.allocationUpserts).toContainEqual(
+      expect.objectContaining({ bank_transaction_id: "tx-1", invoice_id: "inv-A" }),
+    );
+  });
+
+  it("J: een mislukte rejection-clear breekt een geslaagde koppeling + allocatie niet", async () => {
+    state.transactions = [makeTx({ id: "tx-1", __candidate: null })];
+    state.rejections = [makeRejection("tx-1", "inv-A")];
+    state.purchaseInvoices = [makePurchaseInvoice("inv-A")];
+    state.failNextClear = true;
+    renderBank();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Koppel" }));
+    fireEvent.click(await screen.findByRole("button", { name: "__dialog-confirm-inv-A" }));
+
+    // Link + allocatie zijn geschreven vóór de clear-poging…
+    await waitFor(() =>
+      expect(gematchtCalls()).toContainEqual(
+        expect.objectContaining({ id: "tx-1", matched_invoice_id: "inv-A" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(state.allocationUpserts).toContainEqual(
+        expect.objectContaining({ bank_transaction_id: "tx-1", invoice_id: "inv-A" }),
+      ),
+    );
+    // …de clear is geprobeerd en mislukt, zonder de koppeling terug te draaien.
+    await waitFor(() => expect(state.rejectionClears).toHaveLength(1));
+    expect(state.updateTxCalls.some(c => c.match_status === "niet_gematcht")).toBe(false);
+  });
+});
+
 describe("Bank — alle matchpaden delen dezelfde afwijzingsregel (brongaranties)", () => {
   let bankSource = "";
   let hookSource = "";
@@ -427,12 +576,36 @@ describe("Bank — alle matchpaden delen dezelfde afwijzingsregel (brongaranties
     expect(bankSource).toContain("getSafeMatchCandidate(t, invoices ?? [], salesInvs ?? [], rejectedByTxId.get(t.id))");
   });
 
-  it("automatische herberekening wist nooit afwijzingen; alleen de handmatige match wel", () => {
-    // clearMatchRejection is called exactly once, inside handleMatch.
+  it("automatische herberekening wist nooit afwijzingen; alleen expliciete handmatige matches wel", () => {
+    // clearMatchRejection is called exactly twice, both inside handleMatch:
+    // the primary confirm and the additional-allocation confirm.
     const clears = bankSource.match(/clearMatchRejection\.mutateAsync\(/g) ?? [];
-    expect(clears).toHaveLength(1);
+    expect(clears).toHaveLength(2);
     // Rejections cannot be duplicated: unique-key upsert with ignoreDuplicates.
     expect(hookSource).toContain('onConflict: "bank_transaction_id,invoice_id"');
     expect(hookSource).toContain("ignoreDuplicates: true");
+  });
+
+  it("matchingReady omvat de afwijzingsquery en de drawer gebruikt dezelfde filter", async () => {
+    expect(bankSource).toContain(
+      "const rejectionsReady = hasSelection && !rejectionsLoading && !rejectionsError && !!matchRejections;",
+    );
+    expect(bankSource).toContain("const matchingReady = wholeSetReady && salesReady && rejectionsReady;");
+    expect(bankSource).toContain("if (rejectionsError) refetchRejections();");
+    // Bulk unlink persists via the same helper as row unlink.
+    const recordCalls = bankSource.match(/recordMatchRejection\(tx, tx\.matched_invoice_id\)/g) ?? [];
+    expect(recordCalls.length).toBeGreaterThanOrEqual(2);
+    // Drawer suggestions run through the shared predicate.
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const drawerSource = readFileSync(
+      resolve(process.cwd(), "src/components/BankAfletteringDrawer.tsx"),
+      "utf-8",
+    );
+    expect(drawerSource).toContain("filterRejectedCandidates(");
+    expect(drawerSource).toContain("rejectedInvoiceIds");
+    // Batched fetching in the hook: ranges until a short batch.
+    expect(hookSource).toContain("REJECTION_FETCH_BATCH_SIZE");
+    expect(hookSource).toContain(".range(offset, offset + REJECTION_FETCH_BATCH_SIZE - 1)");
   });
 });

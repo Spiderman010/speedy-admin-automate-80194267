@@ -37,25 +37,41 @@ CREATE INDEX IF NOT EXISTS bank_match_rejections_client_idx
 
 ALTER TABLE public.bank_match_rejections ENABLE ROW LEVEL SECURITY;
 
--- Org-scoped RLS, consistent with the repository convention
--- (is_organization_member on a NOT NULL organization_id).
+-- RLS model:
+-- - SELECT: any organization member (read_only included) — rejection history
+--   is needed to RENDER correct suggestions.
+-- - INSERT/DELETE: minimum role 'assistant' via the repository's role-aware
+--   predicate has_min_role — the same minimum required to update
+--   bank_transactions. A read_only member must not be able to create or
+--   remove rejection facts and thereby steer matching.
+-- - Integrity: organization_id and client_id must match the referenced bank
+--   transaction, so a rejection row can never be smuggled into another
+--   org/client scope than its transaction.
 CREATE POLICY "org_members_bank_match_rejections_select"
 ON public.bank_match_rejections
 FOR SELECT
 TO authenticated
 USING (public.is_organization_member(auth.uid(), organization_id));
 
-CREATE POLICY "org_members_bank_match_rejections_insert"
+CREATE POLICY "role_bank_match_rejections_insert"
 ON public.bank_match_rejections
 FOR INSERT
 TO authenticated
-WITH CHECK (public.is_organization_member(auth.uid(), organization_id));
+WITH CHECK (
+  public.has_min_role(auth.uid(), organization_id, 'assistant')
+  AND EXISTS (
+    SELECT 1 FROM public.bank_transactions bt
+    WHERE bt.id = bank_match_rejections.bank_transaction_id
+      AND bt.organization_id = bank_match_rejections.organization_id
+      AND bt.client_id = bank_match_rejections.client_id
+  )
+);
 
-CREATE POLICY "org_members_bank_match_rejections_delete"
+CREATE POLICY "role_bank_match_rejections_delete"
 ON public.bank_match_rejections
 FOR DELETE
 TO authenticated
-USING (public.is_organization_member(auth.uid(), organization_id));
+USING (public.has_min_role(auth.uid(), organization_id, 'assistant'));
 
 -- No UPDATE policy: rejection rows are immutable facts. They are created on
 -- reject/unlink and deleted when the same invoice is explicitly manually
@@ -65,8 +81,12 @@ USING (public.is_organization_member(auth.uid(), organization_id));
 -- V1: select to_regclass('public.bank_match_rejections');
 -- V2: select indexname from pg_indexes
 --       where tablename = 'bank_match_rejections';
--- V3: select policyname, cmd from pg_policies
+-- V3: select policyname, cmd, qual, with_check from pg_policies
 --       where tablename = 'bank_match_rejections';
+--     Expected: SELECT → is_organization_member;
+--               INSERT → has_min_role(..., 'assistant') AND the
+--                        bank_transactions org/client correspondence check;
+--               DELETE → has_min_role(..., 'assistant'); no UPDATE policy.
 
 -- rollback:
 --   DROP TABLE IF EXISTS public.bank_match_rejections;
