@@ -316,6 +316,7 @@ export default function Bank() {
   const {
     data: matchRejections,
     isLoading: rejectionsLoading,
+    isFetching: rejectionsFetching,
     isError: rejectionsError,
     refetch: refetchRejections,
   } = useBankMatchRejections({
@@ -331,8 +332,11 @@ export default function Bank() {
   const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;
   // Rejection history is "ready" only after a successful load. Undefined data
   // (loading or failed) must NEVER be treated as an empty rejection list —
-  // that would let a rejected invoice match again during the gap.
-  const rejectionsReady = hasSelection && !rejectionsLoading && !rejectionsError && !!matchRejections;
+  // that would let a rejected invoice match again during the gap. A refetch
+  // in flight (isFetching) also pauses automatic matching as defense in depth
+  // on top of the mutation's synchronous cache update.
+  const rejectionsReady =
+    hasSelection && !rejectionsLoading && !rejectionsFetching && !rejectionsError && !!matchRejections;
   // Invoice-dependent matching / reconciliation / afletter-report actions need
   // the bank transactions, the sales invoices AND the rejection history all
   // successfully loaded.
@@ -2954,6 +2958,18 @@ export default function Bank() {
             } catch (e: any) {
               toast({ title: "Allocatierij niet aangemaakt", description: e.message, variant: "destructive" });
             }
+          }
+          // Explicit manual override from the processing screen: the link,
+          // invoice and allocation writes succeeded, so clear the stale
+          // rejection of this exact combination — same rule as the match
+          // dialog. A clear failure must never undo the successful booking.
+          try {
+            await clearMatchRejection.mutateAsync({ bankTransactionId: id, invoiceId });
+          } catch {
+            toast({
+              title: "Afwijzing niet gewist",
+              description: "De koppeling is gelukt, maar de oude afwijzing kon niet worden verwijderd. Dit heeft geen effect zolang de koppeling bestaat.",
+            });
           }
           toast({ title: "Factuur gekoppeld" });
           refetch();

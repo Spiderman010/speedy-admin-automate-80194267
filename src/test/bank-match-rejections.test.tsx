@@ -234,7 +234,12 @@ vi.mock("@/components/BankAfletteringDrawer", () => ({
   BankAfletteringDrawer: () => null,
 }));
 vi.mock("@/components/VerwerkingsScherm", () => ({
-  VerwerkingsScherm: () => null,
+  VerwerkingsScherm: ({ open, onMatchInvoice }: any) =>
+    open ? (
+      <button type="button" onClick={() => onMatchInvoice("tx-1", "inv-A", "inkoop")}>
+        __verwerk-match-inv-A
+      </button>
+    ) : null,
 }));
 vi.mock("@/components/CreateVraagpostDialog", () => ({
   CreateVraagpostDialog: () => null,
@@ -553,6 +558,49 @@ describe("Bank — gating, bulk-ontkoppelen, extra allocatie en foutpaden", () =
   });
 });
 
+describe("Bank — VerwerkingsScherm handmatige override", () => {
+  async function openVerwerkingAndMatch() {
+    state.transactions = [makeTx({ id: "tx-1", __candidate: null })];
+    state.rejections = [makeRejection("tx-1", "inv-A")];
+    state.purchaseInvoices = [makePurchaseInvoice("inv-A")];
+    renderBank();
+    fireEvent.click(await screen.findByRole("button", { name: /Verwerken/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "__verwerk-match-inv-A" }));
+  }
+
+  it("wist de exacte afwijzing pas na geslaagde link-, factuur- en allocatie-writes", async () => {
+    await openVerwerkingAndMatch();
+
+    await waitFor(() =>
+      expect(gematchtCalls()).toContainEqual(
+        expect.objectContaining({ id: "tx-1", matched_invoice_id: "inv-A" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(state.allocationUpserts).toContainEqual(
+        expect.objectContaining({ bank_transaction_id: "tx-1", invoice_id: "inv-A" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(state.rejectionClears).toContainEqual({ bankTransactionId: "tx-1", invoiceId: "inv-A" }),
+    );
+  });
+
+  it("een mislukte clear draait de geslaagde boeking niet terug", async () => {
+    state.failNextClear = true;
+    await openVerwerkingAndMatch();
+
+    await waitFor(() =>
+      expect(gematchtCalls()).toContainEqual(
+        expect.objectContaining({ id: "tx-1", matched_invoice_id: "inv-A" }),
+      ),
+    );
+    await waitFor(() => expect(state.rejectionClears).toHaveLength(1));
+    // Geen reset van de transactie na de mislukte clear.
+    expect(state.updateTxCalls.some(c => c.match_status === "niet_gematcht")).toBe(false);
+  });
+});
+
 describe("Bank — alle matchpaden delen dezelfde afwijzingsregel (brongaranties)", () => {
   let bankSource = "";
   let hookSource = "";
@@ -577,10 +625,11 @@ describe("Bank — alle matchpaden delen dezelfde afwijzingsregel (brongaranties
   });
 
   it("automatische herberekening wist nooit afwijzingen; alleen expliciete handmatige matches wel", () => {
-    // clearMatchRejection is called exactly twice, both inside handleMatch:
-    // the primary confirm and the additional-allocation confirm.
+    // clearMatchRejection is called from exactly the three explicit manual
+    // paths: primary dialog confirm, additional-allocation confirm and the
+    // VerwerkingsScherm onMatchInvoice override.
     const clears = bankSource.match(/clearMatchRejection\.mutateAsync\(/g) ?? [];
-    expect(clears).toHaveLength(2);
+    expect(clears).toHaveLength(3);
     // Rejections cannot be duplicated: unique-key upsert with ignoreDuplicates.
     expect(hookSource).toContain('onConflict: "bank_transaction_id,invoice_id"');
     expect(hookSource).toContain("ignoreDuplicates: true");
@@ -588,7 +637,7 @@ describe("Bank — alle matchpaden delen dezelfde afwijzingsregel (brongaranties
 
   it("matchingReady omvat de afwijzingsquery en de drawer gebruikt dezelfde filter", async () => {
     expect(bankSource).toContain(
-      "const rejectionsReady = hasSelection && !rejectionsLoading && !rejectionsError && !!matchRejections;",
+      "hasSelection && !rejectionsLoading && !rejectionsFetching && !rejectionsError && !!matchRejections;",
     );
     expect(bankSource).toContain("const matchingReady = wholeSetReady && salesReady && rejectionsReady;");
     expect(bankSource).toContain("if (rejectionsError) refetchRejections();");

@@ -128,7 +128,33 @@ export function useAddBankMatchRejection() {
       );
       if (error) throw error;
     },
-    onSuccess: () => {
+    onSuccess: (_data, rejection) => {
+      // Apply the new rejection to every matching cached scope BEFORE the
+      // background refetch: invalidation alone leaves the old data in place
+      // while refetching, which would briefly let the just-rejected invoice
+      // be auto-suggested again. Deduped on (bank_transaction_id, invoice_id)
+      // so cache rows can never duplicate; the refetch then replaces the
+      // placeholder row with the server row.
+      for (const [key, rows] of qc.getQueriesData<BankMatchRejection[]>({ queryKey: QUERY_KEY })) {
+        if (!rows) continue;
+        const [, org, client, clientIdsKey] = key as readonly [string, string, string, string];
+        if (org !== "all" && org !== rejection.organization_id) continue;
+        if (client !== "all" && client !== rejection.client_id) continue;
+        if (clientIdsKey && !clientIdsKey.split(",").includes(rejection.client_id)) continue;
+        if (rows.some(r =>
+          r.bank_transaction_id === rejection.bank_transaction_id &&
+          r.invoice_id === rejection.invoice_id,
+        )) continue;
+        qc.setQueryData<BankMatchRejection[]>(key, [
+          ...rows,
+          {
+            ...rejection,
+            id: `local-${rejection.bank_transaction_id}-${rejection.invoice_id}`,
+            rejected_by: user?.id ?? null,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
       qc.invalidateQueries({ queryKey: QUERY_KEY });
     },
   });

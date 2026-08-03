@@ -1,17 +1,23 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { ReactNode } from "react";
 import {
   useBankMatchRejections,
+  useAddBankMatchRejection,
+  buildRejectionMap,
   REJECTION_FETCH_BATCH_SIZE,
 } from "@/hooks/useBankMatchRejections";
 
 type QueryCall = { method: string; args: unknown[] };
+type QueryResponse = { data: unknown[]; error: unknown };
 
 const state = {
   calls: [] as QueryCall[],
-  batchResponses: [] as Array<{ data: unknown[]; error: unknown }>,
+  batchResponses: [] as QueryResponse[],
+  deferNext: false,
+  pendingResolvers: [] as Array<(v: QueryResponse) => void>,
+  upserts: [] as unknown[],
 };
 
 function makeQueryMock() {
@@ -26,10 +32,19 @@ function makeQueryMock() {
   query.in = chain("in");
   query.order = chain("order");
   query.range = chain("range");
-  // The builder is awaited after the filters are applied; resolve with the
-  // next queued batch at that point.
-  (query as any).then = (resolve: (v: unknown) => void) =>
+  query.upsert = vi.fn((...args: unknown[]) => {
+    state.calls.push({ method: "upsert", args });
+    state.upserts.push(args);
+    return { then: (resolve: (v: unknown) => void) => resolve({ error: null }) };
+  });
+  (query as any).then = (resolve: (v: QueryResponse) => void) => {
+    if (state.deferNext) {
+      state.deferNext = false;
+      state.pendingResolvers.push(resolve);
+      return;
+    }
     resolve(state.batchResponses.shift() ?? { data: [], error: null });
+  };
   return query;
 }
 
@@ -50,9 +65,20 @@ function createWrapper() {
 
 const callsFor = (m: string) => state.calls.filter(c => c.method === m);
 
+const REJECTION_INSERT = {
+  organization_id: "org-1",
+  client_id: "c1",
+  bank_transaction_id: "tx-1",
+  invoice_id: "inv-A",
+  invoice_type: "inkoop" as const,
+};
+
 beforeEach(() => {
   state.calls = [];
   state.batchResponses = [];
+  state.deferNext = false;
+  state.pendingResolvers = [];
+  state.upserts = [];
 });
 
 describe("useBankMatchRejections — batched fetch", () => {
@@ -98,5 +124,79 @@ describe("useBankMatchRejections — batched fetch", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([]);
     expect(callsFor("range")).toHaveLength(0);
+  });
+});
+
+describe("useAddBankMatchRejection — geen raamvenster tussen mutatie en refetch", () => {
+  it("past de nieuwe afwijzing direct lokaal toe terwijl de server-refetch nog loopt", async () => {
+    // ECHTE mutatie-flow: geen vooraf geladen afwijzingsdata — de lijst start
+    // leeg vanaf de 'server'.
+    const wrapper = createWrapper();
+    const { result } = renderHook(
+      () => ({
+        list: useBankMatchRejections({ organizationId: "org-1", clientId: "c1" }),
+        add: useAddBankMatchRejection(),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.list.isSuccess).toBe(true));
+    expect(result.current.list.data).toEqual([]);
+
+    // De refetch die de mutatie triggert blijft hangen (trage server).
+    state.deferNext = true;
+    await act(async () => {
+      await result.current.add.mutateAsync(REJECTION_INSERT);
+    });
+
+    // Refetch is gestart maar NIET afgerond…
+    await waitFor(() => expect(state.pendingResolvers).toHaveLength(1));
+    expect(result.current.list.isFetching).toBe(true);
+    // …en toch bevat de cache de afwijzing al: het uitsluitingspredicaat
+    // filtert de zojuist afgewezen factuur dus zonder enige tussenpauze.
+    const rows = result.current.list.data ?? [];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ bank_transaction_id: "tx-1", invoice_id: "inv-A" });
+    expect(buildRejectionMap(rows).get("tx-1")).toEqual(new Set(["inv-A"]));
+
+    // Nogmaals afwijzen van dezelfde combinatie mag geen duplicaat opleveren.
+    state.deferNext = true;
+    await act(async () => {
+      await result.current.add.mutateAsync(REJECTION_INSERT);
+    });
+    expect(result.current.list.data).toHaveLength(1);
+
+    // Server-refetch rondt af met de echte rij: cache consistent, 1 rij.
+    const serverRow = {
+      id: "rej-real-1",
+      ...REJECTION_INSERT,
+      rejected_by: "user-1",
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    await act(async () => {
+      for (const resolve of state.pendingResolvers.splice(0)) {
+        resolve({ data: [serverRow], error: null });
+      }
+    });
+    await waitFor(() => expect(result.current.list.isFetching).toBe(false));
+    expect(result.current.list.data).toEqual([serverRow]);
+  });
+
+  it("werkt geen caches van een andere org/klant-scope bij", async () => {
+    const wrapper = createWrapper();
+    const { result } = renderHook(
+      () => ({
+        other: useBankMatchRejections({ organizationId: "org-1", clientId: "c-ANDERS" }),
+        add: useAddBankMatchRejection(),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.other.isSuccess).toBe(true));
+
+    state.deferNext = true;
+    await act(async () => {
+      await result.current.add.mutateAsync(REJECTION_INSERT); // client c1
+    });
+    // De cache van c-ANDERS krijgt de c1-afwijzing niet toegevoegd.
+    expect(result.current.other.data).toEqual([]);
   });
 });
