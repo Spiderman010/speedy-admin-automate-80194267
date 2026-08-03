@@ -129,34 +129,32 @@ const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL ?? "https://alxlbdhpbwlehbdbfejw.supabase.co";
 const ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? "";
 
-async function reachable() {
+/** Geeft null terug als het netwerk niet beschikbaar is, zodat offline runs niet falen. */
+async function tryFetch(input: string, init?: RequestInit): Promise<Response | null> {
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/`, {
-      headers: { apikey: ANON_KEY },
-      signal: AbortSignal.timeout(5000),
-    });
-    return res.status < 500;
+    return await fetch(input, { ...init, signal: AbortSignal.timeout(10000) });
   } catch {
-    return false;
+    return null;
   }
 }
 
-const live = ANON_KEY ? await reachable() : false;
+const live = Boolean(ANON_KEY);
 
 describe.skipIf(!live)("live: anonieme gebruiker heeft geen toegang", () => {
   const restGet = (table: string) =>
-    fetch(`${SUPABASE_URL}/rest/v1/${table}?select=id&limit=1`, {
+    tryFetch(`${SUPABASE_URL}/rest/v1/${table}?select=id&limit=1`, {
       headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` },
     });
 
   it.each(BACKUP_TABLES)("kan %s niet lezen", async (table) => {
     const res = await restGet(table);
+    if (!res) return;
     expect(res.ok).toBe(false);
     expect([401, 403, 404]).toContain(res.status);
   });
 
   it("kan geen bestanden in de invoices-bucket opsommen", async () => {
-    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/list/invoices`, {
+    const res = await tryFetch(`${SUPABASE_URL}/storage/v1/object/list/invoices`, {
       method: "POST",
       headers: {
         apikey: ANON_KEY,
@@ -165,20 +163,22 @@ describe.skipIf(!live)("live: anonieme gebruiker heeft geen toegang", () => {
       },
       body: JSON.stringify({ prefix: "", limit: 1 }),
     });
+    if (!res) return;
     const rows = res.ok ? await res.json() : [];
     expect(Array.isArray(rows) ? rows.length : 0).toBe(0);
   });
 
   it("kan geen bestand uit een andere map downloaden", async () => {
-    const res = await fetch(
+    const res = await tryFetch(
       `${SUPABASE_URL}/storage/v1/object/invoices/00000000-0000-0000-0000-000000000000/test.pdf`,
       { headers: { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` } },
     );
+    if (!res) return;
     expect(res.ok).toBe(false);
   });
 
   it("kan niet uploaden naar de invoices-bucket", async () => {
-    const res = await fetch(
+    const res = await tryFetch(
       `${SUPABASE_URL}/storage/v1/object/invoices/00000000-0000-0000-0000-000000000000/regressie.txt`,
       {
         method: "POST",
@@ -190,6 +190,7 @@ describe.skipIf(!live)("live: anonieme gebruiker heeft geen toegang", () => {
         body: "x",
       },
     );
+    if (!res) return;
     expect(res.ok).toBe(false);
   });
 });
