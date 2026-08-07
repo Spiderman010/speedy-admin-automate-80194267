@@ -64,7 +64,6 @@ import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
-import type { LegacyColumnDef } from "@tanstack/react-table/legacy";
 import { BankTransactionDetailSheet } from "@/components/bank/BankTransactionDetailSheet";
 
 const formatCurrency = (amount: number) =>
@@ -94,6 +93,13 @@ const MATCH_STATUS_NL: Record<string, string> = {
 
 type SortField = "date" | "amount" | "description" | "status";
 type SortDir = "asc" | "desc";
+
+type BankColDef = {
+  id: string;
+  header: string | (() => React.ReactNode);
+  sortField?: SortField;
+  headerClassName?: string;
+};
 
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
@@ -1874,10 +1880,8 @@ export default function Bank() {
     refetchSales();
   }, [refetch, refetchPurchase, refetchSales]);
 
-  // ── TanStack Table: centralized column definitions (manual rendering) ───────
-  // Uses LegacyColumnDef<T> type from @tanstack/react-table for typed column metadata.
-  // Rendered manually so server-side pagination/sorting semantics are preserved.
-  const txColumnDefs: LegacyColumnDef<Tables<"bank_transactions">>[] = useMemo(() => [
+  // ── Column definitions (manual rendering, no table engine) ─────────────────
+  const txColumnDefs: BankColDef[] = useMemo(() => [
     {
       id: "select",
       header: () => (
@@ -1888,15 +1892,15 @@ export default function Bank() {
           aria-label="Selecteer alle rijen op deze pagina"
         />
       ),
-      meta: { headerClassName: "w-10" },
+      headerClassName: "w-10",
     },
-    { id: "date",        header: "Datum",          meta: { sortField: "date" as SortField } },
-    { id: "description", header: "Omschrijving",   meta: { sortField: "description" as SortField } },
-    { id: "amount",      header: "Bedrag",          meta: { sortField: "amount" as SortField, headerClassName: "text-right" } },
-    { id: "confidence",  header: "Betrouwbaarheid", meta: { headerClassName: "hidden md:table-cell" } },
-    { id: "status",      header: "Status",          meta: { sortField: "status" as SortField } },
-    { id: "linked",      header: "Gekoppeld aan",   meta: { headerClassName: "hidden lg:table-cell" } },
-    { id: "actions",     header: "",                meta: { headerClassName: "w-32" } },
+    { id: "date",        header: "Datum",          sortField: "date" },
+    { id: "description", header: "Omschrijving",   sortField: "description" },
+    { id: "amount",      header: "Bedrag",          sortField: "amount", headerClassName: "text-right" },
+    { id: "confidence",  header: "Betrouwbaarheid", headerClassName: "hidden md:table-cell" },
+    { id: "status",      header: "Status",          sortField: "status" },
+    { id: "linked",      header: "Gekoppeld aan",   headerClassName: "hidden lg:table-cell" },
+    { id: "actions",     header: "",                headerClassName: "w-32" },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [tableRows.length, selectedIds.size, stalePageData]);
 
@@ -2350,23 +2354,19 @@ export default function Bank() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  {txColumnDefs.map(col => {
-                    const meta = (col.meta ?? {}) as Record<string, string | undefined>;
-                    const sf = meta.sortField as SortField | undefined;
-                    return (
-                      <TableHead
-                        key={col.id}
-                        className={[
-                          meta.headerClassName,
-                          sf ? "cursor-pointer select-none" : undefined,
-                        ].filter(Boolean).join(" ") || undefined}
-                        onClick={sf ? () => handleSort(sf) : undefined}
-                      >
-                        {typeof col.header === "function" ? col.header({} as any) : col.header}
-                        {sf && <SortIcon field={sf} />}
-                      </TableHead>
-                    );
-                  })}
+                  {txColumnDefs.map(col => (
+                    <TableHead
+                      key={col.id}
+                      className={[
+                        col.headerClassName,
+                        col.sortField ? "cursor-pointer select-none" : undefined,
+                      ].filter(Boolean).join(" ") || undefined}
+                      onClick={col.sortField ? () => handleSort(col.sortField!) : undefined}
+                    >
+                      {typeof col.header === "function" ? col.header() : col.header}
+                      {col.sortField && <SortIcon field={col.sortField} />}
+                    </TableHead>
+                  ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
