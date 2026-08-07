@@ -2,7 +2,6 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
-import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +12,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Upload, CheckCircle2, HelpCircle, Link2, Download, Info, Unlink, ArrowUp, ArrowDown, Search, Zap, RefreshCw, Plus, FileSearch, AlertTriangle, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Landmark } from "lucide-react";
 import {
   AlertDialog,
@@ -1873,66 +1873,69 @@ export default function Bank() {
 
   return (
     <>
-      <PageHeader title="Bankafschriften" description="Upload en match bankafschriften met facturen">
+      <h1 className="sr-only">Bankafschriften</h1>
+      <div className="mb-6 flex flex-wrap items-center gap-2">
         <ClientMultiSelect
           clients={clients ?? []}
           value={clientSelection}
           onChange={handleClientSelectionChange}
         />
-        <Button variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
-          const exportCandidates = transactions ?? [];
-          if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
-          const gb = grootboekrekeningen ?? [];
-          const sources = exportCandidates.map(t => resolveBankExportGrootboek(t, gb).source);
-          const countTo1799 = sources.filter(s => s === "1799").length;
-          const countExported = sources.filter(s => s === "own" || s === "1799").length;
-          const blockedUnconfirmed = sources.filter(s => s === "blocked_unconfirmed").length;
-          const blockedUnprocessed = sources.filter(s => s === "blocked_unprocessed").length;
-          const blockedManualInvalid = sources.filter(s => s === "blocked_manual_invalid").length;
-          const blockedMissing1799 = sources.filter(s => s === "blocked_missing_1799").length;
-          const countBlocked = blockedUnconfirmed + blockedUnprocessed + blockedManualInvalid + blockedMissing1799;
-          const clientRecord = singleClientId ? clients?.find(c => c.id === singleClientId) : undefined;
-          const clientName = clientRecord?.name;
-          const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
-          setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName, bankDagboek });
-          setExportPreflightOpen(true);
-        }}>
-          <Download className="mr-2 h-4 w-4" />Export Snelstart
-        </Button>
-        <Button variant="outline" disabled={!hasSelection || !matchingReady} onClick={() => {
-          const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
-          const rowCount = exportAfletterrapportCSV(
-            allAllocations ?? [],
-            transactions ?? [],
-            invoices ?? [],
-            salesInvs ?? [],
-            grootboekrekeningen ?? [],
-            clientName,
-          );
-          if (rowCount === 0) {
-            toast({
-              title: "Geen afletteringen gevonden",
-              description: "Er zijn geen definitief gekoppelde bankregels om te rapporteren.",
-              variant: "destructive",
-            });
-          } else {
-            toast({ title: "Afletterrapport aangemaakt", description: `${rowCount} regel(s) geëxporteerd.` });
-          }
-        }}>
-          <Download className="mr-2 h-4 w-4" />Afletterrapport CSV
-        </Button>
-        <Button
-          variant="default"
-          onClick={() => setVerwerkingOpen(true)}
-          disabled={!hasSelection || !matchingReady || openCount === 0}
-        >
-          <Zap className="mr-2 h-4 w-4" />
-          Verwerken {openCount > 0 && `(${openCount})`}
-        </Button>
-        <Button onClick={() => setUploadOpen(true)}>
-          <Upload className="mr-2 h-4 w-4" />Upload afschrift
-        </Button>
-      </PageHeader>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
+            const exportCandidates = transactions ?? [];
+            if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
+            const gb = grootboekrekeningen ?? [];
+            const sources = exportCandidates.map(t => resolveBankExportGrootboek(t, gb).source);
+            const countTo1799 = sources.filter(s => s === "1799").length;
+            const countExported = sources.filter(s => s === "own" || s === "1799").length;
+            const blockedUnconfirmed = sources.filter(s => s === "blocked_unconfirmed").length;
+            const blockedUnprocessed = sources.filter(s => s === "blocked_unprocessed").length;
+            const blockedManualInvalid = sources.filter(s => s === "blocked_manual_invalid").length;
+            const blockedMissing1799 = sources.filter(s => s === "blocked_missing_1799").length;
+            const countBlocked = blockedUnconfirmed + blockedUnprocessed + blockedManualInvalid + blockedMissing1799;
+            const clientRecord = singleClientId ? clients?.find(c => c.id === singleClientId) : undefined;
+            const clientName = clientRecord?.name;
+            const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
+            setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName, bankDagboek });
+            setExportPreflightOpen(true);
+          }}>
+            <Download className="mr-2 h-4 w-4" />Export Snelstart
+          </Button>
+          <Button variant="outline" disabled={!hasSelection || !matchingReady} onClick={() => {
+            const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
+            const rowCount = exportAfletterrapportCSV(
+              allAllocations ?? [],
+              transactions ?? [],
+              invoices ?? [],
+              salesInvs ?? [],
+              grootboekrekeningen ?? [],
+              clientName,
+            );
+            if (rowCount === 0) {
+              toast({
+                title: "Geen afletteringen gevonden",
+                description: "Er zijn geen definitief gekoppelde bankregels om te rapporteren.",
+                variant: "destructive",
+              });
+            } else {
+              toast({ title: "Afletterrapport aangemaakt", description: `${rowCount} regel(s) geëxporteerd.` });
+            }
+          }}>
+            <Download className="mr-2 h-4 w-4" />Afletterrapport CSV
+          </Button>
+          <Button
+            variant="default"
+            onClick={() => setVerwerkingOpen(true)}
+            disabled={!hasSelection || !matchingReady || openCount === 0}
+          >
+            <Zap className="mr-2 h-4 w-4" />
+            Verwerken {openCount > 0 && `(${openCount})`}
+          </Button>
+          <Button onClick={() => setUploadOpen(true)}>
+            <Upload className="mr-2 h-4 w-4" />Upload afschrift
+          </Button>
+        </div>
+      </div>
 
       {!hasSelection ? (
         <Card className="mt-6">
@@ -2070,63 +2073,71 @@ export default function Bank() {
 
 
 
-      <div className="flex gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Zoeken op omschrijving, naam, referentie, tegenrekening..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-          />
+      <div className="mb-4 space-y-3">
+        <Tabs value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+          <TabsList className="flex-wrap h-auto gap-1">
+            <TabsTrigger value="all">
+              Alle {wholeSetReady && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">{transactions?.length ?? 0}</span>}
+            </TabsTrigger>
+            <TabsTrigger value="open">
+              Open {wholeSetReady && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">{transactions?.filter(t => t.match_status === "niet_gematcht" || t.match_status === "suggestie").length ?? 0}</span>}
+            </TabsTrigger>
+            <TabsTrigger value="gematcht">
+              Gematcht {wholeSetReady && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">{matched}</span>}
+            </TabsTrigger>
+            <TabsTrigger value="handmatig">
+              Handmatig {wholeSetReady && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">{transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0}</span>}
+            </TabsTrigger>
+            <TabsTrigger value="blokkeert_export">Blokkeert export</TabsTrigger>
+            <TabsTrigger value="niet_in_bankexport" title="Betalingen die tijdelijk op tussenrekening 1799 staan.">Onbekende betalingen</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <div className="flex flex-wrap gap-2">
+          <div className="relative flex-1 min-w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Zoeken op omschrijving, naam, referentie, tegenrekening..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
+            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Alle vraagposten</SelectItem>
+              <SelectItem value="with">Met vraagpost</SelectItem>
+              <SelectItem value="open">Vraagpost open</SelectItem>
+              <SelectItem value="opgelost">Vraagpost opgelost</SelectItem>
+              <SelectItem value="genegeerd">Vraagpost genegeerd</SelectItem>
+              <SelectItem value="without">Zonder vraagpost</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle statussen</SelectItem>
-            <SelectItem value="open">Open</SelectItem>
-            <SelectItem value="gematcht">Gematcht</SelectItem>
-            <SelectItem value="handmatig">Handmatig geboekt</SelectItem>
-            <SelectItem value="blokkeert_export">Blokkeert export</SelectItem>
-            <SelectItem value="niet_in_bankexport" title="Betalingen die tijdelijk op tussenrekening 1799 staan.">Onbekende betalingen</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
-          <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Alle vraagposten</SelectItem>
-            <SelectItem value="with">Met vraagpost</SelectItem>
-            <SelectItem value="open">Vraagpost open</SelectItem>
-            <SelectItem value="opgelost">Vraagpost opgelost</SelectItem>
-            <SelectItem value="genegeerd">Vraagpost genegeerd</SelectItem>
-            <SelectItem value="without">Zonder vraagpost</SelectItem>
-          </SelectContent>
-        </Select>
+        {statusFilter === "open" && (
+          <div className="flex flex-wrap gap-2">
+            {([
+              ["all", "Alle"],
+              ["high", "≥90%"],
+              ["medium", "60–89%"],
+              ["low", "<60%"],
+              ["none", "Geen suggestie"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setConfidenceFilter(value)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  confidenceFilter === value
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-
-      {statusFilter === "open" && (
-        <div className="flex flex-wrap gap-2 mb-4">
-          {([
-            ["all", "Alle"],
-            ["high", "≥90%"],
-            ["medium", "60–89%"],
-            ["low", "<60%"],
-            ["none", "Geen suggestie"],
-          ] as const).map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => setConfidenceFilter(value)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                confidenceFilter === value
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Export blocker queue — only meaningful once the whole dataset loaded.
           Never claim "Geen bankblokkades" while loading or after a failure. */}
