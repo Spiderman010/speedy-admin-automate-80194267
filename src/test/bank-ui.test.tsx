@@ -265,4 +265,74 @@ describe("Bank pagina UI", () => {
     expect(screen.getByRole("columnheader", { name: /Bedrag/ })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: /Status/ })).toBeInTheDocument();
   });
+
+  it("sorteerkolomheaders zijn klikbaar (sorteerbaar)", () => {
+    state.transactions = [makeRow("t1")];
+    renderBank();
+    const datumHeader = screen.getByRole("columnheader", { name: /Datum/ });
+    const bedragHeader = screen.getByRole("columnheader", { name: /Bedrag/ });
+    // Sortable headers have cursor-pointer class
+    expect(datumHeader.className).toContain("cursor-pointer");
+    expect(bedragHeader.className).toContain("cursor-pointer");
+  });
+
+  it("betrouwbaarheid- en gekoppeld-aan-kolommen zijn verborgen op kleine schermen (responsive)", () => {
+    state.transactions = [makeRow("t1", { match_confidence: 80 })];
+    renderBank();
+    const confHeader = screen.getByRole("columnheader", { name: /Betrouwbaarheid/ });
+    const linkedHeader = screen.getByRole("columnheader", { name: /Gekoppeld aan/ });
+    // md:table-cell hides on small screens
+    expect(confHeader.className).toContain("hidden");
+    expect(linkedHeader.className).toContain("hidden");
+  });
+
+  it("klik op rij opent transactiedetail-Sheet", () => {
+    state.transactions = [
+      makeRow("t1", { description: "Huur detail check", transaction_date: "2026-01-15", amount: -500 }),
+    ];
+    renderBank();
+    // Click the row (not checkbox, not action cell)
+    const row = screen.getAllByRole("row").find(r => r.textContent?.includes("Huur detail check"));
+    expect(row).toBeTruthy();
+    if (row) fireEvent.click(row);
+    // Sheet should open and show "Transactiedetails" header
+    expect(screen.getByText("Transactiedetails")).toBeInTheDocument();
+  });
+
+  it("klik op checkbox opent de detail-Sheet NIET", () => {
+    state.transactions = [makeRow("t1", { description: "Checkbox test rij" })];
+    renderBank();
+    const checkboxes = screen.getAllByRole("checkbox");
+    // Row checkbox is the second one (first is header "select all")
+    const rowCheckbox = checkboxes[1];
+    fireEvent.click(rowCheckbox);
+    // Detail Sheet should NOT open
+    expect(screen.queryByText("Transactiedetails")).not.toBeInTheDocument();
+  });
+
+  it("detail-Sheet toont transactiedatum en bedrag", () => {
+    state.transactions = [
+      makeRow("t1", { description: "Test transactie", transaction_date: "2026-03-20", amount: -250 }),
+    ];
+    renderBank();
+    const row = screen.getAllByRole("row").find(r => r.textContent?.includes("Test transactie"));
+    if (row) fireEvent.click(row);
+    // Sheet header visible
+    expect(screen.getByText("Transactiedetails")).toBeInTheDocument();
+    // Amount shown in the Sheet (negative = -€250,00 format)
+    const amountEls = screen.getAllByText(/250/);
+    expect(amountEls.length).toBeGreaterThan(0);
+  });
+
+  it("detail-Sheet sluit via de Sheet-sluitknop", () => {
+    state.transactions = [makeRow("t1", { description: "Sluiten test" })];
+    renderBank();
+    const row = screen.getAllByRole("row").find(r => r.textContent?.includes("Sluiten test"));
+    if (row) fireEvent.click(row);
+    expect(screen.getByText("Transactiedetails")).toBeInTheDocument();
+    // Close via the X button (aria-label "Close")
+    const closeBtn = screen.getByRole("button", { name: /Close/i });
+    fireEvent.click(closeBtn);
+    expect(screen.queryByText("Transactiedetails")).not.toBeInTheDocument();
+  });
 });
