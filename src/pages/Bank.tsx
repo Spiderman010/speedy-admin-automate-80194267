@@ -64,6 +64,13 @@ import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
+import {
+  useBankMatchRejections,
+  useAddBankMatchRejection,
+  useClearBankMatchRejection,
+  buildRejectionMap,
+  filterRejectedCandidates,
+} from "@/hooks/useBankMatchRejections";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -139,17 +146,23 @@ function pickSafeMatchCandidate(
 }
 
 // Convenience wrapper that ranks candidates itself — for mutation-time re-checks
-// where no pre-ranked list is available.
+// where no pre-ranked list is available. Explicitly rejected invoices are
+// removed BEFORE the top candidate is selected, so a rejected invoice can
+// never win the ranking again for this transaction.
 function getSafeMatchCandidate(
   tx: Tables<"bank_transactions">,
   purchaseInvoices: Tables<"purchase_invoices">[],
   salesInvoices: Tables<"sales_invoices">[],
+  rejectedInvoiceIds?: ReadonlySet<string>,
 ): InvoiceCandidate | null {
   if (!isSafeMatchEligibleStatus(tx.match_status)) return null;
-  const candidates = rankCandidates(
-    tx,
-    purchaseInvoices.filter(i => i.client_id === tx.client_id),
-    salesInvoices.filter(i => i.client_id === tx.client_id),
+  const candidates = filterRejectedCandidates(
+    rankCandidates(
+      tx,
+      purchaseInvoices.filter(i => i.client_id === tx.client_id),
+      salesInvoices.filter(i => i.client_id === tx.client_id),
+    ),
+    rejectedInvoiceIds,
   );
   return pickSafeMatchCandidate(tx, candidates);
 }
@@ -297,12 +310,37 @@ export default function Bank() {
     clientIds: singleClientId ? undefined : clientIdsForQuery,
     enabled: orgEnabled && hasSelection,
   });
+  // Explicitly rejected (transaction, invoice) combinations — same scope and
+  // gating as the allocations query. Automatic matching must never re-suggest
+  // a combination present here.
+  const {
+    data: matchRejections,
+    isLoading: rejectionsLoading,
+    isFetching: rejectionsFetching,
+    isError: rejectionsError,
+    refetch: refetchRejections,
+  } = useBankMatchRejections({
+    organizationId: activeOrganizationId ?? undefined,
+    clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
+    enabled: orgEnabled && hasSelection,
+  });
+  const addMatchRejection = useAddBankMatchRejection();
+  const clearMatchRejection = useClearBankMatchRejection();
   // Sales invoices are "ready" only on a successful load. An error must NOT be
   // treated as an empty successful result (which would silently hide matches).
   const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;
+  // Rejection history is "ready" only after a successful load. Undefined data
+  // (loading or failed) must NEVER be treated as an empty rejection list —
+  // that would let a rejected invoice match again during the gap. A refetch
+  // in flight (isFetching) also pauses automatic matching as defense in depth
+  // on top of the mutation's synchronous cache update.
+  const rejectionsReady =
+    hasSelection && !rejectionsLoading && !rejectionsFetching && !rejectionsError && !!matchRejections;
   // Invoice-dependent matching / reconciliation / afletter-report actions need
-  // BOTH the bank transactions and the sales invoices successfully loaded.
-  const matchingReady = wholeSetReady && salesReady;
+  // the bank transactions, the sales invoices AND the rejection history all
+  // successfully loaded.
+  const matchingReady = wholeSetReady && salesReady && rejectionsReady;
   const addTx = useAddBankTransaction();
   const updateTx = useUpdateBankTransaction();
   const updatePurchase = useUpdatePurchaseInvoice();
@@ -361,6 +399,28 @@ export default function Bank() {
 
   const matched = transactions?.filter((t) => t.match_status === "gematcht").length ?? 0;
 
+  // bank_transaction_id → Set<invoice_id> of explicitly rejected combinations.
+  const rejectedByTxId = useMemo(() => buildRejectionMap(matchRejections), [matchRejections]);
+
+  // The ONE ranking entry point for all automatic matching in this component:
+  // ranks candidates for a transaction and removes explicitly rejected
+  // invoices before anything downstream selects a top candidate. Every
+  // automatic path (stats, detail map, auto-scan, row confirm) must call this
+  // instead of rankCandidates so the rejection rule cannot diverge. Only the
+  // manual BankMatchDialog stays unfiltered: an explicit user pick of a
+  // previously rejected invoice must remain possible.
+  const eligibleCandidatesFor = useCallback(
+    (t: Tables<"bank_transactions">): InvoiceCandidate[] => {
+      const ranked = rankCandidates(
+        t,
+        (invoices ?? []).filter(i => i.client_id === t.client_id),
+        (salesInvs ?? []).filter(i => i.client_id === t.client_id),
+      );
+      return filterRejectedCandidates(ranked, rejectedByTxId.get(t.id));
+    },
+    [invoices, salesInvs, rejectedByTxId],
+  );
+
   // Compute which niet_gematcht transactions have candidate matches (= suggestions)
   const suggestionIds = useMemo(() => {
     const ids = new Set<string>();
@@ -372,19 +432,15 @@ export default function Bank() {
         continue;
       }
 
-      if (!invoices || !salesInvs) continue;
+      if (!invoices || !salesInvs || !matchRejections) continue;
       if (t.match_status !== "niet_gematcht") continue;
-      const candidates = rankCandidates(
-        t,
-        invoices.filter(i => i.client_id === t.client_id),
-        salesInvs.filter(i => i.client_id === t.client_id),
-      );
+      const candidates = eligibleCandidatesFor(t);
       if (candidates.some(c => c.score > 0)) {
         ids.add(t.id);
       }
     }
     return ids;
-  }, [transactions, invoices, salesInvs]);
+  }, [transactions, invoices, salesInvs, matchRejections, eligibleCandidatesFor]);
 
   const suggested = suggestionIds.size;
   const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0)
@@ -410,6 +466,30 @@ export default function Bank() {
     for (const i of salesInvs ?? []) m.set(i.id, i);
     return m;
   }, [salesInvs]);
+
+  // Persist one explicitly rejected (transaction, invoice) combination.
+  // invoice_type is resolved from the loaded invoice sets, falling back to the
+  // tx record and finally the amount-derived direction. Recording is a no-op
+  // when the org id cannot be established (RLS requires it).
+  const recordMatchRejection = useCallback(async (
+    tx: Tables<"bank_transactions">,
+    invoiceId: string,
+  ) => {
+    const organizationId = tx.organization_id ?? activeOrganizationId;
+    if (!organizationId) return;
+    const invoiceType: "inkoop" | "verkoop" = purchaseInvoiceById.has(invoiceId)
+      ? "inkoop"
+      : salesInvoiceById.has(invoiceId)
+        ? "verkoop"
+        : expectedInvoiceTypeForTx(tx);
+    await addMatchRejection.mutateAsync({
+      organization_id: organizationId,
+      client_id: tx.client_id,
+      bank_transaction_id: tx.id,
+      invoice_id: invoiceId,
+      invoice_type: invoiceType,
+    });
+  }, [activeOrganizationId, purchaseInvoiceById, salesInvoiceById, addMatchRejection]);
 
   const allocationsByTxId = useMemo(() => {
     const m = new Map<string, typeof allAllocations[number][]>();
@@ -616,15 +696,13 @@ export default function Bank() {
   // the exact same isSafe verdict from pickSafeMatchCandidate.
   const matchDetailMap = useMemo(() => {
     const map = new Map<string, SuggestionDetail>();
-    if (!transactions || !invoices || !salesInvs) return map;
+    // matchRejections must be successfully loaded: computing safety without
+    // the rejection history could mark a rejected invoice as safe again.
+    if (!transactions || !invoices || !salesInvs || !matchRejections) return map;
     for (const t of transactions) {
       if (!isSafeMatchEligibleStatus(t.match_status)) continue;
       const expectedType = expectedInvoiceTypeForTx(t);
-      const candidates = rankCandidates(
-        t,
-        invoices.filter(i => i.client_id === t.client_id),
-        salesInvs.filter(i => i.client_id === t.client_id),
-      );
+      const candidates = eligibleCandidatesFor(t);
       const bestCorrectDir = candidates.find(c => c.score > 0 && c.type === expectedType) ?? null;
       const bestAny = candidates.find(c => c.score > 0) ?? null;
       const isSafe = pickSafeMatchCandidate(t, candidates) !== null;
@@ -651,7 +729,7 @@ export default function Bank() {
       });
     }
     return map;
-  }, [transactions, invoices, salesInvs]);
+  }, [transactions, invoices, salesInvs, matchRejections, eligibleCandidatesFor]);
 
   // Derived from matchDetailMap — no extra rankCandidates calls needed.
   const safeMatchIds = useMemo(() => {
@@ -918,15 +996,9 @@ export default function Bank() {
         return;
       }
 
-      // No existing link — try to rank candidates and use the best scoring one.
-      const candidates =
-        invoices && salesInvs
-          ? rankCandidates(
-              tx,
-              invoices.filter(i => i.client_id === tx.client_id),
-              salesInvs.filter(i => i.client_id === tx.client_id),
-            )
-          : [];
+      // No existing link — try to rank candidates and use the best scoring
+      // one (explicitly rejected invoices already excluded).
+      const candidates = invoices && salesInvs ? eligibleCandidatesFor(tx) : [];
       const expectedType = expectedInvoiceTypeForTx(tx);
       const best = candidates.find(c => c.score > 0 && c.type === expectedType);
 
@@ -974,7 +1046,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+  }, [transactions, invoices, salesInvs, eligibleCandidatesFor, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const closeMatchDialog = useCallback(() => {
     setMatchTx(null);
@@ -1022,6 +1094,17 @@ export default function Bank() {
             } else {
               await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
             }
+          }
+
+          // The additional allocation succeeded: this is an explicit manual
+          // confirmation of this invoice, so clear its stale rejection too.
+          try {
+            await clearMatchRejection.mutateAsync({ bankTransactionId: transactionId, invoiceId });
+          } catch {
+            toast({
+              title: "Afwijzing niet gewist",
+              description: "De allocatie is gelukt, maar de oude afwijzing kon niet worden verwijderd.",
+            });
           }
 
           toast({ title: "Extra factuur gekoppeld" });
@@ -1079,6 +1162,19 @@ export default function Bank() {
         }
       }
 
+      // Explicit, successful manual confirmation: the match and allocation
+      // writes above all succeeded, so NOW clear the stale rejection of this
+      // exact combination. Only this explicit path clears history; a clear
+      // failure must never undo or block the already-successful link.
+      try {
+        await clearMatchRejection.mutateAsync({ bankTransactionId: transactionId, invoiceId });
+      } catch {
+        toast({
+          title: "Afwijzing niet gewist",
+          description: "De koppeling is gelukt, maar de oude afwijzing kon niet worden verwijderd. Dit heeft geen effect zolang de koppeling bestaat.",
+        });
+      }
+
       if (toastRemaining != null && toastRemaining >= 0.01) {
         toast({ title: "Deelbetaling gekoppeld", description: `Resterend: ${formatCurrency(toastRemaining)}` });
       } else if (allocationAmount != null) {
@@ -1093,7 +1189,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij koppelen", description: e.message, variant: "destructive" });
     }
-  }, [matchDialogMode, allAllocations, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
+  }, [matchDialogMode, allAllocations, transactions, invoices, salesInvs, updateTx, clearMatchRejection, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
 
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
@@ -1101,6 +1197,13 @@ export default function Bank() {
       // legacy+modern cases (primary via matched_invoice_id, extras via allocation rows)
       // are all recalculated — not just the ones found in allocation rows.
       const extraIds = tx.matched_invoice_id ? [tx.matched_invoice_id] : [];
+
+      // Unlinking is an explicit statement that the primary linked invoice was
+      // wrong for this transaction — persist it so auto-matching cannot
+      // immediately restore the same link (the Simyo/Eigennummer scenario).
+      if (tx.matched_invoice_id) {
+        await recordMatchRejection(tx, tx.matched_invoice_id);
+      }
 
       await deleteAllocationsForTx.mutateAsync(tx.id);
 
@@ -1119,7 +1222,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij ontkoppelen", description: e.message, variant: "destructive" });
     }
-  }, [recalculateRemainingAfterDeletions, deleteAllocationsForTx, updateTx, refetchPurchase, refetchSales, toast]);
+  }, [recalculateRemainingAfterDeletions, recordMatchRejection, deleteAllocationsForTx, updateTx, refetchPurchase, refetchSales, toast]);
 
   const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => {
     try {
@@ -1249,6 +1352,13 @@ export default function Bank() {
       if (!tx) continue;
 
       try {
+        // Same explicit-rejection persistence as the row-level unlink: the
+        // primary linked invoice was wrong for this transaction, record it
+        // BEFORE clearing so auto-matching cannot immediately restore it.
+        if (tx.matched_invoice_id) {
+          await recordMatchRejection(tx, tx.matched_invoice_id);
+        }
+
         await deleteAllocationsForTx.mutateAsync(tx.id);
 
         await updateTx.mutateAsync({
@@ -1289,7 +1399,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij ontkoppelen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, recordMatchRejection, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleRepairAflettering = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
@@ -1385,7 +1495,7 @@ export default function Bank() {
   }, [selectedIds, transactions, invoices, salesInvs, updatePurchase, updateSales, toast, refetchPurchase, refetchSales]);
 
   const handleBulkConfirmSuggestions = useCallback(async () => {
-    if (selectedIds.size === 0 || !transactions || !invoices || !salesInvs) return;
+    if (selectedIds.size === 0 || !transactions || !invoices || !salesInvs || !matchRejections) return;
 
     let confirmed = 0;
     let skipped = 0;
@@ -1397,7 +1507,7 @@ export default function Bank() {
 
       // Use the shared helper — enforces eligible status (niet_gematcht/suggestie),
       // correct direction, !isPartialPayment, and amount diff <= €0.01 in one place.
-      const best = getSafeMatchCandidate(tx, invoices, salesInvs);
+      const best = getSafeMatchCandidate(tx, invoices, salesInvs, rejectedByTxId.get(tx.id));
       if (!best) { skipped++; continue; }
 
       try {
@@ -1437,7 +1547,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, invoices, salesInvs, matchRejections, rejectedByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleBulkRejectSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
@@ -1449,6 +1559,12 @@ export default function Bank() {
       const tx = transactions.find(t => t.id === id);
       if (!tx || tx.match_status !== "suggestie") { skipped++; continue; }
       try {
+        // Same persistence as the row-level reject: record the exact rejected
+        // combination before clearing the link.
+        const rejectedInvoiceId = tx.matched_invoice_id ?? matchDetailMap.get(tx.id)?.best?.id ?? null;
+        if (rejectedInvoiceId) {
+          await recordMatchRejection(tx, rejectedInvoiceId);
+        }
         await updateTx.mutateAsync({
           id: tx.id,
           match_status: "niet_gematcht",
@@ -1472,7 +1588,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij afwijzen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, updateTx, toast, refetch]);
+  }, [selectedIds, transactions, updateTx, matchDetailMap, recordMatchRejection, toast, refetch]);
 
   const handleBulkVraagpost = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
@@ -1561,7 +1677,7 @@ export default function Bank() {
   const [lastBatch, setLastBatch] = useState<UndoEntry[] | null>(null);
 
   const handleAutoScan = useCallback(async () => {
-    if (!transactions || !invoices || !salesInvs || autoScanRunning) return;
+    if (!transactions || !invoices || !salesInvs || !matchRejections || autoScanRunning) return;
     setAutoScanRunning(true);
     let confirmed = 0;
     let proposed = 0;
@@ -1571,11 +1687,7 @@ export default function Bank() {
       if (!isSafeMatchEligibleStatus(t.match_status)) continue;
       try {
         const expectedType = expectedInvoiceTypeForTx(t);
-        const candidates = rankCandidates(
-          t,
-          invoices.filter(i => i.client_id === t.client_id),
-          salesInvs.filter(i => i.client_id === t.client_id),
-        );
+        const candidates = eligibleCandidatesFor(t);
         // Same safe predicate as the banner preview and the safe-match button,
         // so this handler confirms exactly what the preview announced.
         const safeCandidate = pickSafeMatchCandidate(t, candidates);
@@ -1659,7 +1771,7 @@ export default function Bank() {
       title: "Automatisch voorstellen klaar",
       description: parts.join(" · ") + (errors.length ? ` · ${errors.length} fout(en)` : ""),
     });
-  }, [transactions, invoices, salesInvs, autoScanRunning, allocationsByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
+  }, [transactions, invoices, salesInvs, matchRejections, eligibleCandidatesFor, autoScanRunning, allocationsByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
 
   const handleUndoLastBatch = useCallback(async () => {
     if (!lastBatch || lastBatch.length === 0 || undoingBatch) return;
@@ -1733,7 +1845,12 @@ export default function Bank() {
   // so the UI label and the actual write are always in sync. Falls back to opening
   // BankMatchDialog when the criteria are not met (unsafe suggestion or stale data).
   const handleSafeSuggestionConfirm = useCallback(async (t: Tables<"bank_transactions">) => {
-    const best = getSafeMatchCandidate(t, invoices ?? [], salesInvs ?? []);
+    // No auto-confirm without successfully loaded rejection history.
+    if (!matchRejections) {
+      setMatchTx(t);
+      return;
+    }
+    const best = getSafeMatchCandidate(t, invoices ?? [], salesInvs ?? [], rejectedByTxId.get(t.id));
     if (!best) {
       setMatchTx(t);
       return;
@@ -1755,10 +1872,17 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+  }, [invoices, salesInvs, matchRejections, rejectedByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const handleRejectSuggestion = useCallback(async (t: Tables<"bank_transactions">) => {
     try {
+      // Persist WHICH invoice was rejected before clearing the link, so the
+      // auto-matcher can never re-suggest the same combination. Falls back to
+      // the displayed best candidate when the suggestion carries no id yet.
+      const rejectedInvoiceId = t.matched_invoice_id ?? matchDetailMap.get(t.id)?.best?.id ?? null;
+      if (rejectedInvoiceId) {
+        await recordMatchRejection(t, rejectedInvoiceId);
+      }
       await updateTx.mutateAsync({
         id: t.id,
         match_status: "niet_gematcht",
@@ -1769,7 +1893,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [updateTx, toast]);
+  }, [updateTx, matchDetailMap, recordMatchRejection, toast]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
@@ -1957,7 +2081,7 @@ export default function Bank() {
         </Card>
       ) : (
       <>
-      {(wholeSetError || salesError) && (
+      {(wholeSetError || salesError || rejectionsError) && (
         <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 flex items-center gap-3">
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
           <p className="text-sm text-destructive flex-1">
@@ -1965,12 +2089,14 @@ export default function Bank() {
               ? "Bank- en verkoopgegevens voor matching, statistieken en export laden mislukt."
               : wholeSetError
                 ? "Bankgegevens voor matching, statistieken en export laden mislukt."
-                : "Verkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."}
+                : salesError
+                  ? "Verkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."
+                  : "Afwijzingsgeschiedenis laden mislukt — automatische matching is uitgeschakeld tot dit is opgelost."}
           </p>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { if (wholeSetError) refetchWholeSet(); if (salesError) refetchSales(); }}
+            onClick={() => { if (wholeSetError) refetchWholeSet(); if (salesError) refetchSales(); if (rejectionsError) refetchRejections(); }}
           >
             Opnieuw laden
           </Button>
@@ -2833,6 +2959,18 @@ export default function Bank() {
               toast({ title: "Allocatierij niet aangemaakt", description: e.message, variant: "destructive" });
             }
           }
+          // Explicit manual override from the processing screen: the link,
+          // invoice and allocation writes succeeded, so clear the stale
+          // rejection of this exact combination — same rule as the match
+          // dialog. A clear failure must never undo the successful booking.
+          try {
+            await clearMatchRejection.mutateAsync({ bankTransactionId: id, invoiceId });
+          } catch {
+            toast({
+              title: "Afwijzing niet gewist",
+              description: "De koppeling is gelukt, maar de oude afwijzing kon niet worden verwijderd. Dit heeft geen effect zolang de koppeling bestaat.",
+            });
+          }
           toast({ title: "Factuur gekoppeld" });
           refetch();
           refetchPurchase();
@@ -2858,6 +2996,7 @@ export default function Bank() {
         open={!!afletteringTx}
         onOpenChange={(v) => { if (!v) setAfletteringTx(null); }}
         transaction={afletteringTx}
+        rejectedInvoiceIds={afletteringTx ? rejectedByTxId.get(afletteringTx.id) : undefined}
         allocations={afletteringTx ? (allocationsByTxId.get(afletteringTx.id) ?? []) : []}
         allAllocations={allAllocations ?? []}
         purchaseInvoices={

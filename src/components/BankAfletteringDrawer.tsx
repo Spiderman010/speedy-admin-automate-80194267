@@ -14,6 +14,7 @@ import type { BankTransactionAllocation } from "@/hooks/useBankTransactionAlloca
 import { getInvoiceTotalAmount, getInvoiceRemainingAmount } from "@/lib/invoice-balances";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
 import { rankCandidates } from "@/components/BankMatchDialog";
+import { filterRejectedCandidates } from "@/hooks/useBankMatchRejections";
 import type { InvoiceCandidate } from "@/components/BankMatchDialog";
 
 const fmt = (amount: number | null | undefined): string =>
@@ -32,6 +33,9 @@ export interface BankAfletteringDrawerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   transaction: Tables<"bank_transactions"> | null;
+  /** Invoice ids the user explicitly rejected for THIS transaction — those
+   * suggestions are hidden here via the shared rejection predicate. */
+  rejectedInvoiceIds?: ReadonlySet<string>;
   /** Allocation rows for this specific transaction (allocationsByTxId.get(tx.id) ?? []). */
   allocations: BankTransactionAllocation[];
   /** Full allocation list — passed in but not used directly in v1 (reserved for future phases). */
@@ -44,6 +48,7 @@ export function BankAfletteringDrawer({
   open,
   onOpenChange,
   transaction,
+  rejectedInvoiceIds,
   allocations,
   purchaseInvoices,
   salesInvoices,
@@ -107,9 +112,14 @@ export function BankAfletteringDrawer({
 
   const rawSuggestions = useMemo(() => {
     if (!showSuggestions || !transaction) return [];
-    return rankCandidates(transaction, purchaseInvoices, salesInvoices)
-      .filter(c => c.score > 0 && !coveredInvoiceIds.has(c.id));
-  }, [showSuggestions, transaction, purchaseInvoices, salesInvoices, coveredInvoiceIds]);
+    // Same shared rejection predicate as the Bank page: an invoice the user
+    // explicitly rejected for this transaction is never shown as a
+    // suggestion here either.
+    return filterRejectedCandidates(
+      rankCandidates(transaction, purchaseInvoices, salesInvoices),
+      rejectedInvoiceIds,
+    ).filter(c => c.score > 0 && !coveredInvoiceIds.has(c.id));
+  }, [showSuggestions, transaction, purchaseInvoices, salesInvoices, coveredInvoiceIds, rejectedInvoiceIds]);
 
   // Apply direction filter and sort same-direction first in "alle" mode.
   const suggestions = useMemo(() => {

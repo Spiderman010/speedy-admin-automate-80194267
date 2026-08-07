@@ -121,6 +121,17 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: { from: vi.fn(), rpc: vi.fn() },
 }));
 
+vi.mock("@/hooks/useBankMatchRejections", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useBankMatchRejections")>();
+  return {
+    ...actual, // keep the real pure helpers (buildRejectionMap, filterRejectedCandidates)
+    useBankMatchRejections: () => ({ data: [], refetch: vi.fn() }),
+    useAddBankMatchRejection: () => ({ mutateAsync: vi.fn(() => Promise.resolve()) }),
+    useClearBankMatchRejection: () => ({ mutateAsync: vi.fn(() => Promise.resolve()) }),
+  };
+});
+
+
 // rankCandidates drives the safe criteria. Per transaction the candidates are
 // configured via test-only fields on the tx:
 //   __candidate: undefined → one exact-amount candidate in the correct direction (safe);
