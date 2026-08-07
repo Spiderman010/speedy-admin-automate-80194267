@@ -64,6 +64,8 @@ import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
+import type { LegacyColumnDef } from "@tanstack/react-table/legacy";
+import { BankTransactionDetailSheet } from "@/components/bank/BankTransactionDetailSheet";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -197,6 +199,7 @@ export default function Bank() {
   const [bulkLedgerId, setBulkLedgerId] = useState("");
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
   const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
+  const [detailTx, setDetailTx] = useState<Tables<"bank_transactions"> | null>(null);
   const [showExportBlockers, setShowExportBlockers] = useState(true);
 
   type ExportPreflightData = {
@@ -1871,6 +1874,32 @@ export default function Bank() {
     refetchSales();
   }, [refetch, refetchPurchase, refetchSales]);
 
+  // ── TanStack Table: centralized column definitions (manual rendering) ───────
+  // Uses LegacyColumnDef<T> type from @tanstack/react-table for typed column metadata.
+  // Rendered manually so server-side pagination/sorting semantics are preserved.
+  const txColumnDefs: LegacyColumnDef<Tables<"bank_transactions">>[] = useMemo(() => [
+    {
+      id: "select",
+      header: () => (
+        <Checkbox
+          checked={tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))}
+          onCheckedChange={toggleSelectAll}
+          disabled={stalePageData}
+          aria-label="Selecteer alle rijen op deze pagina"
+        />
+      ),
+      meta: { headerClassName: "w-10" },
+    },
+    { id: "date",        header: "Datum",          meta: { sortField: "date" as SortField } },
+    { id: "description", header: "Omschrijving",   meta: { sortField: "description" as SortField } },
+    { id: "amount",      header: "Bedrag",          meta: { sortField: "amount" as SortField, headerClassName: "text-right" } },
+    { id: "confidence",  header: "Betrouwbaarheid", meta: { headerClassName: "hidden md:table-cell" } },
+    { id: "status",      header: "Status",          meta: { sortField: "status" as SortField } },
+    { id: "linked",      header: "Gekoppeld aan",   meta: { headerClassName: "hidden lg:table-cell" } },
+    { id: "actions",     header: "",                meta: { headerClassName: "w-32" } },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [tableRows.length, selectedIds.size, stalePageData]);
+
   return (
     <>
       <h1 className="sr-only">Bankafschriften</h1>
@@ -2321,21 +2350,23 @@ export default function Bank() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={tableRows.length > 0 && tableRows.every(t => selectedIds.has(t.id))}
-                      onCheckedChange={toggleSelectAll}
-                      disabled={stalePageData}
-                      aria-label="Selecteer alle rijen op deze pagina"
-                    />
-                  </TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort("date")}>Datum<SortIcon field="date" /></TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort("description")}>Omschrijving<SortIcon field="description" /></TableHead>
-                  <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
-                  <TableHead>Betrouwbaarheid</TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => handleSort("status")}>Status<SortIcon field="status" /></TableHead>
-                  <TableHead>Gekoppeld aan</TableHead>
-                  <TableHead className="w-32"></TableHead>
+                  {txColumnDefs.map(col => {
+                    const meta = (col.meta ?? {}) as Record<string, string | undefined>;
+                    const sf = meta.sortField as SortField | undefined;
+                    return (
+                      <TableHead
+                        key={col.id}
+                        className={[
+                          meta.headerClassName,
+                          sf ? "cursor-pointer select-none" : undefined,
+                        ].filter(Boolean).join(" ") || undefined}
+                        onClick={sf ? () => handleSort(sf) : undefined}
+                      >
+                        {typeof col.header === "function" ? col.header({} as any) : col.header}
+                        {sf && <SortIcon field={sf} />}
+                      </TableHead>
+                    );
+                  })}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2348,8 +2379,12 @@ export default function Bank() {
                   const allocatedForTx = allocationsForTx.reduce((sum, a) => sum + a.amount, 0);
                   const unallocatedAmount = Math.max(0, txAbsAmt - allocatedForTx);
                   return (
-                    <TableRow key={t.id}>
-                      <TableCell>
+                    <TableRow
+                      key={t.id}
+                      className="cursor-pointer"
+                      onClick={() => setDetailTx(t)}
+                    >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <Checkbox
                           checked={selectedIds.has(t.id)}
                           onCheckedChange={() => toggleSelect(t.id)}
@@ -2436,7 +2471,7 @@ export default function Bank() {
                           );
                         })()}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {t.match_confidence != null ? (
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 w-16 rounded-full bg-secondary">
@@ -2485,7 +2520,7 @@ export default function Bank() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden lg:table-cell">
                         {(() => {
                           // Determine the booking/link label
                           let label = "—";
@@ -2596,7 +2631,7 @@ export default function Bank() {
                           );
                         })()}
                       </TableCell>
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1">
                           <TooltipProvider>
                             <Tooltip>
@@ -2881,6 +2916,32 @@ export default function Bank() {
             ? (salesInvs ?? []).filter(i => i.client_id === afletteringTx.client_id)
             : []
         }
+      />
+
+      <BankTransactionDetailSheet
+        open={!!detailTx}
+        onOpenChange={(v) => { if (!v) setDetailTx(null); }}
+        transaction={detailTx}
+        allocations={detailTx ? (allocationsByTxId.get(detailTx.id) ?? []) : []}
+        purchaseInvoices={detailTx?.client_id ? (invoices ?? []).filter(i => i.client_id === detailTx.client_id) : []}
+        salesInvoices={detailTx?.client_id ? (salesInvs ?? []).filter(i => i.client_id === detailTx.client_id) : []}
+        grootboekrekeningen={grootboekrekeningen ?? []}
+        vraagpost={detailTx ? (vraagpostByBankTransactionId.get(detailTx.id) ?? null) : null}
+        isSafe={!!detailTx && safeMatchIds.has(detailTx.id)}
+        onMatch={(tx) => { setMatchTx(tx); setDetailTx(null); }}
+        onConfirmSuggestion={(tx) => { handleSafeSuggestionConfirm(tx); setDetailTx(null); }}
+        onRejectSuggestion={(tx) => { handleRejectSuggestion(tx); setDetailTx(null); }}
+        onUnlink={(tx) => {
+          setDetailTx(null);
+          if (tx.match_status === "handmatig_geboekt") {
+            updateTx.mutateAsync({ id: tx.id, match_status: "niet_gematcht", grootboekrekening_id: null })
+              .then(() => toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." }));
+          } else {
+            handleUnlink(tx);
+          }
+        }}
+        onOpenAfletter={(tx) => { setAfletteringTx(tx); setDetailTx(null); }}
+        onMaakVraagpost={(tx) => { handleMaakVraagpost(tx); setDetailTx(null); }}
       />
 
       <BankMatchDialog
