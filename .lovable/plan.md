@@ -1,123 +1,142 @@
-# Verbetering 2 — "Selecteer alle veilige suggesties"
+# AI-boekingsagent voor BoekAssist — mogelijkheden
 
-Alleen ontwerp- en implementatieplan. Geen code, geen DB, geen hooks, geen types. Volledig hergebruik van `safeSuggestionIds` en `handleBulkConfirmSuggestions` in `src/pages/Bank.tsx`.
+Je vraagt om een AI-agent die daadwerkelijk kan boeken in BoekAssist. Dat is technisch mogelijk op drie manieren. Elk heeft andere mogelijkheden, veiligheidsrisico's en bouwomvang. Deze vergelijking geeft de opties zonder dat er nu al code verandert.
 
-## 1. Doel & scope
+## Bestaande situatie
 
-Eén knop die in één klik alle "veilige" suggesties over de **volledige klantselectie** (niet alleen de zichtbare pagina) aan `selectedIds` toevoegt, waarna de bestaande bulk-bevestig-flow het overneemt. De criteria voor "veilig" blijven exact zoals `safeSuggestionIds` ze vandaag bepaalt.
+- Er is al een chat-UI op `/ai-chat` met een simpele vraag-antwoord Edge Function (`supabase/functions/ai-chat/index.ts`).
+- Er is al een MCP-server (`src/lib/mcp/index.ts`) met OAuth-beveiliging en vier lees-tools: klanten, openstaande inkoopfacturen, openstaande verkoopfacturen, niet-gematchte banktransacties.
+- De app werkt via Lovable Cloud (Supabase backend), met RLS, organisatie-scoping en gebruikersauthenticatie.
+- Directe boekingen in SnelStart zijn niet mogelijk: de app exporteert alleen CSV-bestanden die handmatig in SnelStart worden geïmporteerd.
 
-## 2. Exacte plaatsing van de knop
+## Wat "boeken" voor deze agent betekent
 
-In de bestaande **auto-scan banner** (`Bank.tsx:1907-1938`), rechts naast "Automatisch voorstellen", vóór "Undo laatste batch". Dit is de enige plek waar al een whole-set actie op suggesties leeft. De knop valt onder dezelfde `matchingReady && (autoConfirm > 0 || …)`-gate die de banner al gebruikt.
+De agent kan in de app drie soorten acties uitvoeren:
 
-Geen tweede knop in de bulk-toolbar onderaan (`Bank.tsx:2534-2542`) — die bevat al de bevestig-actie en zou dupliceren.
+1. **Status wijzigen** — bijvoorbeeld een inkoopfactuur van `te_controleren` naar `gecontroleerd` zetten.
+2. **Regels aanmaken/wijzigen** — bijvoorbeeld boekingsregels bij een inkoopfactuur opslaan via `purchase_invoice_lines`.
+3. **Export voorbereiden** — bijvoorbeeld een SnelStart-CSV genereren voor een selectie facturen of banktransacties.
 
-## 3. Knoptekst per staat
+De agent kan **niet** rechtstreeks in SnelStart boeken, omdat er geen API-koppeling is.
 
-Afgeleiden in de render: `safeAvailableCount = safeSuggestionIds.size`, `safeUnselectedCount = aantal ids in safeSuggestionIds die nog niet in selectedIds zitten`.
+## Optie A — In-app chatagent met boekingsrechten
 
-| Situatie | Label | Variant | Enabled |
-|---|---|---|---|
-| `!matchingReady` (data laadt) | "Selecteer veilige suggesties…" | outline | disabled |
-| `safeAvailableCount === 0` | knop niet renderen | — | — |
-| `safeUnselectedCount > 0` | "Selecteer alle veilige suggesties ({safeUnselectedCount})" | outline | enabled |
-| `safeUnselectedCount === 0 && safeAvailableCount > 0` | "Alle veilige suggesties geselecteerd ({safeAvailableCount})" | outline | disabled |
-| `autoScanRunning` of `undoingBatch` | zelfde label | outline | disabled |
+De bestaande `/ai-chat` pagina wordt uitgebreid tot een agent met tool-calling. De gebruiker geeft opdrachten in het Nederlands, bijvoorbeeld: *"Zet alle inkoopfacturen van klant X die al compleet zijn op gecontroleerd"* of *"Genereer de SnelStart-export voor de gecontroleerde inkoopfacturen van deze maand"*.
 
-De knop **selecteert alleen**, bevestigt niet. Eén bevestig-pad blijft behouden (eis 4 & 6).
+### Wat kan
 
-## 4. Gedrag & bron-set
+- Lezen van inkoopfacturen, verkoopfacturen, banktransacties, klanten.
+- Wijzigen van status, toevoegen van boekingsregels, voorbereiden van exports.
+- Mutaties kunnen achter een expliciete "Bevestig"-vraag van de agent staan (needsApproval).
 
-`safeSuggestionIds` is een `Set<string>` afgeleid uit `transactions` (whole-set), niet uit `tableRows`. De actie is dus per definitie cross-page en filter-onafhankelijk (eis 7).
+### Wat niet kan
 
-```text
-onClick:
-  next = new Set(selectedIds)
-  for id in safeSuggestionIds: next.add(id)
-  setSelectedIds(next)
-  toast.info(`{safeUnselectedCount} veilige suggesties geselecteerd`)
-```
+- Direct in SnelStart boeken; de gebruiker moet de gegenereerde CSV nog handmatig importeren.
 
-- Bestaande handmatige selecties blijven staan; er wordt alleen **toegevoegd** (eis 5).
-- Onzekere suggesties, geblokkeerde en reeds verwerkte regels zitten niet in `safeSuggestionIds` (`Bank.tsx:642-648`), dus nooit meegenomen (eis 5).
-- Geen wijziging aan `handleBulkConfirmSuggestions` (`Bank.tsx:1307-1360`) — die filtert zelf al op `safeSuggestionIds` binnen `selectedIds`.
+### Bouwomvang
 
-## 5. Bevestigings- en feedbacktekst
+Medium. Er moet een nieuwe Edge Function komen (of `ai-chat` wordt uitgebreid) die:
 
-Vóór verwerking toont de bulk-toolbar "N transactie(s) geselecteerd" + "Veilige suggesties bevestigen (M)" — de expliciete pre-verwerking-teller (eis 6). Geen extra confirm-dialoog; de actie is reversibel via "Undo laatste batch".
+- de volledige chatgeschiedenis onthoudt;
+- tools definieert voor lezen, status-wijzigen, boekingsregels opslaan en export genereren;
+- mutaties pas uitvoert na bevestiging;
+- fouten en credietlimieten van de Lovable AI Gateway afhandelt.
 
-- Na selectie: toast info "{safeUnselectedCount} veilige suggesties geselecteerd. Klik op 'Veilige suggesties bevestigen' om te verwerken."
-- Na succes: bestaande toast in `handleBulkConfirmSuggestions` (~regel 1355).
-- Gedeeltelijke fout: bestaande `success`/`failed`-telling dekt "X bevestigd, Y mislukt". Geen wijziging.
+### Voor- en nadelen
 
-## 6. Loading / disabled / lege / foutstatus
-
-| Toestand | Gedrag |
+| Voordeel | Nadeel |
 |---|---|
-| `wholeSetLoading` / `!matchingReady` | disabled, label met "…", tooltip "Wacht tot bankdata volledig geladen is" |
-| `wholeSetError` / `salesError` | knop niet renderen (banner gate op `matchingReady`) |
-| `safeAvailableCount === 0` | knop niet renderen |
-| na klik | synchroon (alleen setState), geen spinner |
-| `autoScanRunning` / `undoingBatch` | disabled, voorkomt race |
+| Geen extra externe tool nodig; werkt binnen BoekAssist | Vereist dat de gebruiker de app open heeft |
+| Geschiedenis kan in de database worden opgeslagen | Muterende agent vereist zorgvuldige beveiliging en approvals |
 
-## 7. Gedrag bij 0, 1 en veel veilige suggesties
+## Optie B — MCP-server uitbreiden met schrijftools
 
-- **0**: knop onzichtbaar; banner blokkeert zichzelf al bij `autoConfirm === 0 && toReview === 0`.
-- **1**: label "(1)"; rij-inline "✓ Bevestig" blijft ook werken.
-- **Veel (bv. 200)**: `setSelectedIds` is O(n), geen performance-issue. Bulk-toolbar toont 200. Bevestig-flow blijft sequentieel — ongewijzigd gedrag.
+De bestaande MCP-server (`boekassist-mcp`) krijgt extra tools die niet alleen lezen, maar ook mutaties uitvoeren. De gebruiker kan dan vanuit een externe AI-client (ChatGPT, Claude, Cursor) verbinding maken met BoekAssist en opdrachten geven.
 
-## 8. Cross-page / filter / zoek
+### Wat kan
 
-- Selectie leeft in `selectedIds` (whole-set-scope). Pagineren/filteren/zoeken verandert alleen zichtbaarheid, niet de selectie (eis 7).
-- De header-checkbox (`Bank.tsx:2140-2141`) blijft op `tableRows` opereren en blijft onaangeraakt; verwarring beperkt door het label "alle veilige suggesties" versus "alle regels".
-- Geselecteerde, weggefilterde ids blijven meetellen bij bevestigen — consistent met bestaande bulk-acties.
+- Dezelfde lees-tools als nu, plus schrijftools voor status, boekingsregels en export.
+- Externe AI-clients kunnen de BoekAssist-data gebruiken in hun eigen chatomgeving.
 
-## 9. Mobiel gedrag (≥375px)
+### Wat niet kan
 
-- Banner heeft al `flex flex-wrap items-center gap-…`; knop wrapt vanzelf. Geen extra CSS.
-- `size="sm"` Button geeft ≥40px tap target.
-- Lang label past op 375px op eigen regel; geen truncation.
+- Een volledig in-app chatgevoel; de gebruiker zit in ChatGPT/Claude/Cursor.
+- Directe SnelStart-boeking blijft onmogelijk.
 
-## 10. Toegankelijkheid
+### Bouwomvang
 
-- `aria-label` gelijk aan zichtbare tekst incl. count, bijv. `aria-label="Selecteer alle 47 veilige suggesties"`.
-- `aria-disabled` volgt `disabled`.
-- Toast fungeert als `role="status"` announcement bij state-verandering.
-- Standaard Button-focus + Enter/Space; geen extra handler.
-- Alleen semantische tokens via `variant="outline"`, geen hardcoded kleuren.
+Medium tot groot. Vereist:
 
-## 11. Tests
+- Uitbreiding van `src/lib/mcp/tools/` met schrijftools.
+- `defineMcp` in `src/lib/mcp/index.ts` uitbreiden.
+- Nieuwe deploy van de MCP Edge Function.
+- Opnieuw valideren van de MCP-manifest.
+- Expliciet toestemmingsflow (OAuth) blijft bestaan.
 
-Nieuw bestand `src/test/bank-select-safe-suggestions.test.tsx` (Vitest + RTL, mocks op `useBankTransactions`/`useSalesInvoices`/`usePurchaseInvoices`):
+### Voor- en nadelen
 
-1. Knop verschijnt niet bij `safeSuggestionIds.size === 0`.
-2. Knop disabled bij `!matchingReady`.
-3. Label toont juiste `safeUnselectedCount` bij mix van al/niet geselecteerd.
-4. Klik voegt ontbrekende veilige ids toe en laat handmatige niet-veilige selecties intact.
-5. Na klik: label wordt "Alle veilige suggesties geselecteerd (N)" en knop disabled.
-6. Cross-page: met `page=2` worden ook niet-zichtbare veilige ids geselecteerd.
-7. Integratie: klik + "Veilige suggesties bevestigen" verwerkt alle N ids.
-8. Knop disabled tijdens `autoScanRunning`.
-
-## 12. Betrokken bestanden
-
-- `src/pages/Bank.tsx` — enige productiewijziging: één Button in de auto-scan banner (rond regel 1930) + lokale afgeleide `safeUnselectedCount`. Geen wijziging aan `safeSuggestionIds`, `handleBulkConfirmSuggestions`, `handleAutoScan`, `toggleSelect`, `toggleSelectAll` of bulk-toolbar.
-- `src/test/bank-select-safe-suggestions.test.tsx` (nieuw).
-
-Geen wijzigingen aan hooks, types, migraties, RLS, `snelstart-export`, `BankAfletteringDrawer`, `BankMatchDialog`.
-
-## 13. Risico's & edge-cases
-
-| Risico | Mitigatie |
+| Voordeel | Nadeel |
 |---|---|
-| Gebruiker denkt dat knop direct bevestigt | Tekst "Selecteer…" + toast die naar bevestig-knop verwijst |
-| Verwarring header-checkbox (pagina) vs knop (whole-set) | Duidelijk verschillende labels |
-| `safeSuggestionIds` verandert tussen selecteren en bevestigen | `handleBulkConfirmSuggestions` her-checkt safety per id (bestaand) |
-| Race met `handleAutoScan` | Disabled bij `autoScanRunning` + `undoingBatch` |
-| Grote selectie (>500) traag bij bevestigen | Bestaand bulk-gedrag, geen nieuwe scope |
-| Selectie blijft staan bij klantwissel | `selectedIds` wordt al gereset bij client-wissel (~regel 200) |
-| Screen reader mist count-verandering | Toast als announcement |
+| Werkt vanuit de AI-tool die de gebruiker al kent | Minder visuele controle binnen BoekAssist |
+| Geen extra UI-bouw in de app | Mutaties vanuit een externe client vragen extra vertrouwen |
 
-## 14. Buiten scope
+## Optie C — Automatische achtergrondagent (regels gebaseerd)
 
-Select-all over alle pagina's voor willekeurige rijen (verbetering 1), wijzigen van `isSafe`-criteria, extra confirm-modal, keyboard shortcut (verbetering 4), veilig/onveilig-badge in tabel (verbetering 6).
+Een agent die niet via chat werkt, maar via vooraf ingestelde regels automatisch voorstellen doet. Bijvoorbeeld: bij elke nieuwe inkoopfactuur wordt een grootboekrekening voorgesteld op basis van leverancier + omschrijving; bij banktransacties wordt automatisch een match voorgesteld als de tegenpartij en het bedrag overeenkomen.
+
+### Wat kan
+
+- Automatisch voorstellen voor grootboekrekening, BTW-percentage, matching.
+- De gebruiker krijgt een lijst met voorstellen en bevestigt ze in één keer (bulk-approval).
+
+### Wat niet kan
+
+- Echte "chat" met de agent.
+- Directe SnelStart-boeking.
+
+### Bouwomvang
+
+Groot. Vereist:
+
+- Opslag van matchregels/templates per klant.
+- Een nieuwe Edge Function die op aanvraag voorstellen genereert.
+- UI voor voorstellen beoordelen en bulk-goedkeuren.
+
+### Voor- en nadelen
+
+| Voordeel | Nadeel |
+|---|---|
+| Minste dagelijkse handmatige kliks | Grootste bouwomvang |
+| Werkt zonder dat de gebruiker een chat hoeft te voeren | Vereert historische data en patronen om betrouwbaar te zijn |
+
+## Aanbeveling
+
+Gezien de huidige architectuur (bestaande chat-UI, bestaande MCP-server, strakke RLS) is **Optie A** de snelste en meest gebruiksvriendelijke route. De gebruiker blijft in BoekAssist, en de bestaande AI-chat pagina kan geleidelijk worden opgewaardeerd tot een agent met beperkte, goedgekeurde boekingsacties.
+
+## Keuzes die jij moet maken
+
+Voordat we bouwen, zijn er twee keuzes die jouw werkproces bepalen:
+
+1. **Gespreksvorm**
+   - Eén doorlopend gesprek (de agent onthoudt alles in één chat).
+   - Meerdere aparte gesprekken/threads (bijvoorbeeld per klant of per taak).
+
+2. **Opslag van gesprekken**
+   - Geen opslag (elk gesprek is nieuw na verversen).
+   - Opslag in de browser (`localStorage`).
+   - Opslag in de database (Lovable Cloud), met RLS per gebruiker/organisatie.
+
+## Veiligheidskanttekening
+
+Een agent die kan boeken, is muterend. Daarom moet elke mutatie:
+
+- geautoriseerd zijn via de bestaande Supabase-sessie;
+- gescoped zijn op organisatie en klant;
+- niet zonder expliciete bevestiging plaatsvinden;
+- audit-loggbaar zijn (wie, wat, wanneer).
+
+Voorstel is om te beginnen met een "simulatie-modus": de agent laat zien welke acties hij zou doen, en de gebruiker bevestigt ze pas daarna. Pas na gebruik kan deze modus worden uitgeschakeld voor bepaalde veilige, laag-risico-acties.
+
+## Vervolgstap
+
+Geef aan welke optie je prefereert en maak de twee keuzes hierboven. Dan wordt een concreet implementatieplan opgesteld met exacte bestanden, routes en database-acties.
