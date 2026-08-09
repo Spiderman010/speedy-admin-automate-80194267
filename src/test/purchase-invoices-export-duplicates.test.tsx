@@ -261,8 +261,12 @@ describe("Facturen overview source guarantees", () => {
     // in the import path / derived hook names).
     expect(source).not.toMatch(/\busePurchaseInvoices\(/);
     expect(source).toMatch(/usePaginatedPurchaseInvoices\(/);
-    // The batched full fetch may only run from the export click handler.
-    expect(source).toMatch(/onClick=\{async \(\) => \{[\s\S]*?fetchAllExportablePurchaseInvoices/);
+    // The batched full fetch may only run from the export click handler
+    // (either inline or via a named handler that contains the call).
+    const hasInlineClick = /onClick=\{async \(\) => \{[\s\S]*?fetchAllExportablePurchaseInvoices/.test(source);
+    const hasNamedHandler = /const \w+\s*=\s*async[\s\S]*?fetchAllExportablePurchaseInvoices[\s\S]*?onClick=\{\w+/.test(source) ||
+      (/onClick=\{\w+/.test(source) && /=\s*async \(\) =>[\s\S]*?fetchAllExportablePurchaseInvoices/.test(source));
+    expect(hasInlineClick || hasNamedHandler).toBe(true);
   });
 
   it("no longer offers status as a sortable column", () => {
