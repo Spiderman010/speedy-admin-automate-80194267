@@ -187,8 +187,10 @@ export default function Facturen() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const navigate = useNavigate();
-  const [clientFilter, setClientFilter] = useState("all");
-  const [uploadClientId, setUploadClientId] = useState<string>("");
+  const [clientFilter, setClientFilter] = useState(selectedClientId);
+  const [uploadClientId, setUploadClientId] = useState<string>(
+    selectedClientId !== "all" ? selectedClientId : ""
+  );
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState("");

@@ -11,6 +11,10 @@ const state = {
   duplicateIds: null as Set<string> | null,
   vraagposten: [] as any[],
   allocations: [] as any[],
+  selectedClientId: "all" as string,
+  // Records every call to usePaginatedPurchaseInvoices, in order, so tests
+  // can inspect the FIRST render's arguments (before any effect can run).
+  paginatedCalls: [] as any[],
 };
 
 const navigateSpy = vi.fn();
@@ -21,7 +25,7 @@ vi.mock("react-router-dom", async (orig) => {
 });
 
 vi.mock("@/hooks/useClientContext", () => ({
-  useClientContext: () => ({ selectedClientId: "all", setSelectedClientId: vi.fn() }),
+  useClientContext: () => ({ selectedClientId: state.selectedClientId, setSelectedClientId: vi.fn() }),
 }));
 vi.mock("@/hooks/useActiveOrganization", () => ({
   useActiveOrganization: () => ({ activeOrganizationId: "org-1", isReady: true }),
@@ -31,15 +35,18 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
   PURCHASE_INVOICES_PAGE_SIZE: 50,
-  usePaginatedPurchaseInvoices: () => ({
-    data: state.isError || state.isLoading
-      ? undefined
-      : { invoices: state.invoices, total: state.invoices.length },
-    isLoading: state.isLoading,
-    isFetching: false,
-    isError: state.isError,
-    refetch: vi.fn(),
-  }),
+  usePaginatedPurchaseInvoices: (args: any) => {
+    state.paginatedCalls.push(args);
+    return {
+      data: state.isError || state.isLoading
+        ? undefined
+        : { invoices: state.invoices, total: state.invoices.length },
+      isLoading: state.isLoading,
+      isFetching: false,
+      isError: state.isError,
+      refetch: vi.fn(),
+    };
+  },
   usePurchaseInvoiceDuplicates: () => ({ data: state.duplicateIds }),
   useResetPageOnChange: vi.fn(),
   useUpdatePurchaseInvoice: () => ({ mutateAsync: vi.fn(() => Promise.resolve({})) }),
@@ -115,6 +122,8 @@ beforeEach(() => {
   state.duplicateIds = null;
   state.vraagposten = [];
   state.allocations = [];
+  state.selectedClientId = "all";
+  state.paginatedCalls = [];
   navigateSpy.mockReset();
 });
 
@@ -306,5 +315,52 @@ describe("Inkoopfacturen UI", () => {
     state.invoices = Array.from({ length: 3 }, (_, i) => makeInvoice(`p${i}`));
     renderFacturen();
     expect(screen.getByText(/van \d+ facturen/)).toBeInTheDocument();
+  });
+});
+
+// ── Client-context initial scope (regression guard) ─────────────────────────
+// clientFilter/uploadClientId must be seeded from ClientContext's
+// selectedClientId on the VERY FIRST render — not from a hardcoded "all"/""
+// that only gets corrected by a later synchronization effect. A hardcoded
+// default would make the initial usePaginatedPurchaseInvoices call fetch
+// ALL clients' invoices for a split second, even when the user already has
+// a specific client selected in the sidebar.
+describe("Inkoopfacturen — initiële klantscope", () => {
+  it("start met alle klanten wanneer ClientContext 'all' is", () => {
+    state.selectedClientId = "all";
+    renderFacturen();
+    expect(screen.getByText("Alle klanten")).toBeInTheDocument();
+    expect(state.paginatedCalls[0]?.clientId).toBeUndefined();
+  });
+
+  it("scoped de EERSTE render al naar de geselecteerde klant — geen 'alle klanten' flits", () => {
+    state.selectedClientId = "c1";
+    renderFacturen();
+    // Every recorded call — including the very first — must already carry
+    // the client scope. If the component instead initialized to "all" and
+    // relied on a useEffect to correct it, the first call would have
+    // clientId undefined.
+    expect(state.paginatedCalls.length).toBeGreaterThan(0);
+    expect(state.paginatedCalls[0].clientId).toBe("c1");
+    expect(state.paginatedCalls.every((c) => c.clientId === "c1")).toBe(true);
+    // The action bar reflects the selected client's name immediately.
+    expect(screen.getByText("Klant 1")).toBeInTheDocument();
+    expect(screen.queryByText("Alle klanten")).not.toBeInTheDocument();
+  });
+
+  it("Upload-tab start met de geselecteerde klant, niet met de kies-klant placeholder", () => {
+    state.selectedClientId = "c1";
+    renderFacturen();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /^Upload/ }));
+    // With a client already selected, uploadClientId is pre-filled, so the
+    // "choose a client" placeholder must not appear.
+    expect(screen.queryByText("Kies klant voor upload")).not.toBeInTheDocument();
+  });
+
+  it("Upload-tab toont wel de kies-klant placeholder wanneer ClientContext 'all' is", () => {
+    state.selectedClientId = "all";
+    renderFacturen();
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /^Upload/ }));
+    expect(screen.getByText("Kies klant voor upload")).toBeInTheDocument();
   });
 });
