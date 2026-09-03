@@ -565,7 +565,7 @@ export default function Verkoop() {
         <Button onClick={() => setDialogOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />Handmatig toevoegen
         </Button>
-      </PageHeader>
+      </div>
 
       <Tabs defaultValue="overview">
         <TabsList>
