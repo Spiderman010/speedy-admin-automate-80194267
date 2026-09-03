@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
-import { PageHeader } from "@/components/PageHeader";
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -321,18 +321,25 @@ export default function Verkoop() {
     return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
   };
 
+  const SortableHead = ({ field, children, className }: { field: SortField; children: React.ReactNode; className?: string }) => (
+    <TableHead
+      className={className}
+      aria-sort={sortField === field ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => toggleSort(field)}
+        className="inline-flex select-none items-center hover:text-foreground"
+      >
+        {children}
+        <SortIcon field={field} />
+      </button>
+    </TableHead>
+  );
+
   // Search, workflow status and sorting are applied server-side by
   // usePaginatedSalesInvoices; this is the current page of results.
   const searchFiltered = useMemo(() => pageInvoices ?? [], [pageInvoices]);
-
-  // With server-side status filtering the page may contain a single status,
-  // so chips render from the static order (plus any unknowns on the page).
-  const uniqueStatuses = useMemo(() => {
-    const present = new Set(searchFiltered.map(inv => inv.status).filter(Boolean));
-    const ordered = [...STATUS_ORDER];
-    present.forEach(s => { if (!STATUS_ORDER.includes(s)) ordered.push(s); });
-    return ordered;
-  }, [searchFiltered]);
 
   // Rows to render: the payment-filtered whole-set page, or the server page.
   // Payment filtering + sorting already happened upstream (whole set) or on the
