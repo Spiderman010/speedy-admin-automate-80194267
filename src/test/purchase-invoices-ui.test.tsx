@@ -35,6 +35,8 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
   PURCHASE_INVOICES_PAGE_SIZE: 50,
+  buildYearOptions: (current = new Date().getFullYear(), count = 10) =>
+    Array.from({ length: count }, (_, i) => current - i),
   usePaginatedPurchaseInvoices: (args: any) => {
     state.paginatedCalls.push(args);
     return {
@@ -362,5 +364,31 @@ describe("Inkoopfacturen — initiële klantscope", () => {
     renderFacturen();
     fireEvent.mouseDown(screen.getByRole("tab", { name: /^Upload/ }));
     expect(screen.getByText("Kies klant voor upload")).toBeInTheDocument();
+  });
+});
+
+describe("Inkoopfacturen — jaarselector", () => {
+  beforeEach(() => {
+    state.invoices = [];
+    state.isLoading = false;
+    state.isError = false;
+    state.selectedClientId = "all";
+    state.paginatedCalls = [];
+  });
+
+  it("toont standaard 'Alle jaren' en vraagt de lijst zonder jaarfilter op", () => {
+    renderFacturen();
+    expect(screen.getByRole("combobox", { name: "Jaar" })).toHaveTextContent("Alle jaren");
+    expect(state.paginatedCalls[0].year).toBe("all");
+  });
+
+  it("toont het huidige jaar en voorgaande jaren dynamisch", () => {
+    renderFacturen();
+    fireEvent.click(screen.getByRole("combobox", { name: "Jaar" }));
+    const current = new Date().getFullYear();
+    expect(screen.getByRole("option", { name: "Alle jaren" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: String(current) })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: String(current - 1) })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: String(current - 9) })).toBeInTheDocument();
   });
 });

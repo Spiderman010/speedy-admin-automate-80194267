@@ -158,12 +158,13 @@ function buildStandardCSV(rows: string[]): string {
   return [csvRow(STANDARD_HEADERS), ...rows].join("\r\n");
 }
 
-export function exportPurchaseInvoicesCSV(invoices: PurchaseInvoice[], clientName?: string) {
+export function exportPurchaseInvoicesCSV(invoices: PurchaseInvoice[], clientName?: string, year?: number) {
   const rows = invoices.map(inv =>
     toStandardRow(inv.invoice_date, inv.supplier + (inv.invoice_number ? ` - ${inv.invoice_number}` : ""), inv.ledger_account_text, inv.amount_incl, inv.btw_percentage)
   );
   const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
-  downloadCSV(buildStandardCSV(rows), `${prefix}inkoopfacturen_snelstart.csv`);
+  const yearSuffix = year != null ? `_${year}` : "";
+  downloadCSV(buildStandardCSV(rows), `${prefix}inkoopfacturen_snelstart${yearSuffix}.csv`);
   return invoices.map(i => i.id);
 }
 

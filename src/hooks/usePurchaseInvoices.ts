@@ -39,6 +39,28 @@ export function sanitizeSearchTerm(raw: string): string {
     .trim();
 }
 
+// Year filter: driven by invoice_date only (never created_at). "all" adds no
+// filter at all, so existing behaviour stays identical.
+export type PurchaseInvoiceYearFilter = number | "all";
+
+export const YEAR_OPTIONS_COUNT = 10;
+
+export function buildYearOptions(
+  currentYear: number = new Date().getFullYear(),
+  count: number = YEAR_OPTIONS_COUNT,
+): number[] {
+  return Array.from({ length: count }, (_, i) => currentYear - i);
+}
+
+// Half-open interval [YYYY-01-01, (YYYY+1)-01-01) so no time-of-day math is needed.
+export function getYearDateRange(
+  year: PurchaseInvoiceYearFilter | undefined,
+): { from: string; to: string } | null {
+  if (year === undefined || year === "all" || !Number.isFinite(year as number)) return null;
+  const y = year as number;
+  return { from: `${y}-01-01`, to: `${y + 1}-01-01` };
+}
+
 export interface UsePaginatedPurchaseInvoicesOptions {
   organizationId?: string;
   clientId?: string;
@@ -48,9 +70,11 @@ export interface UsePaginatedPurchaseInvoicesOptions {
   search?: string;
   status?: string; // "all" disables the filter
   documentRoute?: string; // "all" disables the filter
+  year?: PurchaseInvoiceYearFilter; // "all" disables the filter
   sortField?: PurchaseInvoiceSortField;
   sortDir?: "asc" | "desc";
 }
+
 
 export interface PaginatedPurchaseInvoices {
   invoices: PurchaseInvoice[];
@@ -67,6 +91,7 @@ export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoic
     search = "",
     status = "all",
     documentRoute = "all",
+    year = "all",
     sortField = "date",
     sortDir = "desc",
   } = options;
@@ -84,6 +109,7 @@ export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoic
       cleanSearch,
       status,
       documentRoute,
+      String(year ?? "all"),
       sortField,
       sortDir,
     ],
@@ -95,6 +121,10 @@ export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoic
       if (clientId) query = query.eq("client_id", clientId);
       if (status !== "all") query = query.eq("status", status);
       if (documentRoute !== "all") query = query.eq("document_route", documentRoute);
+      const range = getYearDateRange(year);
+      if (range) {
+        query = query.gte("invoice_date", range.from).lt("invoice_date", range.to);
+      }
       if (cleanSearch) {
         query = query.or(
           `supplier.ilike.%${cleanSearch}%,invoice_number.ilike.%${cleanSearch}%,ledger_account_text.ilike.%${cleanSearch}%`
@@ -122,7 +152,9 @@ export const EXPORTABLE_STATUSES = ["gecontroleerd", "betaald"] as const;
 export async function fetchAllExportablePurchaseInvoices(opts: {
   organizationId?: string;
   clientId?: string;
+  year?: PurchaseInvoiceYearFilter;
 }): Promise<PurchaseInvoice[]> {
+  const yearRange = getYearDateRange(opts.year);
   const all: PurchaseInvoice[] = [];
   for (let offset = 0; ; offset += EXPORT_BATCH_SIZE) {
     let query = supabase
@@ -131,6 +163,9 @@ export async function fetchAllExportablePurchaseInvoices(opts: {
       .in("status", [...EXPORTABLE_STATUSES]);
     if (opts.organizationId) query = query.eq("organization_id", opts.organizationId);
     if (opts.clientId) query = query.eq("client_id", opts.clientId);
+    if (yearRange) {
+      query = query.gte("invoice_date", yearRange.from).lt("invoice_date", yearRange.to);
+    }
     const { data, error } = await query
       .order("id", { ascending: true })
       .range(offset, offset + EXPORT_BATCH_SIZE - 1);

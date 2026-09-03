@@ -21,7 +21,9 @@ import {
   useDeletePurchaseInvoice,
   fetchAllExportablePurchaseInvoices,
   markPurchaseInvoicesExported,
+  buildYearOptions,
   PURCHASE_INVOICES_PAGE_SIZE,
+  type PurchaseInvoiceYearFilter,
 } from "@/hooks/usePurchaseInvoices";
 import { useVraagposten } from "@/hooks/useVraagposten";
 import {
@@ -198,6 +200,9 @@ export default function Facturen() {
   const [workflowFilter, setWorkflowFilter] = useState("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [routeFilter, setRouteFilter] = useState("all");
+  // Year filter (invoice_date based). Default "all" keeps existing behaviour.
+  const [yearFilter, setYearFilter] = useState<PurchaseInvoiceYearFilter>("all");
+  const yearOptions = useMemo(() => buildYearOptions(), []);
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(1);
@@ -228,6 +233,7 @@ export default function Facturen() {
     search: debouncedSearch,
     status: workflowFilter,
     documentRoute: routeFilter,
+    year: yearFilter,
     sortField,
     sortDir,
   });
@@ -243,7 +249,7 @@ export default function Facturen() {
 
   useResetPageOnChange(
     () => setPage(1),
-    [debouncedSearch, workflowFilter, paymentFilter, routeFilter, sortField, sortDir, clientFilter, activeOrganizationId],
+    [debouncedSearch, workflowFilter, paymentFilter, routeFilter, yearFilter, sortField, sortDir, clientFilter, activeOrganizationId],
   );
   const { data: vraagposten } = useVraagposten({
     organizationId: activeOrganizationId ?? undefined,
@@ -483,10 +489,11 @@ export default function Facturen() {
       const exportable = await fetchAllExportablePurchaseInvoices({
         organizationId: activeOrganizationId,
         clientId: clientFilter !== "all" ? clientFilter : undefined,
+        year: yearFilter,
       });
       if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
       const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-      const ids = exportPurchaseInvoicesCSV(exportable, clientName);
+      const ids = exportPurchaseInvoicesCSV(exportable, clientName, yearFilter === "all" ? undefined : yearFilter);
       try {
         await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, invoiceIds: ids });
         queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
@@ -525,6 +532,20 @@ export default function Facturen() {
           <SelectContent>
             <SelectItem value="all">Alle klanten</SelectItem>
             {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select
+          value={String(yearFilter)}
+          onValueChange={(v) => setYearFilter(v === "all" ? "all" : Number(v))}
+        >
+          <SelectTrigger className="w-32" aria-label="Jaar">
+            <span className="truncate">{yearFilter === "all" ? "Alle jaren" : yearFilter}</span>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Alle jaren</SelectItem>
+            {yearOptions.map((y) => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <div className="flex-1" />
