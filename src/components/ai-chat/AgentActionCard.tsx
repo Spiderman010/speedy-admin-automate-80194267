@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { formatCurrency } from "@/lib/format";
+import { formatEuro } from "@/lib/format";
 import {
   STATUS_LABELS,
   lineTotals,
@@ -82,7 +82,7 @@ export function AgentActionCard({
                       Grootboek {line.grootboek} · BTW {line.btw_percentage}%
                     </p>
                   </div>
-                  <span className="shrink-0 tabular-nums">{formatCurrency(line.amount_excl)}</span>
+                  <span className="shrink-0 tabular-nums">{formatEuro(line.amount_excl)}</span>
                 </div>
               ))}
             </div>
@@ -91,11 +91,11 @@ export function AgentActionCard({
               return (
                 <div className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1">
                   <span className="text-muted-foreground">Totaal excl.</span>
-                  <span className="tabular-nums">{formatCurrency(totals.excl)}</span>
+                  <span className="tabular-nums">{formatEuro(totals.excl)}</span>
                   <span className="text-muted-foreground">BTW</span>
-                  <span className="tabular-nums">{formatCurrency(totals.btw)}</span>
+                  <span className="tabular-nums">{formatEuro(totals.btw)}</span>
                   <span className="text-muted-foreground">Totaal incl.</span>
-                  <span className="font-medium tabular-nums">{formatCurrency(totals.incl)}</span>
+                  <span className="font-medium tabular-nums">{formatEuro(totals.incl)}</span>
                 </div>
               );
             })()}
