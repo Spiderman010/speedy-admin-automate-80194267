@@ -64,13 +64,15 @@ const statusConfig: Record<string, { label: string; icon: typeof Clock; variant:
 
 const STATUS_ORDER = ["concept", "verzonden", "gecontroleerd", "betaald", "geexporteerd"];
 
-function getSalesInvoiceDisplayStatus(inv: { status: string | null; remaining_amount?: number | null; amount_incl?: number | null; amount_excl?: number | null }): string {
+function getInvoicePaymentState(inv: { status: string | null; remaining_amount?: number | null; amount_incl?: number | null; amount_excl?: number | null }): "paid" | "partial" | "open" {
   const remaining = getInvoiceRemainingAmount(inv as any);
-  if (remaining === 0) return "betaald";
+  if (remaining === 0 || inv.status === "betaald") return "paid";
   const total = getInvoiceTotalAmount(inv as any);
-  if (total != null && remaining != null && remaining < total) return "deelbetaling";
-  return inv.status || "";
+  if (total != null && remaining != null && remaining < total) return "partial";
+  return "open";
 }
+
+
 
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
