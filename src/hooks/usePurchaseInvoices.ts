@@ -91,6 +91,7 @@ export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoic
     search = "",
     status = "all",
     documentRoute = "all",
+    year = "all",
     sortField = "date",
     sortDir = "desc",
   } = options;
@@ -108,6 +109,7 @@ export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoic
       cleanSearch,
       status,
       documentRoute,
+      String(year ?? "all"),
       sortField,
       sortDir,
     ],
@@ -119,6 +121,10 @@ export function usePaginatedPurchaseInvoices(options: UsePaginatedPurchaseInvoic
       if (clientId) query = query.eq("client_id", clientId);
       if (status !== "all") query = query.eq("status", status);
       if (documentRoute !== "all") query = query.eq("document_route", documentRoute);
+      const range = getYearDateRange(year);
+      if (range) {
+        query = query.gte("invoice_date", range.from).lt("invoice_date", range.to);
+      }
       if (cleanSearch) {
         query = query.or(
           `supplier.ilike.%${cleanSearch}%,invoice_number.ilike.%${cleanSearch}%,ledger_account_text.ilike.%${cleanSearch}%`
@@ -146,7 +152,9 @@ export const EXPORTABLE_STATUSES = ["gecontroleerd", "betaald"] as const;
 export async function fetchAllExportablePurchaseInvoices(opts: {
   organizationId?: string;
   clientId?: string;
+  year?: PurchaseInvoiceYearFilter;
 }): Promise<PurchaseInvoice[]> {
+  const yearRange = getYearDateRange(opts.year);
   const all: PurchaseInvoice[] = [];
   for (let offset = 0; ; offset += EXPORT_BATCH_SIZE) {
     let query = supabase
@@ -155,6 +163,9 @@ export async function fetchAllExportablePurchaseInvoices(opts: {
       .in("status", [...EXPORTABLE_STATUSES]);
     if (opts.organizationId) query = query.eq("organization_id", opts.organizationId);
     if (opts.clientId) query = query.eq("client_id", opts.clientId);
+    if (yearRange) {
+      query = query.gte("invoice_date", yearRange.from).lt("invoice_date", yearRange.to);
+    }
     const { data, error } = await query
       .order("id", { ascending: true })
       .range(offset, offset + EXPORT_BATCH_SIZE - 1);
