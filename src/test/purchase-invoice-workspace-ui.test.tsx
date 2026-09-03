@@ -547,14 +547,29 @@ describe("PurchaseInvoiceWorkspace — loading & not found", () => {
     expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
   });
 
-  it("blijft in de laadstatus en toont geen formulier wanneer de query geen factuur oplevert (bestaand gedrag)", async () => {
+  it("toont 'Factuur niet gevonden' met terugknop wanneer de query klaar is en null oplevert (regressie)", async () => {
     state.invoice = null;
     renderWorkspace();
-    // Existing data flow (unchanged in this UI phase): with invoice === null
-    // the init effect returns early, `initialized` stays false and the page
-    // keeps rendering the loader — the "Factuur niet gevonden" branch is only
-    // reachable once initialisation has completed. Reported as a follow-up.
-    await waitFor(() => expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true"));
+    // Loader first …
+    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
+    // … then, once the query settles with no record, the not-found state.
+    const notFound = await screen.findByText("Factuur niet gevonden.");
+    expect(notFound).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "Factuurgegevens" })).not.toBeInTheDocument();
+    const back = screen.getByRole("button", { name: /terug naar inkoopoverzicht/i });
+    fireEvent.click(back);
+    expect(navigateSpy).toHaveBeenCalledWith("/facturen");
+  });
+
+  it("normale factuur: loader verdwijnt en het formulier initialiseert zoals voorheen", async () => {
+    renderWorkspace();
+    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
+    const supplierInput = await screen.findByLabelText("Leveranciersnaam");
+    expect(supplierInput).toHaveValue("Test Leverancier BV");
+    expect(screen.queryByRole("status", { busy: true })).not.toBeInTheDocument();
+    expect(screen.queryByText("Factuur niet gevonden.")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Consultancy")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /goedkeuren/i })).toBeEnabled();
   });
 });
