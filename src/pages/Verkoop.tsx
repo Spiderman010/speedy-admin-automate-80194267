@@ -727,27 +727,29 @@ export default function Verkoop() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("invoice_number")}>Factuurnummer<SortIcon field="invoice_number" /></TableHead>
                       <TableHead>Klant</TableHead>
-                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("customer_name")}>Klantnaam<SortIcon field="customer_name" /></TableHead>
-                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("date")}>Datum<SortIcon field="date" /></TableHead>
-                      <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("due_date")}>Vervaldatum<SortIcon field="due_date" /></TableHead>
-                      <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
+                      <SortableHead field="invoice_number">Factuurnummer</SortableHead>
+                      <SortableHead field="customer_name" className="hidden md:table-cell">Klantnaam</SortableHead>
+                      <SortableHead field="date" className="hidden sm:table-cell">Datum</SortableHead>
+                      <SortableHead field="due_date" className="hidden lg:table-cell">Vervaldatum</SortableHead>
+                      <SortableHead field="amount" className="hidden sm:table-cell text-right">Totaal</SortableHead>
                       <TableHead className="text-right">Openstaand</TableHead>
-                      <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
-                      <TableHead>Status</TableHead>
+                      <SortableHead field="btw" className="hidden xl:table-cell text-right">BTW</SortableHead>
+                      <TableHead>Workflow</TableHead>
+                      <TableHead className="hidden sm:table-cell">Betaling</TableHead>
                       <TableHead className="w-20"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filteredSorted.map(inv => {
                       const sc = statusConfig[inv.status] || statusConfig.concept;
-                      const displayStatus = getSalesInvoiceDisplayStatus(inv);
-                      const isPaid = displayStatus === "betaald";
-                      const isPartiallyPaid = displayStatus === "deelbetaling";
+                      const paymentState = getInvoicePaymentState(inv);
+                      const isPaid = paymentState === "paid";
+                      const isPartiallyPaid = paymentState === "partial";
                       const hasExportWarning = inv.status === "geexporteerd";
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
+                          <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
                           <TableCell className="font-mono text-sm font-medium">
                             <div className="flex items-center gap-2 flex-wrap">
                               {inv.invoice_number ? (
@@ -765,23 +767,24 @@ export default function Verkoop() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
-                          <TableCell className="font-medium">{inv.customer_name}</TableCell>
-                          <TableCell>{new Date(inv.invoice_date).toLocaleDateString("nl-NL")}</TableCell>
-                          <TableCell>{inv.due_date ? new Date(inv.due_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
-                          <TableCell className="text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
+                          <TableCell className="hidden md:table-cell font-medium">{inv.customer_name}</TableCell>
+                          <TableCell className="hidden sm:table-cell whitespace-nowrap">{new Date(inv.invoice_date).toLocaleDateString("nl-NL")}</TableCell>
+                          <TableCell className="hidden lg:table-cell whitespace-nowrap">{inv.due_date ? new Date(inv.due_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
+                          <TableCell className="hidden sm:table-cell text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
                           <TableCell className="text-right">
                             {(() => {
                               const total = getInvoiceTotalAmount(inv);
                               const remaining = getInvoiceRemainingAmount(inv);
-                              if (remaining === 0 || inv.status === "betaald") {
-                                return <span className="font-mono text-sm text-green-600">€0,00</span>;
+                              if (isPaid) {
+                                return <span className="font-mono text-sm text-green-600">{formatCurrency(0)}</span>;
                               }
-                              if (total != null && remaining != null && remaining < total) {
+                              if (isPartiallyPaid && remaining != null) {
                                 return (
-                                  <div>
-                                    <Badge variant="secondary" className="text-[10px] mb-0.5">Deelbetaling</Badge>
-                                    <div className="font-mono text-sm text-amber-600">{formatCurrency(remaining)}</div>
+                                  <div className="font-mono text-sm text-amber-600">
+                                    {formatCurrency(remaining)}
+                                    <span className="block text-[11px] text-muted-foreground">
+                                      open van {formatCurrency(total)}
+                                    </span>
                                   </div>
                                 );
                               }
@@ -792,19 +795,24 @@ export default function Verkoop() {
                               return <span className="text-muted-foreground text-sm">—</span>;
                             })()}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
+                          <TableCell className="hidden xl:table-cell text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell>
+                            <Badge variant={sc.variant} className="gap-1 whitespace-nowrap">
+                              <sc.icon className="h-3 w-3" />{sc.label}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="hidden sm:table-cell">
                             {isPaid ? (
-                              <Badge variant="outline" className="gap-1 border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
+                              <Badge variant="outline" className="gap-1 whitespace-nowrap border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
                                 <CheckCircle2 className="h-3 w-3" />Betaald
                               </Badge>
                             ) : isPartiallyPaid ? (
-                              <Badge variant="secondary" className="gap-1 text-amber-700">
+                              <Badge variant="secondary" className="gap-1 whitespace-nowrap text-amber-700">
                                 <Clock className="h-3 w-3" />Deelbetaling
                               </Badge>
                             ) : (
-                              <Badge variant={sc.variant} className="gap-1">
-                                <sc.icon className="h-3 w-3" />{sc.label}
+                              <Badge variant="outline" className="gap-1 whitespace-nowrap border-orange-400 bg-orange-50 text-orange-900 dark:bg-orange-950/40 dark:text-orange-200">
+                                <Clock className="h-3 w-3" />Openstaand
                               </Badge>
                             )}
                           </TableCell>
