@@ -508,14 +508,24 @@ export default function Verkoop() {
 
   return (
     <>
-      <PageHeader title="Verkoopfacturen" description="Upload, verwerk en beheer verkoopfacturen">
+      <h1 className="sr-only">Verkoopfacturen</h1>
+
+      {/* Compact action bar */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
+          <SelectTrigger className="w-48" aria-label="Klant">
+            <span className="truncate">
+              {clientFilter === "all"
+                ? "Alle klanten"
+                : (clients?.find(c => c.id === clientFilter)?.name ?? "Klant")}
+            </span>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle klanten</SelectItem>
             {clients?.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
+        <div className="flex-1" />
         <Button variant="outline" disabled={exporting} onClick={async () => {
           if (exporting) return;
           if (!activeOrganizationId) {
