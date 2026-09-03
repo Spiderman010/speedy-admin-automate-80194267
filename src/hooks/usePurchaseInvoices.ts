@@ -39,6 +39,28 @@ export function sanitizeSearchTerm(raw: string): string {
     .trim();
 }
 
+// Year filter: driven by invoice_date only (never created_at). "all" adds no
+// filter at all, so existing behaviour stays identical.
+export type PurchaseInvoiceYearFilter = number | "all";
+
+export const YEAR_OPTIONS_COUNT = 10;
+
+export function buildYearOptions(
+  currentYear: number = new Date().getFullYear(),
+  count: number = YEAR_OPTIONS_COUNT,
+): number[] {
+  return Array.from({ length: count }, (_, i) => currentYear - i);
+}
+
+// Half-open interval [YYYY-01-01, (YYYY+1)-01-01) so no time-of-day math is needed.
+export function getYearDateRange(
+  year: PurchaseInvoiceYearFilter | undefined,
+): { from: string; to: string } | null {
+  if (year === undefined || year === "all" || !Number.isFinite(year as number)) return null;
+  const y = year as number;
+  return { from: `${y}-01-01`, to: `${y + 1}-01-01` };
+}
+
 export interface UsePaginatedPurchaseInvoicesOptions {
   organizationId?: string;
   clientId?: string;
@@ -48,9 +70,11 @@ export interface UsePaginatedPurchaseInvoicesOptions {
   search?: string;
   status?: string; // "all" disables the filter
   documentRoute?: string; // "all" disables the filter
+  year?: PurchaseInvoiceYearFilter; // "all" disables the filter
   sortField?: PurchaseInvoiceSortField;
   sortDir?: "asc" | "desc";
 }
+
 
 export interface PaginatedPurchaseInvoices {
   invoices: PurchaseInvoice[];
