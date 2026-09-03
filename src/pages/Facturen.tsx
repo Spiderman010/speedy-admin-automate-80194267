@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from "react";
-import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,7 +55,12 @@ const statusConfig = {
   geexporteerd: { label: "Geëxporteerd", icon: Download, variant: "outline" as const },
 };
 
-const STATUS_ORDER = ["te_controleren", "gecontroleerd", "betaald", "geexporteerd"];
+const WORKFLOW_STATUS_CHIPS = [
+  { value: "te_controleren", label: "Te controleren" },
+  { value: "gecontroleerd", label: "Gecontroleerd" },
+  { value: "betaald", label: "Betaald" },
+  { value: "geexporteerd", label: "Geëxporteerd" },
+] as const;
 
 const formatCurrency = (amount: number | null) =>
   amount != null ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount) : "—";
@@ -256,7 +260,6 @@ export default function Facturen() {
   const [linkTarget, setLinkTarget] = useState<PurchaseTxCandidate | null>(null);
   const [linkAmount, setLinkAmount] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("overview");
 
   const upsertAllocation = useUpsertBankTransactionAllocation();
   const updateBankTx = useUpdateBankTransaction();
@@ -364,15 +367,6 @@ export default function Facturen() {
   // usePaginatedPurchaseInvoices; this is the current page of results.
   const searchFiltered = useMemo(() => pageInvoices ?? [], [pageInvoices]);
 
-  // With server-side status filtering the current page may contain only one
-  // status, so chips are rendered from the static order (plus any unknowns).
-  const uniqueStatuses = useMemo(() => {
-    const present = new Set(searchFiltered.map(inv => inv.status).filter(Boolean));
-    const ordered = [...STATUS_ORDER];
-    present.forEach(s => { if (!STATUS_ORDER.includes(s)) ordered.push(s); });
-    return ordered;
-  }, [searchFiltered]);
-
   // Payment state derives from remaining_amount vs total (a column-to-column
   // comparison PostgREST cannot filter on), so it stays client-side within the
   // current page. All other filters and sorting are applied server-side.
@@ -478,55 +472,68 @@ export default function Facturen() {
 
   const getClientName = (clientId: string) => clients?.find((c) => c.id === clientId)?.name ?? "—";
 
+  const handleExportSnelstart = async () => {
+    if (exporting) return;
+    if (!activeOrganizationId) {
+      toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
+      return;
+    }
+    setExporting(true);
+    try {
+      const exportable = await fetchAllExportablePurchaseInvoices({
+        organizationId: activeOrganizationId,
+        clientId: clientFilter !== "all" ? clientFilter : undefined,
+      });
+      if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
+      const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
+      const ids = exportPurchaseInvoicesCSV(exportable, clientName);
+      try {
+        await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, invoiceIds: ids });
+        queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
+        toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
+      } catch (statusErr: any) {
+        // CSV is already downloaded; earlier batches may be committed.
+        queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
+        toast({
+          title: "CSV gedownload, maar status bijwerken mislukt",
+          description: `Mogelijk staan niet alle facturen op 'geëxporteerd'. Probeer opnieuw of controleer de lijst. (${statusErr?.message ?? "onbekende fout"})`,
+          variant: "destructive",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Export mislukt", description: e?.message, variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
-      <PageHeader title="Inkoopfacturen" description="Upload, verwerk en exporteer inkoopfacturen">
+      {/* Shell header shows "Inkoop"; keep h1 for a11y only */}
+      <h1 className="sr-only">Inkoopfacturen</h1>
+
+      {/* Compact action bar */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
-          <SelectTrigger className="w-48"><SelectValue placeholder="Klant" /></SelectTrigger>
+          <SelectTrigger className="w-48">
+            <span className="truncate">
+              {clientFilter === "all"
+                ? "Alle klanten"
+                : (clients?.find(c => c.id === clientFilter)?.name ?? "Klant")}
+            </span>
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Alle klanten</SelectItem>
             {clients?.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Button variant="outline" disabled={exporting} onClick={async () => {
-          if (exporting) return;
-          if (!activeOrganizationId) {
-            toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
-            return;
-          }
-          setExporting(true);
-          try {
-            const exportable = await fetchAllExportablePurchaseInvoices({
-              organizationId: activeOrganizationId,
-              clientId: clientFilter !== "all" ? clientFilter : undefined,
-            });
-            if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
-            const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-            const ids = exportPurchaseInvoicesCSV(exportable, clientName);
-            try {
-              await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, invoiceIds: ids });
-              queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
-              toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
-            } catch (statusErr: any) {
-              // CSV is already downloaded; earlier batches may be committed.
-              queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
-              toast({
-                title: "CSV gedownload, maar status bijwerken mislukt",
-                description: `Mogelijk staan niet alle facturen op 'geëxporteerd'. Probeer opnieuw of controleer de lijst. (${statusErr?.message ?? "onbekende fout"})`,
-                variant: "destructive",
-              });
-            }
-          } catch (e: any) {
-            toast({ title: "Export mislukt", description: e?.message, variant: "destructive" });
-          } finally {
-            setExporting(false);
-          }
-        }}>
+        <div className="flex-1" />
+        <Button variant="outline" disabled={exporting} onClick={handleExportSnelstart}>
           {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}Export Snelstart
         </Button>
-      </PageHeader>
+      </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overzicht</TabsTrigger>
           <TabsTrigger value="upload">Upload</TabsTrigger>
@@ -615,6 +622,21 @@ export default function Facturen() {
                 <Plus className="mr-2 h-4 w-4" />Nieuwe inkoopfactuur
               </Button>
             </div>
+            {/* Workflow status (primary navigation — server-side filter) */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Workflow</span>
+              <FilterChip label="Alle" active={workflowFilter === "all"}
+                onClick={() => setWorkflowFilter("all")} />
+              {WORKFLOW_STATUS_CHIPS.map(chip => (
+                <FilterChip
+                  key={chip.value}
+                  label={chip.label}
+                  active={workflowFilter === chip.value}
+                  onClick={() => setWorkflowFilter(workflowFilter === chip.value ? "all" : chip.value)}
+                />
+              ))}
+            </div>
+            {/* Betaalstatus (client-side filter within current page) */}
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
               <FilterChip label="Alle" active={paymentFilter === "all"}
@@ -629,19 +651,7 @@ export default function Facturen() {
                 onClick={() => setPaymentFilter(paymentFilter === "paid" ? "all" : "paid")}
                 activeClassName="border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200" />
             </div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
-              <FilterChip label="Alle statussen" active={workflowFilter === "all"}
-                onClick={() => setWorkflowFilter("all")} />
-              {uniqueStatuses.map(s => (
-                <FilterChip
-                  key={s}
-                  label={statusConfig[s as keyof typeof statusConfig]?.label ?? s}
-                  active={workflowFilter === s}
-                  onClick={() => setWorkflowFilter(workflowFilter === s ? "all" : s)}
-                />
-              ))}
-            </div>
+            {/* Documentroute */}
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Route</span>
               <FilterChip label="Alle" active={routeFilter === "all"}
@@ -683,13 +693,13 @@ export default function Facturen() {
                     <TableRow>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("supplier")}>Leverancier<SortIcon field="supplier" /></TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("invoice_number")}>Factuurnummer<SortIcon field="invoice_number" /></TableHead>
-                      <TableHead>Klant</TableHead>
+                      <TableHead className="hidden sm:table-cell">Klant</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("date")}>Datum<SortIcon field="date" /></TableHead>
                       <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
                       <TableHead className="text-right">Openstaand</TableHead>
-                      <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
-                      <TableHead>Grootboek</TableHead>
-                      <TableHead>Route</TableHead>
+                      <TableHead className="text-right cursor-pointer select-none hidden md:table-cell" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
+                      <TableHead className="hidden md:table-cell">Grootboek</TableHead>
+                      <TableHead className="hidden lg:table-cell">Route</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="w-20"></TableHead>
                     </TableRow>
@@ -769,7 +779,7 @@ export default function Facturen() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground hidden sm:table-cell">{getClientName(inv.client_id)}</TableCell>
                           <TableCell>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
                           <TableCell className="text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
                           <TableCell className="text-right">
@@ -794,27 +804,31 @@ export default function Facturen() {
                               return <span className="text-muted-foreground text-sm">—</span>;
                             })()}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
-                          <TableCell className="text-sm">{inv.ledger_account_text || "—"}</TableCell>
-                          <TableCell>
+                          <TableCell className="text-right font-mono text-muted-foreground hidden md:table-cell">{formatCurrency(inv.btw_amount)}</TableCell>
+                          <TableCell className="text-sm hidden md:table-cell">{inv.ledger_account_text || "—"}</TableCell>
+                          <TableCell className="hidden lg:table-cell">
                             <Badge variant="outline" className="text-xs">
                               {getDocumentRouteLabel((inv as any).document_route)}
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {isPaid ? (
-                              <Badge variant="outline" className="gap-1 border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
-                                <CheckCircle2 className="h-3 w-3" />Betaald
-                              </Badge>
-                            ) : isPartiallyPaid ? (
-                              <Badge variant="secondary" className="gap-1 text-amber-700">
-                                <Clock className="h-3 w-3" />Deelbetaling
-                              </Badge>
-                            ) : (
+                            <div className="flex flex-col gap-0.5 items-start">
+                              {/* Workflow status badge */}
                               <Badge variant={sc.variant} className="gap-1">
                                 <sc.icon className="h-3 w-3" />{sc.label}
                               </Badge>
-                            )}
+                              {/* Payment badge — only when it adds information */}
+                              {isPartiallyPaid && (
+                                <Badge variant="secondary" className="gap-1 text-amber-700">
+                                  <Clock className="h-3 w-3" />Deelbetaling
+                                </Badge>
+                              )}
+                              {isPaid && inv.status !== "betaald" && (
+                                <Badge variant="outline" className="gap-1 border-green-500/60 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200">
+                                  <CheckCircle2 className="h-3 w-3" />Betaald
+                                </Badge>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
