@@ -434,25 +434,33 @@ export default function PurchaseInvoiceWorkspace() {
       </div>
     );
   }
-  if (invoiceLoading || !initialized) {
-    return (
-      <div className="space-y-4" role="status" aria-live="polite" aria-busy="true">
-        <span className="sr-only">Laden…</span>
-        <div className="flex items-center gap-3">
-          <Skeleton className="h-8 w-8" />
-          <Skeleton className="h-5 w-56" />
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="ml-auto h-8 w-32" />
-        </div>
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-          <div className="space-y-4">
-            <Skeleton className="h-64 w-full" />
-            <Skeleton className="h-48 w-full" />
-          </div>
-          <Skeleton className="h-[420px] w-full" />
-        </div>
+  // Render-flow order matters here:
+  //  1. query still loading            → loading skeleton
+  //  2. query done, no record          → not found (the init effect never runs
+  //                                      for a missing invoice, so `initialized`
+  //                                      stays false and must NOT gate this)
+  //  3. record present, not initialised → loading skeleton
+  const loadingState = (
+    <div className="space-y-4" role="status" aria-live="polite" aria-busy="true">
+      <span className="sr-only">Laden…</span>
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-8 w-8" />
+        <Skeleton className="h-5 w-56" />
+        <Skeleton className="h-5 w-24" />
+        <Skeleton className="ml-auto h-8 w-32" />
       </div>
-    );
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="space-y-4">
+          <Skeleton className="h-64 w-full" />
+          <Skeleton className="h-48 w-full" />
+        </div>
+        <Skeleton className="h-[420px] w-full" />
+      </div>
+    </div>
+  );
+
+  if (invoiceLoading) {
+    return loadingState;
   }
   if (!invoice) {
     return (
@@ -468,6 +476,9 @@ export default function PurchaseInvoiceWorkspace() {
         </CardContent>
       </Card>
     );
+  }
+  if (!initialized) {
+    return loadingState;
   }
 
   const amountInputClass = "h-9 text-right font-mono tabular-nums";
