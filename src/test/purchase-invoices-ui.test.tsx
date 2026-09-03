@@ -35,6 +35,8 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
   PURCHASE_INVOICES_PAGE_SIZE: 50,
+  buildYearOptions: (current = 2026, count = 10) =>
+    Array.from({ length: count }, (_, i) => current - i),
   usePaginatedPurchaseInvoices: (args: any) => {
     state.paginatedCalls.push(args);
     return {
