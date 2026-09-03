@@ -664,7 +664,7 @@ export default function Verkoop() {
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Betaalstatus</span>
-              <FilterChip label="Alle" active={paymentFilter === "all"}
+              <FilterChip label="Alle betalingen" active={paymentFilter === "all"}
                 onClick={() => setPaymentFilter("all")} />
               <FilterChip label="Openstaand" active={paymentFilter === "open"}
                 onClick={() => setPaymentFilter(paymentFilter === "open" ? "all" : "open")}
@@ -680,7 +680,7 @@ export default function Verkoop() {
               <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
               <FilterChip label="Alle statussen" active={workflowFilter === "all"}
                 onClick={() => setWorkflowFilter("all")} />
-              {uniqueStatuses.map(s => (
+              {STATUS_ORDER.map(s => (
                 <FilterChip
                   key={s}
                   label={statusConfig[s]?.label ?? s}
