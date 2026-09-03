@@ -221,10 +221,9 @@ describe("export completion flow source guarantees", () => {
     resolve(process.cwd(), "src/pages/Facturen.tsx"),
     "utf-8",
   );
-  const handler = source.slice(
-    source.indexOf("Export Snelstart") - 3000,
-    source.indexOf("Export Snelstart"),
-  );
+  // Anchor on the handler itself so unrelated JSX below it cannot shift the window.
+  const handlerStart = source.indexOf("const handleExportSnelstart");
+  const handler = source.slice(handlerStart, handlerStart + 3000);
 
   it("aborts before fetching when no organization is active", () => {
     const guardIdx = handler.indexOf("if (!activeOrganizationId)");
