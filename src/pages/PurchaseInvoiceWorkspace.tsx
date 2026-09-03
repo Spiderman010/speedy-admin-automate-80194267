@@ -6,17 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import {
-  ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, Save, CheckCircle2, Loader2, FileText, ExternalLink,
-} from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ArrowLeft, Link2, PenLine, Plus } from "lucide-react";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { useClients } from "@/hooks/useClients";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
@@ -42,16 +37,19 @@ import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import { round2 } from "@/lib/btw-calc";
 import { formatEuro } from "@/lib/format";
 import type { Tables } from "@/integrations/supabase/types";
+import { PurchaseInvoiceWorkspaceHeader } from "@/components/purchase/PurchaseInvoiceWorkspaceHeader";
+import { PurchaseInvoiceDocumentPreview } from "@/components/purchase/PurchaseInvoiceDocumentPreview";
+import {
+  PurchaseInvoiceTotalsSummary,
+  PurchaseInvoiceTotalsStatusPill,
+} from "@/components/purchase/PurchaseInvoiceTotalsSummary";
+import {
+  PurchaseInvoiceLinesTable,
+  type LineRow,
+} from "@/components/purchase/PurchaseInvoiceLinesTable";
+import { PurchaseInvoiceActionBar } from "@/components/purchase/PurchaseInvoiceActionBar";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
-
-interface LineRow {
-  omschrijving: string;
-  amount_input: string;
-  btw_percentage: string;
-  grootboekrekening_id: string | null;
-  grootboek_label: string;
-}
 
 interface HeaderForm {
   client_id: string;
@@ -86,59 +84,6 @@ function usePurchaseInvoice(invoiceId: string | undefined) {
   });
 }
 
-function InvoicePreview({ filePath }: { filePath: string | null }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!filePath) { setUrl(null); setError(null); return; }
-    setLoading(true); setError(null); setUrl(null);
-    supabase.storage.from("invoices").createSignedUrl(filePath, 3600)
-      .then(({ data, error }) => {
-        if (error) setError("Document niet beschikbaar");
-        else setUrl(data?.signedUrl ?? null);
-      })
-      .catch(() => setError("Document niet beschikbaar"))
-      .finally(() => setLoading(false));
-  }, [filePath]);
-
-  if (!filePath) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-muted-foreground bg-muted/30 rounded-lg">
-        <FileText className="h-12 w-12 mb-3 opacity-40" />
-        <p className="text-sm">Geen bestand beschikbaar</p>
-      </div>
-    );
-  }
-  if (loading) {
-    return <div className="flex items-center justify-center h-full min-h-[400px] text-muted-foreground text-sm">Document laden…</div>;
-  }
-  if (error || !url) {
-    return <div className="flex items-center justify-center h-full min-h-[400px] text-muted-foreground text-sm">{error ?? "Document niet beschikbaar"}</div>;
-  }
-  const isPdf = filePath.toLowerCase().endsWith(".pdf");
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between mb-2 pb-2 border-b">
-        <span className="text-xs font-medium text-muted-foreground">Origineel document</span>
-        <Button variant="ghost" size="icon" className="h-7 w-7"
-          onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
-          title="Open in nieuw tabblad">
-          <ExternalLink className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-      <div className="flex-1 overflow-auto rounded-lg bg-muted/20 border min-h-[500px]">
-        {isPdf ? (
-          <iframe src={url} className="w-full h-full min-h-[500px]" title="Factuur PDF" />
-        ) : (
-          <img src={url} alt="Factuurdocument" className="w-full h-auto" />
-        )}
-      </div>
-    </div>
-  );
-}
-
 function emptyHeader(inv: PurchaseInvoice | null): HeaderForm {
   return {
     client_id: inv?.client_id ?? "",
@@ -155,6 +100,18 @@ function emptyHeader(inv: PurchaseInvoice | null): HeaderForm {
     notes: inv?.notes ?? "",
     status: inv?.status ?? "te_controleren",
   };
+}
+
+/** Small uppercase group label inside the Factuurgegevens card. */
+function FieldGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <fieldset className="min-w-0">
+      <legend className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </legend>
+      {children}
+    </fieldset>
+  );
 }
 
 export default function PurchaseInvoiceWorkspace() {
@@ -374,6 +331,19 @@ export default function PurchaseInvoiceWorkspace() {
           return `Er resteert nog een verschil van ${formatEuro(Math.abs(d))}.`;
         })();
 
+  // "Waarom kan ik niet goedkeuren?" — read-only explanation derived ONLY from
+  // the existing gate booleans above. It never changes canApprove itself.
+  const approveBlockers = useMemo(() => {
+    const reasons: string[] = [];
+    if (!initialized || canApprove) return reasons;
+    if (saving) reasons.push("Er wordt nog opgeslagen.");
+    if (hasPartialLine) reasons.push("Een boekingsregel is niet compleet.");
+    if (!headerComplete) reasons.push("De factuurgegevens zijn nog niet compleet.");
+    if (meaningfulLines.length === 0) reasons.push("Er is nog geen boekingsregel.");
+    else if (!linesMatch) reasons.push("De boekingsregels sluiten niet aan op de factuur.");
+    return reasons;
+  }, [initialized, canApprove, saving, hasPartialLine, headerComplete, meaningfulLines.length, linesMatch]);
+
   // Previous / next invoice navigation (within same client)
   const sortedInvoices = useMemo(() => {
     return (allInvoices ?? []).slice().sort((a, b) =>
@@ -455,80 +425,102 @@ export default function PurchaseInvoiceWorkspace() {
   };
 
   if (!invoiceId) {
-    return <div className="p-8 text-muted-foreground">Geen factuur geselecteerd.</div>;
-  }
-  if (invoiceLoading || !initialized) {
     return (
-      <div className="p-8 flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Laden…
-      </div>
-    );
-  }
-  if (!invoice) {
-    return (
-      <div className="p-8 space-y-3">
-        <p className="text-muted-foreground">Factuur niet gevonden.</p>
+      <div className="space-y-3">
+        <p className="text-muted-foreground">Geen factuur geselecteerd.</p>
         <Button variant="outline" onClick={() => navigate("/facturen")}>
           <ArrowLeft className="mr-2 h-4 w-4" /> Terug naar inkoopoverzicht
         </Button>
       </div>
     );
   }
-
-  return (
-    <div className="pb-24">
-      {/* Page header */}
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <Button variant="ghost" size="sm" onClick={() => navigate("/facturen")}>
-          <ArrowLeft className="mr-2 h-4 w-4" /> Inkoopoverzicht
-        </Button>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <span className="font-semibold">{header.supplier || "Onbekende leverancier"}</span>
-          <span className="text-muted-foreground">·</span>
-          <span className="font-mono">{header.invoice_number || "geen nummer"}</span>
-          <span className="text-muted-foreground">·</span>
-          <span>{header.invoice_date ? new Date(header.invoice_date).toLocaleDateString("nl-NL") : "geen datum"}</span>
-          <Badge variant="outline" className="ml-2">
-            {header.status === "gecontroleerd" ? "Gecontroleerd" : header.status === "geexporteerd" ? "Geëxporteerd" : "Te controleren"}
-          </Badge>
-          {isBtwVrijgesteld && <Badge variant="secondary">BTW-vrijgesteld</Badge>}
+  if (invoiceLoading || !initialized) {
+    return (
+      <div className="space-y-4" role="status" aria-live="polite" aria-busy="true">
+        <span className="sr-only">Laden…</span>
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-8 w-8" />
+          <Skeleton className="h-5 w-56" />
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="ml-auto h-8 w-32" />
         </div>
-        <div className="ml-auto flex items-center gap-1">
-          <Button variant="outline" size="icon" onClick={goPrev} disabled={!hasPrev} title="Vorige factuur">
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span className="text-xs text-muted-foreground w-16 text-center">
-            {currentIdx >= 0 ? `${currentIdx + 1} / ${sortedInvoices.length}` : "—"}
-          </span>
-          <Button variant="outline" size="icon" onClick={goNext} disabled={!hasNext} title="Volgende factuur">
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <div className="space-y-4">
+            <Skeleton className="h-64 w-full" />
+            <Skeleton className="h-48 w-full" />
+          </div>
+          <Skeleton className="h-[420px] w-full" />
         </div>
       </div>
+    );
+  }
+  if (!invoice) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-start gap-3 py-8">
+          <p className="font-medium">Factuur niet gevonden.</p>
+          <p className="text-sm text-muted-foreground">
+            De inkoopfactuur bestaat niet meer of hoort niet bij deze administratie.
+          </p>
+          <Button variant="outline" onClick={() => navigate("/facturen")}>
+            <ArrowLeft className="mr-2 h-4 w-4" /> Terug naar inkoopoverzicht
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,_65fr)_minmax(0,_35fr)] gap-6">
-        {/* Left column */}
-        <div className="space-y-6 min-w-0">
+  const amountInputClass = "h-9 text-right font-mono tabular-nums";
+
+  return (
+    <div className="space-y-4">
+      <PurchaseInvoiceWorkspaceHeader
+        supplier={header.supplier}
+        invoiceNumber={header.invoice_number}
+        invoiceDate={header.invoice_date}
+        status={header.status}
+        isBtwVrijgesteld={isBtwVrijgesteld}
+        clientName={client?.name ?? null}
+        totalIncl={headerTotals.amount_incl}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
+        currentIndex={currentIdx}
+        totalCount={sortedInvoices.length}
+        onBack={() => navigate("/facturen")}
+        onPrev={goPrev}
+        onNext={goNext}
+      />
+
+      <div
+        data-testid="workspace-grid"
+        className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[minmax(0,11fr)_minmax(0,9fr)]"
+      >
+        {/* Left column: processing */}
+        <div className="min-w-0 space-y-4">
           {/* Factuurgegevens */}
           <Card>
-            <CardContent className="pt-6">
-              <h2 className="text-sm font-semibold text-muted-foreground mb-4">Factuurgegevens</h2>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="col-span-2">
-                  <Label>Klant</Label>
-                  <Select value={header.client_id} onValueChange={(v) => patchHeader({ client_id: v })}>
-                    <SelectTrigger><SelectValue placeholder="Selecteer klant" /></SelectTrigger>
-                    <SelectContent>
-                      {(clients ?? []).map((c) => (
-                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="col-span-2">
-                  <Label>Leverancier</Label>
-                  <div className="flex gap-2">
-                    <div className="w-1/2">
+            <CardContent className="space-y-5 pt-5">
+              <h2 className="text-sm font-semibold">Factuurgegevens</h2>
+
+              <FieldGroup title="Identificatie">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <Label>Administratie</Label>
+                    <Select value={header.client_id} onValueChange={(v) => patchHeader({ client_id: v })}>
+                      <SelectTrigger className="h-9" aria-label="Administratie">
+                        <SelectValue placeholder="Selecteer klant" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(clients ?? []).map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="min-w-0">
+                    <Label>Leverancier</Label>
+                    <div className="grid grid-cols-2 gap-2">
                       <Select
                         value={header.leverancier_id || "__none__"}
                         onValueChange={(v) => {
@@ -537,7 +529,9 @@ export default function PurchaseInvoiceWorkspace() {
                           patchHeader({ leverancier_id: v, supplier: lev?.naam ?? header.supplier });
                         }}
                       >
-                        <SelectTrigger><SelectValue placeholder="Bestaande leverancier" /></SelectTrigger>
+                        <SelectTrigger className="h-9" aria-label="Bestaande leverancier">
+                          <SelectValue placeholder="Bestaande leverancier" />
+                        </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">— vrije invoer —</SelectItem>
                           {(leveranciers ?? []).map((l) => (
@@ -545,111 +539,176 @@ export default function PurchaseInvoiceWorkspace() {
                           ))}
                         </SelectContent>
                       </Select>
+                      <Input
+                        className="h-9"
+                        value={header.supplier}
+                        onChange={(e) => patchHeader({ supplier: e.target.value })}
+                        placeholder="Leverancier"
+                        aria-label="Leveranciersnaam"
+                      />
                     </div>
+                    <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                      {header.leverancier_id ? (
+                        <>
+                          <Link2 className="h-3 w-3" /> Gekoppeld aan bestaande leverancier
+                        </>
+                      ) : (
+                        <>
+                          <PenLine className="h-3 w-3" /> Vrije invoer — niet gekoppeld aan een leverancier
+                        </>
+                      )}
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <Label>Factuurnummer</Label>
                     <Input
-                      className="w-1/2"
-                      value={header.supplier}
-                      onChange={(e) => patchHeader({ supplier: e.target.value })}
-                      placeholder="Leverancier"
+                      className="h-9 font-mono"
+                      value={header.invoice_number}
+                      onChange={(e) => patchHeader({ invoice_number: e.target.value })}
+                      aria-label="Factuurnummer"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label>Factuurdatum</Label>
+                    <Input
+                      className="h-9"
+                      type="date"
+                      value={header.invoice_date}
+                      onChange={(e) => patchHeader({ invoice_date: e.target.value })}
+                      aria-label="Factuurdatum"
                     />
                   </div>
                 </div>
+              </FieldGroup>
 
-                <div>
-                  <Label>Factuurnummer</Label>
-                  <Input
-                    value={header.invoice_number}
-                    onChange={(e) => patchHeader({ invoice_number: e.target.value })}
-                  />
+              <FieldGroup title="Bedragen">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  <div className="min-w-0">
+                    <Label>Bedrag excl.</Label>
+                    <Input
+                      inputMode="decimal"
+                      value={header.amount_excl}
+                      onChange={(e) => patchHeader({ amount_excl: e.target.value })}
+                      onBlur={() => {
+                        const n = parseAmountInput(header.amount_excl);
+                        patchHeader({ amount_excl: formatAmountInput(n) });
+                      }}
+                      placeholder="0,00"
+                      aria-label="Bedrag excl."
+                      className={amountInputClass}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label>BTW-bedrag</Label>
+                    <Input
+                      inputMode="decimal"
+                      value={header.btw_amount}
+                      disabled={isBtwVrijgesteld}
+                      onChange={(e) => patchHeader({ btw_amount: e.target.value })}
+                      onBlur={() => {
+                        const n = parseAmountInput(header.btw_amount);
+                        patchHeader({ btw_amount: formatAmountInput(n) });
+                      }}
+                      placeholder="0,00"
+                      aria-label="BTW-bedrag"
+                      className={amountInputClass}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label>Bedrag incl.</Label>
+                    <Input
+                      inputMode="decimal"
+                      value={header.amount_incl}
+                      onChange={(e) => patchHeader({ amount_incl: e.target.value })}
+                      onBlur={() => {
+                        const n = parseAmountInput(header.amount_incl);
+                        patchHeader({ amount_incl: formatAmountInput(n) });
+                      }}
+                      placeholder="0,00"
+                      aria-label="Bedrag incl."
+                      className={amountInputClass}
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label>BTW %</Label>
+                    <Select
+                      value={header.btw_percentage}
+                      onValueChange={(v) => patchHeader({ btw_percentage: v })}
+                      disabled={isBtwVrijgesteld}
+                    >
+                      <SelectTrigger className="h-9" aria-label="BTW-percentage"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="0">0%</SelectItem>
+                        <SelectItem value="9">9%</SelectItem>
+                        <SelectItem value="21">21%</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                <div>
-                  <Label>Factuurdatum</Label>
-                  <Input
-                    type="date"
-                    value={header.invoice_date}
-                    onChange={(e) => patchHeader({ invoice_date: e.target.value })}
-                  />
+                {isBtwVrijgesteld && (
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    Deze administratie is BTW-vrijgesteld: BTW staat vast op 0% en het bedrag incl. is gelijk aan excl.
+                  </p>
+                )}
+              </FieldGroup>
+
+              <FieldGroup title="Boekingscontext">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <Label>Standaard grootboek</Label>
+                    <GrootboekCombobox
+                      value={header.ledger_label}
+                      onValueChange={(v) => patchHeader({ ledger_label: v })}
+                      onIdChange={(id) => patchHeader({ ledger_id: id })}
+                      noneOption
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="min-w-0">
+                    <Label>Notities</Label>
+                    <Textarea
+                      rows={2}
+                      className="min-h-9"
+                      value={header.notes}
+                      onChange={(e) => patchHeader({ notes: e.target.value })}
+                      aria-label="Notities"
+                    />
+                  </div>
                 </div>
-                <div>
-                  <Label>Bedrag excl.</Label>
-                  <Input
-                    inputMode="decimal"
-                    value={header.amount_excl}
-                    onChange={(e) => patchHeader({ amount_excl: e.target.value })}
-                    onBlur={() => {
-                      const n = parseAmountInput(header.amount_excl);
-                      patchHeader({ amount_excl: formatAmountInput(n) });
-                    }}
-                    placeholder="0,00"
-                  />
-                </div>
-                <div>
-                  <Label>BTW-bedrag</Label>
-                  <Input
-                    inputMode="decimal"
-                    value={header.btw_amount}
-                    disabled={isBtwVrijgesteld}
-                    onChange={(e) => patchHeader({ btw_amount: e.target.value })}
-                    onBlur={() => {
-                      const n = parseAmountInput(header.btw_amount);
-                      patchHeader({ btw_amount: formatAmountInput(n) });
-                    }}
-                    placeholder="0,00"
-                  />
-                </div>
-                <div>
-                  <Label>Bedrag incl.</Label>
-                  <Input
-                    inputMode="decimal"
-                    value={header.amount_incl}
-                    onChange={(e) => patchHeader({ amount_incl: e.target.value })}
-                    onBlur={() => {
-                      const n = parseAmountInput(header.amount_incl);
-                      patchHeader({ amount_incl: formatAmountInput(n) });
-                    }}
-                    placeholder="0,00"
-                  />
-                </div>
-                <div>
-                  <Label>BTW %</Label>
-                  <Select
-                    value={header.btw_percentage}
-                    onValueChange={(v) => patchHeader({ btw_percentage: v })}
-                    disabled={isBtwVrijgesteld}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0">0%</SelectItem>
-                      <SelectItem value="9">9%</SelectItem>
-                      <SelectItem value="21">21%</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="col-span-2 md:col-span-4">
-                  <Label>Standaard grootboek</Label>
-                  <GrootboekCombobox
-                    value={header.ledger_label}
-                    onValueChange={(v) => patchHeader({ ledger_label: v })}
-                    onIdChange={(id) => patchHeader({ ledger_id: id })}
-                    noneOption
-                  />
-                </div>
-                <div className="col-span-2 md:col-span-4">
-                  <Label>Notities</Label>
-                  <Textarea
-                    rows={2}
-                    value={header.notes}
-                    onChange={(e) => patchHeader({ notes: e.target.value })}
-                  />
-                </div>
-              </div>
+              </FieldGroup>
             </CardContent>
           </Card>
 
-          {/* Totals summary */}
+          {/* Boekingsregels + totalencontrole together, so the reason approve is
+              blocked is visible right where the lines are edited. */}
           <Card>
-            <CardContent className="pt-6">
-              <TotalsSummary
+            <CardContent className="space-y-4 pt-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold">Boekingsregels</h2>
+                <PurchaseInvoiceTotalsStatusPill state={totalsState} />
+                {lines.length > 0 && (
+                  <Button variant="outline" size="sm" className="ml-auto" onClick={addLine}>
+                    <Plus className="mr-1 h-4 w-4" /> Regel toevoegen
+                  </Button>
+                )}
+              </div>
+
+              <PurchaseInvoiceLinesTable
+                lines={lines}
+                isBtwVrijgesteld={isBtwVrijgesteld}
+                onPatchLine={patchLine}
+                onRemoveLine={removeLine}
+                onAddLine={addLine}
+              />
+
+              {hasPartialLine && (
+                <p className="text-xs text-amber-700 dark:text-amber-400" role="alert">
+                  Één of meer regels zijn niet compleet. Vul bedrag en omschrijving in of verwijder de regel.
+                </p>
+              )}
+
+              <PurchaseInvoiceTotalsSummary
                 header={headerTotals}
                 lineTotals={lineTotals}
                 diffs={diffs}
@@ -658,202 +717,32 @@ export default function PurchaseInvoiceWorkspace() {
               />
             </CardContent>
           </Card>
-
-          {/* Line table */}
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold text-muted-foreground">Boekingsregels</h2>
-                <Button variant="outline" size="sm" onClick={addLine}>
-                  <Plus className="h-4 w-4 mr-1" /> {lines.length === 0 ? "Eerste boekingsregel toevoegen" : "Regel toevoegen"}
-                </Button>
-              </div>
-              {lines.length === 0 ? (
-                <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                  Nog geen boekingsregels. Voeg er één toe om te beginnen.
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="min-w-[180px]">Omschrijving</TableHead>
-                        <TableHead className="min-w-[220px]">Grootboek</TableHead>
-                        <TableHead className="text-right w-[110px]">Excl.</TableHead>
-                        <TableHead className="w-[80px]">BTW %</TableHead>
-                        <TableHead className="text-right w-[100px]">BTW</TableHead>
-                        <TableHead className="text-right w-[110px]">Incl.</TableHead>
-                        <TableHead className="w-[40px]"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {lines.map((line, idx) => {
-                        const excl = parseAmountInput(line.amount_input) ?? 0;
-                        const pct = parseAmountInput(line.btw_percentage) ?? 0;
-                        const btw = round2(excl * pct / 100);
-                        const incl = round2(excl + btw);
-                        const partial = isPartiallyFilledLine({
-                          omschrijving: line.omschrijving,
-                          amount_input: line.amount_input,
-                          grootboekrekening_id: line.grootboekrekening_id,
-                        });
-                        return (
-                          <TableRow key={idx} className={partial ? "bg-amber-50/50 dark:bg-amber-950/20" : undefined}>
-                            <TableCell>
-                              <Input
-                                value={line.omschrijving}
-                                onChange={(e) => patchLine(idx, { omschrijving: e.target.value })}
-                                placeholder="Omschrijving"
-                                className="h-9"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <GrootboekCombobox
-                                value={line.grootboek_label}
-                                onValueChange={(v) => patchLine(idx, { grootboek_label: v })}
-                                onIdChange={(id) => patchLine(idx, { grootboekrekening_id: id })}
-                                noneOption
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Input
-                                inputMode="decimal"
-                                value={line.amount_input}
-                                onChange={(e) => patchLine(idx, { amount_input: e.target.value })}
-                                onBlur={() => {
-                                  const n = parseAmountInput(line.amount_input);
-                                  patchLine(idx, { amount_input: n === null ? line.amount_input : formatAmountInput(n) });
-                                }}
-                                placeholder="0,00"
-                                className="h-9 text-right font-mono"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Select
-                                value={line.btw_percentage}
-                                onValueChange={(v) => patchLine(idx, { btw_percentage: v })}
-                                disabled={isBtwVrijgesteld}
-                              >
-                                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="0">0%</SelectItem>
-                                  <SelectItem value="9">9%</SelectItem>
-                                  <SelectItem value="21">21%</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                              {formatEuro(btw)}
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-sm">
-                              {formatEuro(incl)}
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                onClick={() => removeLine(idx)}
-                                aria-label="Regel verwijderen"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
-              {hasPartialLine && (
-                <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
-                  Één of meer regels zijn niet compleet. Vul bedrag en omschrijving in of verwijder de regel.
-                </p>
-              )}
-            </CardContent>
-          </Card>
         </div>
 
-        {/* Right column: preview */}
+        {/* Right column: original document */}
         <div className="min-w-0">
-          <div className="lg:sticky lg:top-4">
-            <Card>
-              <CardContent className="pt-6">
-                <InvoicePreview filePath={invoice.file_path} />
-              </CardContent>
+          <div
+            data-testid="document-panel"
+            className="h-[70vh] min-h-[420px] lg:sticky lg:top-[4.5rem] lg:h-[calc(100dvh-6.5rem)]"
+          >
+            <Card className="flex h-full flex-col overflow-hidden">
+              <PurchaseInvoiceDocumentPreview filePath={invoice.file_path} />
             </Card>
           </div>
         </div>
       </div>
 
-      {/* Fixed action bar */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur px-4 py-3">
-        <div className="mx-auto max-w-[1600px] flex items-center gap-2">
-          <Button variant="outline" onClick={() => navigate("/facturen")}>
-            <ArrowLeft className="mr-2 h-4 w-4" /> Annuleren
-          </Button>
-          <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" onClick={() => handleSave(false)} disabled={!canSave}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-              Opslaan
-            </Button>
-            <Button onClick={() => handleSave(true)} disabled={!canApprove}>
-              <CheckCircle2 className="mr-2 h-4 w-4" /> Goedkeuren
-            </Button>
-            {hasNext && (
-              <Button variant="secondary" onClick={goNext}>
-                Volgende <ChevronRight className="ml-1 h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TotalsSummary({
-  header, lineTotals, diffs, state, message,
-}: {
-  header: { amount_excl: number | null; btw_amount: number | null; amount_incl: number | null };
-  lineTotals: { sumExcl: number; sumBtw: number; sumIncl: number };
-  diffs: { excl: number | null; btw: number | null; incl: number | null };
-  state: "green" | "amber" | "red";
-  message: string;
-}) {
-  const color =
-    state === "green" ? "border-green-500/50 bg-green-50 text-green-900 dark:bg-green-950/40 dark:text-green-200"
-    : state === "amber" ? "border-amber-500/50 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-    : "border-destructive/50 bg-destructive/10 text-destructive";
-
-  const fmt = (n: number | null) => n == null ? "—" : formatEuro(n);
-  const fmtDiff = (n: number | null) => n == null ? "—" : formatEuro(n);
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-4 gap-2 text-sm">
-        <div className="text-muted-foreground"></div>
-        <div className="text-right font-medium text-muted-foreground">Excl.</div>
-        <div className="text-right font-medium text-muted-foreground">BTW</div>
-        <div className="text-right font-medium text-muted-foreground">Incl.</div>
-
-        <div className="text-muted-foreground">Factuur</div>
-        <div className="text-right font-mono">{fmt(header.amount_excl)}</div>
-        <div className="text-right font-mono">{fmt(header.btw_amount)}</div>
-        <div className="text-right font-mono">{fmt(header.amount_incl)}</div>
-
-        <div className="text-muted-foreground">Boekingsregels</div>
-        <div className="text-right font-mono">{formatEuro(lineTotals.sumExcl)}</div>
-        <div className="text-right font-mono">{formatEuro(lineTotals.sumBtw)}</div>
-        <div className="text-right font-mono">{formatEuro(lineTotals.sumIncl)}</div>
-
-        <div className="text-muted-foreground">Verschil</div>
-        <div className="text-right font-mono">{fmtDiff(diffs.excl)}</div>
-        <div className="text-right font-mono">{fmtDiff(diffs.btw)}</div>
-        <div className="text-right font-mono">{fmtDiff(diffs.incl)}</div>
-      </div>
-      <div className={`rounded-md border px-3 py-2 text-sm ${color}`}>{message}</div>
+      <PurchaseInvoiceActionBar
+        canSave={canSave}
+        canApprove={canApprove}
+        saving={saving}
+        hasNext={hasNext}
+        approveBlockers={approveBlockers}
+        onCancel={() => navigate("/facturen")}
+        onSave={() => handleSave(false)}
+        onApprove={() => handleSave(true)}
+        onNext={goNext}
+      />
     </div>
   );
 }
