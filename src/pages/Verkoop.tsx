@@ -705,10 +705,22 @@ export default function Verkoop() {
                     <FileText className="h-8 w-8 text-primary" />
                   </div>
                   <h3 className="font-display text-lg font-semibold">
-                    {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" ? "Geen facturen gevonden" : "Nog geen verkoopfacturen"}
+                    {searchQuery
+                      ? "Geen zoekresultaten"
+                      : paymentFilter !== "all"
+                        ? "Geen facturen met deze betaalstatus"
+                        : workflowFilter !== "all"
+                          ? "Geen facturen met deze status"
+                          : "Nog geen verkoopfacturen"}
                   </h3>
                   <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                    {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" ? "Probeer een andere zoekopdracht of pas de filters aan." : "Upload facturen via het Upload-tabblad of voeg handmatig toe."}
+                    {searchQuery
+                      ? "Probeer een andere zoekopdracht."
+                      : paymentFilter !== "all"
+                        ? "Kies een andere betaalstatus of zet het filter op alle betalingen."
+                        : workflowFilter !== "all"
+                          ? "Kies een andere status of zet het filter op alle statussen."
+                          : "Upload facturen via het Upload-tabblad of voeg handmatig toe."}
                   </p>
                 </div>
               ) : (
