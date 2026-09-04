@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,6 +10,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
@@ -32,11 +32,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { AlertTriangle, Building2, Plus, Pencil, Search, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
-import { useClients } from "@/hooks/useClients";
 import {
   useLeveranciers,
   useAddLeverancier,
@@ -48,8 +47,8 @@ import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
-import { EmptyState } from "@/components/EmptyState";
 import { NoClientBanner } from "@/components/NoClientBanner";
+import { FilterChip } from "@/components/FilterChip";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 
 type Leverancier = Tables<"leveranciers">;
@@ -82,11 +81,10 @@ const emptyForm: LeverancierForm = {
 
 export default function Leveranciers() {
   const { toast } = useToast();
-  const { selectedClientId, setSelectedClientId } = useClientContext();
+  const { selectedClientId } = useClientContext();
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const orgEnabled = isReady && activeOrganizationId !== null;
-  const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
-  const { data: leveranciers, isLoading } = useLeveranciers({
+  const { data: leveranciers, isLoading, isError, refetch } = useLeveranciers({
     organizationId: activeOrganizationId ?? undefined,
     clientId: selectedClientId !== "all" ? selectedClientId : undefined,
     enabled: isReady && activeOrganizationId !== null,
@@ -102,6 +100,8 @@ export default function Leveranciers() {
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<LeverancierForm>(emptyForm);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "actief" | "inactief">("all");
   const deleteConfirm = useDeleteConfirm();
 
   const grootboekById = useMemo(() => {
@@ -111,6 +111,24 @@ export default function Leveranciers() {
   }, [grootboekrekeningen]);
 
   const noClientSelected = !selectedClientId || selectedClientId === "all";
+
+  const searchFiltered = useMemo(() => {
+    const list = leveranciers ?? [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((l) =>
+      [l.naam, l.btw_nummer, l.kvk_nummer, l.plaats, l.iban]
+        .some((v) => (v ?? "").toLowerCase().includes(q))
+    );
+  }, [leveranciers, searchQuery]);
+
+  const filtered = useMemo(() => {
+    if (statusFilter === "all") return searchFiltered;
+    return searchFiltered.filter((l) => (statusFilter === "actief" ? l.actief : !l.actief));
+  }, [searchFiltered, statusFilter]);
+
+  const activeCount = searchFiltered.filter((l) => l.actief).length;
+  const inactiveCount = searchFiltered.length - activeCount;
 
   const openNew = () => {
     setEditingId(null);
@@ -198,145 +216,241 @@ export default function Leveranciers() {
     }
   };
 
+  const saving = addMut.isPending || updateMut.isPending;
+
+  const emptyTitle = searchQuery.trim()
+    ? "Geen zoekresultaten"
+    : statusFilter === "actief"
+    ? "Geen actieve leveranciers"
+    : statusFilter === "inactief"
+    ? "Geen inactieve leveranciers"
+    : "Nog geen leveranciers";
+
+  const emptyDescription = searchQuery.trim()
+    ? "Pas je zoekterm aan om meer leveranciers te zien."
+    : statusFilter !== "all"
+    ? "Kies een andere status om meer leveranciers te zien."
+    : "Voeg de eerste leverancier van deze klant toe.";
+
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Leveranciers"
-        description="Beheer leveranciers per klant voor inkoopfacturen en UBL"
-      >
-        <Button onClick={openNew} disabled={noClientSelected}>
-          <Plus className="h-4 w-4 mr-2" />
-          Nieuwe leverancier
-        </Button>
-      </PageHeader>
+    <>
+      <h1 className="sr-only">Leveranciers</h1>
 
-      {noClientSelected && (
+      {noClientSelected ? (
         <NoClientBanner message="Kies links in de zijbalk een specifieke klant om diens leveranciers te beheren." />
-      )}
-
-      {!noClientSelected && (
-        <Card>
-          <CardContent className="p-0">
-            {isLoading ? (
-              <div className="p-6 space-y-2">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
+      ) : (
+        <>
+          <div className="mb-4 space-y-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-full max-w-md flex-1 min-w-[12rem]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Zoeken op naam, BTW, KvK, plaats of IBAN..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10"
+                  aria-label="Zoeken in leveranciers"
+                />
               </div>
-            ) : !leveranciers || leveranciers.length === 0 ? (
-              <EmptyState message="Nog geen leveranciers voor deze klant." />
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Naam</TableHead>
-                    <TableHead>BTW-nummer</TableHead>
-                    <TableHead>KvK-nummer</TableHead>
-                    <TableHead>Plaats</TableHead>
-                    <TableHead>IBAN</TableHead>
-                    <TableHead>Standaard grootboek</TableHead>
-                    <TableHead>Actief</TableHead>
-                    <TableHead className="text-right">Actie</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {leveranciers.map((l) => (
-                    <TableRow key={l.id}>
-                      <TableCell className="font-medium">{l.naam}</TableCell>
-                      <TableCell>{l.btw_nummer ?? "—"}</TableCell>
-                      <TableCell>{l.kvk_nummer ?? "—"}</TableCell>
-                      <TableCell>{l.plaats ?? "—"}</TableCell>
-                      <TableCell>{l.iban ?? "—"}</TableCell>
-                      <TableCell>
-                        {l.standaard_grootboekrekening_id
-                          ? grootboekById.get(l.standaard_grootboekrekening_id) ?? "—"
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {l.actief ? (
-                          <Badge variant="secondary">Actief</Badge>
-                        ) : (
-                          <Badge variant="outline">Inactief</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(l)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => deleteConfirm.request(l.id)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
+              <span className="text-sm text-muted-foreground whitespace-nowrap">
+                {filtered.length} {filtered.length === 1 ? "leverancier" : "leveranciers"}
+              </span>
+              <Button className="ml-auto" onClick={openNew} disabled={noClientSelected}>
+                <Plus className="h-4 w-4 mr-2" />
+                Nieuwe leverancier
+              </Button>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <FilterChip
+                label="Alle"
+                active={statusFilter === "all"}
+                count={searchFiltered.length}
+                onClick={() => setStatusFilter("all")}
+              />
+              <FilterChip
+                label="Actief"
+                active={statusFilter === "actief"}
+                count={activeCount}
+                onClick={() => setStatusFilter(statusFilter === "actief" ? "all" : "actief")}
+              />
+              <FilterChip
+                label="Inactief"
+                active={statusFilter === "inactief"}
+                count={inactiveCount}
+                onClick={() => setStatusFilter(statusFilter === "inactief" ? "all" : "inactief")}
+              />
+            </div>
+          </div>
+
+          <Card>
+            <CardContent className="overflow-x-auto p-4 sm:p-6">
+              {isLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Skeleton key={i} className="h-12 w-full" />
                   ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                </div>
+              ) : isError ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10 mb-4">
+                    <AlertTriangle className="h-8 w-8 text-destructive" />
+                  </div>
+                  <h2 className="font-display text-lg font-semibold">Leveranciers laden mislukt</h2>
+                  <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                    Er ging iets mis bij het ophalen van de leveranciers.
+                  </p>
+                  <Button className="mt-4" variant="outline" onClick={() => refetch()}>
+                    Opnieuw proberen
+                  </Button>
+                </div>
+              ) : !filtered.length ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
+                    <Building2 className="h-8 w-8 text-primary" />
+                  </div>
+                  <h2 className="font-display text-lg font-semibold">{emptyTitle}</h2>
+                  <p className="mt-1 max-w-sm text-sm text-muted-foreground">{emptyDescription}</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Naam</TableHead>
+                      <TableHead className="hidden md:table-cell">BTW-nummer</TableHead>
+                      <TableHead className="hidden lg:table-cell">KvK-nummer</TableHead>
+                      <TableHead className="hidden sm:table-cell">Plaats</TableHead>
+                      <TableHead className="hidden lg:table-cell">IBAN</TableHead>
+                      <TableHead className="hidden lg:table-cell">Standaard grootboek</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actie</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((l) => {
+                      const grootboekLabel = l.standaard_grootboekrekening_id
+                        ? grootboekById.get(l.standaard_grootboekrekening_id) ?? "—"
+                        : "—";
+                      const secundair = [l.btw_nummer, l.kvk_nummer, l.iban].filter(Boolean).join(" · ");
+                      return (
+                        <TableRow key={l.id}>
+                          <TableCell className="font-medium">
+                            {l.naam}
+                            <div className="mt-0.5 text-xs text-muted-foreground lg:hidden">
+                              <span className="sm:hidden">{l.plaats ? `${l.plaats}${secundair ? " · " : ""}` : ""}</span>
+                              <span className="md:hidden">{secundair}</span>
+                              <span className="hidden md:inline">
+                                {[l.kvk_nummer, l.iban].filter(Boolean).join(" · ")}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">{l.btw_nummer ?? "—"}</TableCell>
+                          <TableCell className="hidden lg:table-cell">{l.kvk_nummer ?? "—"}</TableCell>
+                          <TableCell className="hidden sm:table-cell">{l.plaats ?? "—"}</TableCell>
+                          <TableCell className="hidden lg:table-cell">{l.iban ?? "—"}</TableCell>
+                          <TableCell className="hidden lg:table-cell">{grootboekLabel}</TableCell>
+                          <TableCell>
+                            {l.actief ? (
+                              <Badge variant="secondary">Actief</Badge>
+                            ) : (
+                              <Badge variant="outline">Inactief</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="inline-flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`Leverancier ${l.naam} bewerken`}
+                                onClick={() => openEdit(l)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label={`Leverancier ${l.naam} verwijderen`}
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => deleteConfirm.request(l.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingId ? "Leverancier bewerken" : "Nieuwe leverancier"}</DialogTitle>
+            <DialogDescription>Velden met * zijn verplicht.</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Naam *</Label>
-              <Input value={form.naam} onChange={(e) => set("naam", e.target.value)} />
+              <Label htmlFor="lev-naam">Naam *</Label>
+              <Input id="lev-naam" value={form.naam} onChange={(e) => set("naam", e.target.value)} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label>BTW-nummer</Label>
+                <Label htmlFor="lev-btw">BTW-nummer</Label>
                 <Input
+                  id="lev-btw"
                   value={form.btw_nummer}
                   onChange={(e) => set("btw_nummer", e.target.value)}
                   placeholder="NL123456789B01"
                 />
               </div>
               <div className="space-y-2">
-                <Label>KvK-nummer</Label>
-                <Input value={form.kvk_nummer} onChange={(e) => set("kvk_nummer", e.target.value)} />
+                <Label htmlFor="lev-kvk">KvK-nummer</Label>
+                <Input id="lev-kvk" value={form.kvk_nummer} onChange={(e) => set("kvk_nummer", e.target.value)} />
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Adres</Label>
-              <Input value={form.adres} onChange={(e) => set("adres", e.target.value)} />
+              <Label htmlFor="lev-adres">Adres</Label>
+              <Input id="lev-adres" value={form.adres} onChange={(e) => set("adres", e.target.value)} />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-2">
-                <Label>Postcode</Label>
-                <Input value={form.postcode} onChange={(e) => set("postcode", e.target.value)} />
+                <Label htmlFor="lev-postcode">Postcode</Label>
+                <Input id="lev-postcode" value={form.postcode} onChange={(e) => set("postcode", e.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label>Plaats</Label>
-                <Input value={form.plaats} onChange={(e) => set("plaats", e.target.value)} />
+                <Label htmlFor="lev-plaats">Plaats</Label>
+                <Input id="lev-plaats" value={form.plaats} onChange={(e) => set("plaats", e.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label>Land</Label>
-                <Input value={form.land} onChange={(e) => set("land", e.target.value)} />
+                <Label htmlFor="lev-land">Land</Label>
+                <Input id="lev-land" value={form.land} onChange={(e) => set("land", e.target.value)} />
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>IBAN</Label>
-              <Input value={form.iban} onChange={(e) => set("iban", e.target.value)} />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Standaard grootboekrekening</Label>
-              <GrootboekCombobox
-                value={form.standaard_grootboekrekening_id ? (grootboekById.get(form.standaard_grootboekrekening_id) ?? "") : ""}
-                onValueChange={() => {}}
-                onIdChange={(id) => set("standaard_grootboekrekening_id", id || "")}
-                noneOption
-                placeholder="Geen"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="lev-iban">IBAN</Label>
+                <Input id="lev-iban" value={form.iban} onChange={(e) => set("iban", e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Standaard grootboekrekening</Label>
+                <GrootboekCombobox
+                  value={form.standaard_grootboekrekening_id ? (grootboekById.get(form.standaard_grootboekrekening_id) ?? "") : ""}
+                  onValueChange={() => {}}
+                  onIdChange={(id) => set("standaard_grootboekrekening_id", id || "")}
+                  noneOption
+                  placeholder="Geen"
+                />
+              </div>
             </div>
 
             <div className="flex items-center gap-3 pt-2">
@@ -355,8 +469,8 @@ export default function Leveranciers() {
             <Button variant="outline" onClick={() => setOpen(false)}>
               Annuleren
             </Button>
-            <Button onClick={handleSave} disabled={addMut.isPending || updateMut.isPending}>
-              Opslaan
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? "Bezig met opslaan..." : "Opslaan"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -365,9 +479,10 @@ export default function Leveranciers() {
       <AlertDialog open={deleteConfirm.open} onOpenChange={(o) => { if (!o) deleteConfirm.cancel(); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Leverancier verwijderen</AlertDialogTitle>
+            <AlertDialogTitle>Leverancier verwijderen?</AlertDialogTitle>
             <AlertDialogDescription>
-              Weet je zeker dat je deze leverancier wilt verwijderen?
+              Als deze leverancier al aan facturen gekoppeld is, wordt hij veilig op inactief gezet in
+              plaats van verwijderd. Anders wordt de leverancier definitief verwijderd.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -378,6 +493,6 @@ export default function Leveranciers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
   );
 }
