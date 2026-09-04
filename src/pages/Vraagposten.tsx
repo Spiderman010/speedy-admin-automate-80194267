@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { CheckCircle2, ClipboardList, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardList, RotateCcw, Search, Trash2, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
@@ -43,6 +42,13 @@ const STATUS_CHIP_LABELS: Record<string, string> = {
   genegeerd: "Genegeerd",
 };
 
+const EMPTY_STATUS_TITLES: Record<string, string> = {
+  open: "Geen open vraagposten",
+  in_behandeling: "Geen vraagposten in behandeling",
+  opgelost: "Geen opgeloste vraagposten",
+  genegeerd: "Geen genegeerde vraagposten",
+};
+
 const statusBadge = (status: string) => {
   switch (status) {
     case "open":
@@ -65,7 +71,7 @@ export default function Vraagposten() {
   const [searchParams] = useSearchParams();
   const orgEnabled = isReady && activeOrganizationId !== null;
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
-  const { data: vraagposten, isLoading } = useVraagposten({
+  const { data: vraagposten, isLoading, isError, refetch } = useVraagposten({
     organizationId: activeOrganizationId ?? undefined,
     clientId: selectedClientId !== "all" ? selectedClientId : undefined,
     enabled: orgEnabled,
@@ -92,11 +98,6 @@ export default function Vraagposten() {
       return (b.created_at || "").localeCompare(a.created_at || "");
     });
   }, [vraagposten]);
-
-  const uniqueStatuses = useMemo(() => {
-    const present = new Set(sorted.map(vp => vp.status).filter(Boolean));
-    return STATUS_ORDER.filter(s => present.has(s));
-  }, [sorted]);
 
   const searchFiltered = useMemo(() => {
     if (!searchQuery.trim()) return sorted;
@@ -162,68 +163,90 @@ export default function Vraagposten() {
     });
   };
 
+  const emptyTitle = searchQuery.trim()
+    ? "Geen zoekresultaten"
+    : statusFilter !== "all"
+    ? EMPTY_STATUS_TITLES[statusFilter] ?? "Geen vraagposten gevonden"
+    : "Geen vraagposten";
+
+  const emptyDescription = searchQuery.trim()
+    ? "Pas je zoekterm aan om meer resultaten te zien."
+    : statusFilter !== "all"
+    ? "Kies een andere status om meer vraagposten te zien."
+    : "Er zijn nog geen openstaande punten voor de geselecteerde klant.";
+
   return (
     <>
-      <PageHeader title="Vraagposten" description="Open punten bij facturen, bank en klanten" />
-      <div className="mb-5 space-y-2.5">
-        <div className="relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Zoeken op titel, bron, categorie of klant..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-        {uniqueStatuses.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs font-medium text-muted-foreground w-24 shrink-0">Status</span>
-            <FilterChip
-              label="Alle statussen"
-              active={statusFilter === "all"}
-              count={searchFiltered.length}
-              onClick={() => setStatusFilter("all")}
+      <h1 className="sr-only">Vraagposten</h1>
+      <div className="mb-4 space-y-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative w-full max-w-md flex-1 min-w-[12rem]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Zoeken op titel, bron, categorie of klant..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+              aria-label="Zoeken in vraagposten"
             />
-            {uniqueStatuses.map(s => (
-              <FilterChip
-                key={s}
-                label={STATUS_CHIP_LABELS[s] ?? s}
-                active={statusFilter === s}
-                count={searchFiltered.filter(vp => vp.status === s).length}
-                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              />
-            ))}
           </div>
-        )}
+          <span className="text-sm text-muted-foreground whitespace-nowrap">
+            {filteredSorted.length} {filteredSorted.length === 1 ? "vraagpost" : "vraagposten"}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <FilterChip
+            label="Alle"
+            active={statusFilter === "all"}
+            count={searchFiltered.length}
+            onClick={() => setStatusFilter("all")}
+          />
+          {STATUS_ORDER.map(s => (
+            <FilterChip
+              key={s}
+              label={STATUS_CHIP_LABELS[s]}
+              active={statusFilter === s}
+              count={searchFiltered.filter(vp => vp.status === s).length}
+              onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+            />
+          ))}
+        </div>
       </div>
       <Card>
-        <CardContent className="overflow-x-auto p-6">
+        <CardContent className="overflow-x-auto p-4 sm:p-6">
           {isLoading ? (
             <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : isError ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10 mb-4">
+                <AlertTriangle className="h-8 w-8 text-destructive" />
+              </div>
+              <h2 className="font-display text-lg font-semibold">Vraagposten laden mislukt</h2>
+              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                Er ging iets mis bij het ophalen van de vraagposten.
+              </p>
+              <Button className="mt-4" variant="outline" onClick={() => refetch()}>
+                Opnieuw proberen
+              </Button>
+            </div>
           ) : !filteredSorted.length ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
                 <ClipboardList className="h-8 w-8 text-primary" />
               </div>
-              <h3 className="font-display text-lg font-semibold">
-                {searchQuery || statusFilter !== "all" ? "Geen vraagposten gevonden" : "Geen vraagposten"}
-              </h3>
-              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                {searchQuery || statusFilter !== "all"
-                  ? "Pas je zoekterm of filters aan om meer resultaten te zien."
-                  : "Er zijn nog geen openstaande punten voor de geselecteerde klant."}
-              </p>
+              <h2 className="font-display text-lg font-semibold">{emptyTitle}</h2>
+              <p className="mt-1 max-w-sm text-sm text-muted-foreground">{emptyDescription}</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Klant</TableHead>
-                  <TableHead>Bron</TableHead>
-                  <TableHead>Categorie</TableHead>
+                  <TableHead className="w-[8rem]">Status</TableHead>
                   <TableHead>Titel</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Datum</TableHead>
+                  <TableHead className="hidden sm:table-cell">Klant</TableHead>
+                  <TableHead className="hidden lg:table-cell">Bron</TableHead>
+                  <TableHead className="hidden lg:table-cell">Categorie</TableHead>
+                  <TableHead className="hidden md:table-cell">Datum</TableHead>
                   <TableHead className="text-right">Actie</TableHead>
                 </TableRow>
               </TableHeader>
@@ -233,6 +256,9 @@ export default function Vraagposten() {
                   const highlightClass = isHighlighted
                     ? "bg-amber-50/80 border-y border-amber-300 first:border-l first:border-l-amber-300 last:border-r last:border-r-amber-300"
                     : "";
+                  const detail = formatMT940Detail(vp.omschrijving);
+                  const sourceLabel = VRAAGPOST_SOURCE_LABELS[vp.source_type] ?? vp.source_type;
+                  const categorieLabel = VRAAGPOST_CATEGORIE_LABELS[vp.categorie] ?? vp.categorie;
 
                   return (
                   <TableRow
@@ -243,48 +269,55 @@ export default function Vraagposten() {
                     }}
                     className="scroll-mt-24 transition-colors duration-300"
                   >
-                    <TableCell className={`${highlightClass} text-sm`}>{getClientName(vp.client_id)}</TableCell>
-                    <TableCell className={`${highlightClass} text-sm`}>{VRAAGPOST_SOURCE_LABELS[vp.source_type] ?? vp.source_type}</TableCell>
-                    <TableCell className={`${highlightClass} text-sm`}>{VRAAGPOST_CATEGORIE_LABELS[vp.categorie] ?? vp.categorie}</TableCell>
+                    <TableCell className={highlightClass}>{statusBadge(vp.status)}</TableCell>
                     <TableCell className={`${highlightClass} font-medium`}>
                       <span title={vp.titel ?? undefined}>{formatMT940Title(vp.titel)}</span>
-                      {(() => {
-                        const detail = formatMT940Detail(vp.omschrijving);
-                        if (!detail) return null;
-                        return (
-                          <div
-                            className="text-xs text-muted-foreground mt-0.5 line-clamp-2"
-                            title={vp.omschrijving ?? undefined}
-                          >
-                            {detail}
-                          </div>
-                        );
-                      })()}
+                      {detail && (
+                        <div
+                          className="text-xs text-muted-foreground mt-0.5 line-clamp-2"
+                          title={vp.omschrijving ?? undefined}
+                        >
+                          {detail}
+                        </div>
+                      )}
+                      <div className="mt-1 text-xs text-muted-foreground lg:hidden">
+                        <span className="sm:hidden">{getClientName(vp.client_id)} · </span>
+                        {sourceLabel} · {categorieLabel}
+                        <span className="md:hidden">
+                          {vp.created_at ? ` · ${new Date(vp.created_at).toLocaleDateString("nl-NL")}` : ""}
+                        </span>
+                      </div>
                     </TableCell>
-                    <TableCell className={highlightClass}>{statusBadge(vp.status)}</TableCell>
-                    <TableCell className={`${highlightClass} text-sm text-muted-foreground`}>
+                    <TableCell className={`${highlightClass} hidden sm:table-cell text-sm`}>{getClientName(vp.client_id)}</TableCell>
+                    <TableCell className={`${highlightClass} hidden lg:table-cell text-sm`}>{sourceLabel}</TableCell>
+                    <TableCell className={`${highlightClass} hidden lg:table-cell text-sm`}>{categorieLabel}</TableCell>
+                    <TableCell className={`${highlightClass} hidden md:table-cell text-sm text-muted-foreground`}>
                       {vp.created_at ? new Date(vp.created_at).toLocaleDateString("nl-NL") : "—"}
                     </TableCell>
                     <TableCell className={`${highlightClass} text-right`}>
-                      <div className="inline-flex gap-2 items-center">
+                      <div className="inline-flex gap-1.5 items-center">
                         {(vp.status === "open" || vp.status === "in_behandeling") && (
                           <>
                             <Button size="sm" variant="outline" onClick={() => handleStatus(vp.id, "opgelost")}>
-                              <CheckCircle2 className="h-3.5 w-3.5 mr-1" />Opgelost
+                              <CheckCircle2 className="h-3.5 w-3.5 sm:mr-1" />
+                              <span className="hidden sm:inline">Oplossen</span>
                             </Button>
                             <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "genegeerd")}>
-                              <XCircle className="h-3.5 w-3.5 mr-1" />Negeren
+                              <XCircle className="h-3.5 w-3.5 sm:mr-1" />
+                              <span className="hidden sm:inline">Negeren</span>
                             </Button>
                           </>
                         )}
                         {(vp.status === "opgelost" || vp.status === "genegeerd") && (
                           <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "open")}>
-                            <RotateCcw className="h-3.5 w-3.5 mr-1" />Heropenen
+                            <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
+                            <span className="hidden sm:inline">Heropenen</span>
                           </Button>
                         )}
                         <Button
                           size="sm"
                           variant="ghost"
+                          aria-label="Vraagpost verwijderen"
                           className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           onClick={() => deleteConfirm.request(vp.id)}
                         >
