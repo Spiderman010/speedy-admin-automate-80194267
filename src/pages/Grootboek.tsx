@@ -25,7 +25,8 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Download } from "lucide-react";
+import { Plus, Pencil, Trash2, Download, ArrowUpRight } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { SearchInput } from "@/components/SearchInput";
 import { EmptyState } from "@/components/EmptyState";
@@ -221,6 +222,11 @@ export default function Grootboek() {
           className="w-full sm:max-w-sm"
         />
         <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" asChild>
+            <Link to="/grootboek/mutaties">
+              <ArrowUpRight className="mr-2 h-4 w-4" />Mutaties bekijken
+            </Link>
+          </Button>
           <Button
             variant="outline"
             onClick={() => setSeedConfirmOpen(true)}
