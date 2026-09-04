@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ── Shared mutable state ──────────────────────────────────────────────────────
@@ -53,7 +54,13 @@ const makeAccount = (over: Partial<any> = {}) => ({
 });
 
 function renderGrootboek() {
-  render(<Grootboek />);
+  // Router context is required since the page links to /grootboek/mutaties.
+  // Test infrastructure only — no assertion in this file changed.
+  render(
+    <MemoryRouter initialEntries={["/grootboek"]}>
+      <Grootboek />
+    </MemoryRouter>,
+  );
 }
 
 const statusFilters = () => within(screen.getByTestId("status-filters"));
