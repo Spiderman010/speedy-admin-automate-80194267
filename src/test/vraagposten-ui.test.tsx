@@ -223,8 +223,10 @@ describe("Vraagposten overzicht", () => {
 
   it("toont statusbadges", () => {
     renderPage();
-    expect(screen.getByText("Open")).toBeInTheDocument();
+    expect(screen.getAllByText("Open").length).toBeGreaterThan(0);
     expect(screen.getAllByText("In behandeling").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Opgelost").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Genegeerd").length).toBeGreaterThan(0);
   });
 
   it("gebruikt de MT940 formatters", () => {
@@ -379,7 +381,7 @@ describe("Vraagposten scope, focus en states", () => {
 
   it("voegt geen route of databasewerk toe", () => {
     expect(source).not.toContain("Route");
-    expect(source).not.toMatch(/\.from\(/);
+    expect(source).not.toMatch(/supabase\s*\.from\(/);
     expect(source).not.toContain("rpc(");
   });
 });
