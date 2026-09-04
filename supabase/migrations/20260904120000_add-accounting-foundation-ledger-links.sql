@@ -28,7 +28,25 @@
 -- accounts (organization_id IS NULL) are deliberately NOT auto-mapped to
 -- organisation-scoped rows, so no implicit cross-organisation mapping occurs.
 --
+-- Tenant isolation: the single-column FKs below only guarantee that the ledger
+-- account EXISTS. They cannot express "and it belongs to the same organisation".
+-- A composite FK on (id, organization_id) was rejected for three concrete
+-- reasons: (a) ON DELETE SET NULL would null the parent's organization_id too
+-- unless the PostgreSQL 15+ column-list form is available, which cannot be
+-- verified from here; (b) MATCH SIMPLE silently skips enforcement whenever the
+-- parent organization_id is NULL; (c) it would drag organization_id into an FK
+-- that the existing immutability trigger also governs. Instead this migration
+-- adds two small BEFORE INSERT OR UPDATE triggers, mirroring the repository's
+-- existing set_organization_id() / prevent_org_user_rebind() convention:
+-- SECURITY DEFINER, SET search_path = public, REVOKEd from PUBLIC, and never
+-- granted to authenticated — they are triggers, not callable RPCs.
+--
 -- rollback:
+--   DROP TRIGGER IF EXISTS validate_sales_invoice_ledger_org_trigger ON public.sales_invoices;
+--   DROP TRIGGER IF EXISTS validate_client_ledger_org_trigger ON public.clients;
+--   DROP FUNCTION IF EXISTS public.enforce_sales_invoice_ledger_org();
+--   DROP FUNCTION IF EXISTS public.enforce_client_ledger_org();
+--   DROP FUNCTION IF EXISTS public.ledger_link_org_ok(uuid, uuid);
 --   ALTER TABLE public.sales_invoices DROP CONSTRAINT IF EXISTS sales_invoices_grootboekrekening_id_fkey;
 --   DROP INDEX IF EXISTS public.idx_sales_invoices_grootboekrekening_id;
 --   ALTER TABLE public.sales_invoices DROP COLUMN IF EXISTS grootboekrekening_id;
@@ -215,6 +233,101 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 7) Tenant consistency — a ledger link may never cross organisations
+--
+--    The FKs above guarantee existence only. These triggers additionally
+--    guarantee that a non-NULL link points at a grootboekrekening in the SAME
+--    organisation, so a cross-organisation reference is refused by PostgreSQL
+--    even when the UI is bypassed.
+--
+--    NULL stays allowed (unconfigured / historically unresolved rows), and the
+--    FK's ON DELETE SET NULL keeps working: nulling a link always passes.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.ledger_link_org_ok(
+  _account_id uuid,
+  _organization_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  -- NULL link = allowed. Otherwise the account must exist AND sit in the same
+  -- organisation. IS NOT DISTINCT FROM so a NULL-org row only matches a
+  -- NULL-org parent; it never lets an organisation borrow a global account or
+  -- vice versa.
+  SELECT _account_id IS NULL
+      OR EXISTS (
+        SELECT 1
+        FROM public.grootboekrekeningen g
+        WHERE g.id = _account_id
+          AND g.organization_id IS NOT DISTINCT FROM _organization_id
+      );
+$$;
+
+CREATE OR REPLACE FUNCTION public.enforce_client_ledger_org()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT public.ledger_link_org_ok(NEW.debiteuren_rekening_id, NEW.organization_id) THEN
+    RAISE EXCEPTION 'debiteuren_rekening_id verwijst naar een grootboekrekening buiten de organisatie van deze administratie'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF NOT public.ledger_link_org_ok(NEW.crediteuren_rekening_id, NEW.organization_id) THEN
+    RAISE EXCEPTION 'crediteuren_rekening_id verwijst naar een grootboekrekening buiten de organisatie van deze administratie'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.enforce_sales_invoice_ledger_org()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT public.ledger_link_org_ok(NEW.grootboekrekening_id, NEW.organization_id) THEN
+    RAISE EXCEPTION 'grootboekrekening_id verwijst naar een grootboekrekening buiten de organisatie van deze verkoopfactuur'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.ledger_link_org_ok(uuid, uuid)      FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.enforce_client_ledger_org()         FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.enforce_sales_invoice_ledger_org()  FROM PUBLIC;
+
+-- Trigger names deliberately start with "validate_" so they sort AFTER the
+-- existing "set_organization_id_trigger". PostgreSQL fires per-row triggers in
+-- name order, and organization_id must already be resolved before it is
+-- compared. UPDATE OF <columns> keeps the trigger off unrelated updates.
+DROP TRIGGER IF EXISTS validate_client_ledger_org_trigger ON public.clients;
+CREATE TRIGGER validate_client_ledger_org_trigger
+  BEFORE INSERT OR UPDATE OF debiteuren_rekening_id, crediteuren_rekening_id, organization_id
+  ON public.clients
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_client_ledger_org();
+
+DROP TRIGGER IF EXISTS validate_sales_invoice_ledger_org_trigger ON public.sales_invoices;
+CREATE TRIGGER validate_sales_invoice_ledger_org_trigger
+  BEFORE INSERT OR UPDATE OF grootboekrekening_id, organization_id
+  ON public.sales_invoices
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_sales_invoice_ledger_org();
+
+COMMENT ON FUNCTION public.ledger_link_org_ok(uuid, uuid) IS
+'TRUE wanneer een grootboek-link leeg is, of verwijst naar een rekening binnen dezelfde organisatie. Gebruikt door de tenant-consistency triggers op clients en sales_invoices.';
 
 COMMENT ON COLUMN public.clients.debiteuren_rekening_id IS
 'Grootboekrekening waarop openstaande verkoopvorderingen worden geboekt (standaard 1300 Debiteuren). NULL = nog niet geconfigureerd; client-readiness meldt dit als config_ontbreekt.';

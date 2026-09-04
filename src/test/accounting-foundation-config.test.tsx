@@ -41,7 +41,10 @@ vi.mock("@/hooks/usePurchaseInvoices", () => ({
   usePurchaseInvoices: () => ({ data: [] }),
 }));
 vi.mock("@/hooks/useGrootboekrekeningen", () => ({
-  useActiveGrootboekrekeningen: () => ({ data: state.accounts }),
+  // Klanten resolves the configured label against ALL accounts so a
+  // deactivated-but-configured account stays recognisable.
+  useGrootboekrekeningen: () => ({ data: state.accounts }),
+  useActiveGrootboekrekeningen: () => ({ data: state.accounts.filter((a: any) => a.actief !== false) }),
 }));
 // Deterministic stand-in for the Popover/Command combobox: exposes the label as
 // an input and reports a chosen id, mirroring the real onValueChange/onIdChange.
@@ -64,9 +67,11 @@ vi.mock("@/components/GrootboekCombobox", () => ({
 import Klanten from "@/pages/Klanten";
 
 const ACCOUNTS = [
-  { id: "gb-1300", nummer: 1300, omschrijving: "Debiteuren" },
-  { id: "gb-1600", nummer: 1600, omschrijving: "Crediteuren" },
-  { id: "gb-8000", nummer: 8000, omschrijving: "Omzet hoog" },
+  { id: "gb-1300", nummer: 1300, omschrijving: "Debiteuren", actief: true },
+  { id: "gb-1600", nummer: 1600, omschrijving: "Crediteuren", actief: true },
+  { id: "gb-8000", nummer: 8000, omschrijving: "Omzet hoog", actief: true },
+  // Configured earlier, deactivated later — must remain recognisable.
+  { id: "gb-1301", nummer: 1301, omschrijving: "Debiteuren oud", actief: false },
 ];
 
 const makeClient = (over: Partial<any> = {}) => ({
@@ -133,6 +138,24 @@ describe("Klanten — accounting configuratie", () => {
     await openEditDialog();
     expect(debiteurenField()).toHaveValue("");
     expect(crediteurenField()).toHaveValue("");
+  });
+
+  it("9c. toont een later gedeactiveerde maar geconfigureerde rekening nog steeds", async () => {
+    state.clients = [makeClient({ debiteuren_rekening_id: "gb-1301" })];
+    await openEditDialog();
+    // Zonder deze fix zou het veld leeg lijken en de gebruiker denken dat er
+    // geen rekening gekoppeld is.
+    expect(debiteurenField()).toHaveValue("1301 - Debiteuren oud");
+  });
+
+  it("9d. behoudt de FK van een inactieve rekening bij opslaan zonder wijziging", async () => {
+    state.clients = [makeClient({ debiteuren_rekening_id: "gb-1301" })];
+    await openEditDialog();
+    fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
+    await waitFor(() => expect(updateClientMutateAsync).toHaveBeenCalledTimes(1));
+    expect(updateClientMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ debiteuren_rekening_id: "gb-1301" }),
+    );
   });
 
   // 10, 11, 12. wijzigen + bestaande update mutation
@@ -257,11 +280,74 @@ describe("Migration — accounting foundation ledger links", () => {
     expect(sql).not.toMatch(/DROP COLUMN/);
     expect(sql).not.toMatch(/CREATE TABLE/);
     expect(sql).not.toMatch(/CREATE POLICY|ALTER POLICY|DROP POLICY/);
-    expect(sql).not.toMatch(/CREATE OR REPLACE FUNCTION/);
+    // Exactly the three tenant-consistency functions, nothing else.
+    const fns = [...sql.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)/g)].map((m) => m[1]);
+    expect(new Set(fns)).toEqual(
+      new Set(["ledger_link_org_ok", "enforce_client_ledger_org", "enforce_sales_invoice_ledger_org"]),
+    );
+    // Bestaande gedeelde functies worden niet aangeraakt.
+    expect(sql).not.toMatch(/set_organization_id\(\)|prevent_org_user_rebind\(\)|has_min_role/);
     expect(sql).not.toMatch(/ledger_account_text[^\n]*DROP/);
     // Alleen clients en sales_invoices worden aangepast.
     const altered = [...sql.matchAll(/ALTER TABLE public\.(\w+)/g)].map((m) => m[1]);
     expect(new Set(altered)).toEqual(new Set(["clients", "sales_invoices"]));
+  });
+
+  // ── Tenant consistency (review finding 1) ────────────────────────────────
+  // There is no DB integration harness in this repo (every suite runs in
+  // jsdom against mocked Supabase), so the guarantee is asserted structurally
+  // here and verified against production with the SQL in the PR description.
+
+  it("TC1/TC3. dwingt dezelfde organisatie af voor beide client-rekeningen", () => {
+    expect(sql).toMatch(/ledger_link_org_ok\(NEW\.debiteuren_rekening_id, NEW\.organization_id\)/);
+    expect(sql).toMatch(/ledger_link_org_ok\(NEW\.crediteuren_rekening_id, NEW\.organization_id\)/);
+  });
+
+  it("TC5. dwingt dezelfde organisatie af voor de verkoopfactuur-rekening", () => {
+    expect(sql).toMatch(/ledger_link_org_ok\(NEW\.grootboekrekening_id, NEW\.organization_id\)/);
+  });
+
+  it("TC2/TC4/TC6. weigert cross-org via RAISE EXCEPTION op alle drie de links", () => {
+    const raises = sql.match(/RAISE EXCEPTION '(debiteuren|crediteuren|grootboekrekening)_?\w*_id verwijst naar een grootboekrekening buiten de organisatie/g) ?? [];
+    expect(raises).toHaveLength(3);
+    // Een check-constraint-achtige fout, geen stille no-op.
+    const errcodes = sql.match(/USING ERRCODE = '23514'/g) ?? [];
+    expect(errcodes).toHaveLength(3);
+  });
+
+  it("TC7. laat NULL expliciet toe", () => {
+    expect(sql).toMatch(/SELECT _account_id IS NULL/);
+  });
+
+  it("TC7b. vergelijkt organisaties NULL-veilig zonder cross-org lek", () => {
+    expect(sql).toMatch(/g\.organization_id IS NOT DISTINCT FROM _organization_id/);
+  });
+
+  it("TC8. behoudt ON DELETE SET NULL — geen cascade delete van client of factuur", () => {
+    // De single-column FK's blijven ongewijzigd; de trigger raakt delete niet.
+    expect(sql.match(/ON DELETE SET NULL/g) ?? []).toHaveLength(3);
+    expect(sql).not.toMatch(/ON DELETE CASCADE/);
+    // Nulling van een link passeert de trigger altijd (NULL is toegestaan).
+    expect(sql).toMatch(/SELECT _account_id IS NULL/);
+  });
+
+  it("TC9. triggers vuren ná set_organization_id (naamvolgorde) en alleen op relevante kolommen", () => {
+    expect(sql).toMatch(/CREATE TRIGGER validate_client_ledger_org_trigger/);
+    expect(sql).toMatch(/CREATE TRIGGER validate_sales_invoice_ledger_org_trigger/);
+    // "validate_" > "set_" alfabetisch, dus organization_id is al ingevuld.
+    expect("validate_client_ledger_org_trigger" > "set_organization_id_trigger").toBe(true);
+    expect(sql).toMatch(/BEFORE INSERT OR UPDATE OF debiteuren_rekening_id, crediteuren_rekening_id, organization_id/);
+    expect(sql).toMatch(/BEFORE INSERT OR UPDATE OF grootboekrekening_id, organization_id/);
+  });
+
+  it("TC10. volgt de repo-conventie voor triggerfuncties en exposeert geen RPC", () => {
+    const definers = sql.match(/SECURITY DEFINER/g) ?? [];
+    expect(definers).toHaveLength(3);
+    expect(sql.match(/SET search_path = public/g) ?? []).toHaveLength(3);
+    const revokes = sql.match(/REVOKE ALL ON FUNCTION/g) ?? [];
+    expect(revokes).toHaveLength(3);
+    // Nooit uitvoerbaar gemaakt voor eindgebruikers.
+    expect(sql).not.toMatch(/GRANT EXECUTE[^\n]*(enforce_|ledger_link_org_ok)/);
   });
 
   it("34b. documenteert een rollback in de header", () => {
@@ -269,5 +355,8 @@ describe("Migration — accounting foundation ledger links", () => {
     expect(raw).toMatch(/DROP COLUMN IF EXISTS debiteuren_rekening_id/);
     expect(raw).toMatch(/DROP COLUMN IF EXISTS crediteuren_rekening_id/);
     expect(raw).toMatch(/DROP COLUMN IF EXISTS grootboekrekening_id/);
+    expect(raw).toMatch(/DROP TRIGGER IF EXISTS validate_client_ledger_org_trigger/);
+    expect(raw).toMatch(/DROP TRIGGER IF EXISTS validate_sales_invoice_ledger_org_trigger/);
+    expect(raw).toMatch(/DROP FUNCTION IF EXISTS public\.ledger_link_org_ok/);
   });
 });

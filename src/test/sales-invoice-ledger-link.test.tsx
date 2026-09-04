@@ -184,6 +184,27 @@ describe("Verkoopfactuur — expliciete grootboekrekening", () => {
     );
   });
 
+  it("24d. een later gedeactiveerde gekoppelde rekening blijft herkenbaar", async () => {
+    // Alleen actieve rekeningen staan in de dropdown; de opgeslagen label-tekst
+    // blijft bewaard, zodat de gebruiker de bestaande koppeling nog ziet en niet
+    // denkt dat er geen rekening gekoppeld is.
+    state.accounts = [{ id: "gb-8010", nummer: 8010, omschrijving: "Omzet laag" }];
+    renderDialog(
+      makeInvoice({ grootboekrekening_id: "gb-8000", ledger_account_text: "8000 - Omzet hoog (inactief)" }),
+    );
+    expect(ledgerField()).toHaveValue("8000 - Omzet hoog (inactief)");
+
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(onSaveSpy).toHaveBeenCalledTimes(1));
+    // De FK wordt niet stilzwijgend leeggemaakt of geremapt.
+    expect(onSaveSpy.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        grootboekrekening_id: "gb-8000",
+        ledger_account_text: "8000 - Omzet hoog (inactief)",
+      }),
+    );
+  });
+
   it("24c. verlegde BTW blijft ongewijzigd werken naast de FK", async () => {
     renderDialog(makeInvoice({ btw_verlegd: true, btw_amount: 0, btw_percentage: 0, grootboekrekening_id: "gb-8000" }));
     fireEvent.click(saveBtn());

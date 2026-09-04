@@ -45,7 +45,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SearchInput } from "@/components/SearchInput";
 import { EmptyState } from "@/components/EmptyState";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
-import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
+import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
 interface ClientForm {
@@ -163,7 +163,11 @@ export default function Klanten() {
     organizationId: activeOrganizationId ?? undefined,
     enabled: isReady && activeOrganizationId !== null,
   });
-  const { data: grootboekrekeningen } = useActiveGrootboekrekeningen({
+  // All accounts (not just active ones): an account that was configured earlier
+  // and later deactivated must still be recognisable as the current selection,
+  // instead of silently rendering as "no account linked". The dropdown itself
+  // still offers only active accounts — GrootboekCombobox handles that.
+  const { data: grootboekrekeningen } = useGrootboekrekeningen({
     organizationId: activeOrganizationId ?? undefined,
     enabled: isReady && activeOrganizationId !== null,
   });
@@ -171,7 +175,11 @@ export default function Klanten() {
   const updateClient = useUpdateClient();
   const deleteClient = useDeleteClient();
 
-  /** Resolve a stored ledger FK to the label GrootboekCombobox displays. */
+  /**
+   * Resolve a stored ledger FK to the label GrootboekCombobox displays.
+   * Resolves against ALL accounts so a deactivated-but-configured account keeps
+   * showing its number and description; the FK is never cleared implicitly.
+   */
   const accountLabelById = (id: string | null | undefined): string => {
     if (!id) return "";
     const account = grootboekrekeningen?.find((a) => a.id === id);
