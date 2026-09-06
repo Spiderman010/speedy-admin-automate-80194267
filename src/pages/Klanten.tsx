@@ -45,6 +45,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SearchInput } from "@/components/SearchInput";
 import { EmptyState } from "@/components/EmptyState";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
+import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
+import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
 interface ClientForm {
   name: string;
@@ -67,6 +69,11 @@ interface ClientForm {
   bank_dagboek: string;
   afgesloten_boekjaar: string;
   snelstart_inkoop_mailbox: string;
+  // Accounting foundation: FK id plus the label GrootboekCombobox displays.
+  debiteuren_rekening_id: string;
+  debiteuren_rekening_label: string;
+  crediteuren_rekening_id: string;
+  crediteuren_rekening_label: string;
 }
 
 const emptyForm: ClientForm = {
@@ -90,6 +97,21 @@ const emptyForm: ClientForm = {
   bank_dagboek: "",
   afgesloten_boekjaar: "",
   snelstart_inkoop_mailbox: "",
+  debiteuren_rekening_id: "",
+  debiteuren_rekening_label: "",
+  crediteuren_rekening_id: "",
+  crediteuren_rekening_label: "",
+};
+
+/**
+ * Accounting-foundation columns added by
+ * 20260904120000_add-accounting-foundation-ledger-links.sql. Read through a
+ * narrow structural type because src/integrations/supabase/types.ts is
+ * generated and must be regenerated from Lovable Cloud after the migration.
+ */
+type ClientAccountingConfig = {
+  debiteuren_rekening_id?: string | null;
+  crediteuren_rekening_id?: string | null;
 };
 
 function validateKvk(v: string): string | null {
@@ -141,9 +163,28 @@ export default function Klanten() {
     organizationId: activeOrganizationId ?? undefined,
     enabled: isReady && activeOrganizationId !== null,
   });
+  // All accounts (not just active ones): an account that was configured earlier
+  // and later deactivated must still be recognisable as the current selection,
+  // instead of silently rendering as "no account linked". The dropdown itself
+  // still offers only active accounts — GrootboekCombobox handles that.
+  const { data: grootboekrekeningen } = useGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: isReady && activeOrganizationId !== null,
+  });
   const addClient = useAddClient();
   const updateClient = useUpdateClient();
   const deleteClient = useDeleteClient();
+
+  /**
+   * Resolve a stored ledger FK to the label GrootboekCombobox displays.
+   * Resolves against ALL accounts so a deactivated-but-configured account keeps
+   * showing its number and description; the FK is never cleared implicitly.
+   */
+  const accountLabelById = (id: string | null | undefined): string => {
+    if (!id) return "";
+    const account = grootboekrekeningen?.find((a) => a.id === id);
+    return account ? `${account.nummer} - ${account.omschrijving}` : "";
+  };
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -208,6 +249,10 @@ export default function Klanten() {
       bank_dagboek: client.bank_dagboek != null ? String(client.bank_dagboek) : "",
       afgesloten_boekjaar: client.afgesloten_boekjaar != null ? String(client.afgesloten_boekjaar) : "",
       snelstart_inkoop_mailbox: client.snelstart_inkoop_mailbox || "",
+      debiteuren_rekening_id: (client as ClientAccountingConfig).debiteuren_rekening_id ?? "",
+      debiteuren_rekening_label: accountLabelById((client as ClientAccountingConfig).debiteuren_rekening_id),
+      crediteuren_rekening_id: (client as ClientAccountingConfig).crediteuren_rekening_id ?? "",
+      crediteuren_rekening_label: accountLabelById((client as ClientAccountingConfig).crediteuren_rekening_id),
     });
     setEditingId(client.id);
     setShowDialog(true);
@@ -247,6 +292,8 @@ export default function Klanten() {
         bank_dagboek: toIntOrNull(form.bank_dagboek),
         afgesloten_boekjaar: toIntOrNull(form.afgesloten_boekjaar),
         snelstart_inkoop_mailbox: form.snelstart_inkoop_mailbox.trim() || null,
+        debiteuren_rekening_id: form.debiteuren_rekening_id || null,
+        crediteuren_rekening_id: form.crediteuren_rekening_id || null,
       };
       if (editingId) {
         await updateClient.mutateAsync({ id: editingId, ...payload });
@@ -561,6 +608,29 @@ export default function Klanten() {
                   <Input id="bank_dagboek" inputMode="numeric" value={form.bank_dagboek} onChange={(e) => setForm({ ...form, bank_dagboek: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 1100" />
                 </div>
               </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="debiteuren_rekening" className="text-xs font-normal">Debiteurenrekening</Label>
+                  <GrootboekCombobox
+                    value={form.debiteuren_rekening_label}
+                    onValueChange={(v) => setForm((prev) => ({ ...prev, debiteuren_rekening_label: v }))}
+                    onIdChange={(id) => setForm((prev) => ({ ...prev, debiteuren_rekening_id: id || "" }))}
+                    placeholder="bv. 1300 - Debiteuren"
+                    noneOption
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="crediteuren_rekening" className="text-xs font-normal">Crediteurenrekening</Label>
+                  <GrootboekCombobox
+                    value={form.crediteuren_rekening_label}
+                    onValueChange={(v) => setForm((prev) => ({ ...prev, crediteuren_rekening_label: v }))}
+                    onIdChange={(id) => setForm((prev) => ({ ...prev, crediteuren_rekening_id: id || "" }))}
+                    placeholder="bv. 1600 - Crediteuren"
+                    noneOption
+                  />
+                </div>
+              </div>
+
               <div className="grid gap-2">
                 <Label htmlFor="afgesloten_boekjaar" className="text-xs font-normal">Afgesloten boekjaar</Label>
                 <Input id="afgesloten_boekjaar" inputMode="numeric" value={form.afgesloten_boekjaar} onChange={(e) => setForm({ ...form, afgesloten_boekjaar: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 2024" className="max-w-[160px]" />

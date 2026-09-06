@@ -21,6 +21,14 @@ import { SALES_UBL_TEST_HELPER_TEXT, buildSalesInvoiceTestPackage } from "@/lib/
 
 type SalesInvoice = Tables<"sales_invoices">;
 
+/**
+ * Accounting-foundation column added by
+ * 20260904120000_add-accounting-foundation-ledger-links.sql. Read through a
+ * narrow structural type because src/integrations/supabase/types.ts is
+ * generated and must be regenerated from Lovable Cloud after the migration.
+ */
+type SalesInvoiceLedgerLink = { grootboekrekening_id?: string | null };
+
 function InvoicePreview({ filePath }: { filePath: string | null }) {
   const [url, setUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -99,6 +107,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
     btw_percentage: "21",
     btw_verlegd: false,
     ledger_account_text: "",
+    grootboekrekening_id: "",
     notes: "",
     status: "concept",
   });
@@ -145,6 +154,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
         btw_percentage: verlegd ? "verlegd" : (["0", "9", "21"].includes(pct) ? pct : "21"),
         btw_verlegd: verlegd,
         ledger_account_text: ledgerValue,
+        grootboekrekening_id: (invoice as SalesInvoiceLedgerLink).grootboekrekening_id ?? "",
         notes: invoice.notes || "",
         status: invoice.status || "concept",
       });
@@ -173,6 +183,9 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
       btw_percentage: isVerlegd ? 0 : (form.btw_percentage ? parseFloat(form.btw_percentage) : null),
       btw_verlegd: isVerlegd,
       ledger_account_text: form.ledger_account_text || null,
+      // Explicit ledger FK. ledger_account_text stays alongside it for history
+      // and the existing SnelStart export, which is unchanged by this phase.
+      grootboekrekening_id: form.grootboekrekening_id || null,
       notes: form.notes || null,
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
     } as any;
@@ -388,6 +401,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
               <GrootboekCombobox
                 value={form.ledger_account_text}
                 onValueChange={(v) => set("ledger_account_text", v)}
+                onIdChange={(id) => set("grootboekrekening_id", id || "")}
                 noneOption
               />
             </div>

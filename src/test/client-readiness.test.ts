@@ -9,6 +9,11 @@ type PurchaseInvoice = Tables<"purchase_invoices">;
 type SalesInvoice = Tables<"sales_invoices">;
 type Vraagpost = Tables<"vraagposten">;
 
+// "Fully configured" client fixture. The accounting foundation added
+// debiteuren_rekening_id / crediteuren_rekening_id as required configuration,
+// so a complete-config fixture must now include them too — otherwise every
+// existing "klaar" assertion below would be testing an outdated definition of
+// complete configuration. No assertion in this file was changed.
 function makeClient(overrides: Partial<Client> = {}): Client {
   return {
     id: "c-1",
@@ -16,6 +21,8 @@ function makeClient(overrides: Partial<Client> = {}): Client {
     bank_dagboek: 100,
     inkoop_dagboek: 20,
     verkoop_dagboek: 70,
+    debiteuren_rekening_id: "gb-1300",
+    crediteuren_rekening_id: "gb-1600",
     ...overrides,
   } as Client;
 }
@@ -132,6 +139,64 @@ describe("computeClientReadiness", () => {
     const client = makeClient({ verkoop_dagboek: null });
     const r = computeClientReadiness(client, [], [], [], [], allAccounts);
     expect(r.configMissingVerkoopDagboek).toBe(true);
+    expect(r.status).toBe("config_ontbreekt");
+  });
+
+  it("missing debiteuren_rekening_id gives config_ontbreekt", () => {
+    const client = makeClient({ debiteuren_rekening_id: null } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingDebiteurenRekening).toBe(true);
+    expect(r.configMissingCrediteurenRekening).toBe(false);
+    expect(r.status).toBe("config_ontbreekt");
+  });
+
+  it("missing crediteuren_rekening_id gives config_ontbreekt", () => {
+    const client = makeClient({ crediteuren_rekening_id: null } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingCrediteurenRekening).toBe(true);
+    expect(r.configMissingDebiteurenRekening).toBe(false);
+    expect(r.status).toBe("config_ontbreekt");
+  });
+
+  it("missing both ledger accounts gives config_ontbreekt", () => {
+    const client = makeClient({
+      debiteuren_rekening_id: null,
+      crediteuren_rekening_id: null,
+    } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingDebiteurenRekening).toBe(true);
+    expect(r.configMissingCrediteurenRekening).toBe(true);
+    expect(r.status).toBe("config_ontbreekt");
+  });
+
+  it("names the missing ledger accounts in configMissingReasons", () => {
+    const client = makeClient({
+      debiteuren_rekening_id: null,
+      crediteuren_rekening_id: null,
+    } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingReasons).toContain("Debiteurenrekening ontbreekt");
+    expect(r.configMissingReasons).toContain("Crediteurenrekening ontbreekt");
+  });
+
+  it("a fully configured client has no config reasons and stays klaar", () => {
+    const r = computeClientReadiness(makeClient(), [], [], [], [], allAccounts);
+    expect(r.configMissingDebiteurenRekening).toBe(false);
+    expect(r.configMissingCrediteurenRekening).toBe(false);
+    expect(r.configMissingReasons).toEqual([]);
+    expect(r.status).toBe("klaar");
+  });
+
+  it("keeps reporting the pre-existing dagboek reasons alongside the new ones", () => {
+    const client = makeClient({
+      bank_dagboek: null,
+      debiteuren_rekening_id: null,
+    } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingReasons).toEqual([
+      "Bank-dagboek ontbreekt",
+      "Debiteurenrekening ontbreekt",
+    ]);
     expect(r.status).toBe("config_ontbreekt");
   });
 

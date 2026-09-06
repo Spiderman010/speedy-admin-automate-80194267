@@ -309,21 +309,21 @@ export default function Dashboard() {
                       <TableRow key={client.id}>
                         <TableCell className="max-w-[220px]">
                           <p className="truncate text-sm font-medium">{client.name}</p>
-                          {(readiness.configMissingBankDagboek ||
-                            readiness.configMissingInkoopDagboek ||
-                            readiness.configMissingVerkoopDagboek ||
+                          {(readiness.configMissingReasons.length > 0 ||
                             readiness.configMissing1799) && (
                             <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-warning">
                               <AlertCircle className="h-3 w-3 shrink-0" />
+                              {/* configMissingReasons is the single source for
+                                  blocking config gaps (dagboeken + debiteuren/
+                                  crediteurenrekening), so nothing is listed
+                                  twice. 1799 is informational and not part of
+                                  that list, so it is appended separately. */}
                               {[
-                                readiness.configMissingBankDagboek && "bankdagboek",
-                                readiness.configMissingInkoopDagboek && "inkoopdagboek",
-                                readiness.configMissingVerkoopDagboek && "verkoopdagboek",
-                                readiness.configMissing1799 && "rekening 1799",
+                                ...readiness.configMissingReasons,
+                                readiness.configMissing1799 && "Rekening 1799 ontbreekt",
                               ]
                                 .filter(Boolean)
-                                .join(" · ")}{" "}
-                              ontbreekt
+                                .join(" · ")}
                             </p>
                           )}
                         </TableCell>
