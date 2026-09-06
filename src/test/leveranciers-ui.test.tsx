@@ -283,6 +283,13 @@ describe("Leveranciers broncode-garanties", () => {
     expect(source).toContain("hidden lg:table-cell");
   });
 
+  it("kapt lange waarden veilig af en gebruikt touch-vriendelijke actieknoppen", () => {
+    expect(source).toContain("truncate");
+    expect(source).toContain("break-all");
+    expect(source).toContain("h-9 w-9");
+    expect(source).toContain("max-h-[90vh]");
+  });
+
   it("bevat geen database- of schemawijzigingen", () => {
     expect(source).not.toMatch(/\.rpc\(|create table|alter table/i);
   });

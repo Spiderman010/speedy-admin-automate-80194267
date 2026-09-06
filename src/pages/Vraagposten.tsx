@@ -271,7 +271,7 @@ export default function Vraagposten() {
                   >
                     <TableCell className={highlightClass}>{statusBadge(vp.status)}</TableCell>
                     <TableCell className={`${highlightClass} font-medium`}>
-                      <span title={vp.titel ?? undefined}>{formatMT940Title(vp.titel)}</span>
+                      <span className="block max-w-[14rem] sm:max-w-xs lg:max-w-md truncate" title={vp.titel ?? undefined}>{formatMT940Title(vp.titel)}</span>
                       {detail && (
                         <div
                           className="text-xs text-muted-foreground mt-0.5 line-clamp-2"
@@ -295,21 +295,21 @@ export default function Vraagposten() {
                       {vp.created_at ? new Date(vp.created_at).toLocaleDateString("nl-NL") : "—"}
                     </TableCell>
                     <TableCell className={`${highlightClass} text-right`}>
-                      <div className="inline-flex gap-1.5 items-center">
+                      <div className="inline-flex gap-1.5 items-center whitespace-nowrap">
                         {(vp.status === "open" || vp.status === "in_behandeling") && (
                           <>
-                            <Button size="sm" variant="outline" onClick={() => handleStatus(vp.id, "opgelost")}>
+                            <Button size="sm" variant="outline" className="h-9" onClick={() => handleStatus(vp.id, "opgelost")}>
                               <CheckCircle2 className="h-3.5 w-3.5 sm:mr-1" />
                               <span className="hidden sm:inline">Oplossen</span>
                             </Button>
-                            <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "genegeerd")}>
+                            <Button size="sm" variant="ghost" className="h-9" onClick={() => handleStatus(vp.id, "genegeerd")}>
                               <XCircle className="h-3.5 w-3.5 sm:mr-1" />
                               <span className="hidden sm:inline">Negeren</span>
                             </Button>
                           </>
                         )}
                         {(vp.status === "opgelost" || vp.status === "genegeerd") && (
-                          <Button size="sm" variant="ghost" onClick={() => handleStatus(vp.id, "open")}>
+                          <Button size="sm" variant="ghost" className="h-9" onClick={() => handleStatus(vp.id, "open")}>
                             <RotateCcw className="h-3.5 w-3.5 sm:mr-1" />
                             <span className="hidden sm:inline">Heropenen</span>
                           </Button>
@@ -318,7 +318,7 @@ export default function Vraagposten() {
                           size="sm"
                           variant="ghost"
                           aria-label="Vraagpost verwijderen"
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10"
                           onClick={() => deleteConfirm.request(vp.id)}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
