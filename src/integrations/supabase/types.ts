@@ -298,6 +298,8 @@ export type Database = {
           contact_person: string | null
           country: string
           created_at: string
+          crediteuren_rekening_id: string | null
+          debiteuren_rekening_id: string | null
           email: string | null
           ibans: string[] | null
           id: string
@@ -325,6 +327,8 @@ export type Database = {
           contact_person?: string | null
           country?: string
           created_at?: string
+          crediteuren_rekening_id?: string | null
+          debiteuren_rekening_id?: string | null
           email?: string | null
           ibans?: string[] | null
           id?: string
@@ -352,6 +356,8 @@ export type Database = {
           contact_person?: string | null
           country?: string
           created_at?: string
+          crediteuren_rekening_id?: string | null
+          debiteuren_rekening_id?: string | null
           email?: string | null
           ibans?: string[] | null
           id?: string
@@ -369,6 +375,20 @@ export type Database = {
           verwerkingsfrequentie?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "clients_crediteuren_rekening_id_fkey"
+            columns: ["crediteuren_rekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clients_debiteuren_rekening_id_fkey"
+            columns: ["debiteuren_rekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "clients_organization_id_fkey"
             columns: ["organization_id"]
@@ -907,6 +927,7 @@ export type Database = {
           created_at: string
           customer_name: string
           due_date: string | null
+          grootboekrekening_id: string | null
           id: string
           invoice_date: string
           invoice_number: string
@@ -929,6 +950,7 @@ export type Database = {
           created_at?: string
           customer_name: string
           due_date?: string | null
+          grootboekrekening_id?: string | null
           id?: string
           invoice_date: string
           invoice_number: string
@@ -951,6 +973,7 @@ export type Database = {
           created_at?: string
           customer_name?: string
           due_date?: string | null
+          grootboekrekening_id?: string | null
           id?: string
           invoice_date?: string
           invoice_number?: string
@@ -969,6 +992,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_invoices_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
             referencedColumns: ["id"]
           },
         ]
@@ -1076,6 +1106,10 @@ export type Database = {
       }
       is_organization_member: {
         Args: { _organization_id: string; _user_id: string }
+        Returns: boolean
+      }
+      ledger_link_org_ok: {
+        Args: { _account_id: string; _organization_id: string }
         Returns: boolean
       }
       replace_purchase_invoice_lines: {

@@ -334,8 +334,8 @@ export default function Leveranciers() {
                       return (
                         <TableRow key={l.id}>
                           <TableCell className="font-medium">
-                            {l.naam}
-                            <div className="mt-0.5 text-xs text-muted-foreground lg:hidden">
+                            <span className="block max-w-[14rem] sm:max-w-xs truncate">{l.naam}</span>
+                            <div className="mt-0.5 text-xs text-muted-foreground break-all lg:hidden">
                               <span className="sm:hidden">{l.plaats ? `${l.plaats}${secundair ? " · " : ""}` : ""}</span>
                               <span className="md:hidden">{secundair}</span>
                               <span className="hidden md:inline">
@@ -343,12 +343,12 @@ export default function Leveranciers() {
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="hidden md:table-cell">{l.btw_nummer ?? "—"}</TableCell>
+                          <TableCell className="hidden md:table-cell whitespace-nowrap">{l.btw_nummer ?? "—"}</TableCell>
                           <TableCell className="hidden lg:table-cell">{l.kvk_nummer ?? "—"}</TableCell>
                           <TableCell className="hidden sm:table-cell">{l.plaats ?? "—"}</TableCell>
-                          <TableCell className="hidden lg:table-cell">{l.iban ?? "—"}</TableCell>
-                          <TableCell className="hidden lg:table-cell">{grootboekLabel}</TableCell>
-                          <TableCell>
+                          <TableCell className="hidden lg:table-cell whitespace-nowrap">{l.iban ?? "—"}</TableCell>
+                          <TableCell className="hidden lg:table-cell max-w-[12rem] truncate">{grootboekLabel}</TableCell>
+                          <TableCell className="whitespace-nowrap">
                             {l.actief ? (
                               <Badge variant="secondary">Actief</Badge>
                             ) : (
@@ -356,11 +356,12 @@ export default function Leveranciers() {
                             )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="inline-flex items-center gap-1">
+                            <div className="inline-flex items-center gap-1 whitespace-nowrap">
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 aria-label={`Leverancier ${l.naam} bewerken`}
+                                className="h-9 w-9"
                                 onClick={() => openEdit(l)}
                               >
                                 <Pencil className="h-4 w-4" />
@@ -369,7 +370,7 @@ export default function Leveranciers() {
                                 variant="ghost"
                                 size="sm"
                                 aria-label={`Leverancier ${l.naam} verwijderen`}
-                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10"
                                 onClick={() => deleteConfirm.request(l.id)}
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -388,7 +389,7 @@ export default function Leveranciers() {
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto w-[calc(100vw-2rem)]">
           <DialogHeader>
             <DialogTitle>{editingId ? "Leverancier bewerken" : "Nieuwe leverancier"}</DialogTitle>
             <DialogDescription>Velden met * zijn verplicht.</DialogDescription>

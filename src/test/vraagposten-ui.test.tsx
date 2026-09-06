@@ -379,6 +379,11 @@ describe("Vraagposten scope, focus en states", () => {
     expect(source).toContain("hidden lg:table-cell");
   });
 
+  it("houdt titels veilig afgekapt en acties met grote touch targets", () => {
+    expect(source).toContain("truncate");
+    expect(source).toContain('className="h-9"');
+  });
+
   it("voegt geen route of databasewerk toe", () => {
     expect(source).not.toContain("Route");
     expect(source).not.toMatch(/supabase\s*\.from\(/);
