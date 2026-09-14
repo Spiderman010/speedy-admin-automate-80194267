@@ -168,27 +168,41 @@ describe("Migratie — boekingsgroep-invarianten", () => {
     expect(sql).not.toMatch(/hashtext|md5\(/);
   });
 
-  it("18e. weigert REPEATABLE READ, waar de lock alleen niet genoeg is", () => {
-    // Onder REPEATABLE READ legt een transactie haar snapshot vast vóórdat ze
-    // op de lock wacht; na het verkrijgen van de lock ziet ze de zojuist
-    // gecommitte rijen van de ander nóg steeds niet. Twee op zichzelf geldige
-    // helften kunnen dan samen één ongeldige groep vormen.
+  it("18e. staat alleen READ COMMITTED toe en weigert elk snapshot-vasthoudend niveau", () => {
+    // Onder REPEATABLE READ legt een transactie haar snapshot vast vóórdat ze op
+    // de lock wacht. SERIALIZABLE is net zo min veilig: SSI arbitreert alleen
+    // tússen serializable transacties, dus een READ COMMITTED schrijver ernaast
+    // wordt niet gedetecteerd.
     const fn = sql.slice(sql.indexOf("FUNCTION public.lock_ledger_posting_group"));
-    expect(fn).toMatch(/current_setting\('transaction_isolation'\) = 'repeatable read'/);
-    expect(fn).toMatch(/ERRCODE = '0A000'/);
-    // De weigering staat vóór de lock, dus er wordt nooit een rij geaccepteerd.
-    expect(fn.indexOf("repeatable read")).toBeLessThan(fn.indexOf("pg_advisory_xact_lock"));
+    expect(fn).toMatch(/current_setting\('transaction_isolation'\) <> 'read committed'/);
+    expect(fn).toMatch(/ERRCODE = '25000'/);
+    // De weigering staat vóór de lock en vóór de zegel, dus er wordt nooit een
+    // rij geaccepteerd.
+    expect(fn.indexOf("read committed")).toBeLessThan(fn.indexOf("pg_advisory_xact_lock"));
   });
 
-  it("18f. laat READ COMMITTED en SERIALIZABLE ongemoeid", () => {
-    const fn = sql.slice(
-      sql.indexOf("FUNCTION public.lock_ledger_posting_group"),
-      sql.indexOf("FUNCTION public.lock_ledger_posting_group") + 900,
-    );
-    // Alleen 'repeatable read' wordt geweigerd; serializable is bewezen veilig
-    // via SSI en read committed via de advisory lock.
-    expect(fn).not.toMatch(/= 'serializable'/);
-    expect(fn).not.toMatch(/= 'read committed'/);
+  it("18f. claimt nergens meer dat SERIALIZABLE is toegestaan", () => {
+    expect(raw).not.toMatch(/SERIALIZABLE\s+—\s+allowed/);
+    expect(raw).toMatch(/SERIALIZABLE — also refused/);
+  });
+
+  it("18g. verzegelt een boekingsgroep op de transactie die hem aanmaakte", () => {
+    // Zonder zegel kon elke assistant een al vastgelegde boeking van 100 naar
+    // 150 tillen door een tweede sluitend paar toe te voegen — onherstelbaar,
+    // want UPDATE en DELETE zijn geblokkeerd.
+    expect(sql).toMatch(/created_xact_id\s+xid8\s+NOT NULL/);
+    const fn = sql.slice(sql.indexOf("FUNCTION public.lock_ledger_posting_group"));
+    // Door de trigger gezet, dus niet te spoofen door de client.
+    expect(fn).toMatch(/NEW\.created_xact_id := pg_current_xact_id\(\)/);
+    // Zegelcontrole ná de lock, zodat er geen race is met een andere schrijver.
+    expect(fn.indexOf("pg_advisory_xact_lock")).toBeLessThan(fn.indexOf("p.created_xact_id <> NEW.created_xact_id"));
+    expect(fn).toMatch(/is al vastgelegd door een eerdere transactie/);
+  });
+
+  it("18h. herhaalt de zegel bij COMMIT over de eindstaat van de groep", () => {
+    const fn = sql.slice(sql.indexOf("FUNCTION public.enforce_ledger_posting_group_balance"));
+    expect(fn).toMatch(/COUNT\(DISTINCT p\.created_xact_id\)/);
+    expect(fn).toMatch(/v_xacts > 1/);
   });
 
   it("18d. pakt de lock vóór alle validatie (naamvolgorde van de triggers)", () => {
@@ -210,15 +224,28 @@ describe("Migratie — tenant-isolatie", () => {
     expect(sql).toMatch(/FROM public\.clients c\s+WHERE c\.id = _client_id\s+AND c\.organization_id IS NOT DISTINCT FROM _organization_id/);
   });
 
-  it("20. hergebruikt ledger_link_org_ok voor de grootboekrekening", () => {
-    expect(sql).toMatch(/public\.ledger_link_org_ok\(NEW\.grootboekrekening_id, NEW\.organization_id\)/);
-    // De bestaande gedeelde functie wordt hergebruikt, niet geherdefinieerd.
+  it("20. controleert de grootboekrekening op organisatie ÉN administratie", () => {
+    // Alleen organisatie vergelijken liet een boeking van administratie A op een
+    // rekening van administratie B landen: het bedrag verdwijnt dan uit B's
+    // grootboek en duikt op in A's, blijvend.
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.posting_account_ok/);
+    expect(sql).toMatch(/g\.organization_id IS NOT DISTINCT FROM _organization_id/);
+    // Gedeelde rekeningen (client_id IS NULL) moeten blijven werken.
+    expect(sql).toMatch(/\(g\.client_id IS NULL OR g\.client_id = _client_id\)/);
+    expect(sql).toMatch(/public\.posting_account_ok\(NEW\.grootboekrekening_id, NEW\.organization_id, NEW\.client_id\)/);
+    // De gedeelde functie blijft ongemoeid: andere tabellen gebruiken hem met de
+    // lossere betekenis die daar juist is.
     expect(sql).not.toMatch(/CREATE OR REPLACE FUNCTION public\.ledger_link_org_ok/);
+  });
+
+  it("20b. houdt een tegenboeking binnen dezelfde organisatie en administratie", () => {
+    expect(sql).toMatch(/reversal_of_posting_id verwijst naar een boeking van een andere organisatie of administratie/);
+    expect(sql).toMatch(/p\.id = NEW\.reversal_of_posting_id\s+AND p\.organization_id = NEW\.organization_id\s+AND p\.client_id = NEW\.client_id/);
   });
 
   it("21. weigert beide richtingen met een check_violation", () => {
     expect(sql).toMatch(/client_id verwijst naar een administratie buiten de organisatie/);
-    expect(sql).toMatch(/grootboekrekening_id verwijst naar een grootboekrekening buiten de organisatie/);
+    expect(sql).toMatch(/grootboekrekening_id verwijst naar een grootboekrekening buiten deze organisatie of van een andere administratie/);
     const errcodes = sql.match(/ERRCODE = '23514'/g) ?? [];
     expect(errcodes.length).toBeGreaterThanOrEqual(2);
   });
@@ -237,6 +264,7 @@ describe("Migratie — tenant-isolatie", () => {
       "prevent_ledger_posting_mutation",
       "enforce_ledger_posting_group_balance",
       "lock_ledger_posting_group",
+      "posting_account_ok",
     ];
     for (const name of definers) {
       const body = sql.slice(sql.indexOf(`FUNCTION public.${name}`));
@@ -251,6 +279,7 @@ describe("Migratie — tenant-isolatie", () => {
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.prevent_ledger_posting_mutation\(\)\s+FROM PUBLIC;/);
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.enforce_ledger_posting_group_balance\(\)\s+FROM PUBLIC;/);
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.lock_ledger_posting_group\(\)\s+FROM PUBLIC;/);
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.posting_account_ok\(uuid, uuid, uuid\)\s+FROM PUBLIC;/);
     // Trigger-only functies worden nooit als RPC aan gebruikers gegeven.
     expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.(posting_client_org_ok|enforce_ledger_posting|prevent_ledger_posting)/);
   });
@@ -263,6 +292,14 @@ describe("Migratie — append-only", () => {
       /CREATE TRIGGER prevent_ledger_posting_mutation_trigger\s+BEFORE UPDATE OR DELETE ON public\.ledger_postings/,
     );
     expect(sql).toMatch(/ledger_postings is append-only/);
+  });
+
+  it("25b. blokkeert TRUNCATE met een statement-trigger, niet alleen met rechten", () => {
+    // TRUNCATE vuurt geen row-trigger, dus zonder deze statement-trigger rustte
+    // de hele tabel op één REVOKE.
+    expect(sql).toMatch(
+      /CREATE TRIGGER prevent_ledger_posting_truncate_trigger\s+BEFORE TRUNCATE ON public\.ledger_postings\s+FOR EACH STATEMENT/,
+    );
   });
 
   it("26. maakt geen UPDATE- of DELETE-policy aan", () => {
@@ -457,6 +494,7 @@ describe("Migratie — geen historische backfill, geen scope-uitbreiding", () =>
         "prevent_ledger_posting_mutation",
         "enforce_ledger_posting_group_balance",
         "lock_ledger_posting_group",
+        "posting_account_ok",
       ]),
     );
     expect(sql).not.toMatch(/FUNCTION public\.(set_organization_id|prevent_org_user_rebind|update_updated_at_column)\s*\(\)\s*\n?RETURNS/);

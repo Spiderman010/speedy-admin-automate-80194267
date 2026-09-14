@@ -32,11 +32,12 @@
 -- that carries postings is therefore refused by PostgreSQL — which is the
 -- intended accounting semantics.
 --
--- Append-only: enforced in three independent layers, see section 7.
+-- Append-only: enforced in four independent layers, see section 7.
 --
 -- rollback:
 --   DROP TRIGGER IF EXISTS validate_ledger_posting_group_balance_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS validate_ledger_posting_org_trigger ON public.ledger_postings;
+--   DROP TRIGGER IF EXISTS prevent_ledger_posting_truncate_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS prevent_ledger_posting_mutation_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS set_organization_id_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS lock_ledger_posting_group_trigger ON public.ledger_postings;
@@ -44,6 +45,7 @@
 --   DROP FUNCTION IF EXISTS public.enforce_ledger_posting_group_balance();
 --   DROP FUNCTION IF EXISTS public.enforce_ledger_posting_org();
 --   DROP FUNCTION IF EXISTS public.prevent_ledger_posting_mutation();
+--   DROP FUNCTION IF EXISTS public.posting_account_ok(uuid, uuid, uuid);
 --   DROP FUNCTION IF EXISTS public.posting_client_org_ok(uuid, uuid);
 --   DROP POLICY IF EXISTS role_ledger_postings_select ON public.ledger_postings;
 --   DROP POLICY IF EXISTS role_ledger_postings_insert ON public.ledger_postings;
@@ -130,6 +132,18 @@ CREATE TABLE IF NOT EXISTS public.ledger_postings (
 
   user_id                uuid        NOT NULL,
   created_at             timestamptz NOT NULL DEFAULT now(),
+
+  -- The database transaction that created this row. Seals the posting group:
+  -- every row of one posting_group_id must carry the same value, so a group
+  -- cannot be enlarged by a LATER transaction (see section 8a). Always
+  -- overwritten by the trigger, never trusted from the caller, so it cannot be
+  -- spoofed through PostgREST.
+  --
+  -- xid8 rather than xid/bigint: it is the 64-bit epoch-extended transaction
+  -- id, so it is immune to the 32-bit xid wraparound that would eventually make
+  -- two different transactions compare equal — which on an immutable ledger
+  -- would silently re-open the group it is meant to seal.
+  created_xact_id        xid8        NOT NULL,
 
   -- Exactly one side is positive. Both columns are NOT NULL DEFAULT 0, so the
   -- "unused" side is always an explicit 0 and never NULL — there is one single
@@ -432,6 +446,40 @@ AS $$
   );
 $$;
 
+-- The account check cannot be public.ledger_link_org_ok: that only compares
+-- organization_id, and grootboekrekeningen is scoped one level finer. An
+-- account is either organisation-wide (client_id IS NULL — the seeded chart,
+-- e.g. the shared 1799 vraagpost) or owned by one administratie (client_id set).
+-- With an org-only check, an accounting firm holding administraties A and B
+-- could post A's amount onto B's own "4000 Kosten": the future Grootboek reads
+-- on (client_id, grootboekrekening_id, posting_date), so the amount would
+-- vanish from B's ledger and surface in A's under an account A does not own —
+-- silently wrong balances for both, permanently.
+--
+-- Requiring client_id equality outright would be just as wrong: it would reject
+-- every shared account, which is the dominant pattern in this schema. Hence
+-- "shared OR mine". ledger_link_org_ok is deliberately left untouched — other
+-- tables still use it with the looser meaning that is correct for them.
+CREATE OR REPLACE FUNCTION public.posting_account_ok(
+  _account_id uuid,
+  _organization_id uuid,
+  _client_id uuid
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.grootboekrekeningen g
+    WHERE g.id = _account_id
+      AND g.organization_id IS NOT DISTINCT FROM _organization_id
+      AND (g.client_id IS NULL OR g.client_id = _client_id)
+  );
+$$;
+
 CREATE OR REPLACE FUNCTION public.enforce_ledger_posting_org()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -444,8 +492,23 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
-  IF NOT public.ledger_link_org_ok(NEW.grootboekrekening_id, NEW.organization_id) THEN
-    RAISE EXCEPTION 'grootboekrekening_id verwijst naar een grootboekrekening buiten de organisatie van deze boeking'
+  IF NOT public.posting_account_ok(NEW.grootboekrekening_id, NEW.organization_id, NEW.client_id) THEN
+    RAISE EXCEPTION 'grootboekrekening_id verwijst naar een grootboekrekening buiten deze organisatie of van een andere administratie'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- A tegenboeking must stay inside the same administratie: an immutable row
+  -- may not hold a permanent pointer into another tenant's ledger, which the
+  -- RESTRICT FK would then pin in place forever.
+  IF NEW.reversal_of_posting_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1
+       FROM public.ledger_postings p
+       WHERE p.id = NEW.reversal_of_posting_id
+         AND p.organization_id = NEW.organization_id
+         AND p.client_id = NEW.client_id
+     ) THEN
+    RAISE EXCEPTION 'reversal_of_posting_id verwijst naar een boeking van een andere organisatie of administratie'
       USING ERRCODE = '23514';
   END IF;
 
@@ -456,7 +519,7 @@ $$;
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 7) Append-only enforcement
 --
---    Three independent layers, so no single misconfiguration re-opens mutation:
+--    Four independent layers, so no single misconfiguration re-opens mutation:
 --
 --      a. RLS (section 9) grants SELECT and INSERT only. With RLS enabled and
 --         no permissive UPDATE/DELETE policy, PostgreSQL denies both for
@@ -464,9 +527,12 @@ $$;
 --         every other table in this schema spells out all four.
 --      b. Explicit REVOKE of UPDATE/DELETE/TRUNCATE from anon and authenticated,
 --         mirroring the read-only backup-table precedent (20260802201226).
---      c. This trigger, which also covers roles that bypass RLS — notably
---         service_role, which edge functions use and which would otherwise sail
---         straight past (a) and (b).
+--      c. A row-level trigger for UPDATE/DELETE, which also covers roles that
+--         bypass RLS — notably service_role, which edge functions use and which
+--         would otherwise sail straight past (a) and (b).
+--      d. A STATEMENT-level trigger for TRUNCATE. TRUNCATE fires no row-level
+--         trigger, so (c) is blind to it; without (d) the whole ledger rested
+--         on the REVOKE in (b) alone.
 --
 --    Privileged maintenance: the trigger blocks every caller unconditionally,
 --    including postgres. A genuine DBA correction is therefore an explicit,
@@ -499,6 +565,17 @@ DROP TRIGGER IF EXISTS prevent_ledger_posting_mutation_trigger ON public.ledger_
 CREATE TRIGGER prevent_ledger_posting_mutation_trigger
   BEFORE UPDATE OR DELETE ON public.ledger_postings
   FOR EACH ROW EXECUTE FUNCTION public.prevent_ledger_posting_mutation();
+
+-- TRUNCATE fires no ROW trigger, so the trigger above cannot see it — but a
+-- STATEMENT-level TRUNCATE trigger can, and has existed since PostgreSQL 8.4.
+-- Without this, TRUNCATE rested on the REVOKE alone, and one routine
+-- "GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role" repair snippet
+-- would have silently re-armed it: the entire ledger erasable in one statement
+-- while every UPDATE and DELETE stayed correctly blocked.
+DROP TRIGGER IF EXISTS prevent_ledger_posting_truncate_trigger ON public.ledger_postings;
+CREATE TRIGGER prevent_ledger_posting_truncate_trigger
+  BEFORE TRUNCATE ON public.ledger_postings
+  FOR EACH STATEMENT EXECUTE FUNCTION public.prevent_ledger_posting_mutation();
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 8) Posting-group invariants — a group is one accounting journal entry
@@ -558,12 +635,10 @@ CREATE TRIGGER prevent_ledger_posting_mutation_trigger
 --    single-tenant and balanced, and the cross-tenant check in this very
 --    function would be defeated by the rows it is meant to catch.
 --
---    KNOWN AND ACCEPTED: because the check re-evaluates the whole group, rows
---    may still be appended to an already-committed group as long as the group
---    remains balanced and internally consistent. Nothing here marks a group as
---    closed — that would need a separate journal-header table, which this phase
---    deliberately does not introduce. Writers from 6C-b3 onward own the rule
---    that a document posts its group exactly once.
+--    A group can no longer be enlarged after its transaction commits: the
+--    created_xact_id seal in 8a refuses the append at insert time, and the
+--    COUNT(DISTINCT created_xact_id) check below re-asserts it at COMMIT. No
+--    separate journal-header table was needed to achieve that.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -582,6 +657,17 @@ CREATE TRIGGER prevent_ledger_posting_mutation_trigger
 --    sorts before both "set_organization_id_trigger" and "validate_...", which
 --    means the lock is held before any validation work happens — the second
 --    transaction waits at its first inserted row rather than racing.
+--
+--    WRITER CONTRACT (deadlock): the lock is taken per inserted row, in row
+--    order, and held to COMMIT. A transaction writing several posting groups
+--    therefore takes several locks, and two such transactions covering the same
+--    groups in opposite orders can deadlock. That is an availability detail,
+--    not a correctness one: PostgreSQL detects the cycle and aborts one side
+--    with 40P01, so nothing partial is ever committed and every invariant above
+--    still holds. It is therefore stated as a contract rather than designed
+--    around: write ONE posting group per transaction, or — if a batch writer
+--    must cover several — insert them ordered by posting_group_id, which makes
+--    a cycle impossible, or retry on 40P01.
 --
 --    pg_advisory_xact_lock (not pg_advisory_lock) releases automatically at
 --    COMMIT or ROLLBACK, so no session-level lock can leak into a pooled
@@ -618,27 +704,48 @@ CREATE TRIGGER prevent_ledger_posting_mutation_trigger
 --    organisations, TWO clients and TWO posting dates — permanently, because
 --    the table is append-only.
 --
---    So the level is checked, not assumed:
---      • READ COMMITTED (and READ UNCOMMITTED, which PostgreSQL treats as READ
---        COMMITTED) — allowed. Each statement takes a fresh snapshot, so after
---        the lock is granted the group is re-read including the other
---        transaction's committed rows, and 8b rejects the combined group.
---      • SERIALIZABLE — allowed. Verified rather than assumed: the aggregate in
---        8b takes predicate locks, so the interleaving is a textbook write-skew
---        pivot and SSI aborts one transaction with serialization_failure
---        (40001), which is a retry signal. Confirmed empirically on the same
---        schema: the second transaction was cancelled "on identification as a
---        pivot, during write" and only the first group survived.
---      • REPEATABLE READ — REFUSED here, before any row is accepted.
+--    ONLY READ COMMITTED IS PERMITTED. Everything else is refused before a row
+--    is accepted:
+--      • READ COMMITTED — allowed. Each statement takes a fresh snapshot, so
+--        after the lock is granted the group is re-read including the other
+--        transaction's committed rows, and both the seal check below and 8b see
+--        the true current state.
+--      • REPEATABLE READ — refused, for the snapshot reason above.
+--      • SERIALIZABLE — also refused. An earlier revision allowed it on the
+--        grounds that SSI turns the interleaving into a write-skew pivot. That
+--        argument is too narrow: SSI only arbitrates between transactions that
+--        are THEMSELVES serializable. With a READ COMMITTED writer (the
+--        PostgREST default) racing a SERIALIZABLE one, no dangerous structure is
+--        detected at all, and the SERIALIZABLE transaction still aggregates
+--        against its stale snapshot. Allowing it would reintroduce exactly the
+--        hole the REPEATABLE READ refusal closes.
+--      • READ UNCOMMITTED — refused too. PostgreSQL treats it as READ
+--        COMMITTED, but the setting still reports its own name, and an exact
+--        contract is worth more here than accommodating a level nothing uses.
 --
 --    Refusing is the right call for BoekAssist specifically: nothing in this
 --    codebase sets an isolation level. Every posting write goes through
 --    PostgREST or a SECURITY INVOKER RPC, both of which run at the default
 --    READ COMMITTED, and the future writers in 6C-b3+ are server-side code in
---    this same repository. So the guard rejects a level no current or planned
+--    this same repository. So the guard rejects levels no current or planned
 --    caller uses, while making it impossible for a later writer to silently
 --    opt into an unsafe one. It is enforced by the database rather than left
 --    as a documented convention, so no application code has to remember it.
+--
+--    SEALING THE GROUP: the lock orders concurrent writers, but on its own it
+--    still allowed a COMMITTED group to be enlarged later. Because 8b only
+--    checks that the final state is consistent, any assistant could post a
+--    second balanced pair onto an existing posting_group_id through a plain
+--    PostgREST call and turn a 100,00 entry into 150,00 — permanently, since
+--    UPDATE and DELETE are blocked. Mutation-by-append is indistinguishable
+--    from a correction and carries no reversal marker, so this defeated the
+--    whole immutability guarantee. Delegating the rule to the future writers
+--    was not sufficient, because RLS gives authenticated direct INSERT: the
+--    writers are not the only path in.
+--
+--    So a group is now sealed to the transaction that created it, using the
+--    created_xact_id stamp. A later transaction attempting to append is
+--    refused. Corrections are what they should always have been: a new group.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.lock_ledger_posting_group()
@@ -648,18 +755,43 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  -- Refuse before the row is accepted, not at COMMIT, so nothing is ever
-  -- written under an isolation level whose snapshot would blind the group
-  -- check. current_setting('transaction_isolation') is the level actually in
-  -- force for this transaction, so a caller cannot dodge it.
-  IF current_setting('transaction_isolation') = 'repeatable read' THEN
-    RAISE EXCEPTION 'ledger_postings kan niet worden geschreven in een REPEATABLE READ transactie: de boekingsgroep-controle zou een verouderde snapshot zien. Gebruik READ COMMITTED (standaard) of SERIALIZABLE.'
-      USING ERRCODE = '0A000';
+  -- 1) Isolation contract, refused before the row is accepted rather than at
+  --    COMMIT, so nothing is ever written under a level whose snapshot would
+  --    blind the group check. Only READ COMMITTED is permitted; see the
+  --    comment block above for why SERIALIZABLE is not sufficient either.
+  --    current_setting('transaction_isolation') is the level actually in force,
+  --    so a caller cannot dodge it by any SET syntax.
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'ledger_postings mag alleen worden geschreven in een READ COMMITTED transactie (huidig niveau: %). Een snapshot-vasthoudend niveau zou de boekingsgroep-controle een verouderde staat laten zien.', current_setting('transaction_isolation')
+      USING ERRCODE = '25000';
   END IF;
 
+  -- 2) Stamp the creating transaction. Assigned here, never read from the
+  --    caller, so a client cannot forge membership of an existing group.
+  NEW.created_xact_id := pg_current_xact_id();
+
+  -- 3) Serialise writers to this group BEFORE reading its existing rows, so the
+  --    seal check below cannot race another in-flight writer.
   PERFORM pg_advisory_xact_lock(
     ('x' || substr(replace(NEW.posting_group_id::text, '-', ''), 1, 16))::bit(64)::bigint
   );
+
+  -- 4) Seal: a posting group belongs to exactly one transaction. Rows written
+  --    by an earlier, already-committed transaction make this group closed
+  --    forever. Under READ COMMITTED this statement takes a fresh snapshot, so
+  --    it sees those committed rows; the advisory lock above rules out a
+  --    concurrent writer. Same-transaction inserts pass, including across
+  --    several INSERT statements, because the stamp is identical.
+  IF EXISTS (
+    SELECT 1
+    FROM public.ledger_postings p
+    WHERE p.posting_group_id = NEW.posting_group_id
+      AND p.created_xact_id <> NEW.created_xact_id
+  ) THEN
+    RAISE EXCEPTION 'boekingsgroep % is al vastgelegd door een eerdere transactie en kan niet worden uitgebreid; corrigeer met een nieuwe tegenboeking', NEW.posting_group_id
+      USING ERRCODE = '23505';
+  END IF;
+
   RETURN NEW;
 END
 $$;
@@ -681,6 +813,7 @@ DECLARE
   v_currencies integer;
   v_dates      integer;
   v_boekjaren  integer;
+  v_xacts      integer;
   v_debit      numeric;
   v_credit     numeric;
 BEGIN
@@ -690,11 +823,20 @@ BEGIN
          COUNT(DISTINCT p.currency),
          COUNT(DISTINCT p.posting_date),
          COUNT(DISTINCT p.boekjaar),
+         COUNT(DISTINCT p.created_xact_id),
          COALESCE(SUM(p.debit_amount),  0),
          COALESCE(SUM(p.credit_amount), 0)
-    INTO v_rows, v_orgs, v_clients, v_currencies, v_dates, v_boekjaren, v_debit, v_credit
+    INTO v_rows, v_orgs, v_clients, v_currencies, v_dates, v_boekjaren, v_xacts, v_debit, v_credit
   FROM public.ledger_postings p
   WHERE p.posting_group_id = NEW.posting_group_id;
+
+  -- Closing half of the seal. The BEFORE trigger refuses an append at insert
+  -- time; this re-asserts it at COMMIT over the group's final state, so the
+  -- invariant does not rest on a single check.
+  IF v_xacts > 1 THEN
+    RAISE EXCEPTION 'boekingsgroep % bevat regels uit meerdere transacties; een boeking wordt in één transactie vastgelegd', NEW.posting_group_id
+      USING ERRCODE = '23505';
+  END IF;
 
   IF v_rows < 2 THEN
     RAISE EXCEPTION 'boekingsgroep % bevat % regel; een boeking heeft minimaal een debet- en een creditregel', NEW.posting_group_id, v_rows
@@ -737,6 +879,7 @@ $$;
 
 REVOKE ALL ON FUNCTION public.lock_ledger_posting_group()                FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.posting_client_org_ok(uuid, uuid)          FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.posting_account_ok(uuid, uuid, uuid)        FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_ledger_posting_org()               FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.prevent_ledger_posting_mutation()          FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_ledger_posting_group_balance()     FROM PUBLIC;
@@ -832,6 +975,9 @@ REVOKE UPDATE, DELETE, TRUNCATE ON public.ledger_postings FROM anon, authenticat
 
 COMMENT ON TABLE public.ledger_postings IS
 'Append-only grootboekboekingen. Eén rij = één debet- of creditzijde; een volledige boeking is de set rijen met hetzelfde posting_group_id, die per groep in balans moet zijn. Rijen worden nooit gewijzigd of verwijderd — een correctie is een nieuwe tegenboeking. Wordt in fase 6C-b2 nog door geen enkele workflow gevuld.';
+
+COMMENT ON COLUMN public.ledger_postings.created_xact_id IS
+'De databasetransactie die deze regel schreef. Door de trigger gezet, nooit door de client. Verzegelt de boekingsgroep: alle regels van één posting_group_id horen bij dezelfde transactie, zodat een al vastgelegde boeking later niet kan worden uitgebreid.';
 
 COMMENT ON COLUMN public.ledger_postings.posting_group_id IS
 'Groepeert de debet- en creditrijen van één boeking. De groep moet atomair in één transactie worden weggeschreven en in balans zijn.';
