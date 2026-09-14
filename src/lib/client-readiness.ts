@@ -16,19 +16,6 @@ export interface GrootboekSlim {
 
 export type ReadinessStatus = "klaar" | "niet_klaar" | "config_ontbreekt";
 
-/**
- * Accounting-foundation columns added by
- * 20260904120000_add-accounting-foundation-ledger-links.sql.
- *
- * They are read through this narrow structural type because
- * src/integrations/supabase/types.ts is generated and must be regenerated from
- * Lovable Cloud after the migration is applied — it is never hand-edited.
- */
-type ClientAccountingConfig = {
-  debiteuren_rekening_id?: string | null;
-  crediteuren_rekening_id?: string | null;
-};
-
 export interface ClientReadiness {
   clientId: string;
   bankGeblokkeerd: number;
@@ -89,13 +76,11 @@ export function computeClientReadiness(
     i => i.client_id === client.id && i.status === "concept",
   ).length;
 
-  const accountingConfig = client as typeof client & ClientAccountingConfig;
-
   const configMissingBankDagboek = client.bank_dagboek == null;
   const configMissingInkoopDagboek = client.inkoop_dagboek == null;
   const configMissingVerkoopDagboek = client.verkoop_dagboek == null;
-  const configMissingDebiteurenRekening = accountingConfig.debiteuren_rekening_id == null;
-  const configMissingCrediteurenRekening = accountingConfig.crediteuren_rekening_id == null;
+  const configMissingDebiteurenRekening = client.debiteuren_rekening_id == null;
+  const configMissingCrediteurenRekening = client.crediteuren_rekening_id == null;
   const configMissing1799 = !has1799(clientAccounts);
 
   const configMissingReasons: string[] = [];
