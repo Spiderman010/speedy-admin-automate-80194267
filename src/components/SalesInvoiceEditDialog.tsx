@@ -21,14 +21,6 @@ import { SALES_UBL_TEST_HELPER_TEXT, buildSalesInvoiceTestPackage } from "@/lib/
 
 type SalesInvoice = Tables<"sales_invoices">;
 
-/**
- * Accounting-foundation column added by
- * 20260904120000_add-accounting-foundation-ledger-links.sql. Read through a
- * narrow structural type because src/integrations/supabase/types.ts is
- * generated and must be regenerated from Lovable Cloud after the migration.
- */
-type SalesInvoiceLedgerLink = { grootboekrekening_id?: string | null };
-
 function InvoicePreview({ filePath }: { filePath: string | null }) {
   const [url, setUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -154,7 +146,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
         btw_percentage: verlegd ? "verlegd" : (["0", "9", "21"].includes(pct) ? pct : "21"),
         btw_verlegd: verlegd,
         ledger_account_text: ledgerValue,
-        grootboekrekening_id: (invoice as SalesInvoiceLedgerLink).grootboekrekening_id ?? "",
+        grootboekrekening_id: invoice.grootboekrekening_id ?? "",
         notes: invoice.notes || "",
         status: invoice.status || "concept",
       });

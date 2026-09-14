@@ -103,17 +103,6 @@ const emptyForm: ClientForm = {
   crediteuren_rekening_label: "",
 };
 
-/**
- * Accounting-foundation columns added by
- * 20260904120000_add-accounting-foundation-ledger-links.sql. Read through a
- * narrow structural type because src/integrations/supabase/types.ts is
- * generated and must be regenerated from Lovable Cloud after the migration.
- */
-type ClientAccountingConfig = {
-  debiteuren_rekening_id?: string | null;
-  crediteuren_rekening_id?: string | null;
-};
-
 function validateKvk(v: string): string | null {
   if (!v) return null;
   return /^\d{8}$/.test(v) ? null : "KvK nummer moet 8 cijfers bevatten";
@@ -249,10 +238,10 @@ export default function Klanten() {
       bank_dagboek: client.bank_dagboek != null ? String(client.bank_dagboek) : "",
       afgesloten_boekjaar: client.afgesloten_boekjaar != null ? String(client.afgesloten_boekjaar) : "",
       snelstart_inkoop_mailbox: client.snelstart_inkoop_mailbox || "",
-      debiteuren_rekening_id: (client as ClientAccountingConfig).debiteuren_rekening_id ?? "",
-      debiteuren_rekening_label: accountLabelById((client as ClientAccountingConfig).debiteuren_rekening_id),
-      crediteuren_rekening_id: (client as ClientAccountingConfig).crediteuren_rekening_id ?? "",
-      crediteuren_rekening_label: accountLabelById((client as ClientAccountingConfig).crediteuren_rekening_id),
+      debiteuren_rekening_id: client.debiteuren_rekening_id ?? "",
+      debiteuren_rekening_label: accountLabelById(client.debiteuren_rekening_id),
+      crediteuren_rekening_id: client.crediteuren_rekening_id ?? "",
+      crediteuren_rekening_label: accountLabelById(client.crediteuren_rekening_id),
     });
     setEditingId(client.id);
     setShowDialog(true);
