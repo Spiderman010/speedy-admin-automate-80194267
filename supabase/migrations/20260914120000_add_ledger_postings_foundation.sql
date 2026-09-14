@@ -39,6 +39,8 @@
 --   DROP TRIGGER IF EXISTS validate_ledger_posting_org_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS prevent_ledger_posting_mutation_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS set_organization_id_trigger ON public.ledger_postings;
+--   DROP TRIGGER IF EXISTS lock_ledger_posting_group_trigger ON public.ledger_postings;
+--   DROP FUNCTION IF EXISTS public.lock_ledger_posting_group();
 --   DROP FUNCTION IF EXISTS public.enforce_ledger_posting_group_balance();
 --   DROP FUNCTION IF EXISTS public.enforce_ledger_posting_org();
 --   DROP FUNCTION IF EXISTS public.prevent_ledger_posting_mutation();
@@ -564,6 +566,63 @@ CREATE TRIGGER prevent_ledger_posting_mutation_trigger
 --    that a document posts its group exactly once.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 8a) Serialising concurrent writers to the same posting group
+--
+--    The deferred check in 8b sees committed rows plus its own transaction's
+--    rows — it cannot see another in-flight transaction. Two concurrent
+--    transactions could therefore each write half of what becomes one group,
+--    each validate its own half as balanced, and both commit, leaving a
+--    combined group that is invalid and, because the table is append-only,
+--    permanently uncorrectable.
+--
+--    This BEFORE INSERT trigger takes a transaction-scoped advisory lock keyed
+--    on posting_group_id, so writers to the SAME group serialise while writers
+--    to different groups never block each other. It is named "lock_..." so it
+--    sorts before both "set_organization_id_trigger" and "validate_...", which
+--    means the lock is held before any validation work happens — the second
+--    transaction waits at its first inserted row rather than racing.
+--
+--    pg_advisory_xact_lock (not pg_advisory_lock) releases automatically at
+--    COMMIT or ROLLBACK, so no session-level lock can leak into a pooled
+--    connection — which matters because Supabase pools connections.
+--
+--    KEY DERIVATION: the first 64 bits of the uuid, read straight out of its
+--    hex text. This is a pure, deterministic mapping that depends only on
+--    documented cast behaviour, not on a hash function whose implementation may
+--    differ between PostgreSQL versions (hashtextextended is not contracted to
+--    be stable across major versions, and this lock must mean the same thing on
+--    every server that runs it). Values above 2^63 wrap to negative bigints,
+--    which advisory locks accept.
+--
+--    COLLISION IMPLICATIONS: two different group ids sharing their first 64
+--    bits would share a lock. The consequence is a brief, harmless serialisation
+--    of two unrelated groups — never a correctness failure, because the lock
+--    only orders writers and every group is still validated on its own rows by
+--    8b. So a collision costs a little concurrency and can never admit an
+--    invalid group. With random v4 uuids the chance is negligible anyway, and
+--    only matters between transactions that are literally in flight at the same
+--    instant.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.lock_ledger_posting_group()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM pg_advisory_xact_lock(
+    ('x' || substr(replace(NEW.posting_group_id::text, '-', ''), 1, 16))::bit(64)::bigint
+  );
+  RETURN NEW;
+END
+$$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 8b) Posting-group invariants, checked at COMMIT
+-- ─────────────────────────────────────────────────────────────────────────────
+
 CREATE OR REPLACE FUNCTION public.enforce_ledger_posting_group_balance()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -631,10 +690,19 @@ BEGIN
 END
 $$;
 
+REVOKE ALL ON FUNCTION public.lock_ledger_posting_group()                FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.posting_client_org_ok(uuid, uuid)          FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_ledger_posting_org()               FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.prevent_ledger_posting_mutation()          FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.enforce_ledger_posting_group_balance()     FROM PUBLIC;
+
+-- Fires FIRST of the BEFORE INSERT triggers ("lock_" sorts before "set_" and
+-- "validate_"), so concurrent writers to one posting group serialise before any
+-- of them does validation work.
+DROP TRIGGER IF EXISTS lock_ledger_posting_group_trigger ON public.ledger_postings;
+CREATE TRIGGER lock_ledger_posting_group_trigger
+  BEFORE INSERT ON public.ledger_postings
+  FOR EACH ROW EXECUTE FUNCTION public.lock_ledger_posting_group();
 
 -- Trigger names start with "validate_" so they sort AFTER
 -- "set_organization_id_trigger". PostgreSQL fires per-row triggers in name
@@ -666,10 +734,26 @@ CREATE POLICY role_ledger_postings_select ON public.ledger_postings
   FOR SELECT TO authenticated
   USING (public.has_min_role(auth.uid(), organization_id, 'read_only'));
 
+-- The membership check alone would let any authenticated member submit another
+-- existing user's uuid as user_id: the FK would pass, and the posting would be
+-- permanently and untraceably attributed to the wrong person — on a row that
+-- can never be corrected. Binding user_id to auth.uid() closes that.
+--
+-- Done in the policy rather than with a trigger that rewrites user_id: a
+-- rewriting trigger would silently accept a spoofed value and quietly change
+-- it, which hides the caller's intent. Rejecting is the honest behaviour, and
+-- the repository has no precedent for auto-filling user_id (no DEFAULT
+-- auth.uid() exists anywhere).
+--
+-- service_role bypasses RLS, so server-side writers can still supply the
+-- originating user's uuid explicitly where that is the correct attribution.
 DROP POLICY IF EXISTS role_ledger_postings_insert ON public.ledger_postings;
 CREATE POLICY role_ledger_postings_insert ON public.ledger_postings
   FOR INSERT TO authenticated
-  WITH CHECK (public.has_min_role(auth.uid(), organization_id, 'assistant'));
+  WITH CHECK (
+    public.has_min_role(auth.uid(), organization_id, 'assistant')
+    AND user_id = auth.uid()
+  );
 
 -- anon must never reach accounting data, and no application role may mutate a
 -- posted row (layer (b) of section 7).

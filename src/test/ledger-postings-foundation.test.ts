@@ -146,6 +146,35 @@ describe("Migratie — boekingsgroep-invarianten", () => {
     expect(fn).toMatch(/v_credit\s+numeric;/);
   });
 
+  it("18b. serialiseert gelijktijdige schrijvers per posting_group_id", () => {
+    // De deferred check ziet alleen commits + eigen transactie, dus twee
+    // gelijktijdige transacties konden elk hun eigen helft goedkeuren en samen
+    // een ongeldige groep achterlaten — onherstelbaar in een append-only tabel.
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.lock_ledger_posting_group/);
+    expect(sql).toMatch(/PERFORM pg_advisory_xact_lock\(/);
+    // Transactie-scope, niet sessie-scope: een sessielock zou in een pooled
+    // connectie kunnen blijven hangen.
+    expect(sql).not.toMatch(/pg_advisory_lock\(/);
+    expect(sql).toMatch(
+      /CREATE TRIGGER lock_ledger_posting_group_trigger\s+BEFORE INSERT ON public\.ledger_postings/,
+    );
+  });
+
+  it("18c. leidt de locksleutel deterministisch af uit posting_group_id", () => {
+    // Geen hashfunctie waarvan de uitkomst per PostgreSQL-versie kan verschillen.
+    expect(sql).toMatch(
+      /\('x' \|\| substr\(replace\(NEW\.posting_group_id::text, '-', ''\), 1, 16\)\)::bit\(64\)::bigint/,
+    );
+    expect(sql).not.toMatch(/hashtext|md5\(/);
+  });
+
+  it("18d. pakt de lock vóór alle validatie (naamvolgorde van de triggers)", () => {
+    // PostgreSQL vuurt row-triggers op naam; "lock_" moet vóór "set_" en
+    // "validate_" komen zodat de tweede transactie meteen wacht.
+    expect("lock_ledger_posting_group_trigger" < "set_organization_id_trigger").toBe(true);
+    expect("lock_ledger_posting_group_trigger" < "validate_ledger_posting_org_trigger").toBe(true);
+  });
+
   it("18. beoordeelt de eindstaat van de hele groep, niet alleen de nieuwe rij", () => {
     // De aggregatie loopt over alle rijen met hetzelfde posting_group_id.
     expect(fn).toMatch(/FROM public\.ledger_postings p\s+WHERE p\.posting_group_id = NEW\.posting_group_id/);
@@ -184,6 +213,7 @@ describe("Migratie — tenant-isolatie", () => {
       "enforce_ledger_posting_org",
       "prevent_ledger_posting_mutation",
       "enforce_ledger_posting_group_balance",
+      "lock_ledger_posting_group",
     ];
     for (const name of definers) {
       const body = sql.slice(sql.indexOf(`FUNCTION public.${name}`));
@@ -197,6 +227,7 @@ describe("Migratie — tenant-isolatie", () => {
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.enforce_ledger_posting_org\(\)\s+FROM PUBLIC;/);
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.prevent_ledger_posting_mutation\(\)\s+FROM PUBLIC;/);
     expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.enforce_ledger_posting_group_balance\(\)\s+FROM PUBLIC;/);
+    expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.lock_ledger_posting_group\(\)\s+FROM PUBLIC;/);
     // Trigger-only functies worden nooit als RPC aan gebruikers gegeven.
     expect(sql).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.(posting_client_org_ok|enforce_ledger_posting|prevent_ledger_posting)/);
   });
@@ -258,8 +289,25 @@ describe("Migratie — RLS", () => {
       /CREATE POLICY role_ledger_postings_select ON public\.ledger_postings\s+FOR SELECT TO authenticated\s+USING \(public\.has_min_role\(auth\.uid\(\), organization_id, 'read_only'\)\)/,
     );
     expect(sql).toMatch(
-      /CREATE POLICY role_ledger_postings_insert ON public\.ledger_postings\s+FOR INSERT TO authenticated\s+WITH CHECK \(public\.has_min_role\(auth\.uid\(\), organization_id, 'assistant'\)\)/,
+      /CREATE POLICY role_ledger_postings_insert ON public\.ledger_postings\s+FOR INSERT TO authenticated\s+WITH CHECK \(\s*public\.has_min_role\(auth\.uid\(\), organization_id, 'assistant'\)/,
     );
+  });
+
+  it("30b. bindt user_id aan auth.uid(), zodat een boeking niet aan een ander toegeschreven kan worden", () => {
+    // Zonder deze eis zou elk lid een andere bestaande auth-uuid kunnen
+    // meesturen: de FK slaagt en de onveranderlijke boeking staat voorgoed op
+    // naam van de verkeerde persoon.
+    const policy = sql.slice(
+      sql.indexOf("CREATE POLICY role_ledger_postings_insert"),
+      sql.indexOf("CREATE POLICY role_ledger_postings_insert") + 400,
+    );
+    expect(policy).toMatch(/AND user_id = auth\.uid\(\)/);
+  });
+
+  it("30c. herschrijft user_id niet stilzwijgend met een trigger", () => {
+    // Weigeren is eerlijker dan een gespooofde waarde stil corrigeren.
+    expect(sql).not.toMatch(/NEW\.user_id\s*:=/);
+    expect(sql).not.toMatch(/user_id[^\n]*DEFAULT auth\.uid\(\)/);
   });
 
   it("31. geeft anon nergens toegang", () => {
@@ -385,6 +433,7 @@ describe("Migratie — geen historische backfill, geen scope-uitbreiding", () =>
         "enforce_ledger_posting_org",
         "prevent_ledger_posting_mutation",
         "enforce_ledger_posting_group_balance",
+        "lock_ledger_posting_group",
       ]),
     );
     expect(sql).not.toMatch(/FUNCTION public\.(set_organization_id|prevent_org_user_rebind|update_updated_at_column)\s*\(\)\s*\n?RETURNS/);
