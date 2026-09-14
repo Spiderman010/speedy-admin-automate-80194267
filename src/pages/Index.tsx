@@ -400,7 +400,7 @@ export default function Dashboard() {
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="break-words text-xs text-muted-foreground">
                         {item.sub}
                         {item.date ? ` · ${new Date(item.date).toLocaleDateString("nl-NL")}` : ""}
                       </p>
