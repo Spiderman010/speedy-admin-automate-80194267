@@ -47,16 +47,24 @@ function statusLabel(s: ReadinessStatus): string {
 // warning styling for missing configuration, neutral for done.
 function StatusBadge({ status }: { status: ReadinessStatus }) {
   if (status === "niet_klaar") {
-    return <Badge variant="destructive">{statusLabel(status)}</Badge>;
-  }
-  if (status === "config_ontbreekt") {
     return (
-      <Badge variant="outline" className="border-warning/60 text-warning">
+      <Badge variant="destructive" className="whitespace-nowrap">
         {statusLabel(status)}
       </Badge>
     );
   }
-  return <Badge variant="secondary">{statusLabel(status)}</Badge>;
+  if (status === "config_ontbreekt") {
+    return (
+      <Badge variant="outline" className="whitespace-nowrap border-warning/60 text-warning">
+        {statusLabel(status)}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary" className="whitespace-nowrap">
+      {statusLabel(status)}
+    </Badge>
+  );
 }
 
 // Compact operational KPI card: title, current value, one context line and a
@@ -230,12 +238,12 @@ export default function Dashboard() {
       <h1 className="sr-only">Dashboard</h1>
 
       {hasError && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
           <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
-          <p className="flex-1 text-sm text-destructive">
+          <p className="min-w-0 flex-1 break-words text-sm text-destructive">
             Een deel van de dashboardgegevens kon niet worden geladen.
           </p>
-          <Button variant="outline" size="sm" onClick={retryFailed}>
+          <Button variant="outline" size="sm" className="h-9 shrink-0 whitespace-nowrap" onClick={retryFailed}>
             Opnieuw laden
           </Button>
         </div>
@@ -307,11 +315,13 @@ export default function Dashboard() {
                   <TableBody>
                     {workRows.map(({ client, readiness }) => (
                       <TableRow key={client.id}>
-                        <TableCell className="max-w-[220px]">
-                          <p className="truncate text-sm font-medium">{client.name}</p>
+                        <TableCell className="max-w-[10rem] sm:max-w-[14rem] lg:max-w-[220px]">
+                          <p className="truncate text-sm font-medium" title={client.name}>
+                            {client.name}
+                          </p>
                           {(readiness.configMissingReasons.length > 0 ||
                             readiness.configMissing1799) && (
-                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-warning">
+                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 break-words text-xs text-warning">
                               <AlertCircle className="h-3 w-3 shrink-0" />
                               {/* configMissingReasons is the single source for
                                   blocking config gaps (dagboeken + debiteuren/
@@ -343,7 +353,7 @@ export default function Dashboard() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="min-h-[44px] sm:min-h-0"
+                            className="h-9 whitespace-nowrap"
                             onClick={() => openWorkArea(client.id)}
                           >
                             Openen
@@ -381,7 +391,7 @@ export default function Dashboard() {
                   <Link
                     key={item.id}
                     to={item.to}
-                    className="-mx-2 flex items-start gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="-mx-2 flex items-start gap-3 rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:py-1.5"
                   >
                     {item.kind === "vraagpost" ? (
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
@@ -390,7 +400,7 @@ export default function Dashboard() {
                     )}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium">{item.label}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="break-words text-xs text-muted-foreground">
                         {item.sub}
                         {item.date ? ` · ${new Date(item.date).toLocaleDateString("nl-NL")}` : ""}
                       </p>
