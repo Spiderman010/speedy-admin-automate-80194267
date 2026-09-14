@@ -118,6 +118,7 @@ export default function Overzichten() {
   const totalEntries = entries?.reduce((s, e) => s + e.amount, 0) ?? 0;
   const isLoading = clientsLoading || invoicesLoading || entriesLoading || transactionsLoading || accountsLoading;
   const isError = clientsError || invoicesError || entriesError || transactionsError || accountsError;
+  const hasFinancialData = Boolean(invoices?.length || entries?.length || transactions?.length);
 
   const handleRetry = () => {
     void Promise.all([
@@ -157,7 +158,23 @@ export default function Overzichten() {
 
   return (
     <div className="min-w-0 space-y-6 overflow-x-hidden">
-      <PageHeader title="Rapportages" description="Financiële overzichten per administratie" />
+      <div className="[&>div]:mb-0 [&>div]:min-w-0 [&>div]:flex-col [&>div]:gap-4 sm:[&>div]:flex-row [&>div>div]:min-w-0 [&>div>div:last-child]:w-full sm:[&>div>div:last-child]:w-72">
+        <PageHeader title="Rapportages" description="Financiële overzichten per administratie">
+          <div className="min-w-0 w-full space-y-1.5">
+            <Label htmlFor="administratie-filter">Administratie</Label>
+            <Select value={selectedClient} onValueChange={(v) => { setSelectedClient(v); setSelectedClientId(v); }}>
+              <SelectTrigger id="administratie-filter" aria-label="Administratie selecteren" className="h-9 min-w-0 w-full">
+                <SelectValue placeholder="Selecteer administratie" />
+              </SelectTrigger>
+              <SelectContent>
+                {clients?.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </PageHeader>
+      </div>
 
       <section aria-labelledby="rapporttype-heading">
         <div className="mb-3 flex items-end justify-between gap-4">
@@ -187,20 +204,7 @@ export default function Overzichten() {
 
       <section aria-labelledby="filters-heading" className="rounded-lg border bg-card p-4 shadow-sm">
         <h2 id="filters-heading" className="mb-3 font-display text-base font-semibold">Filters</h2>
-        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_auto] lg:items-end">
-          <div className="min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-1">
-            <Label htmlFor="administratie-filter">Administratie</Label>
-            <Select value={selectedClient} onValueChange={(v) => { setSelectedClient(v); setSelectedClientId(v); }}>
-              <SelectTrigger id="administratie-filter" aria-label="Administratie selecteren" className="h-9 min-w-0 w-full">
-                <SelectValue placeholder="Selecteer administratie" />
-              </SelectTrigger>
-              <SelectContent>
-                {clients?.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto] lg:items-end">
           {[
             ["Boekjaar", "Boekjaar nog niet beschikbaar"],
             ["Periode", "Periode nog niet beschikbaar"],
@@ -251,6 +255,14 @@ export default function Overzichten() {
             Opnieuw proberen
           </Button>
         </div>
+      ) : !hasFinancialData ? (
+        <Card className="shadow-sm">
+          <CardContent className="flex min-h-48 flex-col items-center justify-center px-4 py-10 text-center">
+            <ReceiptText className="mb-3 h-8 w-8 text-muted-foreground" aria-hidden="true" />
+            <h2 className="font-display text-base font-semibold">Geen financiële gegevens beschikbaar</h2>
+            <p className="mt-1 max-w-lg text-sm text-muted-foreground">Er zijn geen financiële gegevens voor de geselecteerde administratie of periode.</p>
+          </CardContent>
+        </Card>
       ) : (
         <section aria-labelledby="huidig-overzicht-heading" className="space-y-4">
           <div>

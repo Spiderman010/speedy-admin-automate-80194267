@@ -86,6 +86,12 @@ describe("Rapportages pagina", () => {
     expect(screen.queryByText("€ 0,00")).not.toBeInTheDocument();
   });
 
+  it("toont ontbrekende financiële data niet als nulbedragen", () => {
+    render(<Overzichten />);
+    expect(screen.getByText("Geen financiële gegevens beschikbaar")).toBeInTheDocument();
+    expect(screen.queryByText("€ 0,00")).not.toBeInTheDocument();
+  });
+
   it("toont skeletons tijdens laden", () => {
     state.isLoading = true;
     const { container } = render(<Overzichten />);
