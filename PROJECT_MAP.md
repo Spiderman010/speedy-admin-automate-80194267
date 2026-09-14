@@ -118,6 +118,42 @@ bank_transaction_allocations
 
 ---
 
+### Phase 6C-b2 — `ledger_postings`
+
+Migration file:
+```
+supabase/migrations/20260914120000_add_ledger_postings_foundation.sql
+```
+
+**Purpose:** Adds `ledger_postings` — the persisted, append-only accounting posting layer that future phases write to. It is the first table in the schema that expresses double entry at all: today `journal_entries` holds one signed amount on one account, `sales_invoices` is header-only, and the only two-sided artefact anywhere is the transient `boekingcode` pairing inside the SnelStart CSV.
+
+Design rules that must not be broken by later work:
+
+- **One row = one side** of a debit/credit entry. A complete entry is the set of rows sharing `posting_group_id`.
+- **A posting group is one journaalpost**: at least two rows, exactly one organisation, client, currency, posting date and boekjaar, and `SUM(debit) = SUM(credit)` with both totals `> 0`. Enforced at COMMIT by a `DEFERRABLE INITIALLY DEFERRED` constraint trigger, so a group must be written atomically in one transaction.
+- **Append-only.** Never `UPDATE` or `DELETE` a posting — correct with a new reversing entry instead. Enforced three ways: no UPDATE/DELETE RLS policy, explicit `REVOKE`, and a blocking trigger that also covers RLS-bypassing roles such as `service_role`.
+- **Tenant-isolated** at row level (client and grootboekrekening must sit in the posting's organisation) and at group level.
+- **Empty on purpose.** No historic invoice, transaction or journal entry is backfilled; no workflow writes to it yet.
+
+Future phases: 6C-b3 purchase posting, 6C-b4 sales posting, 6C-b5 bank settlement posting, 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
+
+**Status: ⏳ Not yet applied.**
+Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
+
+Verification query (for future reference):
+```sql
+select to_regclass('public.ledger_postings') as postings_table;
+```
+
+Expected result:
+```
+postings_table
+─────────────────────────────────────
+ledger_postings
+```
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**
