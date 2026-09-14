@@ -111,7 +111,7 @@ export default function AIChat() {
                 </div>
               )}
             </div>
-          </ScrollArea>
+          </div>
         </CardContent>
 
         <div className="space-y-3 border-t p-4">
