@@ -593,6 +593,101 @@ export type Database = {
           },
         ]
       }
+      ledger_postings: {
+        Row: {
+          boekjaar: number
+          client_id: string
+          created_at: string
+          created_xact_id: unknown
+          credit_amount: number
+          currency: string
+          debit_amount: number
+          description: string | null
+          grootboekrekening_id: string
+          id: string
+          line_no: number
+          organization_id: string
+          posting_date: string
+          posting_group_id: string
+          reversal_of_posting_id: string | null
+          source_id: string | null
+          source_line_id: string | null
+          source_type: string
+          user_id: string
+        }
+        Insert: {
+          boekjaar: number
+          client_id: string
+          created_at?: string
+          created_xact_id: unknown
+          credit_amount?: number
+          currency: string
+          debit_amount?: number
+          description?: string | null
+          grootboekrekening_id: string
+          id?: string
+          line_no: number
+          organization_id: string
+          posting_date: string
+          posting_group_id: string
+          reversal_of_posting_id?: string | null
+          source_id?: string | null
+          source_line_id?: string | null
+          source_type: string
+          user_id: string
+        }
+        Update: {
+          boekjaar?: number
+          client_id?: string
+          created_at?: string
+          created_xact_id?: unknown
+          credit_amount?: number
+          currency?: string
+          debit_amount?: number
+          description?: string | null
+          grootboekrekening_id?: string
+          id?: string
+          line_no?: number
+          organization_id?: string
+          posting_date?: string
+          posting_group_id?: string
+          reversal_of_posting_id?: string | null
+          source_id?: string | null
+          source_line_id?: string | null
+          source_type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledger_postings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_postings_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_postings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_postings_reversal_of_posting_id_fkey"
+            columns: ["reversal_of_posting_id"]
+            isOneToOne: false
+            referencedRelation: "ledger_postings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leveranciers: {
         Row: {
           actief: boolean
@@ -1110,6 +1205,18 @@ export type Database = {
       }
       ledger_link_org_ok: {
         Args: { _account_id: string; _organization_id: string }
+        Returns: boolean
+      }
+      posting_account_ok: {
+        Args: {
+          _account_id: string
+          _client_id: string
+          _organization_id: string
+        }
+        Returns: boolean
+      }
+      posting_client_org_ok: {
+        Args: { _client_id: string; _organization_id: string }
         Returns: boolean
       }
       replace_purchase_invoice_lines: {
