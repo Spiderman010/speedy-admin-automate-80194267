@@ -168,6 +168,29 @@ describe("Migratie — boekingsgroep-invarianten", () => {
     expect(sql).not.toMatch(/hashtext|md5\(/);
   });
 
+  it("18e. weigert REPEATABLE READ, waar de lock alleen niet genoeg is", () => {
+    // Onder REPEATABLE READ legt een transactie haar snapshot vast vóórdat ze
+    // op de lock wacht; na het verkrijgen van de lock ziet ze de zojuist
+    // gecommitte rijen van de ander nóg steeds niet. Twee op zichzelf geldige
+    // helften kunnen dan samen één ongeldige groep vormen.
+    const fn = sql.slice(sql.indexOf("FUNCTION public.lock_ledger_posting_group"));
+    expect(fn).toMatch(/current_setting\('transaction_isolation'\) = 'repeatable read'/);
+    expect(fn).toMatch(/ERRCODE = '0A000'/);
+    // De weigering staat vóór de lock, dus er wordt nooit een rij geaccepteerd.
+    expect(fn.indexOf("repeatable read")).toBeLessThan(fn.indexOf("pg_advisory_xact_lock"));
+  });
+
+  it("18f. laat READ COMMITTED en SERIALIZABLE ongemoeid", () => {
+    const fn = sql.slice(
+      sql.indexOf("FUNCTION public.lock_ledger_posting_group"),
+      sql.indexOf("FUNCTION public.lock_ledger_posting_group") + 900,
+    );
+    // Alleen 'repeatable read' wordt geweigerd; serializable is bewezen veilig
+    // via SSI en read committed via de advisory lock.
+    expect(fn).not.toMatch(/= 'serializable'/);
+    expect(fn).not.toMatch(/= 'read committed'/);
+  });
+
   it("18d. pakt de lock vóór alle validatie (naamvolgorde van de triggers)", () => {
     // PostgreSQL vuurt row-triggers op naam; "lock_" moet vóór "set_" en
     // "validate_" komen zodat de tweede transactie meteen wacht.

@@ -605,6 +605,42 @@ CREATE TRIGGER prevent_ledger_posting_mutation_trigger
 --    instant.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+--    ISOLATION LEVEL: the advisory lock orders writers, but ordering alone is
+--    not enough under a snapshot-preserving isolation level. Under REPEATABLE
+--    READ a writer can establish its snapshot BEFORE waiting on the lock; when
+--    it finally acquires the lock it still reads the old snapshot, so the
+--    check in 8b cannot see the rows the other transaction just committed, and
+--    two individually valid halves can both commit into one invalid group.
+--
+--    That is not theoretical. Reproduced on PostgreSQL 16 against this exact
+--    schema minus the guard below: two REPEATABLE READ transactions sharing a
+--    posting_group_id both committed and left a single group spanning TWO
+--    organisations, TWO clients and TWO posting dates — permanently, because
+--    the table is append-only.
+--
+--    So the level is checked, not assumed:
+--      • READ COMMITTED (and READ UNCOMMITTED, which PostgreSQL treats as READ
+--        COMMITTED) — allowed. Each statement takes a fresh snapshot, so after
+--        the lock is granted the group is re-read including the other
+--        transaction's committed rows, and 8b rejects the combined group.
+--      • SERIALIZABLE — allowed. Verified rather than assumed: the aggregate in
+--        8b takes predicate locks, so the interleaving is a textbook write-skew
+--        pivot and SSI aborts one transaction with serialization_failure
+--        (40001), which is a retry signal. Confirmed empirically on the same
+--        schema: the second transaction was cancelled "on identification as a
+--        pivot, during write" and only the first group survived.
+--      • REPEATABLE READ — REFUSED here, before any row is accepted.
+--
+--    Refusing is the right call for BoekAssist specifically: nothing in this
+--    codebase sets an isolation level. Every posting write goes through
+--    PostgREST or a SECURITY INVOKER RPC, both of which run at the default
+--    READ COMMITTED, and the future writers in 6C-b3+ are server-side code in
+--    this same repository. So the guard rejects a level no current or planned
+--    caller uses, while making it impossible for a later writer to silently
+--    opt into an unsafe one. It is enforced by the database rather than left
+--    as a documented convention, so no application code has to remember it.
+-- ─────────────────────────────────────────────────────────────────────────────
+
 CREATE OR REPLACE FUNCTION public.lock_ledger_posting_group()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -612,6 +648,15 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
+  -- Refuse before the row is accepted, not at COMMIT, so nothing is ever
+  -- written under an isolation level whose snapshot would blind the group
+  -- check. current_setting('transaction_isolation') is the level actually in
+  -- force for this transaction, so a caller cannot dodge it.
+  IF current_setting('transaction_isolation') = 'repeatable read' THEN
+    RAISE EXCEPTION 'ledger_postings kan niet worden geschreven in een REPEATABLE READ transactie: de boekingsgroep-controle zou een verouderde snapshot zien. Gebruik READ COMMITTED (standaard) of SERIALIZABLE.'
+      USING ERRCODE = '0A000';
+  END IF;
+
   PERFORM pg_advisory_xact_lock(
     ('x' || substr(replace(NEW.posting_group_id::text, '-', ''), 1, 16))::bit(64)::bigint
   );
