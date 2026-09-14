@@ -12,7 +12,6 @@ const state = {
 
 const refetchSpy = vi.fn();
 const setSelectedClientIdSpy = vi.fn();
-const exportSpy = vi.fn(() => Promise.resolve());
 
 const query = (data: any[]) => ({
   data: state.isLoading || state.isError ? undefined : data,
@@ -38,7 +37,7 @@ vi.mock("@/hooks/useJournalEntries", () => ({ useJournalEntries: () => query([])
 vi.mock("@/hooks/useBankTransactions", () => ({ useBankTransactions: () => query([]) }));
 vi.mock("@/hooks/useGrootboekrekeningen", () => ({ useActiveGrootboekrekeningen: () => query([]) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
-vi.mock("@/lib/snelstart-export", () => ({ exportAllForClient: exportSpy }));
+vi.mock("@/lib/snelstart-export", () => ({ exportAllForClient: vi.fn(() => Promise.resolve()) }));
 
 import Overzichten from "@/pages/Overzichten";
 
