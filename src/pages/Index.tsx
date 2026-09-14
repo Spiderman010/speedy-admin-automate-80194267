@@ -315,11 +315,13 @@ export default function Dashboard() {
                   <TableBody>
                     {workRows.map(({ client, readiness }) => (
                       <TableRow key={client.id}>
-                        <TableCell className="max-w-[220px]">
-                          <p className="truncate text-sm font-medium">{client.name}</p>
+                        <TableCell className="max-w-[10rem] sm:max-w-[14rem] lg:max-w-[220px]">
+                          <p className="truncate text-sm font-medium" title={client.name}>
+                            {client.name}
+                          </p>
                           {(readiness.configMissingReasons.length > 0 ||
                             readiness.configMissing1799) && (
-                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-warning">
+                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 break-words text-xs text-warning">
                               <AlertCircle className="h-3 w-3 shrink-0" />
                               {/* configMissingReasons is the single source for
                                   blocking config gaps (dagboeken + debiteuren/
@@ -351,7 +353,7 @@ export default function Dashboard() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="min-h-[44px] sm:min-h-0"
+                            className="h-9 whitespace-nowrap"
                             onClick={() => openWorkArea(client.id)}
                           >
                             Openen
@@ -389,7 +391,7 @@ export default function Dashboard() {
                   <Link
                     key={item.id}
                     to={item.to}
-                    className="-mx-2 flex items-start gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="-mx-2 flex items-start gap-3 rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:py-1.5"
                   >
                     {item.kind === "vraagpost" ? (
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
