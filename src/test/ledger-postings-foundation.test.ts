@@ -83,6 +83,17 @@ describe("Migratie — financiële integriteit op rijniveau", () => {
     expect(sql).not.toMatch(/line_no\s+integer\s+NOT NULL DEFAULT/);
   });
 
+  it("9b. bewaakt bij source_type de vorm, niet een vaste waardenlijst", () => {
+    // De canonieke grootboektabel mag niet bij elke nieuwe bronsoort een
+    // schemamigratie eisen; de echte bescherming is de idempotency-constraint
+    // die elke schrijverfase voor zijn eigen bronsoort toevoegt.
+    expect(sql).toMatch(/btrim\(source_type\) <> ''/);
+    expect(sql).toMatch(/source_type ~ '\^\[a-z\]\[a-z0-9_\]\*\$'/);
+    // Geen harde waardenlijst en geen PostgreSQL enum.
+    expect(sql).not.toMatch(/source_type IN \(/);
+    expect(sql).not.toMatch(/CREATE TYPE/);
+  });
+
   it("10. vereist currency expliciet, zonder impliciete EUR-default", () => {
     expect(sql).toMatch(/currency\s+text\s+NOT NULL CHECK \(currency ~ '\^\[A-Z\]\{3\}\$'\)/);
     expect(sql).not.toMatch(/currency[^\n]*DEFAULT/);
@@ -206,8 +217,27 @@ describe("Migratie — append-only", () => {
     expect(sql).not.toMatch(/role_ledger_postings_update|role_ledger_postings_delete/);
   });
 
-  it("27. trekt muteerrechten ook expliciet in (ook voor rollen die RLS omzeilen)", () => {
-    expect(sql).toMatch(/REVOKE UPDATE, DELETE, TRUNCATE ON public\.ledger_postings FROM anon, authenticated;/);
+  it("27. trekt muteerrechten in bij álle applicatierollen, inclusief service_role", () => {
+    expect(sql).toMatch(
+      /REVOKE UPDATE, DELETE, TRUNCATE ON public\.ledger_postings FROM anon, authenticated, service_role;/,
+    );
+  });
+
+  it("27b. dicht het TRUNCATE-gat dat trigger noch RLS kan afdekken", () => {
+    // TRUNCATE vuurt geen row-trigger, en service_role omzeilt RLS. Alleen een
+    // expliciete REVOKE sluit dit; anders zou één TRUNCATE het hele grootboek
+    // wissen terwijl UPDATE en DELETE keurig geblokkeerd blijven.
+    const revoke = sql.match(/REVOKE UPDATE, DELETE, TRUNCATE ON public\.ledger_postings FROM ([^;]+);/);
+    expect(revoke).not.toBeNull();
+    const roles = (revoke as RegExpMatchArray)[1].split(",").map((r) => r.trim());
+    expect(new Set(roles)).toEqual(new Set(["anon", "authenticated", "service_role"]));
+  });
+
+  it("27c. laat service_role wél lezen en schrijven", () => {
+    // De REVOKE noemt alleen UPDATE/DELETE/TRUNCATE; SELECT en INSERT blijven,
+    // zodat edge functions gewoon kunnen boeken.
+    expect(sql).not.toMatch(/REVOKE[^\n]*\bINSERT\b[^\n]*service_role/);
+    expect(sql).not.toMatch(/REVOKE ALL ON public\.ledger_postings FROM[^\n]*service_role/);
   });
 
   it("28. bouwt nog geen reversal-logica, alleen een kolom voor later", () => {
@@ -246,7 +276,7 @@ describe("Migratie — RLS", () => {
 describe("Migratie — foreign keys en verwijdergedrag", () => {
   it("33. gebruikt overal ON DELETE RESTRICT en nooit CASCADE of SET NULL", () => {
     const restricts = sql.match(/ON DELETE RESTRICT/g) ?? [];
-    expect(restricts).toHaveLength(4);
+    expect(restricts).toHaveLength(5);
     expect(sql).not.toMatch(/ON DELETE CASCADE/);
     expect(sql).not.toMatch(/ON DELETE SET NULL/);
   });
@@ -258,9 +288,18 @@ describe("Migratie — foreign keys en verwijdergedrag", () => {
     expect(sql).toMatch(/ledger_postings_reversal_of_posting_id_fkey[\s\S]*?REFERENCES public\.ledger_postings \(id\)\s+ON DELETE RESTRICT/);
   });
 
+  it("34b. legt user_id vast met een FK naar auth.users, niet-cascaderend", () => {
+    // Een onveranderlijke boeking mag nooit een verzonnen of verweesde
+    // maker-uuid bevatten; CASCADE zou boekhistorie wissen bij het
+    // verwijderen van een gebruiker.
+    expect(sql).toMatch(
+      /ledger_postings_user_id_fkey\s+FOREIGN KEY \(user_id\)\s+REFERENCES auth\.users \(id\)\s+ON DELETE RESTRICT/,
+    );
+  });
+
   it("35. voegt de constraints idempotent toe via pg_constraint", () => {
     const guards = sql.match(/FROM pg_constraint c/g) ?? [];
-    expect(guards).toHaveLength(4);
+    expect(guards).toHaveLength(5);
   });
 });
 
@@ -286,9 +325,14 @@ describe("Migratie — indexen en idempotentie", () => {
         "idx_ledger_postings_client_account_date",
         "idx_ledger_postings_grootboekrekening_id",
         "idx_ledger_postings_source",
+        "idx_ledger_postings_user_id",
         "idx_ledger_postings_reversal_of_posting_id",
       ]),
     );
+  });
+
+  it("38b. indexeert user_id zodat de RESTRICT-FK geen seq scan wordt", () => {
+    expect(sql).toMatch(/CREATE INDEX IF NOT EXISTS idx_ledger_postings_user_id\s+ON public\.ledger_postings \(user_id\);/);
   });
 
   it("39. is idempotent te herhalen", () => {

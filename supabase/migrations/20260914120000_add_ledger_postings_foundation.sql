@@ -46,6 +46,7 @@
 --   DROP POLICY IF EXISTS role_ledger_postings_select ON public.ledger_postings;
 --   DROP POLICY IF EXISTS role_ledger_postings_insert ON public.ledger_postings;
 --   DROP INDEX IF EXISTS public.idx_ledger_postings_reversal_of_posting_id;
+--   DROP INDEX IF EXISTS public.idx_ledger_postings_user_id;
 --   DROP INDEX IF EXISTS public.idx_ledger_postings_source;
 --   DROP INDEX IF EXISTS public.idx_ledger_postings_grootboekrekening_id;
 --   DROP INDEX IF EXISTS public.idx_ledger_postings_client_account_date;
@@ -105,14 +106,21 @@ CREATE TABLE IF NOT EXISTS public.ledger_postings (
 
   description            text,
 
-  source_type            text        NOT NULL CHECK (source_type IN (
-                                       'purchase_invoice',
-                                       'sales_invoice',
-                                       'bank_transaction',
-                                       'manual_journal',
-                                       'opening_balance',
-                                       'correction'
-                                     )),
+  -- Shape-checked, NOT value-checked. An enumerated CHECK would mean a schema
+  -- migration every time a later phase introduces a source, on the canonical
+  -- long-lived ledger table — and it would buy little, because the real
+  -- protection against a bogus source is the writer-specific idempotency
+  -- constraint each phase adds for its own source_type, not a list here. The
+  -- shape rule still prevents the drift an unconstrained text column invites
+  -- ('Purchase Invoice' vs 'purchase_invoice' vs ' purchase_invoice'), which
+  -- matters because a future partial index keys off the literal value.
+  -- Deliberately not a PostgreSQL enum: the repo uses text + CHECK everywhere
+  -- except app_role, and an enum is worse here (ALTER TYPE to extend, and
+  -- values can never be removed).
+  source_type            text        NOT NULL CHECK (
+                                       btrim(source_type) <> ''
+                                       AND source_type ~ '^[a-z][a-z0-9_]*$'
+                                     ),
   source_id              uuid,
   source_line_id         uuid,
 
@@ -214,6 +222,39 @@ BEGIN
 END
 $$;
 
+-- user_id is the creator of an immutable row, so it must stay both present and
+-- truthful. The first-wave tables (20260411182021) use ON DELETE CASCADE, which
+-- is exactly wrong here: deleting a user would erase accounting history. The
+-- closer precedent is bank_transaction_allocations (20260515120000), which
+-- references auth.users(id) with no cascade at all. RESTRICT makes that
+-- intent explicit rather than implicit (NO ACTION), and is not deferrable, so
+-- the check cannot be postponed inside a transaction. The consequence is
+-- deliberate: an auth user who has posted can no longer be hard-deleted, which
+-- is the correct trade for never leaving a fabricated or dangling creator uuid
+-- on a permanent accounting record.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint c
+    JOIN pg_class t ON t.oid = c.conrelid
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE c.contype = 'f'
+      AND n.nspname = 'public'
+      AND t.relname = 'ledger_postings'
+      AND c.conname = 'ledger_postings_user_id_fkey'
+  ) THEN
+    ALTER TABLE public.ledger_postings
+      ADD CONSTRAINT ledger_postings_user_id_fkey
+      FOREIGN KEY (user_id)
+      REFERENCES auth.users (id)
+      ON DELETE RESTRICT;
+  ELSE
+    RAISE NOTICE 'Constraint ledger_postings_user_id_fkey already exists, skipping';
+  END IF;
+END
+$$;
+
 -- Self-reference for a future reversal: the reversing posting points at the
 -- posting it reverses. Nullable (almost every posting is not a reversal) and
 -- RESTRICT, so a reversed posting can never be deleted out from under its
@@ -302,6 +343,11 @@ CREATE INDEX IF NOT EXISTS idx_ledger_postings_grootboekrekening_id
 -- already posted this document before writing again.
 CREATE INDEX IF NOT EXISTS idx_ledger_postings_source
   ON public.ledger_postings (source_type, source_id);
+
+-- user_id leads no other index, so without this the RESTRICT FK above would
+-- sequentially scan every posting whenever an auth user delete is attempted.
+CREATE INDEX IF NOT EXISTS idx_ledger_postings_user_id
+  ON public.ledger_postings (user_id);
 
 -- Reversals are rare, so a partial index keeps this near-free while still
 -- serving the self-referencing RESTRICT FK.
@@ -626,9 +672,30 @@ CREATE POLICY role_ledger_postings_insert ON public.ledger_postings
   WITH CHECK (public.has_min_role(auth.uid(), organization_id, 'assistant'));
 
 -- anon must never reach accounting data, and no application role may mutate a
--- posted row (layers (b) of section 7).
+-- posted row (layer (b) of section 7).
+--
+-- service_role is included deliberately. It is the one role where neither of
+-- the other two layers helps: it bypasses RLS, so layer (a) is irrelevant to
+-- it, and TRUNCATE fires no row-level trigger at all, so layer (c) cannot see
+-- it either — a single TRUNCATE would silently erase the entire ledger while
+-- every UPDATE and DELETE stayed correctly blocked. Privilege is therefore the
+-- only mechanism that closes this, and it must be applied to service_role
+-- explicitly rather than assumed from RLS.
+--
+-- UPDATE and DELETE are revoked from service_role too, as defence in depth:
+-- the mutation trigger already refuses them, but a REVOKE stops the statement
+-- one layer earlier and keeps the privilege grid stating the intent outright,
+-- so the trigger is not the single point of failure for an RLS-exempt role.
+--
+-- service_role keeps SELECT and INSERT, so edge functions can still read and
+-- write postings normally.
 REVOKE ALL ON public.ledger_postings FROM anon;
-REVOKE UPDATE, DELETE, TRUNCATE ON public.ledger_postings FROM anon, authenticated;
+REVOKE UPDATE, DELETE, TRUNCATE ON public.ledger_postings FROM anon, authenticated, service_role;
+
+-- The table owner keeps TRUNCATE (ownership privileges cannot be revoked from
+-- the owner), so the documented owner-only maintenance path in section 7 stays
+-- operable. That is intended: maintenance is an explicit, auditable act by a
+-- DBA, not something any application role can reach.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 10) Documentation
@@ -647,7 +714,7 @@ COMMENT ON COLUMN public.ledger_postings.boekjaar IS
 'Boekjaar waaraan deze boeking wordt toegerekend. Expliciet opgeslagen omdat een gebroken boekjaar niet gelijk hoeft te zijn aan het kalenderjaar van posting_date.';
 
 COMMENT ON COLUMN public.ledger_postings.source_type IS
-'Herkomst van de boeking. De toegestane waarden dekken de geplande schrijvers (6C-b3 t/m 6C-b6) plus opening_balance en correction; uitbreiden gebeurt met een expliciete ALTER van de CHECK.';
+'Herkomst van de boeking, als lowercase snake_case. De CHECK bewaakt alleen de vorm, niet de waarde: nieuwe bronsoorten komen erbij zonder schemamigratie. Bekende waarden: purchase_invoice (6C-b3), sales_invoice (6C-b4), bank_transaction (6C-b5), manual_journal (6C-b6), opening_balance, correction. Elke schrijverfase bewaakt zijn eigen bronsoort met een eigen idempotency-constraint.';
 
 COMMENT ON COLUMN public.ledger_postings.source_line_id IS
 'Optionele regel binnen het brondocument. Let op: purchase_invoice_lines.id is niet duurzaam (regels worden bij elke opslag verwijderd en opnieuw ingevoegd), dus dit veld is geen permanente identiteit.';
