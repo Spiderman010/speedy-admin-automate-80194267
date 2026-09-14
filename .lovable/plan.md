@@ -11,11 +11,13 @@ De bestaande pagina `Overzichten` omvormen tot een professionele, responsieve ra
 - De bestaande exportactie, drie bestaande totalen en tabel met recente inkoopfacturen behouden. Alleen visuele hiërarchie, uitlijning, tabel-scroll en numerieke typografie verbeteren.
 - Bestaande query-resultaten gebruiken voor laad-, fout-, geen-administratie- en geen-dataweergaven. Een herlaadknop gebruikt alleen de al aanwezige `refetch`-functies.
 - Eén gericht testbestand toevoegen voor renderen, administratiekeuze, rapportkaarten, toestanden, responsieve klassen, bestaand rapportbereik en afwezigheid van nieuwe database-mutaties of financiële rekenlogica.
+- Responsieve tests mogen klassen controleren, maar gebruiken waar mogelijk ook echte render/asserties voor zichtbare bediening, staten en rapportkaarten.
 
 ## Technische afbakening
 - Alleen `src/pages/Overzichten.tsx` en één gericht rapportage-testbestand wijzigen.
 - Geen wijzigingen aan gedeelde componenten, projectkaart, database, migraties, gegenereerde types, grootboekpostings, boekingslogica of SnelStart-export.
 - De bestaande sommen en exportaanroep blijven byte-inhoudelijk en functioneel gelijk waar relevant.
+- Als `Overzichten.tsx` tijdens de uitvoering blijkt te zijn gewijzigd sinds de startcontrole, direct stoppen en eerst de nieuwe diff rapporteren.
 
 ## Validatie
 - `npx tsc --noEmit`
