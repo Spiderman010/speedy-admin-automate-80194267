@@ -55,6 +55,7 @@
 --   DROP INDEX IF EXISTS public.idx_ledger_postings_grootboekrekening_id;
 --   DROP INDEX IF EXISTS public.idx_ledger_postings_client_account_date;
 --   DROP INDEX IF EXISTS public.idx_ledger_postings_organization_date;
+--   REVOKE SELECT, INSERT ON public.ledger_postings FROM authenticated, service_role;
 --   DROP TABLE IF EXISTS public.ledger_postings;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -243,8 +244,9 @@ $$;
 -- is exactly wrong here: deleting a user would erase accounting history. The
 -- closer precedent is bank_transaction_allocations (20260515120000), which
 -- references auth.users(id) with no cascade at all. RESTRICT makes that
--- intent explicit rather than implicit (NO ACTION), and is not deferrable, so
--- the check cannot be postponed inside a transaction. The consequence is
+-- intent explicit rather than implicit (NO ACTION): RESTRICT is checked
+-- immediately even where a constraint has been declared DEFERRABLE, whereas
+-- NO ACTION can be postponed to commit. The consequence is
 -- deliberate: an auth user who has posted can no longer be hard-deleted, which
 -- is the correct trade for never leaving a fabricated or dangling creator uuid
 -- on a permanent accounting record.
@@ -539,8 +541,15 @@ $$;
 --    auditable act rather than an accident:
 --
 --      ALTER TABLE public.ledger_postings DISABLE TRIGGER prevent_ledger_posting_mutation_trigger;
+--      ALTER TABLE public.ledger_postings DISABLE TRIGGER prevent_ledger_posting_truncate_trigger;
 --      -- ... corrective statement ...
---      ALTER TABLE public.ledger_postings ENABLE  TRIGGER prevent_ledger_posting_mutation_trigger;
+--      ALTER TABLE public.ledger_postings ENABLE ALWAYS TRIGGER prevent_ledger_posting_mutation_trigger;
+--      ALTER TABLE public.ledger_postings ENABLE ALWAYS TRIGGER prevent_ledger_posting_truncate_trigger;
+--
+--    Both must be named: UPDATE/DELETE and TRUNCATE are guarded by two separate
+--    triggers that merely share one function, so disabling only the first still
+--    leaves TRUNCATE blocked. Re-enable with ENABLE ALWAYS, not ENABLE, or the
+--    guard silently drops back to being bypassable via session_replication_role.
 --
 --    Only the table owner can run that, so the schema stays operable without
 --    leaving an in-band bypass that application code could ever reach.
@@ -668,6 +677,21 @@ CREATE TRIGGER prevent_ledger_posting_truncate_trigger
 --    around: write ONE posting group per transaction, or — if a batch writer
 --    must cover several — insert them ordered by posting_group_id, which makes
 --    a cycle impossible, or retry on 40P01.
+--
+--    Two further costs a batch writer must respect. First, each advisory lock
+--    occupies a slot in the SHARED lock table until COMMIT, so a transaction
+--    covering thousands of groups can exhaust max_locks_per_transaction and
+--    degrade other backends, not just itself. Second, the deferred check stays
+--    row-level, so a group of n rows runs n aggregations over n rows at commit —
+--    quadratic, not merely duplicated. Both are fine for the two- to
+--    few-line entries this table is designed around, and both argue for the
+--    same contract: one posting group per transaction, modest groups.
+--
+--    Finally, posting_group_id must be RANDOM (uuid v4), never derived
+--    deterministically from a source document. The seal makes a group id
+--    single-use, so a predictable id would let anyone pre-commit a group under
+--    it and permanently block the legitimate writer from ever posting that
+--    document — a cross-tenant denial of write that no correction could undo.
 --
 --    pg_advisory_xact_lock (not pg_advisory_lock) releases automatically at
 --    COMMIT or ROLLBACK, so no session-level lock can leak into a pooled
@@ -961,8 +985,30 @@ CREATE POLICY role_ledger_postings_insert ON public.ledger_postings
 --
 -- service_role keeps SELECT and INSERT, so edge functions can still read and
 -- write postings normally.
+-- Granted explicitly rather than inherited from ALTER DEFAULT PRIVILEGES, so
+-- the final privilege grid is a property of this migration instead of of
+-- whichever role happened to apply it. Both precedents this file follows do the
+-- same (20260530211249 for organizations, 20260802201226 for the backup table).
+-- Without it the outcome is undefined in both directions: either the app cannot
+-- write at all, or the REVOKEs below are revoking privileges that were never
+-- granted and layer (b) is a no-op.
+GRANT SELECT, INSERT ON public.ledger_postings TO authenticated, service_role;
+
 REVOKE ALL ON public.ledger_postings FROM anon;
 REVOKE UPDATE, DELETE, TRUNCATE ON public.ledger_postings FROM anon, authenticated, service_role;
+
+-- A single session GUC, session_replication_role = 'replica', disables every
+-- ORIGIN trigger at once — no ALTER TABLE, no audit trail. That would have
+-- silently unarmed the append-only guards while the REVOKEs still looked
+-- correct, so the two guards that must never yield are ENABLE ALWAYS.
+--
+-- The INSERT-path triggers are deliberately NOT ENABLE ALWAYS: a pg_restore or
+-- logical-replication apply runs in replica mode and carries created_xact_id in
+-- the dump, so leaving them ORIGIN is what keeps a restore possible. Re-running
+-- them would re-stamp the rows and the seal would then reject the very history
+-- being restored.
+ALTER TABLE public.ledger_postings ENABLE ALWAYS TRIGGER prevent_ledger_posting_mutation_trigger;
+ALTER TABLE public.ledger_postings ENABLE ALWAYS TRIGGER prevent_ledger_posting_truncate_trigger;
 
 -- The table owner keeps TRUNCATE (ownership privileges cannot be revoked from
 -- the owner), so the documented owner-only maintenance path in section 7 stays

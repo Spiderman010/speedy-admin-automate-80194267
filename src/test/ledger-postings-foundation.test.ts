@@ -324,6 +324,22 @@ describe("Migratie — append-only", () => {
     expect(new Set(roles)).toEqual(new Set(["anon", "authenticated", "service_role"]));
   });
 
+  it("27d. maakt de append-only triggers ENABLE ALWAYS, zodat één session-GUC ze niet uitzet", () => {
+    // session_replication_role = 'replica' schakelt alle ORIGIN-triggers in één
+    // keer uit, zonder ALTER TABLE en zonder spoor.
+    expect(sql).toMatch(/ALTER TABLE public\.ledger_postings ENABLE ALWAYS TRIGGER prevent_ledger_posting_mutation_trigger;/);
+    expect(sql).toMatch(/ALTER TABLE public\.ledger_postings ENABLE ALWAYS TRIGGER prevent_ledger_posting_truncate_trigger;/);
+    // De INSERT-triggers blijven bewust ORIGIN, anders is een pg_restore
+    // onmogelijk: de zegel zou de teruggezette historie zelf afkeuren.
+    expect(sql).not.toMatch(/ENABLE ALWAYS TRIGGER (lock_ledger_posting_group_trigger|validate_)/);
+  });
+
+  it("27e. verleent de rechten expliciet in plaats van te leunen op defaults", () => {
+    expect(sql).toMatch(/GRANT SELECT, INSERT ON public\.ledger_postings TO authenticated, service_role;/);
+    // Geen UPDATE/DELETE/TRUNCATE in de GRANT.
+    expect(sql).not.toMatch(/GRANT[^\n]*(UPDATE|DELETE|TRUNCATE|ALL)[^\n]*ON public\.ledger_postings/);
+  });
+
   it("27c. laat service_role wél lezen en schrijven", () => {
     // De REVOKE noemt alleen UPDATE/DELETE/TRUNCATE; SELECT en INSERT blijven,
     // zodat edge functions gewoon kunnen boeken.
