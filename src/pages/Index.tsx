@@ -47,16 +47,24 @@ function statusLabel(s: ReadinessStatus): string {
 // warning styling for missing configuration, neutral for done.
 function StatusBadge({ status }: { status: ReadinessStatus }) {
   if (status === "niet_klaar") {
-    return <Badge variant="destructive">{statusLabel(status)}</Badge>;
-  }
-  if (status === "config_ontbreekt") {
     return (
-      <Badge variant="outline" className="border-warning/60 text-warning">
+      <Badge variant="destructive" className="whitespace-nowrap">
         {statusLabel(status)}
       </Badge>
     );
   }
-  return <Badge variant="secondary">{statusLabel(status)}</Badge>;
+  if (status === "config_ontbreekt") {
+    return (
+      <Badge variant="outline" className="whitespace-nowrap border-warning/60 text-warning">
+        {statusLabel(status)}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary" className="whitespace-nowrap">
+      {statusLabel(status)}
+    </Badge>
+  );
 }
 
 // Compact operational KPI card: title, current value, one context line and a
@@ -230,12 +238,12 @@ export default function Dashboard() {
       <h1 className="sr-only">Dashboard</h1>
 
       {hasError && (
-        <div className="mb-4 flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
           <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
-          <p className="flex-1 text-sm text-destructive">
+          <p className="min-w-0 flex-1 break-words text-sm text-destructive">
             Een deel van de dashboardgegevens kon niet worden geladen.
           </p>
-          <Button variant="outline" size="sm" onClick={retryFailed}>
+          <Button variant="outline" size="sm" className="h-9 shrink-0 whitespace-nowrap" onClick={retryFailed}>
             Opnieuw laden
           </Button>
         </div>
