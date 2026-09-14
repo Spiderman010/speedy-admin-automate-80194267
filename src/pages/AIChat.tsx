@@ -48,7 +48,7 @@ export default function AIChat() {
         </CardHeader>
 
         <CardContent className="flex-1 overflow-hidden p-0">
-          <ScrollArea className="h-full" ref={scrollRef}>
+          <div className="h-full overflow-y-auto" ref={scrollRef}>
             <div className="space-y-4 p-4">
               {messages.length === 0 && (
                 <div className="py-10 text-center text-sm text-muted-foreground">
