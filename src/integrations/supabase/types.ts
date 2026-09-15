@@ -41,6 +41,74 @@ export type Database = {
         }
         Relationships: []
       }
+      bank_allocation_postings: {
+        Row: {
+          allocation_id: string
+          amount: number
+          bank_transaction_id: string
+          client_id: string
+          created_at: string
+          invoice_id: string
+          invoice_type: string
+          organization_id: string
+          posting_group_id: string
+          user_id: string
+        }
+        Insert: {
+          allocation_id: string
+          amount: number
+          bank_transaction_id: string
+          client_id: string
+          created_at?: string
+          invoice_id: string
+          invoice_type: string
+          organization_id: string
+          posting_group_id: string
+          user_id: string
+        }
+        Update: {
+          allocation_id?: string
+          amount?: number
+          bank_transaction_id?: string
+          client_id?: string
+          created_at?: string
+          invoice_id?: string
+          invoice_type?: string
+          organization_id?: string
+          posting_group_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_allocation_postings_allocation_id_fkey"
+            columns: ["allocation_id"]
+            isOneToOne: true
+            referencedRelation: "bank_transaction_allocations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_allocation_postings_bank_transaction_id_fkey"
+            columns: ["bank_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "bank_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_allocation_postings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_allocation_postings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bank_transaction_allocations: {
         Row: {
           amount: number
@@ -1334,6 +1402,10 @@ export type Database = {
       ledger_link_org_ok: {
         Args: { _account_id: string; _organization_id: string }
         Returns: boolean
+      }
+      post_bank_allocation: {
+        Args: { _allocation_id: string }
+        Returns: string
       }
       post_purchase_invoice: { Args: { _invoice_id: string }; Returns: string }
       post_sales_invoice: { Args: { _invoice_id: string }; Returns: string }
