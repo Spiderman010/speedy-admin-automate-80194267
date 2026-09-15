@@ -304,9 +304,65 @@ from information_schema.columns
 where table_schema='public' and table_name='clients' and column_name='bank_rekening_id';
 ```
 
+### Phase 6C-b5b — bank settlement postings
+
+Migration file:
+```
+supabase/migrations/20260917120000_add_bank_settlement_posting.sql
+```
+
+**Purpose:** the third production accounting writer. `public.post_bank_allocation(_allocation_id uuid)` posts one bank allocation (one `bank_transaction_allocations` row: "this bank transaction settles this much of this invoice") into `ledger_postings` as a balanced, immutable, two-leg group, exactly once. It moves the open item from debiteuren/crediteuren to the bank account and books **no** revenue, expense or VAT — those legs were booked by 6C-b3/6C-b4 and this writer requires that to have happened first.
+
+**The entry** (amount = `allocation.amount`, used as-is — never recalculated, never clamped)
+
+```
+invoice_type = 'verkoop'  (requires bank_transactions.amount > 0)
+  DEBIT   clients.bank_rekening_id
+  CREDIT  clients.debiteuren_rekening_id
+
+invoice_type = 'inkoop'   (requires bank_transactions.amount < 0)
+  DEBIT   clients.crediteuren_rekening_id
+  CREDIT  clients.bank_rekening_id
+```
+
+**Proven sign semantics.** `bank_transactions.amount` is signed: `>= 0` = money in = `verkoop`, `< 0` = money out = `inkoop` (`src/pages/Bank.tsx:111`, `src/lib/ledger-mutations.ts:345`, `src/lib/snelstart-export.ts:268`). `bank_transaction_allocations.amount` is always positive (`CHECK (amount > 0)`, derived from `Math.abs(tx.amount)` in the UI); direction is not stored on the allocation, it comes from `invoice_type` and is cross-checked against the transaction sign. A mismatch (or `amount = 0`) is refused.
+
+**Contract**
+
+- **Trigger point:** an explicit "Boeken in grootboek" action per allocation card in the Bankaflettering drawer. Nothing posts on save, match or import.
+- **Idempotency key = the allocation id.** `public.bank_allocation_postings` has `allocation_id` as PRIMARY KEY and `posting_group_id UNIQUE`. Neither the transaction id nor the invoice id can be the key: one transaction may settle several invoices and one invoice may be settled by several transactions — both are one-to-many. The marker also records `bank_transaction_id`, `invoice_id`, `invoice_type` and `amount` as audit trail. A `BEFORE INSERT` guard on `ledger_postings`, scoped strictly to `source_type = 'bank_allocation'`, makes the marker the single authority so a direct `authenticated` INSERT cannot create a second group.
+- **Source invoice must already be posted.** The writer requires a row in `purchase_invoice_postings` / `sales_invoice_postings` for the invoice (`invoice_id` has no FK; it is resolved per `invoice_type`). Invoice `status` proves nothing and is not consulted. The invoice row is locked `FOR SHARE` so a `post_*_invoice()` in flight finishes first (then the marker is visible) or rolls back (then "nog niet geboekt").
+- **Bank account source:** `clients.bank_rekening_id` (6C-b5a), re-checked with `posting_account_ok()` at posting time, as are debiteuren/crediteuren. Never `bank_dagboek`, never 1100, never `bank_transactions.grootboekrekening_id` (the SnelStart contra account), never the legacy `ledger_account_id`, never `categorie`. No fallback account, ever.
+- **Date source:** `posting_date = bank_transactions.transaction_date` (the day the money moved), `boekjaar` = its calendar year, `currency = 'EUR'` explicit. Closed years (`<= clients.afgesloten_boekjaar`) are refused.
+- **Partial / multi semantics:** a partial receipt posts a partial settlement; several allocations on one transaction each post their own group; several transactions on one invoice each post their own group.
+- **Over-allocation / overpayment refusals** (exact NUMERIC, no tolerance — the DB has no such constraint, only `Bank.tsx` checks it client-side): `allocation.amount > abs(tx.amount)`, `SUM(allocations on tx) > abs(tx.amount)`, `allocation.amount > invoice.amount_incl`, `SUM(allocations on invoice) > invoice.amount_incl` ("een overbetaling wordt nog niet ondersteund"). The writer refuses inconsistent state instead of posting it.
+- **Security:** identical model to 6C-b3/b4 — `SECURITY DEFINER`, `SET search_path = public`, `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` then `GRANT EXECUTE TO authenticated` only; role required `assistant`; `organization_id IS NULL` on the allocation fails closed. Marker: `REVOKE ALL` then `GRANT SELECT TO authenticated, service_role`; `anon` has nothing.
+- **Immutability, allocation:** once posted, `id, amount, bank_transaction_id, client_id, invoice_id, invoice_type, organization_id, user_id` are frozen and DELETE is refused (`prevent_posted_bank_allocation_mutation`, explicit `TG_OP` branches, never `COALESCE(NEW.x, OLD.x)`; re-pointing an unposted row onto a posted id is refused too). `created_at`/`updated_at` stay free.
+- **Immutability, bank transaction:** once any allocation on it is posted, `id, amount, transaction_date, client_id, organization_id, user_id` are frozen and DELETE is refused — which also means the `ON DELETE CASCADE` on `bta_tx_user_client_fk` can never reach a posted allocation. `description, reference, counter_account, camt_*, match_status, match_confidence, matched_invoice_id, grootboekrekening_id (contra), ledger_account_id (legacy)` stay editable.
+- **`clients.bank_rekening_id` is deliberately NOT frozen.** The ledger rows persist the actual `grootboekrekening_id` used, so a later configuration change only affects future settlements and can never rewrite history; freezing it would block legitimate re-configuration for every client that ever posted a settlement.
+- **Lock order:** allocation (`FOR UPDATE`) → bank transaction (`FOR UPDATE`) → source invoice (`FOR SHARE`) → marker read → client/account reads → claim INSERT → ledger INSERTs. The invoice writers only lock their own invoice row and never touch allocations/bank rows; the app's allocation/bank mutations are separate single-table transactions; so no lock cycle exists. A concurrent allocation INSERT on the same transaction takes `KEY SHARE` on the bank row for its FK, which conflicts with the writer's `FOR UPDATE` and waits — that serialisation is what makes the per-transaction SUM check sound.
+- **No historic backfill.** No existing allocation is posted automatically.
+
+**Deliberately unsupported, refused rather than approximated:** overpayments / betalingsverschillen (no suspense or 1799 leg), sign mismatches, settlements of invoices that were never posted, corrections/reposting (future reversal workflow).
+
+**Temporary type shim.** `src/hooks/useBankAllocationPosting.ts` reaches `bank_allocation_postings` / `post_bank_allocation` through a narrow structural cast (`UntypedPostingApi`), exactly like 6C-b4 did in PR #148, because `types.ts` is never hand-edited and the migration is not applied yet. Remove the shim in a tiny follow-up once types are regenerated (as #150 did for sales).
+
+**Status: ⏳ Not yet applied.**
+Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
+
+Verification query:
+```sql
+select to_regclass('public.bank_allocation_postings') as marker_table,
+       (select count(*) from pg_proc where proname = 'post_bank_allocation') as rpc,
+       (select count(*) from pg_trigger where tgname in
+         ('validate_bank_source_claim_trigger',
+          'prevent_posted_bank_allocation_mutation_trigger',
+          'prevent_posted_bank_transaction_mutation_trigger')) as triggers;
+```
+
 ---
 
-Future phases: 6C-b5b bank settlement posting (the writer consuming `clients.bank_rekening_id` configured in 6C-b5a), 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
+Future phases: 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
 
 **Status: ⏳ Not yet applied.**
 Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
