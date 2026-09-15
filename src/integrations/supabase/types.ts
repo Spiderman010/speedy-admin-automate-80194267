@@ -909,6 +909,55 @@ export type Database = {
           },
         ]
       }
+      purchase_invoice_postings: {
+        Row: {
+          client_id: string
+          created_at: string
+          organization_id: string
+          posting_group_id: string
+          purchase_invoice_id: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          organization_id: string
+          posting_group_id: string
+          purchase_invoice_id: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          organization_id?: string
+          posting_group_id?: string
+          purchase_invoice_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_invoice_postings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_invoice_postings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_invoice_postings_purchase_invoice_id_fkey"
+            columns: ["purchase_invoice_id"]
+            isOneToOne: true
+            referencedRelation: "purchase_invoices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       purchase_invoices: {
         Row: {
           amount_excl: number | null
@@ -1227,6 +1276,7 @@ export type Database = {
         Args: { _account_id: string; _organization_id: string }
         Returns: boolean
       }
+      post_purchase_invoice: { Args: { _invoice_id: string }; Returns: string }
       posting_account_ok: {
         Args: {
           _account_id: string
