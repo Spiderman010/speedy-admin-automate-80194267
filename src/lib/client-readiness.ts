@@ -29,6 +29,7 @@ export interface ClientReadiness {
   configMissingCrediteurenRekening: boolean;
   configMissingBtwTeVorderenRekening: boolean;
   configMissingBtwTeBetalenRekening: boolean;
+  configMissingBankRekening: boolean;
   configMissing1799: boolean;
   /** Human-readable list of what is missing, for display next to the status. */
   configMissingReasons: string[];
@@ -85,6 +86,7 @@ export function computeClientReadiness(
   const configMissingCrediteurenRekening = client.crediteuren_rekening_id == null;
   const configMissingBtwTeVorderenRekening = client.btw_te_vorderen_rekening_id == null;
   const configMissingBtwTeBetalenRekening = client.btw_te_betalen_rekening_id == null;
+  const configMissingBankRekening = client.bank_rekening_id == null;
   const configMissing1799 = !has1799(clientAccounts);
 
   const configMissingReasons: string[] = [];
@@ -95,6 +97,7 @@ export function computeClientReadiness(
   if (configMissingCrediteurenRekening) configMissingReasons.push("Crediteurenrekening ontbreekt");
   if (configMissingBtwTeVorderenRekening) configMissingReasons.push("BTW te vorderen (voorbelasting) ontbreekt");
   if (configMissingBtwTeBetalenRekening) configMissingReasons.push("BTW te betalen (af te dragen BTW) ontbreekt");
+  if (configMissingBankRekening) configMissingReasons.push("Bankrekening grootboek ontbreekt");
 
   const hasConfigWarning = configMissingReasons.length > 0;
 
@@ -122,6 +125,7 @@ export function computeClientReadiness(
     configMissingCrediteurenRekening,
     configMissingBtwTeVorderenRekening,
     configMissingBtwTeBetalenRekening,
+    configMissingBankRekening,
     configMissing1799,
     configMissingReasons,
     status,
