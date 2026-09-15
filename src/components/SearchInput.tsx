@@ -17,7 +17,7 @@ export function SearchInput({ value, onChange, placeholder, className }: SearchI
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="pl-10"
+        className="h-10 pl-10"
       />
     </div>
   );
