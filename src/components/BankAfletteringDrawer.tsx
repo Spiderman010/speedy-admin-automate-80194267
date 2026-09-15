@@ -15,6 +15,7 @@ import { getInvoiceTotalAmount, getInvoiceRemainingAmount } from "@/lib/invoice-
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
 import { rankCandidates } from "@/components/BankMatchDialog";
 import type { InvoiceCandidate } from "@/components/BankMatchDialog";
+import { BankAllocationPostingAction } from "@/components/BankAllocationPostingAction";
 
 const fmt = (amount: number | null | undefined): string =>
   amount == null
@@ -296,6 +297,12 @@ export function BankAfletteringDrawer({
                           invoiceRemaining={null}
                           allocated={alloc.amount}
                           warning
+                          action={
+                            <BankAllocationPostingAction
+                              allocation={alloc}
+                              transaction={transaction}
+                            />
+                          }
                         />
                       );
                     }
@@ -316,6 +323,12 @@ export function BankAfletteringDrawer({
                         invoiceTotal={getInvoiceTotalAmount(inv)}
                         invoiceRemaining={getInvoiceRemainingAmount(inv)}
                         allocated={alloc.amount}
+                        action={
+                          <BankAllocationPostingAction
+                            allocation={alloc}
+                            transaction={transaction}
+                          />
+                        }
                       />
                     );
                   })}
@@ -424,6 +437,8 @@ interface AllocationCardProps {
   invoiceRemaining: number | null;
   allocated: number;
   warning?: boolean;
+  /** Fase 6C-b5b: "Boeken in grootboek" per koppeling, gerenderd onderaan de kaart. */
+  action?: React.ReactNode;
 }
 
 function AllocationCard({
@@ -434,6 +449,7 @@ function AllocationCard({
   invoiceRemaining,
   allocated,
   warning = false,
+  action,
 }: AllocationCardProps) {
   return (
     <div
@@ -480,6 +496,8 @@ function AllocationCard({
           </div>
         </div>
       )}
+
+      {action}
     </div>
   );
 }
