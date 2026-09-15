@@ -16,6 +16,22 @@ export interface GrootboekSlim {
 
 export type ReadinessStatus = "klaar" | "niet_klaar" | "config_ontbreekt";
 
+/**
+ * BTW-grootboekconfiguratie uit
+ * 20260915120000_add_client_vat_ledger_config.sql.
+ *
+ * TIJDELIJK: deze velden worden via een smal structureel type gelezen zolang
+ * de migratie nog niet op productie is toegepast en
+ * src/integrations/supabase/types.ts dus nog niet geregenereerd is. Dat bestand
+ * wordt nooit met de hand aangepast. Verwijder dit type — net als
+ * ClientAccountingConfig in PR #140/#142 — zodra de types opnieuw gegenereerd
+ * zijn.
+ */
+type ClientVatConfig = {
+  btw_te_vorderen_rekening_id?: string | null;
+  btw_te_betalen_rekening_id?: string | null;
+};
+
 export interface ClientReadiness {
   clientId: string;
   bankGeblokkeerd: number;
@@ -27,6 +43,8 @@ export interface ClientReadiness {
   configMissingVerkoopDagboek: boolean;
   configMissingDebiteurenRekening: boolean;
   configMissingCrediteurenRekening: boolean;
+  configMissingBtwTeVorderenRekening: boolean;
+  configMissingBtwTeBetalenRekening: boolean;
   configMissing1799: boolean;
   /** Human-readable list of what is missing, for display next to the status. */
   configMissingReasons: string[];
@@ -81,6 +99,9 @@ export function computeClientReadiness(
   const configMissingVerkoopDagboek = client.verkoop_dagboek == null;
   const configMissingDebiteurenRekening = client.debiteuren_rekening_id == null;
   const configMissingCrediteurenRekening = client.crediteuren_rekening_id == null;
+  const vatConfig = client as typeof client & ClientVatConfig;
+  const configMissingBtwTeVorderenRekening = vatConfig.btw_te_vorderen_rekening_id == null;
+  const configMissingBtwTeBetalenRekening = vatConfig.btw_te_betalen_rekening_id == null;
   const configMissing1799 = !has1799(clientAccounts);
 
   const configMissingReasons: string[] = [];
@@ -89,6 +110,8 @@ export function computeClientReadiness(
   if (configMissingVerkoopDagboek) configMissingReasons.push("Verkoop-dagboek ontbreekt");
   if (configMissingDebiteurenRekening) configMissingReasons.push("Debiteurenrekening ontbreekt");
   if (configMissingCrediteurenRekening) configMissingReasons.push("Crediteurenrekening ontbreekt");
+  if (configMissingBtwTeVorderenRekening) configMissingReasons.push("BTW te vorderen (voorbelasting) ontbreekt");
+  if (configMissingBtwTeBetalenRekening) configMissingReasons.push("BTW te betalen (af te dragen BTW) ontbreekt");
 
   const hasConfigWarning = configMissingReasons.length > 0;
 
@@ -114,6 +137,8 @@ export function computeClientReadiness(
     configMissingVerkoopDagboek,
     configMissingDebiteurenRekening,
     configMissingCrediteurenRekening,
+    configMissingBtwTeVorderenRekening,
+    configMissingBtwTeBetalenRekening,
     configMissing1799,
     configMissingReasons,
     status,

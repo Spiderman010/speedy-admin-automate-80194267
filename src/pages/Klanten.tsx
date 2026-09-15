@@ -74,6 +74,10 @@ interface ClientForm {
   debiteuren_rekening_label: string;
   crediteuren_rekening_id: string;
   crediteuren_rekening_label: string;
+  btw_te_vorderen_rekening_id: string;
+  btw_te_vorderen_rekening_label: string;
+  btw_te_betalen_rekening_id: string;
+  btw_te_betalen_rekening_label: string;
 }
 
 const emptyForm: ClientForm = {
@@ -101,6 +105,10 @@ const emptyForm: ClientForm = {
   debiteuren_rekening_label: "",
   crediteuren_rekening_id: "",
   crediteuren_rekening_label: "",
+  btw_te_vorderen_rekening_id: "",
+  btw_te_vorderen_rekening_label: "",
+  btw_te_betalen_rekening_id: "",
+  btw_te_betalen_rekening_label: "",
 };
 
 function validateKvk(v: string): string | null {
@@ -242,6 +250,10 @@ export default function Klanten() {
       debiteuren_rekening_label: accountLabelById(client.debiteuren_rekening_id),
       crediteuren_rekening_id: client.crediteuren_rekening_id ?? "",
       crediteuren_rekening_label: accountLabelById(client.crediteuren_rekening_id),
+      btw_te_vorderen_rekening_id: client.btw_te_vorderen_rekening_id ?? "",
+      btw_te_vorderen_rekening_label: accountLabelById(client.btw_te_vorderen_rekening_id),
+      btw_te_betalen_rekening_id: client.btw_te_betalen_rekening_id ?? "",
+      btw_te_betalen_rekening_label: accountLabelById(client.btw_te_betalen_rekening_id),
     });
     setEditingId(client.id);
     setShowDialog(true);
@@ -283,6 +295,8 @@ export default function Klanten() {
         snelstart_inkoop_mailbox: form.snelstart_inkoop_mailbox.trim() || null,
         debiteuren_rekening_id: form.debiteuren_rekening_id || null,
         crediteuren_rekening_id: form.crediteuren_rekening_id || null,
+        btw_te_vorderen_rekening_id: form.btw_te_vorderen_rekening_id || null,
+        btw_te_betalen_rekening_id: form.btw_te_betalen_rekening_id || null,
       };
       if (editingId) {
         await updateClient.mutateAsync({ id: editingId, ...payload });
@@ -615,6 +629,26 @@ export default function Klanten() {
                     onValueChange={(v) => setForm((prev) => ({ ...prev, crediteuren_rekening_label: v }))}
                     onIdChange={(id) => setForm((prev) => ({ ...prev, crediteuren_rekening_id: id || "" }))}
                     placeholder="bv. 1600 - Crediteuren"
+                    noneOption
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="btw_te_vorderen_rekening" className="text-xs font-normal">BTW te vorderen (voorbelasting)</Label>
+                  <GrootboekCombobox
+                    value={form.btw_te_vorderen_rekening_label}
+                    onValueChange={(v) => setForm((prev) => ({ ...prev, btw_te_vorderen_rekening_label: v }))}
+                    onIdChange={(id) => setForm((prev) => ({ ...prev, btw_te_vorderen_rekening_id: id || "" }))}
+                    placeholder="Kies een grootboekrekening"
+                    noneOption
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="btw_te_betalen_rekening" className="text-xs font-normal">BTW te betalen (af te dragen BTW)</Label>
+                  <GrootboekCombobox
+                    value={form.btw_te_betalen_rekening_label}
+                    onValueChange={(v) => setForm((prev) => ({ ...prev, btw_te_betalen_rekening_label: v }))}
+                    onIdChange={(id) => setForm((prev) => ({ ...prev, btw_te_betalen_rekening_id: id || "" }))}
+                    placeholder="Kies een grootboekrekening"
                     noneOption
                   />
                 </div>

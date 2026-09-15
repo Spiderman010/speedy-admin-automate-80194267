@@ -142,6 +142,45 @@ Design rules that must not be broken by later work:
 
 Accepted operational consequences, deliberately not solved in this phase: a user who has posted cannot be hard-deleted (`ON DELETE RESTRICT`), and an organisation or client with accounting history cannot be deleted without DBA action. A future user-erasure/anonymisation request needs a deliberate accounting-retention design — do not weaken immutability to solve it.
 
+### Phase 6C-b2a — client VAT ledger configuration
+
+Migration file:
+```
+supabase/migrations/20260915120000_add_client_vat_ledger_config.sql
+```
+
+**Purpose:** adds the two BTW ledger accounts as explicit per-administratie configuration, so the posting writers can post VAT to a real account instead of guessing one:
+
+| Column | Label | Used by |
+|---|---|---|
+| `clients.btw_te_vorderen_rekening_id` | BTW te vorderen / voorbelasting | debited on a purchase invoice (6C-b3) |
+| `clients.btw_te_betalen_rekening_id` | BTW te betalen / af te dragen BTW | credited on a sales invoice (6C-b4) |
+
+Rules:
+
+- **No backfill, no default numbers.** Both start NULL for every administratie. Unlike 1300/1600 there is no unambiguous Dutch default — an administratie may use 1520/1530, one combined BTW account, or a per-rate split — and guessing would post VAT to the wrong account on an immutable ledger. `client-readiness` surfaces the absence as `config_ontbreekt`.
+- **Account scope is stricter than debiteuren/crediteuren.** These two reuse `posting_account_ok()`: same organisation, and the account must be either organisation-wide (`client_id IS NULL`) or owned by this very administratie. That matches what `ledger_postings` enforces per row, so configuration cannot record an account that posting would later refuse. The older debiteuren/crediteuren columns keep their looser org-only check — tightening them would risk rejecting configuration production already holds, so it is a separate deliberate follow-up.
+- FK `ON DELETE SET NULL` (optional configuration, not accounting identity), plus an index on each.
+
+**Status: ⏳ Not yet applied.**
+Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
+
+Verification query:
+```sql
+select column_name from information_schema.columns
+where table_schema='public' and table_name='clients'
+  and column_name in ('btw_te_vorderen_rekening_id','btw_te_betalen_rekening_id');
+```
+
+### Carried into 6C-b3 (purchase postings)
+
+- **Idempotency must NOT be a partial unique index on `(source_id) WHERE source_type='purchase_invoice' AND line_no=1`.** That is bypassable: direct `ledger_postings` INSERT is permitted, and a second group can simply avoid `line_no = 1`. Use a dedicated atomic claim instead — a small `purchase_invoice_postings` marker table with a unique `purchase_invoice_id` and a unique `posting_group_id`, written in the same transaction as the ledger rows.
+- **Purchase reverse charge (verlegde BTW) is unsupported**: the purchase model has no field representing it, so a verlegde inkoopfactuur can only be stored as 0% VAT and the payable leg cannot be expressed. State it as a limitation rather than approximating it.
+- **The writer must fail closed when header totals and line allocation cannot reconcile exactly** (`Σ line.amount_excl + btw_amount = amount_incl`); header and lines can legitimately diverge today, which `purchase-line-validation.ts` exists to flag.
+- **No historic backfill.** Existing purchase invoices are never auto-posted.
+
+---
+
 Future phases: 6C-b3 purchase posting, 6C-b4 sales posting, 6C-b5 bank settlement posting, 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
 
 **Status: ⏳ Not yet applied.**
