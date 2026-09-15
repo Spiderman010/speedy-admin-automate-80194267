@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -1033,21 +1033,21 @@ export default function Instellingen() {
   return (
     <div className="space-y-6">
       <PageHeader title="Instellingen" description="Beheer je applicatie-instellingen" />
-      <Tabs defaultValue="profiel">
-        <TabsList className="grid w-full grid-cols-6">
-          <TabsTrigger value="profiel">Profiel</TabsTrigger>
-          <TabsTrigger value="matching">Matching</TabsTrigger>
-          <TabsTrigger value="herkenningsregels">Herkenningsregels</TabsTrigger>
-          <TabsTrigger value="btw">BTW</TabsTrigger>
-          <TabsTrigger value="grootboek">Grootboek standaarden</TabsTrigger>
-          <TabsTrigger value="export">Export</TabsTrigger>
+      <Tabs defaultValue="profiel" className="max-w-5xl">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 h-auto gap-1">
+          <TabsTrigger value="profiel" className="min-h-9">Profiel</TabsTrigger>
+          <TabsTrigger value="matching" className="min-h-9">Matching</TabsTrigger>
+          <TabsTrigger value="herkenningsregels" className="min-h-9">Herkenningsregels</TabsTrigger>
+          <TabsTrigger value="btw" className="min-h-9">BTW</TabsTrigger>
+          <TabsTrigger value="grootboek" className="min-h-9">Grootboek standaarden</TabsTrigger>
+          <TabsTrigger value="export" className="min-h-9">Export</TabsTrigger>
         </TabsList>
-        <TabsContent value="profiel"><ProfielTab /></TabsContent>
-        <TabsContent value="matching"><MatchingTab /></TabsContent>
-        <TabsContent value="herkenningsregels"><HerkenningsregelsTab /></TabsContent>
-        <TabsContent value="btw"><BtwTab /></TabsContent>
-        <TabsContent value="grootboek"><GrootboekStandaardenTab /></TabsContent>
-        <TabsContent value="export"><ExportTab /></TabsContent>
+        <TabsContent value="profiel" className="mt-6"><ProfielTab /></TabsContent>
+        <TabsContent value="matching" className="mt-6"><MatchingTab /></TabsContent>
+        <TabsContent value="herkenningsregels" className="mt-6"><HerkenningsregelsTab /></TabsContent>
+        <TabsContent value="btw" className="mt-6"><BtwTab /></TabsContent>
+        <TabsContent value="grootboek" className="mt-6"><GrootboekStandaardenTab /></TabsContent>
+        <TabsContent value="export" className="mt-6"><ExportTab /></TabsContent>
       </Tabs>
     </div>
   );
