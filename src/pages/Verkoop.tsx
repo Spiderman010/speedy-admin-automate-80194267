@@ -345,11 +345,30 @@ export default function Verkoop() {
     let pdfPath: string | null = null;
     if (file) {
       const ext = file.name.split(".").pop() || "pdf";
-      const userId = (await supabase.auth.getUser()).data.user?.id;
+      // Een verlopen of nog vernieuwende sessie leverde eerder het pad
+      // "undefined/..." op; dat wordt door de opslagregels geweigerd.
+      // Daarom eerst de sessie vernieuwen en pas uploaden met een geldige id.
+      const { data: sessionData } = await supabase.auth.getSession();
+      const userId = sessionData.session?.user?.id;
+      if (!userId) {
+        toast({
+          title: "Sessie verlopen",
+          description: "Log opnieuw in en probeer de factuur nogmaals op te slaan.",
+          variant: "destructive",
+        });
+        return;
+      }
       const path = `${userId}/sales/${form.client_id}/${Date.now()}.${ext}`;
       const { error: uploadErr } = await supabase.storage.from("invoices").upload(path, file);
       if (uploadErr) {
-        toast({ title: "Upload mislukt", description: uploadErr.message, variant: "destructive" });
+        const expired = /row-level security|jwt|unauthor/i.test(uploadErr.message);
+        toast({
+          title: expired ? "Sessie verlopen" : "Upload mislukt",
+          description: expired
+            ? "Log opnieuw in en probeer de factuur nogmaals op te slaan."
+            : uploadErr.message,
+          variant: "destructive",
+        });
         return;
       }
       pdfPath = path;
