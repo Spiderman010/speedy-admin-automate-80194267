@@ -56,10 +56,30 @@ must respect:
 - **Persisted posting date / boekjaar** — derived once, at posting time,
   from the authoritative source, and stored — never recomputed later.
 - **`source_type` + `source_id`** — every row traces back to exactly the
-  business event that produced it. `source_line_id` is used when the source
-  document has line-level granularity (purchase); `NULL` when it does not
-  (sales is header-only; bank settlement's source is the allocation, not a
-  line).
+  business event that produced it. `source_id` is the writer's claim key
+  (pattern 4) — for purchase and sales, the invoice id; for bank
+  settlement, the allocation id.
+- **`source_line_id` is optional and writer-specific — it is not "the line
+  id whenever the source has child rows".** It may only be persisted when
+  the source line's identity is itself durable and stable for the lifetime
+  of the posting. As of 6C-b5b, **every writer passes `NULL`**:
+  - Purchase posting iterates `purchase_invoice_lines` to produce one ledger
+    row per line, but still writes `source_line_id = NULL` for every row
+    (`20260915140000_add_purchase_ledger_posting.sql`). Purchase invoice
+    line ids are **not** treated as durable, because
+    `save_purchase_invoice_with_lines` deletes and recreates a purchase
+    invoice's lines on every save — a line's id does not survive an edit,
+    so it cannot safely identify "the same line" after posting.
+  - Sales posting is header-only (no line table exists), so there is no
+    line identity to record.
+  - Bank settlement's durable source identity is
+    `bank_transaction_allocations.id`, and that is what goes in `source_id`
+    — an allocation has no child rows, so `source_line_id` stays `NULL`.
+
+  A future writer must not populate `source_line_id` merely because its
+  source has child rows. Only do so if a specific line's id is proven to be
+  stable across every subsequent edit path the source document supports —
+  and if it isn't, follow the existing precedent and use `NULL`.
 - **No silent recalculation after posting.** Once a group exists, nothing
   about it is ever recomputed — a correction is a new group, never a
   mutation of an old one.
@@ -120,17 +140,26 @@ rolls back both.
 
 ## 5. SECURITY DEFINER hardening
 
-Every posting RPC and every claim/immutability trigger function needs this
-exact treatment when `SECURITY DEFINER` is required (it is required for the
-RPC because the marker table is deliberately not writable by
-`authenticated`, so an INVOKER function couldn't claim anything):
+**Authorization and integrity are different concerns, enforced at different
+points, by different kinds of function.** Do not apply the RPC's auth
+requirements to a trigger function, or vice versa — they exist for
+different reasons and, in BoekAssist today, none of the trigger functions
+check `auth.uid()` or a role at all.
 
+### A. Posting RPCs (`post_purchase_invoice`, `post_sales_invoice`,
+`post_bank_allocation`) — the access boundary
+
+This is where a request is authorized. Every posting RPC needs:
+
+- `SECURITY DEFINER` when required — it is required here because the
+  marker table is deliberately not writable by `authenticated`, so an
+  INVOKER function couldn't claim anything.
 - `SET search_path = public` — pinned, always.
 - `auth.uid()` required — `NULL` is refused immediately (`28000`).
 - Explicit role check — `has_min_role(auth.uid(), organization_id, '<role>')`,
   not an assumption based on RLS.
-- Tenant derived from the **stored source row**, never from a caller-passed
-  value.
+- Tenant derived from the **stored source row** (read and locked inside the
+  function), never from a caller-passed value.
 - `REVOKE ALL ON FUNCTION ... FROM PUBLIC, anon, authenticated, service_role`
   — name every application role explicitly. `REVOKE ... FROM PUBLIC` alone
   is not sufficient: Lovable Cloud has been observed granting privileges
@@ -139,16 +168,52 @@ RPC because the marker table is deliberately not writable by
 - `GRANT EXECUTE ... TO authenticated` only — nothing wider, unless there is
   a proven, separately-reviewed need (there has not been one yet for any
   writer's RPC).
-- The marker table gets the same `REVOKE ALL` **reset**, not an enumerated
-  list of revoked privileges (`INSERT, UPDATE, DELETE, TRUNCATE, ...`) — an
-  enumeration can always be one privilege short of whatever a platform's
-  defaults hand out next (e.g. `MAINTAIN` on PostgreSQL 17+). `REVOKE ALL`
-  clears everything, known or not, before `GRANT SELECT` restores exactly
-  the intended read access.
 
 **Do not rely on RLS alone inside a definer function** — `SECURITY DEFINER`
 bypasses RLS by design, so every check RLS would normally have performed
 must be done explicitly in the function body.
+
+### B. Claim / immutability trigger functions (`enforce_*_source_claim`,
+`prevent_posted_*_mutation`) — integrity, not authorization
+
+These functions (checked directly in
+`20260915140000_add_purchase_ledger_posting.sql`,
+`20260915160000_add_sales_ledger_posting.sql`, and
+`20260917120000_add_bank_settlement_posting.sql`) enforce a row/database
+invariant — "this `ledger_postings` row matches its claimed marker", "this
+posted invoice's accounting fields haven't changed" — regardless of *who*
+is making the change or *why*. None of them reference `auth.uid()` or
+`has_min_role()`, and that is correct, not an oversight:
+
+- **They do not automatically require request-level `auth.uid()`.** A
+  trigger fires on every `INSERT`/`UPDATE`/`DELETE` against the table,
+  including ones made through paths where `auth.uid()` is legitimately
+  `NULL` — a service-role job, a maintenance script, an internal
+  administrative correction. Requiring a session user here would make the
+  invariant enforceable only for ordinary user requests, which is not what
+  an integrity guard is for.
+- **They do not automatically require `has_min_role()`.** Role is an
+  authorization concept — it belongs to "may this caller start this
+  action", which the RPC already decided before the trigger ever runs.
+  Re-checking a role inside the trigger conflates the two concerns and adds
+  a check that has no correct answer for a legitimate internal DML path.
+- They **must remain valid for legitimate internal/admin DML paths** where
+  `auth.uid()` can be `NULL` — that is the actual reason `has_min_role`
+  never appears in any of them.
+- They still pin `SECURITY DEFINER` and `SET search_path = public` (so they
+  run with a fixed, predictable search path and can read the marker table
+  regardless of the caller's own privileges), and are still
+  `REVOKE ALL ... FROM PUBLIC` — the same house pattern as the RPCs, applied
+  for a different reason: not to gate *who* can call them (nothing calls a
+  trigger function directly; it only runs as a trigger), but to keep the
+  function's own name off `PUBLIC`'s default privilege surface, consistent
+  with every other function in the schema.
+
+**In short: authorization belongs at the RPC/access boundary; integrity
+belongs in the trigger.** A trigger that started requiring `auth.uid()` or a
+role would either break legitimate non-interactive DML or silently do
+nothing useful, since the RPC already enforced authorization before the
+trigger's invariant check ever runs.
 
 ---
 
