@@ -164,9 +164,14 @@ describe("Migratie — scope en veiligheid", () => {
     expect(sql).not.toMatch(/CREATE OR REPLACE FUNCTION public\.(posting_account_ok|has_min_role|ledger_link_org_ok|set_organization_id)/);
   });
 
-  it("23. definieert precies één nieuwe functie", () => {
+  it("23. definieert precies de vier eigen functies en niets meer", () => {
     const fns = [...sql.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)/g)].map((m) => m[1]);
-    expect(fns).toEqual(["post_purchase_invoice"]);
+    expect(new Set(fns)).toEqual(new Set([
+      "post_purchase_invoice",
+      "enforce_purchase_source_claim",
+      "prevent_posted_purchase_invoice_mutation",
+      "prevent_posted_purchase_line_mutation",
+    ]));
   });
 
   it("24. is idempotent herhaalbaar", () => {
@@ -186,5 +191,67 @@ describe("Migratie — scope en veiligheid", () => {
   it("26. documenteert de bewust niet-ondersteunde gevallen", () => {
     expect(raw).toMatch(/[Vv]erlegde BTW|reverse charge/);
     expect(raw).toMatch(/[Cc]redit note|creditnota/);
+  });
+});
+
+describe("Migratie — bronidempotentie op ledger_postings zelf", () => {
+  const fn = sql.slice(sql.indexOf("FUNCTION public.enforce_purchase_source_claim"));
+
+  it("27. bewaakt inkoopregels rechtstreeks op ledger_postings", () => {
+    // De PK van de claimtabel beschermt alleen de RPC; authenticated heeft uit
+    // 6C-b2 een directe INSERT op ledger_postings, dus een tweede groep moest
+    // op de tabel zelf worden uitgesloten.
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.enforce_purchase_source_claim/);
+    expect(sql).toMatch(
+      /CREATE TRIGGER validate_purchase_source_claim_trigger\s+BEFORE INSERT ON public\.ledger_postings/,
+    );
+  });
+
+  it("28. blijft strikt beperkt tot source_type = purchase_invoice", () => {
+    // Geen universele brontrigger: 6C-b4/b5/b6 hebben hun eigen contract.
+    expect(fn).toMatch(/IF NEW\.source_type <> 'purchase_invoice' THEN\s+RETURN NEW;/);
+  });
+
+  it("29. eist een marker en exact dezelfde boekingsgroep, organisatie en administratie", () => {
+    expect(fn).toMatch(/NEW\.source_id IS NULL/);
+    expect(fn).toMatch(/FROM public\.purchase_invoice_postings\s+WHERE purchase_invoice_id = NEW\.source_id/);
+    expect(fn).toMatch(/NEW\.posting_group_id <> v_marker\.posting_group_id/);
+    expect(fn).toMatch(/NEW\.organization_id IS DISTINCT FROM v_marker\.organization_id/);
+    expect(fn).toMatch(/NEW\.client_id IS DISTINCT FROM v_marker\.client_id/);
+  });
+});
+
+describe("Migratie — geboekte bron is bevroren", () => {
+  const hdr = sql.slice(sql.indexOf("FUNCTION public.prevent_posted_purchase_invoice_mutation"));
+
+  it("30. bevriest de boekhoudkundige headervelden zodra er een marker is", () => {
+    for (const field of [
+      "client_id", "organization_id", "leverancier_id", "supplier", "invoice_number",
+      "invoice_date", "amount_excl", "btw_amount", "amount_incl", "btw_percentage",
+      "grootboekrekening_id", "ledger_account_id", "ledger_account_text",
+    ]) {
+      expect(hdr).toContain(`NEW.${field}`);
+    }
+  });
+
+  it("31. laat betaal- en workflowvelden bewust vrij", () => {
+    // status, remaining_amount en notes veranderen niets aan wat geboekt is.
+    for (const allowed of ["status", "remaining_amount", "notes"]) {
+      expect(hdr).not.toMatch(new RegExp(`NEW\\.${allowed}\\s+IS DISTINCT FROM`));
+    }
+  });
+
+  it("32. blokkeert elke mutatie van boekingsregels van een geboekte factuur", () => {
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION public\.prevent_posted_purchase_line_mutation/);
+    expect(sql).toMatch(
+      /CREATE TRIGGER prevent_posted_purchase_line_mutation_trigger\s+BEFORE INSERT OR UPDATE OR DELETE ON public\.purchase_invoice_lines/,
+    );
+    // DELETE gebruikt OLD, INSERT gebruikt NEW.
+    expect(sql).toMatch(/COALESCE\(NEW\.purchase_invoice_id, OLD\.purchase_invoice_id\)/);
+  });
+
+  it("33. serialiseert opslaan en boeken met een rijgrendel", () => {
+    const writer = sql.slice(sql.indexOf("FUNCTION public.post_purchase_invoice"));
+    expect(writer).toMatch(/FROM public\.purchase_invoices WHERE id = _invoice_id FOR UPDATE;/);
   });
 });
