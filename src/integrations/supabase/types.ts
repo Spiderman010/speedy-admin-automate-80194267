@@ -292,6 +292,8 @@ export type Database = {
           afgesloten_boekjaar: number | null
           bank_dagboek: number | null
           btw_number: string | null
+          btw_te_betalen_rekening_id: string | null
+          btw_te_vorderen_rekening_id: string | null
           btw_type: string
           btw_vrijgesteld: boolean
           city: string | null
@@ -321,6 +323,8 @@ export type Database = {
           afgesloten_boekjaar?: number | null
           bank_dagboek?: number | null
           btw_number?: string | null
+          btw_te_betalen_rekening_id?: string | null
+          btw_te_vorderen_rekening_id?: string | null
           btw_type?: string
           btw_vrijgesteld?: boolean
           city?: string | null
@@ -350,6 +354,8 @@ export type Database = {
           afgesloten_boekjaar?: number | null
           bank_dagboek?: number | null
           btw_number?: string | null
+          btw_te_betalen_rekening_id?: string | null
+          btw_te_vorderen_rekening_id?: string | null
           btw_type?: string
           btw_vrijgesteld?: boolean
           city?: string | null
@@ -375,6 +381,20 @@ export type Database = {
           verwerkingsfrequentie?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "clients_btw_te_betalen_rekening_id_fkey"
+            columns: ["btw_te_betalen_rekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clients_btw_te_vorderen_rekening_id_fkey"
+            columns: ["btw_te_vorderen_rekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "clients_crediteuren_rekening_id_fkey"
             columns: ["crediteuren_rekening_id"]
