@@ -79,8 +79,6 @@ interface ClientForm {
   btw_te_vorderen_rekening_label: string;
   btw_te_betalen_rekening_id: string;
   btw_te_betalen_rekening_label: string;
-  bank_rekening_id: string;
-  bank_rekening_label: string;
 }
 
 const emptyForm: ClientForm = {
@@ -112,8 +110,6 @@ const emptyForm: ClientForm = {
   btw_te_vorderen_rekening_label: "",
   btw_te_betalen_rekening_id: "",
   btw_te_betalen_rekening_label: "",
-  bank_rekening_id: "",
-  bank_rekening_label: "",
 };
 
 function validateKvk(v: string): string | null {
@@ -289,8 +285,6 @@ export default function Klanten() {
       btw_te_vorderen_rekening_label: accountLabelById(client.btw_te_vorderen_rekening_id),
       btw_te_betalen_rekening_id: client.btw_te_betalen_rekening_id ?? "",
       btw_te_betalen_rekening_label: accountLabelById(client.btw_te_betalen_rekening_id),
-      bank_rekening_id: client.bank_rekening_id ?? "",
-      bank_rekening_label: accountLabelById(client.bank_rekening_id),
     });
     setEditingId(client.id);
     setShowDialog(true);
@@ -334,9 +328,6 @@ export default function Klanten() {
         crediteuren_rekening_id: form.crediteuren_rekening_id || null,
         btw_te_vorderen_rekening_id: form.btw_te_vorderen_rekening_id || null,
         btw_te_betalen_rekening_id: form.btw_te_betalen_rekening_id || null,
-        // Fase 6C-b5a: een lege keuze wordt bewust NULL — nooit 1100 of een
-        // andere terugvalrekening.
-        bank_rekening_id: form.bank_rekening_id || null,
       };
       if (editingId) {
         await updateClient.mutateAsync({ id: editingId, ...payload });
@@ -781,17 +772,6 @@ export default function Klanten() {
                     placeholder="Kies een grootboekrekening"
                     noneOption
                   />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="bank_rekening" className="text-xs font-normal">Bankrekening grootboek</Label>
-                  <GrootboekCombobox
-                    value={form.bank_rekening_label}
-                    onValueChange={(v) => setForm((prev) => ({ ...prev, bank_rekening_label: v }))}
-                    onIdChange={(id) => setForm((prev) => ({ ...prev, bank_rekening_id: id || "" }))}
-                    placeholder="Kies een grootboekrekening"
-                    noneOption
-                  />
-                  <p className="text-xs text-muted-foreground">Grootboekrekening waarop bankmutaties worden geboekt.</p>
                 </div>
               </div>
 

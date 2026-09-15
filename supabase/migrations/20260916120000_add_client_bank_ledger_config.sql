@@ -20,8 +20,17 @@
 -- number, from categorie, or from bank_dagboek.
 --
 -- PHASE SPLIT.
---   • 6C-b5a (this migration) = configuration only.
+--   • 6C-b5a (this migration) = schema only.
 --   • 6C-b5b (next phase)     = the bank settlement writer that consumes it.
+--
+-- ROLLOUT ORDER — load-bearing, not a preference. No application code in this
+-- PR reads or writes bank_rekening_id, deliberately. PostgREST rejects an
+-- entire request that names an unknown column (PGRST204) rather than ignoring
+-- it, so a frontend that sent bank_rekening_id before this migration was
+-- applied would break every ordinary client save for the whole window between
+-- deploy and apply. The order is therefore: merge this migration → apply it in
+-- the Lovable Cloud SQL editor → regenerate types.ts from the live schema →
+-- only then merge the UI/readiness PR that starts persisting the column.
 --
 -- THIS MIGRATION IS CONFIGURATION ONLY.
 --   • no posting is created anywhere;

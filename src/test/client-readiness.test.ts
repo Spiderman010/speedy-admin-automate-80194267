@@ -10,9 +10,8 @@ type SalesInvoice = Tables<"sales_invoices">;
 type Vraagpost = Tables<"vraagposten">;
 
 // "Fully configured" client fixture. The accounting foundation added
-// debiteuren_rekening_id / crediteuren_rekening_id, 6C-b2a added the two
-// BTW ledger accounts, and 6C-b5a added bank_rekening_id, as required
-// configuration,
+// debiteuren_rekening_id / crediteuren_rekening_id, and 6C-b2a added the two
+// BTW ledger accounts, as required configuration,
 // so a complete-config fixture must now include them too — otherwise every
 // existing "klaar" assertion below would be testing an outdated definition of
 // complete configuration. No assertion in this file was changed.
@@ -27,7 +26,6 @@ function makeClient(overrides: Partial<Client> = {}): Client {
     crediteuren_rekening_id: "gb-1600",
     btw_te_vorderen_rekening_id: "gb-btw-vorderen",
     btw_te_betalen_rekening_id: "gb-btw-betalen",
-    bank_rekening_id: "gb-bank",
     ...overrides,
   } as Client;
 }

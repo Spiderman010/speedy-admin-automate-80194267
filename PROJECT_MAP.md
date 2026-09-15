@@ -282,11 +282,20 @@ supabase/migrations/20260916120000_add_client_bank_ledger_config.sql
 
 **Why it is needed.** Nothing in the schema identified a client's bank grootboekrekening before this phase: `clients.bank_dagboek` is a SnelStart *dagboek* integer (not a `grootboekrekeningen` FK, often NULL, with a `?? 1100` UI fallback), `bank_transactions.grootboekrekening_id` is the *contra* account of a mutation, `bank_transactions.ledger_account_id` points at the legacy `ledger_accounts` table, and `grootboekrekeningen.categorie` has no `bank` value. The account is therefore configured explicitly and **never inferred** from a number (least of all 1100), from `categorie`, or from `bank_dagboek`.
 
-**Phase split:** 6C-b5a (this migration) is configuration only — no posting logic, no settlement marker, no writer. 6C-b5b adds the bank settlement writer that consumes the column.
+**Phase split:** 6C-b5a (this migration) is **schema only** — no posting logic, no settlement marker, no writer, and deliberately *no application code that reads or writes the column*. 6C-b5b adds the bank settlement writer that consumes it.
+
+**Rollout order — this is a safety contract, not a preference.** The application must not send `bank_rekening_id` to PostgREST before the column exists in production, or every ordinary client save fails with `PGRST204` ("could not find the column ... in the schema cache"). PostgREST rejects the whole request; it does not ignore unknown columns. Therefore:
+
+1. Merge this PR (migration + documentation only). Ordinary client edits keep working, because no code references the column.
+2. Apply the migration in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw`.
+3. Regenerate `src/integrations/supabase/types.ts` from the live schema.
+4. Only then merge the follow-up PR that adds the "Bankrekening grootboek" field to the client configuration screen and the `configMissingBankRekening` readiness flag.
+
+Step 4 is what makes the column *usable*; steps 1–3 make it *exist*. Keeping them apart removes any window in which a deployed frontend can reference a column production does not have.
 
 Rules:
 
-- **No backfill, no default.** The column starts NULL for every administratie. There is no unambiguous default: an administratie may use 1100, 1101, one account per bank/IBAN, or any other number, and guessing would silently post settlements to the wrong account on an immutable ledger. `client-readiness` surfaces the absence as `config_ontbreekt` on the dashboard (display only — it gates no posting and no export).
+- **No backfill, no default.** The column starts NULL for every administratie. There is no unambiguous default: an administratie may use 1100, 1101, one account per bank/IBAN, or any other number, and guessing would silently post settlements to the wrong account on an immutable ledger. The follow-up PR surfaces the absence via `client-readiness` as `config_ontbreekt` on the dashboard (display only — it gates no posting and no export).
 - **Account scope is the strict one.** The new check in `enforce_client_ledger_org()` reuses `posting_account_ok()`: same organisation, and the account must be either organisation-wide (`client_id IS NULL`) or owned by this very administratie — the same predicate `ledger_postings` enforces per row, so configuration cannot record an account that posting would later refuse. NULL is explicitly allowed. The debiteuren/crediteuren columns keep their looser org-only check, untouched.
 - **The trigger is recreated** with `bank_rekening_id` added to its `UPDATE OF` list (alongside the four pre-existing columns and `organization_id`); without that, an update touching only the new column would skip validation entirely.
 - FK `ON DELETE SET NULL` (optional configuration, not accounting identity), plus an index on the column. No new SECURITY DEFINER function is introduced.

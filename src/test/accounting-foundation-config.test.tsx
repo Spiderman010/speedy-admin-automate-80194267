@@ -70,7 +70,6 @@ const ACCOUNTS = [
   { id: "gb-1300", nummer: 1300, omschrijving: "Debiteuren", actief: true },
   { id: "gb-1600", nummer: 1600, omschrijving: "Crediteuren", actief: true },
   { id: "gb-8000", nummer: 8000, omschrijving: "Omzet hoog", actief: true },
-  { id: "gb-1110", nummer: 1110, omschrijving: "Bank ING", actief: true },
   // Configured earlier, deactivated later — must remain recognisable.
   { id: "gb-1301", nummer: 1301, omschrijving: "Debiteuren oud", actief: false },
 ];
@@ -92,23 +91,11 @@ const makeClient = (over: Partial<any> = {}) => ({
   snelstart_inkoop_mailbox: null,
   debiteuren_rekening_id: null,
   crediteuren_rekening_id: null,
-  bank_rekening_id: null,
   ...over,
 });
 
 const debiteurenField = () => screen.getByLabelText("bv. 1300 - Debiteuren") as HTMLInputElement;
 const crediteurenField = () => screen.getByLabelText("bv. 1600 - Crediteuren") as HTMLInputElement;
-
-/**
- * Meerdere grootboekvelden delen dezelfde placeholder ("Kies een
- * grootboekrekening"), dus zoek het invoerveld via zijn eigen labeltekst in
- * plaats van via de placeholder.
- */
-const fieldByLabelText = (label: string): HTMLInputElement => {
-  const wrapper = screen.getByText(label).closest("div")!;
-  return within(wrapper).getByRole("textbox") as HTMLInputElement;
-};
-const bankRekeningField = () => fieldByLabelText("Bankrekening grootboek");
 
 async function openEditDialog() {
   render(<Klanten />);
@@ -222,61 +209,6 @@ describe("Klanten — accounting configuratie", () => {
         bank_dagboek: 1100,
         name: "Klant Een",
       }),
-    );
-  });
-
-  // ── Fase 6C-b5a — bankgrootboekrekening ───────────────────────────────────
-
-  it("b5a-1. toont het veld 'Bankrekening grootboek'", async () => {
-    await openEditDialog();
-    expect(screen.getByText("Bankrekening grootboek")).toBeInTheDocument();
-    expect(bankRekeningField()).toBeInTheDocument();
-    expect(
-      screen.getByText("Grootboekrekening waarop bankmutaties worden geboekt."),
-    ).toBeInTheDocument();
-  });
-
-  it("b5a-2. laat het veld leeg wanneer nog niets geconfigureerd is", async () => {
-    await openEditDialog();
-    expect(bankRekeningField()).toHaveValue("");
-  });
-
-  it("b5a-3. laadt een bestaande bankrekening als label uit de FK", async () => {
-    state.clients = [makeClient({ bank_rekening_id: "gb-1110" })];
-    await openEditDialog();
-    expect(bankRekeningField()).toHaveValue("1110 - Bank ING");
-  });
-
-  it("b5a-4. slaat de expliciet gekozen bankrekening op", async () => {
-    await openEditDialog();
-    fireEvent.change(bankRekeningField(), { target: { value: "1110 - Bank ING" } });
-    fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
-    await waitFor(() => expect(updateClientMutateAsync).toHaveBeenCalledTimes(1));
-    expect(updateClientMutateAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "c-1", bank_rekening_id: "gb-1110" }),
-    );
-  });
-
-  it("b5a-5. slaat null op zonder keuze — nooit 1100 of een andere terugval", async () => {
-    await openEditDialog();
-    fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
-    await waitFor(() => expect(updateClientMutateAsync).toHaveBeenCalledTimes(1));
-    const payload = updateClientMutateAsync.mock.calls[0][0];
-    expect(payload.bank_rekening_id).toBeNull();
-    // Het SnelStart bank-dagboek blijft een los veld en lekt niet in de FK.
-    expect(payload.bank_dagboek).toBe(1100);
-    expect(payload.bank_rekening_id).not.toBe(1100);
-    expect(payload.bank_rekening_id).not.toBe("gb-1100");
-  });
-
-  it("b5a-6. laat het bestaande Bank-dagboek-veld ongemoeid", async () => {
-    await openEditDialog();
-    expect(screen.getByLabelText("Bank-dagboek")).toHaveValue("1100");
-    fireEvent.change(bankRekeningField(), { target: { value: "1110 - Bank ING" } });
-    fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
-    await waitFor(() => expect(updateClientMutateAsync).toHaveBeenCalledTimes(1));
-    expect(updateClientMutateAsync).toHaveBeenCalledWith(
-      expect.objectContaining({ bank_dagboek: 1100, bank_rekening_id: "gb-1110" }),
     );
   });
 });

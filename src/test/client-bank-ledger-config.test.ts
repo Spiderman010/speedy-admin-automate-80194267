@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { computeClientReadiness } from "@/lib/client-readiness";
-import type { Tables } from "@/integrations/supabase/types";
-import type { GrootboekSlim } from "@/lib/client-readiness";
 
 /**
  * Fase 6C-b5a — bankgrootboekconfiguratie per administratie.
  *
- * Configuratie-only: deze fase voegt géén afletteringsboeking toe (dat is
- * 6C-b5b). De migratietests zijn structureel (er is geen DB-harnas in deze
- * repo); de semantiek is daarnaast bewezen met echte PostgreSQL-probes.
+ * Schema-only: deze fase voegt alleen de kolom toe. De applicatie leest of
+ * schrijft bank_rekening_id nog nergens — dat gebeurt pas in de opvolg-PR,
+ * ná het toepassen van deze migratie op productie en het opnieuw genereren
+ * van de types. Zo kan een gewone klantopslag nooit een kolom versturen die
+ * in productie nog niet bestaat. De afletteringsboeking zelf is 6C-b5b.
+ *
+ * De migratietests zijn structureel: er is geen DB-harnas in deze repo.
  */
 
 const MIGRATION = "supabase/migrations/20260916120000_add_client_bank_ledger_config.sql";
@@ -152,97 +153,5 @@ describe("Migratie — bankgrootboekconfiguratie", () => {
     expect(sql).toMatch(/COMMENT ON COLUMN public\.clients\.bank_rekening_id IS/);
     expect(raw).toMatch(/6C-b5a/);
     expect(raw).toMatch(/6C-b5b/);
-  });
-});
-
-// ── Readiness ───────────────────────────────────────────────────────────────
-
-type Client = Tables<"clients">;
-
-function makeClient(overrides: Partial<Client> = {}): Client {
-  return {
-    id: "c-1",
-    name: "Test Klant",
-    bank_dagboek: 100,
-    inkoop_dagboek: 20,
-    verkoop_dagboek: 70,
-    debiteuren_rekening_id: "gb-1300",
-    crediteuren_rekening_id: "gb-1600",
-    btw_te_vorderen_rekening_id: "gb-btw-v",
-    btw_te_betalen_rekening_id: "gb-btw-b",
-    bank_rekening_id: "gb-bank",
-    ...overrides,
-  } as Client;
-}
-
-const accounts: GrootboekSlim[] = [
-  { id: "gb-1799", nummer: 1799, omschrijving: "Onbekend", client_id: null },
-];
-
-describe("Client-readiness — bankgrootboekrekening", () => {
-  it("13. een volledig geconfigureerde klant blijft klaar", () => {
-    const r = computeClientReadiness(makeClient(), [], [], [], [], accounts);
-    expect(r.configMissingBankRekening).toBe(false);
-    expect(r.configMissingReasons).not.toContain("Bankrekening grootboek ontbreekt");
-    expect(r.configMissingReasons).toEqual([]);
-    expect(r.status).toBe("klaar");
-  });
-
-  it("14. ontbrekende bankrekening geeft config_ontbreekt", () => {
-    const r = computeClientReadiness(
-      makeClient({ bank_rekening_id: null } as Partial<Client>),
-      [], [], [], [], accounts,
-    );
-    expect(r.configMissingBankRekening).toBe(true);
-    expect(r.configMissingReasons).toContain("Bankrekening grootboek ontbreekt");
-    expect(r.status).toBe("config_ontbreekt");
-  });
-
-  it("15. een ingevuld bank_dagboek vervangt de bankrekening NIET", () => {
-    // bank_dagboek is een SnelStart-dagboeknummer, geen grootboekrekening.
-    const r = computeClientReadiness(
-      makeClient({ bank_dagboek: 1100, bank_rekening_id: null } as Partial<Client>),
-      [], [], [], [], accounts,
-    );
-    expect(r.configMissingBankDagboek).toBe(false);
-    expect(r.configMissingBankRekening).toBe(true);
-    expect(r.status).toBe("config_ontbreekt");
-  });
-
-  it("16. meldt de bankreden naast de bestaande redenen, in vaste volgorde", () => {
-    const r = computeClientReadiness(
-      makeClient({
-        bank_dagboek: null,
-        debiteuren_rekening_id: null,
-        btw_te_betalen_rekening_id: null,
-        bank_rekening_id: null,
-      } as Partial<Client>),
-      [], [], [], [], accounts,
-    );
-    expect(r.configMissingReasons).toEqual([
-      "Bank-dagboek ontbreekt",
-      "Debiteurenrekening ontbreekt",
-      "BTW te betalen (af te dragen BTW) ontbreekt",
-      "Bankrekening grootboek ontbreekt",
-    ]);
-  });
-
-  it("17. laat de bestaande debiteuren/crediteuren/BTW-vlaggen ongewijzigd", () => {
-    const r = computeClientReadiness(
-      makeClient({ bank_rekening_id: null } as Partial<Client>),
-      [], [], [], [], accounts,
-    );
-    expect(r.configMissingDebiteurenRekening).toBe(false);
-    expect(r.configMissingCrediteurenRekening).toBe(false);
-    expect(r.configMissingBtwTeVorderenRekening).toBe(false);
-    expect(r.configMissingBtwTeBetalenRekening).toBe(false);
-  });
-
-  it("18. een verwijderde rekening (FK SET NULL) wordt als ontbrekend gemeld", () => {
-    const r = computeClientReadiness(
-      makeClient({ bank_rekening_id: null } as Partial<Client>),
-      [], [], [], [], accounts,
-    );
-    expect(r.configMissingBankRekening).toBe(true);
   });
 });
