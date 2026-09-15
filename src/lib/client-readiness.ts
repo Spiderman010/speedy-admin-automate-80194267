@@ -16,22 +16,6 @@ export interface GrootboekSlim {
 
 export type ReadinessStatus = "klaar" | "niet_klaar" | "config_ontbreekt";
 
-/**
- * BTW-grootboekconfiguratie uit
- * 20260915120000_add_client_vat_ledger_config.sql.
- *
- * TIJDELIJK: deze velden worden via een smal structureel type gelezen zolang
- * de migratie nog niet op productie is toegepast en
- * src/integrations/supabase/types.ts dus nog niet geregenereerd is. Dat bestand
- * wordt nooit met de hand aangepast. Verwijder dit type — net als
- * ClientAccountingConfig in PR #140/#142 — zodra de types opnieuw gegenereerd
- * zijn.
- */
-type ClientVatConfig = {
-  btw_te_vorderen_rekening_id?: string | null;
-  btw_te_betalen_rekening_id?: string | null;
-};
-
 export interface ClientReadiness {
   clientId: string;
   bankGeblokkeerd: number;
@@ -99,9 +83,8 @@ export function computeClientReadiness(
   const configMissingVerkoopDagboek = client.verkoop_dagboek == null;
   const configMissingDebiteurenRekening = client.debiteuren_rekening_id == null;
   const configMissingCrediteurenRekening = client.crediteuren_rekening_id == null;
-  const vatConfig = client as typeof client & ClientVatConfig;
-  const configMissingBtwTeVorderenRekening = vatConfig.btw_te_vorderen_rekening_id == null;
-  const configMissingBtwTeBetalenRekening = vatConfig.btw_te_betalen_rekening_id == null;
+  const configMissingBtwTeVorderenRekening = client.btw_te_vorderen_rekening_id == null;
+  const configMissingBtwTeBetalenRekening = client.btw_te_betalen_rekening_id == null;
   const configMissing1799 = !has1799(clientAccounts);
 
   const configMissingReasons: string[] = [];
