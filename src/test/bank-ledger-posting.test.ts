@@ -378,4 +378,32 @@ describe("Migratie — scope en veiligheid", () => {
     expect(raw).toMatch(/NO BACKFILL/);
     expect(raw).toMatch(/overbetaling|overpayment/i);
   });
+
+  // Reviewer-findings (onafhankelijke tweede lezing) — hieronder vastgelegd
+  // zodat ze niet stilzwijgend kunnen terugkeren.
+  it("38. weigert te draaien zolang 6C-b2/b3/b4/b5a niet zijn toegepast (voorwaardenguard vóór het eerste object)", () => {
+    const guard = sql.slice(0, sql.indexOf("CREATE TABLE IF NOT EXISTS public.bank_allocation_postings"));
+    expect(guard).toMatch(/to_regclass\('public\.ledger_postings'\) IS NULL/);
+    expect(guard).toMatch(/to_regclass\('public\.purchase_invoice_postings'\) IS NULL/);
+    expect(guard).toMatch(/to_regclass\('public\.sales_invoice_postings'\) IS NULL/);
+    expect(guard).toMatch(/column_name = 'bank_rekening_id'/);
+    expect((guard.match(/RAISE EXCEPTION 'Migratie 6C-b5b vereist eerst/g) ?? []).length).toBe(4);
+  });
+
+  it("39. de claimtrigger dwingt precies twee regels af, elk met exact het afgeletterde bedrag op één zijde", () => {
+    // Zonder dit kon een raw-SQL-aanroeper binnen dezelfde transactie extra
+    // sluitende regels (bv. DR omzet / CR bank) onder de geclaimde groep hangen
+    // en een aflettering stilletjes in een omzetboeking veranderen.
+    expect(claimFn).toMatch(/NEW\.line_no NOT IN \(1, 2\)/);
+    expect(claimFn).toMatch(/NEW\.debit_amount = v_marker\.amount AND NEW\.credit_amount = 0/);
+    expect(claimFn).toMatch(/NEW\.credit_amount = v_marker\.amount AND NEW\.debit_amount = 0/);
+    expect(claimFn).toMatch(/precies twee regels/);
+  });
+
+  it("40. beschrijft het enige deadlock-pad eerlijk in plaats van 'geen cyclus' te claimen", () => {
+    expect(raw).not.toMatch(/Why there is no lock cycle/);
+    expect(raw).toMatch(/DELETE FROM bank_transactions/);
+    expect(raw).toMatch(/40P01/);
+    expect(raw).toMatch(/never an accounting one/);
+  });
 });

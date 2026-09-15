@@ -127,12 +127,26 @@
 --             → claim INSERT (marker)
 --               → ledger INSERTs
 --
--- Why there is no lock cycle: the purchase and sales writers only ever lock
--- their own invoice row (FOR UPDATE) and never touch allocations or bank rows;
--- the app's allocation and bank mutations (useUpsertBankTransactionAllocation,
--- useDeleteBankTransactionAllocation, bank_transactions updates) are separate,
--- single-table transactions. Every path therefore acquires locks in a
--- consistent direction relative to this one. A concurrent allocation INSERT
+-- Why the application cannot deadlock against this: the purchase and sales
+-- writers only ever lock their own invoice row (FOR UPDATE) and never touch
+-- allocations or bank rows; the app's allocation and bank mutations
+-- (useUpsertBankTransactionAllocation, useDeleteBankTransactionAllocation,
+-- bank_transactions updates) are separate, single-table transactions. Every
+-- application path therefore acquires locks in a direction consistent with
+-- this one.
+--
+-- One NON-application path can deadlock: a raw DELETE FROM bank_transactions
+-- (SQL editor only — the app has no bank_transactions delete path) locks the
+-- transaction row first and then, through the ON DELETE CASCADE of
+-- bta_tx_user_client_fk, its allocation rows — the reverse of this function's
+-- allocation → transaction order. If both run at the same instant PostgreSQL
+-- detects the cycle (40P01) and aborts one side; the posting either commits
+-- cleanly or is retried, and the delete is refused anyway once the posting
+-- exists (prevent_posted_bank_transaction_mutation). This is an availability
+-- edge on a manual path, never an accounting one, and the allocation-first
+-- order is kept because it is the one the app's own allocation UPDATEs use
+-- (an UPDATE that re-points bank_transaction_id locks its allocation row and
+-- then takes KEY SHARE on the target transaction row). A concurrent allocation INSERT
 -- on the same bank transaction takes a KEY SHARE lock on the bank_transactions
 -- row for its foreign key (bta_tx_user_client_fk); KEY SHARE conflicts with
 -- our FOR UPDATE, so that INSERT waits until this posting commits — which is
@@ -188,6 +202,38 @@
 --    written in the same transaction, so an allocation is either fully posted
 --    or not posted.
 -- ─────────────────────────────────────────────────────────────────────────────
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 0) Prerequisite guard
+--
+--    plpgsql does not validate table references at CREATE FUNCTION time, so
+--    without this the file would apply with zero errors on a database that
+--    has not yet received 6C-b3/6C-b4, and post_bank_allocation() would only
+--    fail at first use with a raw "relation ... does not exist". Refuse up
+--    front instead: a settlement writer without invoice markers has nothing
+--    to settle against. Required order: 6C-b2 foundation → 6C-b2a VAT config
+--    → 6C-b3 purchase → 6C-b4 sales → 6C-b5a bank config → this file.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+DO $$
+BEGIN
+  IF to_regclass('public.ledger_postings') IS NULL THEN
+    RAISE EXCEPTION 'Migratie 6C-b5b vereist eerst 6C-b2 (public.ledger_postings ontbreekt)';
+  END IF;
+  IF to_regclass('public.purchase_invoice_postings') IS NULL THEN
+    RAISE EXCEPTION 'Migratie 6C-b5b vereist eerst 6C-b3 (public.purchase_invoice_postings ontbreekt)';
+  END IF;
+  IF to_regclass('public.sales_invoice_postings') IS NULL THEN
+    RAISE EXCEPTION 'Migratie 6C-b5b vereist eerst 6C-b4 (public.sales_invoice_postings ontbreekt)';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'clients' AND column_name = 'bank_rekening_id'
+  ) THEN
+    RAISE EXCEPTION 'Migratie 6C-b5b vereist eerst 6C-b5a (clients.bank_rekening_id ontbreekt)';
+  END IF;
+END
+$$;
 
 CREATE TABLE IF NOT EXISTS public.bank_allocation_postings (
   allocation_id       uuid          PRIMARY KEY,
@@ -711,10 +757,31 @@ BEGIN
   END IF;
 
   -- grootboekrekening_id is NOT NULL on the table already; re-asserted here so
-  -- this guard does not lean on a column constraint it does not own. A group
-  -- has exactly two legs, and nothing else about a leg is marker-derived.
+  -- this guard does not lean on a column constraint it does not own.
   IF NEW.grootboekrekening_id IS NULL THEN
     RAISE EXCEPTION 'Een afletteringsregel moet een grootboekrekening hebben' USING ERRCODE = '23514';
+  END IF;
+
+  -- A settlement group is exactly two legs, each for exactly the settled
+  -- amount recorded on the marker. The foundation's group seal already stops a
+  -- LATER transaction from appending to the group, but inside the SAME
+  -- transaction as post_bank_allocation() a raw-SQL caller could otherwise add
+  -- extra balanced legs (e.g. DR omzet / CR bank) under the claimed group and
+  -- quietly turn a settlement into a revenue booking. line_no 1 and 2 are the
+  -- only legal lines, and each must carry the marker's amount on exactly one
+  -- side. Unreachable via PostgREST (one statement per transaction) — this is
+  -- defence in depth, not a live hole.
+  IF NEW.line_no NOT IN (1, 2) THEN
+    RAISE EXCEPTION 'Een afletteringsboeking bestaat uit precies twee regels; regel % is niet toegestaan', NEW.line_no
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF NOT (
+       (NEW.debit_amount = v_marker.amount AND NEW.credit_amount = 0)
+    OR (NEW.credit_amount = v_marker.amount AND NEW.debit_amount = 0)
+  ) THEN
+    RAISE EXCEPTION 'Een afletteringsregel moet exact het afgeletterde bedrag (%) op één zijde dragen', v_marker.amount
+      USING ERRCODE = '23514';
   END IF;
 
   RETURN NEW;

@@ -57,7 +57,11 @@ export function BankAllocationPostingAction({
   const { data: salesPosting } = useSalesInvoicePosting(
     isPurchase ? undefined : allocation.invoice_id,
   );
-  const { data: allocationPosting } = useBankAllocationPosting(allocation.id);
+  const {
+    data: allocationPosting,
+    isPending: markerPending,
+    isError: markerError,
+  } = useBankAllocationPosting(allocation.id);
   const { data: clients } = useClients();
   const postAllocation = usePostBankAllocation();
 
@@ -73,12 +77,21 @@ export function BankAllocationPostingAction({
     );
   }
 
-  const hint = firstBlockingReason({
-    isPurchase,
-    sourcePosted,
-    txAmount: transaction.amount,
-    client: resolvedClient,
-  });
+  // "Weet ik niet" is niet hetzelfde als "niet geboekt". Zolang de
+  // claimtabel nog niet bevraagd is (laden) of niet bevraagd kán worden (bv.
+  // de migratie is nog niet op productie toegepast, PostgREST kent de tabel
+  // niet), blijft de knop uit met een neutrale uitleg. Anders zou een klik
+  // een rauwe schema-cache-fout tonen.
+  const hint = markerError
+    ? "Boeken in het grootboek is nog niet beschikbaar voor bankkoppelingen."
+    : markerPending
+      ? "Boekingsstatus wordt geladen…"
+      : firstBlockingReason({
+          isPurchase,
+          sourcePosted,
+          txAmount: transaction.amount,
+          client: resolvedClient,
+        });
 
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-border/50">

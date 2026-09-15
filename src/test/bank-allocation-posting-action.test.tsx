@@ -19,6 +19,9 @@ const state = {
     bank_allocation_postings: null as Marker | null,
   } as Record<string, Marker | null>,
   clients: [] as Array<Record<string, unknown>>,
+  // Per tabel een te simuleren PostgREST-fout (bv. 42P01 / PGRST205 zolang de
+  // migratie nog niet op productie staat). null = geen fout.
+  errors: {} as Record<string, { message: string; code?: string } | null>,
 };
 
 const { rpcSpy, toastSpy } = vi.hoisted(() => ({
@@ -33,7 +36,10 @@ vi.mock("@/integrations/supabase/client", () => ({
     from: (table: string) => ({
       select: () => ({
         eq: () => ({
-          maybeSingle: async () => ({ data: state.tables[table] ?? null, error: null }),
+          maybeSingle: async () =>
+            state.errors[table]
+              ? { data: null, error: state.errors[table] }
+              : { data: state.tables[table] ?? null, error: null },
         }),
       }),
     }),
@@ -238,5 +244,28 @@ describe("BankAllocationPostingAction", () => {
     renderAction();
     await waitFor(() => expect(button().disabled).toBe(false));
     expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("14. claimtabel niet bevraagbaar (migratie nog niet toegepast) → knop uit, neutrale hint, geen rpc", async () => {
+    // Deploy-venster: de frontend staat live vóór de migratie. PostgREST kent
+    // bank_allocation_postings dan niet. "Weet ik niet" mag nooit als "niet
+    // geboekt" worden behandeld, anders leidt een klik tot een rauwe
+    // schema-cache-fout.
+    state.errors.bank_allocation_postings = {
+      message: "Could not find the table 'public.bank_allocation_postings' in the schema cache",
+      code: "PGRST205",
+    };
+    renderAction();
+    await waitFor(() =>
+      expect(screen.getByTestId("bank-posting-hint")).toHaveTextContent(
+        "Boeken in het grootboek is nog niet beschikbaar voor bankkoppelingen.",
+      ),
+    );
+    expect(button().disabled).toBe(true);
+    expect(screen.queryByTestId("bank-posting-done")).not.toBeInTheDocument();
+    fireEvent.click(button());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rpcSpy).not.toHaveBeenCalled();
+    state.errors.bank_allocation_postings = null;
   });
 });
