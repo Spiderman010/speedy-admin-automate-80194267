@@ -321,6 +321,10 @@ export default function PurchaseInvoiceWorkspace() {
   const canSave = initialized && !hasPartialLine && !saving && !isPosted;
   const canApprove = canSave && headerComplete && linesMatch && meaningfulLines.length > 0;
 
+  // De database boekt alleen een gecontroleerde factuur; de knop volgt die regel
+  // zodat een nog te controleren factuur geen onvermijdelijke foutmelding geeft.
+  const isPostableStatus = ["gecontroleerd", "betaald", "geexporteerd"].includes(header.status);
+
   // Totals color state
   const totalsState: "green" | "amber" | "red" =
     (headerTotals.amount_incl == null && meaningfulLines.length > 0) ? "red"
@@ -757,11 +761,17 @@ export default function PurchaseInvoiceWorkspace() {
             boekingsregels liggen daarmee vast; een correctie vereist een tegenboeking.
           </p>
         ) : (
+          <div className="flex flex-wrap items-center gap-2">
+          {!isPostableStatus && (
+            <p className="text-xs text-muted-foreground" data-testid="purchase-posting-blocker">
+              Keur de factuur eerst goed; daarna kan deze in het grootboek worden geboekt.
+            </p>
+          )}
           <Button
             variant="outline"
             size="sm"
             data-testid="purchase-posting-button"
-            disabled={!canApprove || postInvoice.isPending || !invoiceId}
+            disabled={!canApprove || !isPostableStatus || postInvoice.isPending || !invoiceId}
             onClick={async () => {
               if (!invoiceId) return;
               try {
@@ -778,6 +788,7 @@ export default function PurchaseInvoiceWorkspace() {
           >
             {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
           </Button>
+          </div>
         )}
       </div>
 
