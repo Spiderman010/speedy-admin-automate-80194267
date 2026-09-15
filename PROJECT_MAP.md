@@ -351,7 +351,7 @@ invoice_type = 'inkoop'   (requires bank_transactions.amount < 0)
 
 **Known follow-up (UX, not accounting):** the drawer's "Ontkoppelen" action deletes every allocation of a transaction in one statement; once any of them is posted the whole unlink is correctly refused by the database, but the action is still offered and surfaces the database message. Hide/disable it when the transaction has a posted allocation — needs a per-transaction marker lookup in `Bank.tsx`, deliberately kept out of this phase to keep the UI change minimal.
 
-**Temporary type shim.** `src/hooks/useBankAllocationPosting.ts` reaches `bank_allocation_postings` / `post_bank_allocation` through a narrow structural cast (`UntypedPostingApi`), exactly like 6C-b4 did in PR #148, because `types.ts` is never hand-edited and the migration is not applied yet. Remove the shim in a tiny follow-up once types are regenerated (as #150 did for sales).
+**Temporary type shim: removed.** `src/hooks/useBankAllocationPosting.ts` initially reached `bank_allocation_postings` / `post_bank_allocation` through a narrow structural cast (`UntypedPostingApi`), because `types.ts` did not yet know either object. Now that the generated types include both, the hook calls the typed `supabase` client directly — as #150 did for sales.
 
 **Independent review.** A second-pass adversarial review (fresh context, own throwaway cluster, own probes incl. NULL-org allocation, tampered-org invoice, wrong `invoice_type` with a real id, `id` re-pointing, `service_role` bypass, FK-bypassed foreign-client transaction, and two races) found no P1. Its P2 (deploy-window UI) and three of its P3s (two-leg hardening, honest deadlock note, prerequisite guard) are resolved above; the unlink UX P3 is the recorded follow-up.
 
