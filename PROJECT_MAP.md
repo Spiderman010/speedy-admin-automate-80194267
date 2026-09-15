@@ -1,5 +1,10 @@
 # Project Map — BoekAssist
 
+For future accounting phases, `BOOKASSIST_AI_BUILD_STRATEGY.md` (how to build
+with AI on this repo) and `BOOKASSIST_ACCOUNTING_PATTERNS.md` (the reusable
+posting/idempotency/security patterns proven in 6C-b1 through 6C-b5b) are
+canonical supporting docs — read them before designing a new writer.
+
 ## Source of truth
 
 | Item | Value |
