@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 if (!(globalThis as any).ResizeObserver) {
   (globalThis as any).ResizeObserver = class {
@@ -20,18 +21,33 @@ const state = {
     { id: "gb-8000", nummer: 8000, omschrijving: "Omzet hoog" },
     { id: "gb-8010", nummer: 8010, omschrijving: "Omzet laag" },
   ] as any[],
+  // null = nog niet geboekt (default voor de meeste tests hieronder). Zet dit
+  // naar een marker-object om de "reeds geboekt"-tak te simuleren.
+  postingMarker: null as { sales_invoice_id: string; posting_group_id: string; created_at: string } | null,
 };
 
 const onSaveSpy = vi.fn();
 const onApproveSpy = vi.fn();
+const { rpcSpy } = vi.hoisted(() => ({ rpcSpy: vi.fn(async () => ({ data: null, error: null })) }));
 
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock("@/hooks/useClients", () => ({
   useClients: () => ({ data: [{ id: "c-1", name: "Klant Een", btw_vrijgesteld: false }] }),
 }));
+// Fase 6C-b4: de dialog vraagt nu ook of de factuur al geboekt is
+// (useSalesInvoicePosting), via een tijdelijke ongetypeerde cast op dezelfde
+// supabase-client. `state.postingMarker` bepaalt het antwoord per test; de
+// meeste tests gaan niet over boeken, dus "nooit geboekt" (null) is de
+// standaard.
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     storage: { from: () => ({ createSignedUrl: async () => ({ data: null, error: null }), download: async () => ({ data: null, error: null }) }) },
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: state.postingMarker, error: null }) }),
+      }),
+    }),
+    rpc: rpcSpy,
   },
 }));
 vi.mock("@/components/CreateVraagpostDialog", () => ({
@@ -81,14 +97,19 @@ const makeInvoice = (over: Partial<any> = {}) => ({
 });
 
 function renderDialog(invoice: any = makeInvoice()) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <SalesInvoiceEditDialog
-      invoice={invoice}
-      open
-      onOpenChange={() => {}}
-      onSave={onSaveSpy}
-      onApprove={onApproveSpy}
-    />,
+    <QueryClientProvider client={queryClient}>
+      <SalesInvoiceEditDialog
+        invoice={invoice}
+        open
+        onOpenChange={() => {}}
+        onSave={onSaveSpy}
+        onApprove={onApproveSpy}
+      />
+    </QueryClientProvider>,
   );
 }
 
@@ -98,6 +119,8 @@ const saveBtn = () => screen.getByRole("button", { name: /^opslaan$/i });
 beforeEach(() => {
   onSaveSpy.mockReset().mockResolvedValue(undefined);
   onApproveSpy.mockReset().mockResolvedValue(undefined);
+  rpcSpy.mockClear();
+  state.postingMarker = null;
 });
 
 describe("Verkoopfactuur — expliciete grootboekrekening", () => {
@@ -213,5 +236,207 @@ describe("Verkoopfactuur — expliciete grootboekrekening", () => {
     expect(payload.btw_verlegd).toBe(true);
     expect(payload.btw_amount).toBe(0);
     expect(payload.grootboekrekening_id).toBe("gb-8000");
+  });
+});
+
+describe("Verkoopfactuur — dirty-check vóór boeken (P1-fix)", () => {
+  const postButton = () => screen.getByTestId("sales-posting-button") as HTMLButtonElement;
+  const dirtyHint = () => screen.queryByTestId("sales-posting-dirty-hint");
+
+  it("clean form: boeken is toegestaan (niet geboekt, geldige klantnaam)", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+    expect(dirtyHint()).not.toBeInTheDocument();
+  });
+
+  it("dirty amount_excl: boeken-knop is disabled en de Nederlandse hint verschijnt", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    fireEvent.change(screen.getByDisplayValue("1000"), { target: { value: "1234" } });
+
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toHaveTextContent(
+      "Sla de wijzigingen eerst op voordat je de factuur boekt.",
+    );
+  });
+
+  it("dirty grootboekrekening (via GrootboekCombobox): boeken-knop is disabled", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    fireEvent.change(ledgerField(), { target: { value: "8010 - Omzet laag" } });
+
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toBeInTheDocument();
+  });
+
+  it("dirty invoice_date: boeken-knop is disabled", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    const dateInputs = document.querySelectorAll('input[type="date"]');
+    fireEvent.change(dateInputs[0], { target: { value: "2026-04-15" } });
+
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toBeInTheDocument();
+  });
+
+  it("met een dirty formulier wordt supabase.rpc(post_sales_invoice) niet aangeroepen bij een klik", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    fireEvent.change(screen.getByDisplayValue("1000"), { target: { value: "1234" } });
+    await waitFor(() => expect(postButton()).toBeDisabled());
+
+    fireEvent.click(postButton());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("na een gesimuleerde save/refetch (nieuwe invoice-prop) is boeken weer toegestaan", async () => {
+    const initial = makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <SalesInvoiceEditDialog
+          invoice={initial}
+          open
+          onOpenChange={() => {}}
+          onSave={onSaveSpy}
+          onApprove={onApproveSpy}
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    fireEvent.change(screen.getByDisplayValue("1000"), { target: { value: "1234" } });
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toBeInTheDocument();
+
+    // Parent's save->refetch flow: a new invoice prop reflecting the saved value.
+    const saved = { ...initial, amount_excl: 1234 };
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <SalesInvoiceEditDialog
+          invoice={saved}
+          open
+          onOpenChange={() => {}}
+          onSave={onSaveSpy}
+          onApprove={onApproveSpy}
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+    expect(dirtyHint()).not.toBeInTheDocument();
+  });
+
+  it("posted invoice: toont nog steeds de 'reeds geboekt' melding, onaangetast door de dirty-check", async () => {
+    state.postingMarker = {
+      sales_invoice_id: "si-1",
+      posting_group_id: "grp-1",
+      created_at: "2026-04-02T00:00:00Z",
+    };
+    renderDialog(makeInvoice({ status: "betaald", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(screen.getByTestId("sales-posting-done")).toBeInTheDocument());
+    expect(screen.queryByTestId("sales-posting-button")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("sales-posting-dirty-hint")).not.toBeInTheDocument();
+  });
+});
+
+// post_sales_invoice() leest de *gepersisteerde* status om te bepalen of er
+// geboekt mag worden. Een niet-opgeslagen statuswijziging zou de RPC dus op een
+// andere status laten boeken dan de gebruiker ziet; daarom telt status mee in
+// de pre-post gelijkheidscheck (niet in de database-freeze).
+describe("Verkoopfactuur — onopgeslagen statuswijziging blokkeert boeken", () => {
+  const postButton = () => screen.getByTestId("sales-posting-button") as HTMLButtonElement;
+  const dirtyHint = () => screen.queryByTestId("sales-posting-dirty-hint");
+  // De status-Select toont de huidige waarde; de gelijknamige Badge in de
+  // titel is geen button, vandaar de closest("button")-filter.
+  const statusTrigger = () =>
+    screen
+      .getAllByText("Gecontroleerd")
+      .map((node) => node.closest("button"))
+      .find(Boolean)!;
+  const pickStatus = (label: string) => {
+    fireEvent.click(statusTrigger());
+    fireEvent.click(screen.getByRole("option", { name: label }));
+  };
+
+  it("gepersisteerd gecontroleerd -> onopgeslagen concept: boeken geblokkeerd", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Concept");
+
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toHaveTextContent(
+      "Sla de wijzigingen eerst op voordat je de factuur boekt.",
+    );
+  });
+
+  it("gepersisteerd gecontroleerd -> onopgeslagen verzonden: boeken geblokkeerd", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Verzonden");
+
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toBeInTheDocument();
+  });
+
+  it("een onopgeslagen statuswijziging roept post_sales_invoice niet aan", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Concept");
+    await waitFor(() => expect(postButton()).toBeDisabled());
+
+    fireEvent.click(postButton());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("gepersisteerd gecontroleerd zonder statuswijziging: boeken toegestaan", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+    expect(dirtyHint()).not.toBeInTheDocument();
+  });
+
+  it("na save/refetch van de nieuwe status verdwijnt de dirty-state; de RPC krijgt alleen het id", async () => {
+    const initial = makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (inv: any) => (
+      <QueryClientProvider client={queryClient}>
+        <SalesInvoiceEditDialog
+          invoice={inv}
+          open
+          onOpenChange={() => {}}
+          onSave={onSaveSpy}
+          onApprove={onApproveSpy}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(initial));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Betaald");
+    await waitFor(() => expect(postButton()).toBeDisabled());
+
+    // Parent's save->refetch: de nieuwe prop bevat de opgeslagen status.
+    rerender(view({ ...initial, status: "betaald" }));
+
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+    expect(dirtyHint()).not.toBeInTheDocument();
+
+    // De client stuurt nooit een status mee: of er daadwerkelijk geboekt mag
+    // worden blijft een beslissing van post_sales_invoice() zelf.
+    fireEvent.click(postButton());
+    await waitFor(() => expect(rpcSpy).toHaveBeenCalledTimes(1));
+    expect(rpcSpy).toHaveBeenCalledWith("post_sales_invoice", { _invoice_id: "si-1" });
   });
 });

@@ -18,6 +18,7 @@ import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { SALES_UBL_TEST_HELPER_TEXT, buildSalesInvoiceTestPackage } from "@/lib/sales-ubl-generator";
+import { useSalesInvoicePosting, usePostSalesInvoice } from "@/hooks/useSalesInvoicePosting";
 
 type SalesInvoice = Tables<"sales_invoices">;
 
@@ -74,6 +75,74 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
   );
 }
 
+/**
+ * Zuivere afleiding van de formulierstaat uit de gepersisteerde factuur. Wordt
+ * zowel gebruikt om `form` te initialiseren/synchroniseren (in de useEffect
+ * hieronder) als om, op elke render, de actueel gepersisteerde staat af te
+ * leiden voor de dirty-check — zonder een aparte "laatst opgeslagen"
+ * snapshot-state die uit de pas zou kunnen lopen.
+ */
+function deriveFormFromInvoice(invoice: SalesInvoice) {
+  const verlegd = !!(invoice as any).btw_verlegd;
+  const pct = invoice.btw_percentage?.toString() || "21";
+  const ledgerValue = (invoice as any).ledger_account_text || "";
+
+  return {
+    customer_name: invoice.customer_name || "",
+    invoice_number: invoice.invoice_number || "",
+    invoice_date: invoice.invoice_date || "",
+    due_date: invoice.due_date || "",
+    amount_excl: invoice.amount_excl?.toString() || "",
+    amount_incl: invoice.amount_incl?.toString() || "",
+    btw_amount: verlegd ? "0" : (invoice.btw_amount?.toString() || ""),
+    btw_percentage: verlegd ? "verlegd" : (["0", "9", "21"].includes(pct) ? pct : "21"),
+    btw_verlegd: verlegd,
+    ledger_account_text: ledgerValue,
+    grootboekrekening_id: invoice.grootboekrekening_id ?? "",
+    notes: invoice.notes || "",
+    status: invoice.status || "concept",
+  };
+}
+
+/**
+ * De boekhoudkundig relevante velden — exact de set die
+ * prevent_posted_sales_invoice_mutation() bevriest (minus client_id/
+ * organization_id, die niet in deze dialog bewerkt worden). status, due_date,
+ * notes en remaining_amount/pdf_path horen hier bewust niet bij: die blijven
+ * na boeken vrij bewerkbaar volgens diezelfde migratie.
+ */
+const ACCOUNTING_FIELDS = [
+  "customer_name",
+  "invoice_number",
+  "invoice_date",
+  "amount_excl",
+  "amount_incl",
+  "btw_amount",
+  "btw_percentage",
+  "btw_verlegd",
+  "grootboekrekening_id",
+  "ledger_account_text",
+] as const;
+
+/**
+ * De set die vóór boeken exact gelijk moet zijn aan de gepersisteerde factuur:
+ * de boekhoudkundige velden plus `status`. post_sales_invoice() leest de
+ * gepersisteerde status om te bepalen óf er geboekt mag worden (alleen
+ * gecontroleerd of betaald), dus met een niet-opgeslagen statuswijziging zou de
+ * RPC op een andere status boeken dan de gebruiker op het scherm ziet. Dit
+ * maakt status géén bevroren boekhoudkundig veld in de database: de migratie
+ * blijft ongewijzigd en na boeken blijft gecontroleerd → betaald toegestaan.
+ */
+const PRE_POST_FIELDS = [...ACCOUNTING_FIELDS, "status"] as const;
+
+/** String/number-veilige gelijkheid — geen nieuwe boekhoudkundige logica. */
+function isPrePostStateDirty(
+  form: ReturnType<typeof deriveFormFromInvoice>,
+  persisted: ReturnType<typeof deriveFormFromInvoice>,
+): boolean {
+  return PRE_POST_FIELDS.some((key) => form[key] !== persisted[key]);
+}
+
 interface Props {
   invoice: SalesInvoice | null;
   open: boolean;
@@ -88,6 +157,12 @@ interface Props {
 export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, allInvoices, knownDuplicate }: Props) {
   const { toast } = useToast();
   const { data: clients } = useClients();
+  const { data: posting } = useSalesInvoicePosting(invoice?.id);
+  const postInvoice = usePostSalesInvoice();
+  // Een geboekte factuur is brongegeven geworden: de database weigert elke
+  // boekhoudkundige wijziging, dus de UI biedt die ook niet meer aan. De
+  // databasegrendel is leidend; dit voorkomt alleen een onvermijdelijke fout.
+  const isPosted = !!posting;
   const [form, setForm] = useState({
     customer_name: "",
     invoice_number: "",
@@ -133,25 +208,19 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
       const enabled = !verlegd && (parseFloat(pct) !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0));
       setBtwEnabled(enabled && !verlegd);
 
-      const ledgerValue = (invoice as any).ledger_account_text || "";
-
-      setForm({
-        customer_name: invoice.customer_name || "",
-        invoice_number: invoice.invoice_number || "",
-        invoice_date: invoice.invoice_date || "",
-        due_date: invoice.due_date || "",
-        amount_excl: invoice.amount_excl?.toString() || "",
-        amount_incl: invoice.amount_incl?.toString() || "",
-        btw_amount: verlegd ? "0" : (invoice.btw_amount?.toString() || ""),
-        btw_percentage: verlegd ? "verlegd" : (["0", "9", "21"].includes(pct) ? pct : "21"),
-        btw_verlegd: verlegd,
-        ledger_account_text: ledgerValue,
-        grootboekrekening_id: invoice.grootboekrekening_id ?? "",
-        notes: invoice.notes || "",
-        status: invoice.status || "concept",
-      });
+      setForm(deriveFormFromInvoice(invoice));
     }
   }, [invoice]);
+
+  // Op elke render opnieuw afgeleid uit de huidige `invoice`-prop, zodat dit
+  // zichzelf corrigeert zodra de parent een vers opgeslagen/opnieuw
+  // opgehaalde factuur doorgeeft — geen aparte snapshot-state die kan
+  // verouderen.
+  const persistedForm = useMemo(
+    () => (invoice ? deriveFormFromInvoice(invoice) : null),
+    [invoice],
+  );
+  const isDirty = !!persistedForm && isPrePostStateDirty(form, persistedForm);
 
   if (!invoice) return null;
 
@@ -425,14 +494,52 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
             <HelpCircle className="mr-2 h-4 w-4" />Vraagpost maken
           </Button>
-          <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name}>
+          {isPosted ? (
+            <p className="text-xs text-muted-foreground self-center" data-testid="sales-posting-done">
+              Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens
+              liggen daarmee vast; een correctie vereist een tegenboeking.
+            </p>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="sales-posting-button"
+                disabled={postInvoice.isPending || !invoice || saving || isDirty || !form.customer_name}
+                onClick={async () => {
+                  if (!invoice) return;
+                  try {
+                    await postInvoice.mutateAsync(invoice.id);
+                    toast({ title: "Factuur geboekt" });
+                  } catch (e) {
+                    toast({
+                      title: "Boeken niet gelukt",
+                      description: e instanceof Error ? e.message : undefined,
+                      variant: "destructive",
+                    });
+                  }
+                }}
+              >
+                {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
+              </Button>
+              {isDirty && (
+                <p
+                  className="text-xs text-muted-foreground self-center basis-full sm:basis-auto"
+                  data-testid="sales-posting-dirty-hint"
+                >
+                  Sla de wijzigingen eerst op voordat je de factuur boekt.
+                </p>
+              )}
+            </>
+          )}
+          <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name || isPosted}>
             <Save className="mr-2 h-4 w-4" />Opslaan
           </Button>
-          <Button onClick={handleApprove} disabled={saving || !form.customer_name}>
+          <Button onClick={handleApprove} disabled={saving || !form.customer_name || isPosted}>
             <CheckCircle2 className="mr-2 h-4 w-4" />Goedkeuren
           </Button>
         </DialogFooter>
