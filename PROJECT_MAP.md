@@ -172,12 +172,51 @@ where table_schema='public' and table_name='clients'
   and column_name in ('btw_te_vorderen_rekening_id','btw_te_betalen_rekening_id');
 ```
 
-### Carried into 6C-b3 (purchase postings)
+### Phase 6C-b3 — purchase ledger postings
 
-- **Idempotency must NOT be a partial unique index on `(source_id) WHERE source_type='purchase_invoice' AND line_no=1`.** That is bypassable: direct `ledger_postings` INSERT is permitted, and a second group can simply avoid `line_no = 1`. Use a dedicated atomic claim instead — a small `purchase_invoice_postings` marker table with a unique `purchase_invoice_id` and a unique `posting_group_id`, written in the same transaction as the ledger rows.
-- **Purchase reverse charge (verlegde BTW) is unsupported**: the purchase model has no field representing it, so a verlegde inkoopfactuur can only be stored as 0% VAT and the payable leg cannot be expressed. State it as a limitation rather than approximating it.
-- **The writer must fail closed when header totals and line allocation cannot reconcile exactly** (`Σ line.amount_excl + btw_amount = amount_incl`); header and lines can legitimately diverge today, which `purchase-line-validation.ts` exists to flag.
-- **No historic backfill.** Existing purchase invoices are never auto-posted.
+Migration file:
+```
+supabase/migrations/20260915140000_add_purchase_ledger_posting.sql
+```
+
+**Purpose:** the first production accounting writer. `public.post_purchase_invoice(_invoice_id uuid)` posts one finalised purchase invoice into `ledger_postings` as a balanced, immutable group, exactly once.
+
+**The entry**
+
+```
+DEBIT   each line.amount_excl   → purchase_invoice_lines.grootboekrekening_id
+DEBIT   header.btw_amount       → clients.btw_te_vorderen_rekening_id   (only when > 0)
+CREDIT  header.amount_incl      → clients.crediteuren_rekening_id
+```
+
+VAT is never folded into an expense line, no account number is ever invented, and there is no silent fallback — a missing account fails the whole posting.
+
+**Contract**
+
+- **Trigger point:** an explicit "Boeken in grootboek" action. Ordinary save never posts; `te_controleren` is refused. Only `gecontroleerd`, `betaald` or `geexporteerd` may post.
+- **Source identity:** `source_type = 'purchase_invoice'`, `source_id` = the invoice id, `source_line_id` = **NULL**. Purchase line ids are *not* durable — `save_purchase_invoice_with_lines` deletes and re-inserts every line on each save — so `line_no` carries posting-line order only, never source identity.
+- **Idempotency:** `public.purchase_invoice_postings`, whose PRIMARY KEY on `purchase_invoice_id` *is* the guarantee. Claim and ledger rows are written in one transaction, so an invoice is either fully posted or not posted. Under concurrency the index is the serialisation point: the second session blocks until the first commits, then fails as already posted. The earlier proposed partial unique index on `(source_id) WHERE line_no = 1` was rejected as bypassable.
+- **Reconciliation is exact**, in NUMERIC: `SUM(line.amount_excl) = header.amount_excl` and `header.amount_excl + btw_amount = header.amount_incl`. The `lineTolerance()` in `purchase-line-validation.ts` is a UI editing affordance, **not** an accounting convention — the ledger's own group check is exact, so anything less would be rejected at COMMIT anyway. Discrepancies are refused, never repaired.
+- **Date / boekjaar / currency:** `posting_date = invoice_date` (NULL fails closed); `boekjaar` = calendar year of that date — the product has no broken-fiscal-year support and its own tested year filter selects `invoice_date >= 'YYYY-01-01' AND < 'YYYY+1-01-01'`; `currency = 'EUR'` explicitly, the product being EUR-only (no currency column, EUR hard-coded in money formatting and both UBL generators).
+- **Closed years:** posting into a year at or before `clients.afgesloten_boekjaar` is refused.
+- **Security:** `SECURITY DEFINER` (required — the marker is deliberately not writable by `authenticated`), `SET search_path = public`, `REVOKE ALL FROM PUBLIC`, `GRANT EXECUTE TO authenticated` only. The only caller input is the invoice id; user, organisation, administratie, amounts, accounts, boekjaar and currency are all derived server-side, and `created_xact_id` is stamped by the ledger's own trigger. Role required: `assistant`, matching the ledger's own INSERT policy.
+- **Marker privileges:** `SELECT` only for `authenticated`/`service_role`, nothing for `anon`. `INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER` are explicitly revoked — Lovable Cloud defaults were observed to hand out more than the obvious three.
+
+**Deliberately unsupported, refused rather than approximated**
+
+- **Verlegde BTW (reverse charge) on purchases.** The purchase model has no field representing it, so the payable leg cannot be expressed. A verlegde invoice can only be stored as 0% VAT, which posts as a plain no-VAT purchase; the VAT-return legs are absent. Do not infer reverse charge from any other field.
+- **Credit notes / negative amounts.** `ledger_postings` forbids negative amounts by design; a creditnota is a reversal and belongs to the correction workflow.
+- **Corrections and reposting.** Once posted, an invoice cannot be posted again. If accounting-relevant source data changes afterwards this phase fails closed on purpose. Corrections require a future reversal workflow writing NEW immutable rows; nothing edits or deletes a posted row.
+- **No historic backfill.** No existing purchase invoice is posted automatically.
+
+**Status: ⏳ Not yet applied.**
+Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
+
+Verification query:
+```sql
+select to_regclass('public.purchase_invoice_postings') as marker_table,
+       (select count(*) from pg_proc where proname = 'post_purchase_invoice') as rpc;
+```
 
 ---
 

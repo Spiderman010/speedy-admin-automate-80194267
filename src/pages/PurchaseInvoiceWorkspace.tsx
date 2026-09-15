@@ -38,6 +38,7 @@ import { round2 } from "@/lib/btw-calc";
 import { formatEuro } from "@/lib/format";
 import type { Tables } from "@/integrations/supabase/types";
 import { PurchaseInvoiceWorkspaceHeader } from "@/components/purchase/PurchaseInvoiceWorkspaceHeader";
+import { usePurchaseInvoicePosting, usePostPurchaseInvoice } from "@/hooks/usePurchaseInvoicePosting";
 import { PurchaseInvoiceDocumentPreview } from "@/components/purchase/PurchaseInvoiceDocumentPreview";
 import {
   PurchaseInvoiceTotalsSummary,
@@ -151,6 +152,8 @@ export default function PurchaseInvoiceWorkspace() {
   const [lines, setLines] = useState<LineRow[]>([]);
   const [initialized, setInitialized] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { data: posting } = usePurchaseInvoicePosting(invoiceId);
+  const postInvoice = usePostPurchaseInvoice();
 
   // Deterministic initialization once invoice + lines are loaded.
   useEffect(() => {
@@ -311,7 +314,11 @@ export default function PurchaseInvoiceWorkspace() {
     !!header.invoice_date &&
     headerTotals.amount_incl != null;
 
-  const canSave = initialized && !hasPartialLine && !saving;
+  // Een geboekte factuur is brongegeven geworden: de database weigert elke
+  // boekhoudkundige wijziging, dus de UI biedt die ook niet meer aan. De
+  // databasegrendel is leidend; dit voorkomt alleen een onvermijdelijke fout.
+  const isPosted = !!posting;
+  const canSave = initialized && !hasPartialLine && !saving && !isPosted;
   const canApprove = canSave && headerComplete && linesMatch && meaningfulLines.length > 0;
 
   // Totals color state
@@ -741,6 +748,37 @@ export default function PurchaseInvoiceWorkspace() {
             </Card>
           </div>
         </div>
+      </div>
+
+      <div className="mt-4" data-testid="purchase-posting-section">
+        {posting ? (
+          <p className="text-xs text-muted-foreground" data-testid="purchase-posting-done">
+            Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens en
+            boekingsregels liggen daarmee vast; een correctie vereist een tegenboeking.
+          </p>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="purchase-posting-button"
+            disabled={!canApprove || postInvoice.isPending || !invoiceId}
+            onClick={async () => {
+              if (!invoiceId) return;
+              try {
+                await postInvoice.mutateAsync(invoiceId);
+                toast({ title: "Factuur geboekt" });
+              } catch (e) {
+                toast({
+                  title: "Boeken niet gelukt",
+                  description: e instanceof Error ? e.message : undefined,
+                  variant: "destructive",
+                });
+              }
+            }}
+          >
+            {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
+          </Button>
+        )}
       </div>
 
       <PurchaseInvoiceActionBar
