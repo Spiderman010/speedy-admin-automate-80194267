@@ -757,11 +757,17 @@ export default function PurchaseInvoiceWorkspace() {
             boekingsregels liggen daarmee vast; een correctie vereist een tegenboeking.
           </p>
         ) : (
+          <div className="flex flex-wrap items-center gap-2">
+          {!isPostableStatus && (
+            <p className="text-xs text-muted-foreground" data-testid="purchase-posting-blocker">
+              Keur de factuur eerst goed; daarna kan deze in het grootboek worden geboekt.
+            </p>
+          )}
           <Button
             variant="outline"
             size="sm"
             data-testid="purchase-posting-button"
-            disabled={!canApprove || postInvoice.isPending || !invoiceId}
+            disabled={!canApprove || !isPostableStatus || postInvoice.isPending || !invoiceId}
             onClick={async () => {
               if (!invoiceId) return;
               try {
