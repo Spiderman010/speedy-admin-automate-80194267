@@ -18,6 +18,7 @@ import { shouldSyncRemainingAmount } from "@/lib/invoice-balances";
 import { useToast } from "@/hooks/use-toast";
 import { useClients } from "@/hooks/useClients";
 import { SALES_UBL_TEST_HELPER_TEXT, buildSalesInvoiceTestPackage } from "@/lib/sales-ubl-generator";
+import { useSalesInvoicePosting, usePostSalesInvoice } from "@/hooks/useSalesInvoicePosting";
 
 type SalesInvoice = Tables<"sales_invoices">;
 
@@ -88,6 +89,12 @@ interface Props {
 export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, allInvoices, knownDuplicate }: Props) {
   const { toast } = useToast();
   const { data: clients } = useClients();
+  const { data: posting } = useSalesInvoicePosting(invoice?.id);
+  const postInvoice = usePostSalesInvoice();
+  // Een geboekte factuur is brongegeven geworden: de database weigert elke
+  // boekhoudkundige wijziging, dus de UI biedt die ook niet meer aan. De
+  // databasegrendel is leidend; dit voorkomt alleen een onvermijdelijke fout.
+  const isPosted = !!posting;
   const [form, setForm] = useState({
     customer_name: "",
     invoice_number: "",
@@ -425,14 +432,42 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
             <HelpCircle className="mr-2 h-4 w-4" />Vraagpost maken
           </Button>
-          <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name}>
+          {isPosted ? (
+            <p className="text-xs text-muted-foreground self-center" data-testid="sales-posting-done">
+              Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens
+              liggen daarmee vast; een correctie vereist een tegenboeking.
+            </p>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="sales-posting-button"
+              disabled={postInvoice.isPending || !invoice}
+              onClick={async () => {
+                if (!invoice) return;
+                try {
+                  await postInvoice.mutateAsync(invoice.id);
+                  toast({ title: "Factuur geboekt" });
+                } catch (e) {
+                  toast({
+                    title: "Boeken niet gelukt",
+                    description: e instanceof Error ? e.message : undefined,
+                    variant: "destructive",
+                  });
+                }
+              }}
+            >
+              {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
+            </Button>
+          )}
+          <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name || isPosted}>
             <Save className="mr-2 h-4 w-4" />Opslaan
           </Button>
-          <Button onClick={handleApprove} disabled={saving || !form.customer_name}>
+          <Button onClick={handleApprove} disabled={saving || !form.customer_name || isPosted}>
             <CheckCircle2 className="mr-2 h-4 w-4" />Goedkeuren
           </Button>
         </DialogFooter>

@@ -218,9 +218,57 @@ select to_regclass('public.purchase_invoice_postings') as marker_table,
        (select count(*) from pg_proc where proname = 'post_purchase_invoice') as rpc;
 ```
 
+### Phase 6C-b4 — sales ledger postings
+
+Migration file:
+```
+supabase/migrations/20260915160000_add_sales_ledger_posting.sql
+```
+
+**Purpose:** the second production accounting writer. `public.post_sales_invoice(_invoice_id uuid)` posts one finalised sales invoice into `ledger_postings` as a balanced, immutable group, exactly once. Mirrors the 6C-b3 architecture, adapted to a materially different source model (audited before writing any code, see below).
+
+**The entry**
+
+```
+DEBIT   header.amount_incl (gross)  → clients.debiteuren_rekening_id
+CREDIT  header.amount_excl (net)    → sales_invoices.grootboekrekening_id
+CREDIT  header.btw_amount           → clients.btw_te_betalen_rekening_id   (only when > 0)
+```
+
+**Sales is header-only**, unlike purchase: no `sales_invoice_lines` table exists anywhere in the schema, so `sales_invoices.grootboekrekening_id` is the one and only revenue account per invoice, and `source_line_id` is always NULL. No account number is ever invented and there is no silent fallback.
+
+**Contract**
+
+- **Trigger point:** an explicit "Boeken in grootboek" action. Only `gecontroleerd` or `betaald` may post. `concept` and `verzonden` are refused — `verzonden` is a freely selectable dropdown value with no code path proving it means "reviewed", so it is treated as non-final. `geexporteerd` is not offered as a status at all: the live DB `CHECK` constraint on `sales_invoices.status` only permits `concept | gecontroleerd | verzonden | betaald`, even though some app code (`SALES_LEDGER_STATUSES`, `STATUS_ORDER`) references `geexporteerd` for sales — that reference is dead code inherited from the purchase pattern, not a reachable state.
+- **Source identity:** `source_type = 'sales_invoice'`, `source_id` = the invoice id, `source_line_id` = NULL (no lines exist to carry one).
+- **Idempotency:** `public.sales_invoice_postings`, identical design to the purchase marker — PRIMARY KEY on `sales_invoice_id` is the guarantee, claim and ledger rows are written in one transaction, and a `BEFORE INSERT` guard on `ledger_postings` (scoped strictly to `source_type = 'sales_invoice'`) makes the marker the single authority so a direct `authenticated` INSERT cannot create a second group.
+- **Posted-source immutability:** once a marker exists, a `BEFORE UPDATE` trigger on `sales_invoices` freezes every accounting-relevant field (`client_id`, `organization_id`, `customer_name`, `invoice_number`, `invoice_date`, `amount_excl`, `btw_amount`, `amount_incl`, `btw_percentage`, `btw_verlegd`, `grootboekrekening_id`, `ledger_account_text`). `status`, `due_date`, `remaining_amount`, `notes` and `pdf_path` stay editable, because none of them changes what was booked. Sales had **no** existing posted-source guard before this phase (unlike purchase, which also needed one in 6C-b3) — invoices were previously fully mutable regardless of status.
+- **Save-vs-post concurrency:** the writer takes `SELECT ... FOR UPDATE` on the invoice row before reading it, the same row `useUpdateSalesInvoice` implicitly locks during its `UPDATE`. Whichever starts first finishes first; a mixed old/new snapshot is impossible.
+- **Reconciliation is exact**, in NUMERIC: `header.amount_excl + header.btw_amount = header.amount_incl`. There is no line sum to check.
+- **Date / boekjaar / currency:** identical contract to purchase. `invoice_date` is actually `NOT NULL` at the schema level for sales (unlike purchase), so the writer's NULL check is defensive rather than load-bearing. `currency = 'EUR'` explicitly.
+- **Closed years:** posting into a year at or before `clients.afgesloten_boekjaar` is refused.
+- **Security:** identical model to purchase — `SECURITY DEFINER`, `SET search_path = public`, `REVOKE ALL FROM PUBLIC`, `GRANT EXECUTE TO authenticated` only. **`service_role` EXECUTE is explicitly revoked too** (not just omitted) — no edge function currently posts sales invoices, and that stays a deliberate, separately-reviewed grant rather than a default. Role required: `assistant`.
+- **Marker privileges:** `SELECT` only for `authenticated`/`service_role`, nothing for `anon`. `INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER` are explicitly revoked.
+
+**Deliberately unsupported, refused rather than approximated**
+
+- **Verlegde BTW (`btw_verlegd = true`).** Unlike purchase, sales genuinely has a field for reverse charge — so silence was not available. A naive header posting of a verlegde invoice would balance (because `btw_amount` is forced to 0) while omitting the VAT-return legs entirely. The product has already made this exact call once: the SnelStart export refuses to export a `btw_verlegd` invoice ("de juiste SnelStart-exportcode is nog niet ingesteld"). The writer follows the same posture and refuses to post one, with its own explicit error, rather than booking an incomplete entry.
+- **Credit notes / negative amounts.** Same refusal as purchase; nothing in the schema represents a sales credit note today.
+- **Corrections and reposting.** Same as purchase: once posted, never again; corrections require a future reversal workflow.
+- **No historic backfill.**
+
+**Status: ⏳ Not yet applied.**
+Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
+
+Verification query:
+```sql
+select to_regclass('public.sales_invoice_postings') as marker_table,
+       (select count(*) from pg_proc where proname = 'post_sales_invoice') as rpc;
+```
+
 ---
 
-Future phases: 6C-b3 purchase posting, 6C-b4 sales posting, 6C-b5 bank settlement posting, 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
+Future phases: 6C-b5 bank settlement posting, 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
 
 **Status: ⏳ Not yet applied.**
 Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.

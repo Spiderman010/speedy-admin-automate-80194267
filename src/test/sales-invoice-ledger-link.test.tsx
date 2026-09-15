@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 if (!(globalThis as any).ResizeObserver) {
   (globalThis as any).ResizeObserver = class {
@@ -29,9 +30,19 @@ vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock("@/hooks/useClients", () => ({
   useClients: () => ({ data: [{ id: "c-1", name: "Klant Een", btw_vrijgesteld: false }] }),
 }));
+// Fase 6C-b4: de dialog vraagt nu ook of de factuur al geboekt is
+// (useSalesInvoicePosting), via een tijdelijke ongetypeerde cast op dezelfde
+// supabase-client. Deze tests gaan niet over boeken, dus "nooit geboekt" is
+// hier de enige relevante respons.
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     storage: { from: () => ({ createSignedUrl: async () => ({ data: null, error: null }), download: async () => ({ data: null, error: null }) }) },
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+      }),
+    }),
+    rpc: async () => ({ data: null, error: null }),
   },
 }));
 vi.mock("@/components/CreateVraagpostDialog", () => ({
@@ -81,14 +92,19 @@ const makeInvoice = (over: Partial<any> = {}) => ({
 });
 
 function renderDialog(invoice: any = makeInvoice()) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <SalesInvoiceEditDialog
-      invoice={invoice}
-      open
-      onOpenChange={() => {}}
-      onSave={onSaveSpy}
-      onApprove={onApproveSpy}
-    />,
+    <QueryClientProvider client={queryClient}>
+      <SalesInvoiceEditDialog
+        invoice={invoice}
+        open
+        onOpenChange={() => {}}
+        onSave={onSaveSpy}
+        onApprove={onApproveSpy}
+      />
+    </QueryClientProvider>,
   );
 }
 
