@@ -567,16 +567,32 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE
-  v_invoice_id uuid := COALESCE(NEW.purchase_invoice_id, OLD.purchase_invoice_id);
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.purchase_invoice_postings WHERE purchase_invoice_id = v_invoice_id
+  -- Both sides of an UPDATE must be checked, not one derived id. An earlier
+  -- version used COALESCE(NEW.purchase_invoice_id, OLD.purchase_invoice_id),
+  -- but on UPDATE NEW is always present, so OLD was never examined: re-pointing
+  -- a line from a POSTED invoice to an unposted one would have been accepted
+  -- and would have silently removed a line from posted accounting.
+  IF TG_OP IN ('INSERT', 'UPDATE') AND EXISTS (
+    SELECT 1 FROM public.purchase_invoice_postings
+    WHERE purchase_invoice_id = NEW.purchase_invoice_id
   ) THEN
     RAISE EXCEPTION 'Deze inkoopfactuur is geboekt; boekingsregels kunnen niet meer worden gewijzigd. Een correctie vereist een tegenboeking.'
       USING ERRCODE = '42501';
   END IF;
-  RETURN COALESCE(NEW, OLD);
+
+  IF TG_OP IN ('UPDATE', 'DELETE') AND EXISTS (
+    SELECT 1 FROM public.purchase_invoice_postings
+    WHERE purchase_invoice_id = OLD.purchase_invoice_id
+  ) THEN
+    RAISE EXCEPTION 'Deze inkoopfactuur is geboekt; boekingsregels kunnen niet meer worden gewijzigd. Een correctie vereist een tegenboeking.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN
+    RETURN OLD;
+  END IF;
+  RETURN NEW;
 END
 $$;
 

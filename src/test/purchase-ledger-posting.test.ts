@@ -246,8 +246,17 @@ describe("Migratie — geboekte bron is bevroren", () => {
     expect(sql).toMatch(
       /CREATE TRIGGER prevent_posted_purchase_line_mutation_trigger\s+BEFORE INSERT OR UPDATE OR DELETE ON public\.purchase_invoice_lines/,
     );
-    // DELETE gebruikt OLD, INSERT gebruikt NEW.
-    expect(sql).toMatch(/COALESCE\(NEW\.purchase_invoice_id, OLD\.purchase_invoice_id\)/);
+  });
+
+  it("32b. toetst bij UPDATE BEIDE kanten, niet één afgeleide factuur-id", () => {
+    // Met COALESCE(NEW..., OLD...) werd OLD bij een UPDATE nooit bekeken (NEW is
+    // er altijd), zodat een regel van een GEBOEKTE factuur naar een ongeboekte
+    // kon worden verplaatst en zo stilzwijgend uit de boeking verdween.
+    const line = sql.slice(sql.indexOf("FUNCTION public.prevent_posted_purchase_line_mutation"));
+    expect(line).not.toMatch(/COALESCE\(NEW\.purchase_invoice_id, OLD\.purchase_invoice_id\)/);
+    expect(line).toMatch(/TG_OP IN \('INSERT', 'UPDATE'\)[\s\S]*?WHERE purchase_invoice_id = NEW\.purchase_invoice_id/);
+    expect(line).toMatch(/TG_OP IN \('UPDATE', 'DELETE'\)[\s\S]*?WHERE purchase_invoice_id = OLD\.purchase_invoice_id/);
+    expect(line).toMatch(/IF TG_OP = 'DELETE' THEN\s+RETURN OLD;/);
   });
 
   it("33. serialiseert opslaan en boeken met een rijgrendel", () => {
