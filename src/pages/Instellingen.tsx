@@ -89,69 +89,93 @@ function ProfielTab() {
     await supabase.auth.signOut();
   };
 
-  if (isLoading) return <p className="text-muted-foreground">Laden...</p>;
+  if (isLoading) return (
+    <div className="space-y-6">
+      {[0, 1, 2].map(i => (
+        <Card key={i}>
+          <CardHeader><div className="h-5 w-40 rounded bg-muted animate-pulse" /></CardHeader>
+          <CardContent><div className="h-24 rounded bg-muted/50 animate-pulse" /></CardContent>
+        </Card>
+      ))}
+    </div>
+  );
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><User className="h-5 w-5" />Bedrijfsgegevens</CardTitle>
+          <CardTitle className="flex items-center gap-2"><User className="h-5 w-5 text-muted-foreground" />Bedrijfsgegevens</CardTitle>
+          <CardDescription>Deze gegevens worden gebruikt voor je account en correspondentie.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label>Naam</Label>
-              <Input value={naam} onChange={e => setNaam(e.target.value)} placeholder="Je volledige naam" />
+            <div className="space-y-1.5">
+              <Label htmlFor="profiel-naam">Naam</Label>
+              <Input id="profiel-naam" value={naam} onChange={e => setNaam(e.target.value)} placeholder="Je volledige naam" />
             </div>
-            <div className="space-y-1">
-              <Label>Bedrijfsnaam</Label>
-              <Input value={bedrijf} onChange={e => setBedrijf(e.target.value)} placeholder="Agio Finance" />
+            <div className="space-y-1.5">
+              <Label htmlFor="profiel-bedrijf">Bedrijfsnaam</Label>
+              <Input id="profiel-bedrijf" value={bedrijf} onChange={e => setBedrijf(e.target.value)} placeholder="Agio Finance" />
             </div>
-            <div className="space-y-1">
-              <Label>E-mailadres</Label>
-              <Input value={user?.email || ""} disabled className="bg-muted" />
+            <div className="space-y-1.5">
+              <Label htmlFor="profiel-email">E-mailadres</Label>
+              <Input id="profiel-email" value={user?.email || ""} disabled className="bg-muted" />
               <p className="text-xs text-muted-foreground">E-mailadres kan niet worden gewijzigd</p>
             </div>
-            <div className="space-y-1">
-              <Label>Telefoonnummer</Label>
-              <Input value={telefoon} onChange={e => setTelefoon(e.target.value)} placeholder="+31 6 00000000" />
+            <div className="space-y-1.5">
+              <Label htmlFor="profiel-telefoon">Telefoonnummer</Label>
+              <Input id="profiel-telefoon" value={telefoon} onChange={e => setTelefoon(e.target.value)} placeholder="+31 6 00000000" />
             </div>
-            <div className="space-y-1">
-              <Label>KVK nummer</Label>
-              <Input value={kvk} onChange={e => setKvk(e.target.value)} placeholder="12345678" />
+            <div className="space-y-1.5">
+              <Label htmlFor="profiel-kvk">KVK nummer</Label>
+              <Input id="profiel-kvk" value={kvk} onChange={e => setKvk(e.target.value)} placeholder="12345678" />
             </div>
-            <div className="space-y-1">
-              <Label>BTW nummer</Label>
-              <Input value={btwnummer} onChange={e => setBtwnummer(e.target.value)} placeholder="NL123456789B01" />
+            <div className="space-y-1.5">
+              <Label htmlFor="profiel-btw">BTW nummer</Label>
+              <Input id="profiel-btw" value={btwnummer} onChange={e => setBtwnummer(e.target.value)} placeholder="NL123456789B01" />
             </div>
           </div>
-          <Button onClick={handleSaveProfiel} disabled={saveMut.isPending}>Profiel opslaan</Button>
+          <div className="flex justify-end border-t pt-4">
+            <Button onClick={handleSaveProfiel} disabled={saveMut.isPending} className="min-h-9">
+              {saveMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Profiel opslaan
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Wachtwoord wijzigen</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+        <CardHeader>
+          <CardTitle>Wachtwoord wijzigen</CardTitle>
+          <CardDescription>Kies een nieuw wachtwoord van minimaal 6 tekens.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label>Nieuw wachtwoord</Label>
-              <Input type="password" value={nieuwWachtwoord} onChange={e => setNieuwWachtwoord(e.target.value)} placeholder="Minimaal 6 tekens" />
+            <div className="space-y-1.5">
+              <Label htmlFor="ww-nieuw">Nieuw wachtwoord</Label>
+              <Input id="ww-nieuw" type="password" value={nieuwWachtwoord} onChange={e => setNieuwWachtwoord(e.target.value)} placeholder="Minimaal 6 tekens" />
             </div>
-            <div className="space-y-1">
-              <Label>Bevestig wachtwoord</Label>
-              <Input type="password" value={wachtwoordBevestig} onChange={e => setWachtwoordBevestig(e.target.value)} placeholder="Herhaal wachtwoord" />
+            <div className="space-y-1.5">
+              <Label htmlFor="ww-bevestig">Bevestig wachtwoord</Label>
+              <Input id="ww-bevestig" type="password" value={wachtwoordBevestig} onChange={e => setWachtwoordBevestig(e.target.value)} placeholder="Herhaal wachtwoord" />
             </div>
           </div>
-          <Button onClick={handleWachtwoordWijzigen} disabled={savingPassword || !nieuwWachtwoord}>
-            {savingPassword ? "Bezig..." : "Wachtwoord wijzigen"}
-          </Button>
+          <div className="flex justify-end border-t pt-4">
+            <Button onClick={handleWachtwoordWijzigen} disabled={savingPassword || !nieuwWachtwoord} className="min-h-9">
+              {savingPassword && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {savingPassword ? "Bezig..." : "Wachtwoord wijzigen"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Account</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle>Account</CardTitle>
+          <CardDescription>Meld je af op dit apparaat.</CardDescription>
+        </CardHeader>
         <CardContent>
-          <Button variant="destructive" onClick={handleUitloggen} className="gap-2">
+          <Button variant="destructive" onClick={handleUitloggen} className="gap-2 min-h-9">
             <LogOut className="h-4 w-4" />Uitloggen
           </Button>
         </CardContent>
@@ -192,43 +216,63 @@ function MatchingTab() {
     );
   };
 
-  if (isLoading) return <p className="text-muted-foreground">Laden...</p>;
+  if (isLoading) return (
+    <Card>
+      <CardHeader><div className="h-5 w-40 rounded bg-muted animate-pulse" /></CardHeader>
+      <CardContent><div className="h-40 rounded bg-muted/50 animate-pulse" /></CardContent>
+    </Card>
+  );
 
   return (
     <Card>
-      <CardHeader><CardTitle>Matching instellingen</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle>Matching instellingen</CardTitle>
+        <CardDescription>Bepaal hoe banktransacties automatisch aan facturen worden gekoppeld.</CardDescription>
+      </CardHeader>
       <CardContent className="space-y-6">
-        <div className="space-y-2">
-          <Label>Maximaal bedragverschil bij matching (€)</Label>
-          <Input type="number" step="0.01" value={tolerantie} onChange={e => setTolerantie(parseFloat(e.target.value) || 0)} className="w-40" />
+        <div className="space-y-1.5 max-w-xs">
+          <Label htmlFor="match-tolerantie">Maximaal bedragverschil bij matching (€)</Label>
+          <Input id="match-tolerantie" type="number" step="0.01" value={tolerantie} onChange={e => setTolerantie(parseFloat(e.target.value) || 0)} className="w-40" />
         </div>
-        <div className="flex items-center justify-between max-w-md">
-          <Label>Deelbetalingen toestaan</Label>
-          <Switch checked={deelbetalingen} onCheckedChange={setDeelbetalingen} />
+
+        <div className="max-w-xl divide-y rounded-lg border">
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <Label htmlFor="sw-deelbetalingen" className="font-normal">Deelbetalingen toestaan</Label>
+            <Switch id="sw-deelbetalingen" checked={deelbetalingen} onCheckedChange={setDeelbetalingen} />
+          </div>
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <Label htmlFor="sw-omschrijving" className="font-normal">Zoeken in omschrijving</Label>
+            <Switch id="sw-omschrijving" checked={zoekOmschrijving} onCheckedChange={setZoekOmschrijving} />
+          </div>
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <Label htmlFor="sw-referentie" className="font-normal">Zoeken in referentie</Label>
+            <Switch id="sw-referentie" checked={zoekReferentie} onCheckedChange={setZoekReferentie} />
+          </div>
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <Label htmlFor="sw-naam" className="font-normal">Zoeken in naam</Label>
+            <Switch id="sw-naam" checked={zoekNaam} onCheckedChange={setZoekNaam} />
+          </div>
         </div>
-        <div className="flex items-center justify-between max-w-md">
-          <Label>Zoeken in omschrijving</Label>
-          <Switch checked={zoekOmschrijving} onCheckedChange={setZoekOmschrijving} />
+
+        <div className="grid gap-6 max-w-xl sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label id="lbl-auto-drempel">Betrouwbaarheidsdrempel automatisch matchen: <span className="tabular-nums">{autoMatchDrempel}%</span></Label>
+            <p className="text-xs text-muted-foreground">Transacties boven deze score worden automatisch gematcht</p>
+            <Slider aria-labelledby="lbl-auto-drempel" value={[autoMatchDrempel]} onValueChange={v => setAutoMatchDrempel(v[0])} min={0} max={100} step={1} />
+          </div>
+          <div className="space-y-2">
+            <Label id="lbl-suggestie-drempel">Betrouwbaarheidsdrempel suggestie tonen: <span className="tabular-nums">{suggestieDrempel}%</span></Label>
+            <p className="text-xs text-muted-foreground">Transacties boven deze score worden als suggestie getoond</p>
+            <Slider aria-labelledby="lbl-suggestie-drempel" value={[suggestieDrempel]} onValueChange={v => setSuggestieDrempel(v[0])} min={0} max={100} step={1} />
+          </div>
         </div>
-        <div className="flex items-center justify-between max-w-md">
-          <Label>Zoeken in referentie</Label>
-          <Switch checked={zoekReferentie} onCheckedChange={setZoekReferentie} />
+
+        <div className="flex justify-end border-t pt-4">
+          <Button onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
+            {saveMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Instellingen opslaan
+          </Button>
         </div>
-        <div className="flex items-center justify-between max-w-md">
-          <Label>Zoeken in naam</Label>
-          <Switch checked={zoekNaam} onCheckedChange={setZoekNaam} />
-        </div>
-        <div className="space-y-2 max-w-md">
-          <Label>Betrouwbaarheidsdrempel automatisch matchen: {autoMatchDrempel}%</Label>
-          <p className="text-xs text-muted-foreground">Transacties boven deze score worden automatisch gematcht</p>
-          <Slider value={[autoMatchDrempel]} onValueChange={v => setAutoMatchDrempel(v[0])} min={0} max={100} step={1} />
-        </div>
-        <div className="space-y-2 max-w-md">
-          <Label>Betrouwbaarheidsdrempel suggestie tonen: {suggestieDrempel}%</Label>
-          <p className="text-xs text-muted-foreground">Transacties boven deze score worden als suggestie getoond</p>
-          <Slider value={[suggestieDrempel]} onValueChange={v => setSuggestieDrempel(v[0])} min={0} max={100} step={1} />
-        </div>
-        <Button onClick={handleSave} disabled={saveMut.isPending}>Instellingen opslaan</Button>
       </CardContent>
     </Card>
   );
