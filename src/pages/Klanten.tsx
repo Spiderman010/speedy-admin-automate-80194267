@@ -47,6 +47,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ClientForm {
   name: string;
@@ -149,6 +150,7 @@ export default function Klanten() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const isMobile = useIsMobile();
   const { toast } = useToast();
   const { activeOrganizationId, isReady } = useActiveOrganization();
 
@@ -196,6 +198,35 @@ export default function Klanten() {
     if (sortKey !== col) return null;
     return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
   };
+
+  /** Sorteerbare kolomkop: toetsenbordbedienbaar en met aria-sort. */
+  const SortableHead = ({
+    col, children, className,
+  }: { col: SortKey; children: React.ReactNode; className?: string }) => (
+    <TableHead
+      className={className}
+      aria-sort={sortKey === col ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => toggleSort(col)}
+        className="inline-flex select-none items-center rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        {children}
+        <SortArrow col={col} />
+      </button>
+    </TableHead>
+  );
+
+  /** Statuslabel: kleur én tekst, nooit kleur alleen. */
+  const StatusBadge = ({ openTasks }: { openTasks: number }) => (
+    <Badge
+      variant={openTasks === 0 ? "secondary" : openTasks > 3 ? "destructive" : "default"}
+      className="whitespace-nowrap font-medium tabular-nums"
+    >
+      {openTasks === 0 ? "Bijgewerkt" : `${openTasks} taken`}
+    </Badge>
+  );
 
   const getOpenTasks = (clientId: string) =>
     invoices?.filter((i) => i.client_id === clientId && i.status === "te_controleren").length ?? 0;
@@ -337,101 +368,191 @@ export default function Klanten() {
         </Button>
       </PageHeader>
 
-      <Card>
-        <CardContent className="p-6">
-          <div className="mb-4 flex items-center gap-2">
-            <SearchInput
-              value={search}
-              onChange={setSearch}
-              placeholder="Zoek op naam, KvK of BTW-nummer..."
-              className="flex-1"
-            />
-          </div>
+      <Card className="overflow-hidden">
+        <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Zoek op naam, KvK of BTW-nummer..."
+            className="w-full sm:max-w-sm"
+          />
+          {!isLoading && (
+            <p className="text-xs text-muted-foreground tabular-nums" data-testid="klanten-count">
+              {sorted.length} van {clients?.length ?? 0} klanten
+            </p>
+          )}
+        </div>
 
+        <CardContent className="p-0">
           {isLoading ? (
-            <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+            <div className="space-y-3 p-4 sm:p-6">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
+                  <Skeleton className="h-4 flex-1" />
+                  <Skeleton className="hidden h-4 w-24 sm:block" />
+                  <Skeleton className="h-6 w-20 rounded-full" />
+                </div>
+              ))}
+            </div>
           ) : sorted.length === 0 ? (
             <EmptyState
+              icon={Building2}
               message={clients?.length === 0 ? "Nog geen klanten. Voeg je eerste klant toe!" : "Geen resultaten gevonden."}
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("name")}>
-                    Bedrijf<SortArrow col="name" />
-                  </TableHead>
-                  <TableHead>KvK</TableHead>
-                  <TableHead>BTW-nummer</TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("rechtsvorm")}>
-                    Rechtsvorm<SortArrow col="rechtsvorm" />
-                  </TableHead>
-                  <TableHead>Contactpersoon</TableHead>
-                  <TableHead>Frequentie</TableHead>
-                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("status")}>
-                    Status<SortArrow col="status" />
-                  </TableHead>
-                  <TableHead className="w-28 text-right"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Mobiel: kaartweergave met de primaire kolommen. */}
+              {isMobile ? (
+              <ul className="divide-y">
                 {sorted.map((client) => {
                   const openTasks = getOpenTasks(client.id);
                   const btwLabel = client.btw_type === "vrijgesteld" ? "Vrijgesteld" : client.btw_type === "mix" ? "Mix" : null;
                   return (
-                    <TableRow key={client.id}>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                            <Building2 className="h-4 w-4 text-primary" />
+                    <li key={client.id} className="p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                          <Building2 className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium" title={client.name}>{client.name}</p>
+                          <p className="truncate text-xs text-muted-foreground">{client.email || "—"}</p>
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            <StatusBadge openTasks={openTasks} />
+                            {btwLabel && <Badge variant="outline" className="text-[10px]">{btwLabel}</Badge>}
+                            <Badge variant="outline" className="text-[10px]">
+                              {verwerkingsLabels[(client as any).verwerkingsfrequentie] || "Kwartaal"}
+                            </Badge>
                           </div>
-                          <div>
-                            <p className="font-medium">{client.name}</p>
-                            <p className="text-xs text-muted-foreground">{client.email || "—"}</p>
+                          <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <div className="min-w-0">
+                              <dt className="sr-only">KvK</dt>
+                              <dd className="truncate font-mono tabular-nums">KvK {client.kvk_number || "—"}</dd>
+                            </div>
+                            <div className="min-w-0">
+                              <dt className="sr-only">BTW-nummer</dt>
+                              <dd className="truncate font-mono">{client.btw_number || "—"}</dd>
+                            </div>
+                            <div className="min-w-0">
+                              <dt className="sr-only">Rechtsvorm</dt>
+                              <dd className="truncate">{client.rechtsvorm || "—"}</dd>
+                            </div>
+                            <div className="min-w-0">
+                              <dt className="sr-only">Contactpersoon</dt>
+                              <dd className="truncate">{client.contact_person || "—"}</dd>
+                            </div>
+                          </dl>
+                          <div className="mt-3 flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-9"
+                              onClick={() => openEdit(client)}
+                              aria-label={`Bewerk ${client.name}`}
+                            >
+                              <Pencil className="mr-1 h-4 w-4" />Bewerken
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeleteTarget({ id: client.id, name: client.name })}
+                              aria-label={`Verwijder ${client.name}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
                         </div>
-                      </TableCell>
-                      <TableCell className="font-mono text-sm">{client.kvk_number || "—"}</TableCell>
-                      <TableCell className="font-mono text-sm">
-                        {client.btw_number || "—"}
-                        {btwLabel && <Badge variant="secondary" className="ml-2 text-[10px]">{btwLabel}</Badge>}
-                      </TableCell>
-                      <TableCell className="text-sm">{client.rechtsvorm || "—"}</TableCell>
-                      <TableCell>{client.contact_person || "—"}</TableCell>
-                      <TableCell className="text-sm">{verwerkingsLabels[(client as any).verwerkingsfrequentie] || "Kwartaal"}</TableCell>
-                      <TableCell>
-                        <Badge variant={openTasks === 0 ? "default" : openTasks > 3 ? "destructive" : "secondary"}>
-                          {openTasks === 0 ? "Bijgewerkt" : `${openTasks} taken`}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 px-2 text-muted-foreground"
-                            onClick={() => openEdit(client)}
-                            title="Klant bewerken"
-                            aria-label={`Bewerk ${client.name}`}
-                          >
-                            <Pencil className="mr-1 h-4 w-4" />Bewerken
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeleteTarget({ id: client.id, name: client.name })}
-                            title="Klant verwijderen"
-                            aria-label={`Verwijder ${client.name}`}
-                          >
-                            <Trash2 className="h-4 w-4 text-muted-foreground" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                      </div>
+                    </li>
                   );
                 })}
-              </TableBody>
-            </Table>
+              </ul>
+
+              ) : (
+              /* Tablet en desktop: volledige tabel, scrollt binnen de eigen container. */
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <SortableHead col="name">Bedrijf</SortableHead>
+                      <TableHead>KvK</TableHead>
+                      <TableHead>BTW-nummer</TableHead>
+                      <SortableHead col="rechtsvorm">Rechtsvorm</SortableHead>
+                      <TableHead>Contactpersoon</TableHead>
+                      <TableHead>Frequentie</TableHead>
+                      <SortableHead col="status">Status</SortableHead>
+                      <TableHead className="w-32 text-right">
+                        <span className="sr-only">Acties</span>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sorted.map((client) => {
+                      const openTasks = getOpenTasks(client.id);
+                      const btwLabel = client.btw_type === "vrijgesteld" ? "Vrijgesteld" : client.btw_type === "mix" ? "Mix" : null;
+                      return (
+                        <TableRow key={client.id} className="group">
+                          <TableCell className="max-w-[260px]">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                                <Building2 className="h-4 w-4 text-primary" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="truncate font-medium" title={client.name}>{client.name}</p>
+                                <p className="truncate text-xs text-muted-foreground" title={client.email || undefined}>
+                                  {client.email || "—"}
+                                </p>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-sm tabular-nums">{client.kvk_number || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-sm">
+                            {client.btw_number || "—"}
+                            {btwLabel && <Badge variant="outline" className="ml-2 text-[10px]">{btwLabel}</Badge>}
+                          </TableCell>
+                          <TableCell className="text-sm">{client.rechtsvorm || "—"}</TableCell>
+                          <TableCell className="max-w-[180px] truncate text-sm" title={client.contact_person || undefined}>
+                            {client.contact_person || "—"}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                            {verwerkingsLabels[(client as any).verwerkingsfrequentie] || "Kwartaal"}
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge openTasks={openTasks} />
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-9 px-2 text-muted-foreground hover:text-foreground"
+                                onClick={() => openEdit(client)}
+                                title="Klant bewerken"
+                                aria-label={`Bewerk ${client.name}`}
+                              >
+                                <Pencil className="mr-1 h-4 w-4" />Bewerken
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                                onClick={() => setDeleteTarget({ id: client.id, name: client.name })}
+                                title="Klant verwijderen"
+                                aria-label={`Verwijder ${client.name}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
