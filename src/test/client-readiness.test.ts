@@ -10,11 +10,12 @@ type SalesInvoice = Tables<"sales_invoices">;
 type Vraagpost = Tables<"vraagposten">;
 
 // "Fully configured" client fixture. The accounting foundation added
-// debiteuren_rekening_id / crediteuren_rekening_id, and 6C-b2a added the two
-// BTW ledger accounts, as required configuration,
-// so a complete-config fixture must now include them too — otherwise every
-// existing "klaar" assertion below would be testing an outdated definition of
-// complete configuration. No assertion in this file was changed.
+// debiteuren_rekening_id / crediteuren_rekening_id, 6C-b2a added the two BTW
+// ledger accounts, and 6C-b5a added the bank ledger account, all as required
+// configuration, so a complete-config fixture must now include them too —
+// otherwise every existing "klaar" assertion below would be testing an
+// outdated definition of complete configuration. No assertion in this file
+// was changed.
 function makeClient(overrides: Partial<Client> = {}): Client {
   return {
     id: "c-1",
@@ -26,6 +27,7 @@ function makeClient(overrides: Partial<Client> = {}): Client {
     crediteuren_rekening_id: "gb-1600",
     btw_te_vorderen_rekening_id: "gb-btw-vorderen",
     btw_te_betalen_rekening_id: "gb-btw-betalen",
+    bank_rekening_id: "gb-bank",
     ...overrides,
   } as Client;
 }
@@ -269,5 +271,49 @@ describe("computeClientReadiness", () => {
     const client = makeClient({ id: "c-other" });
     const r = computeClientReadiness(client, [], [], [], [], [gb4400, gb1799]);
     expect(r.configMissing1799).toBe(false);
+  });
+
+  // 6C-b5a follow-up: bankrekening grootboek
+  it("missing bank_rekening_id gives config_ontbreekt", () => {
+    const client = makeClient({ bank_rekening_id: null } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingBankRekening).toBe(true);
+    expect(r.configMissingReasons).toContain("Bankrekening grootboek ontbreekt");
+    expect(r.status).toBe("config_ontbreekt");
+  });
+
+  it("configured bank_rekening_id keeps the client klaar", () => {
+    const r = computeClientReadiness(makeClient(), [], [], [], [], allAccounts);
+    expect(r.configMissingBankRekening).toBe(false);
+    expect(r.configMissingReasons).not.toContain("Bankrekening grootboek ontbreekt");
+    expect(r.status).toBe("klaar");
+  });
+
+  it("a filled bank_dagboek does not satisfy the bank ledger account requirement", () => {
+    // bank_dagboek is a SnelStart *dagboek* number, not a grootboekrekeningen
+    // FK — the two are deliberately independent checks.
+    const client = makeClient({ bank_dagboek: 1100, bank_rekening_id: null } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingBankDagboek).toBe(false);
+    expect(r.configMissingBankRekening).toBe(true);
+    expect(r.status).toBe("config_ontbreekt");
+  });
+
+  it("does not change existing debtor/creditor/VAT readiness behavior", () => {
+    const client = makeClient({
+      debiteuren_rekening_id: null,
+      crediteuren_rekening_id: null,
+      btw_te_vorderen_rekening_id: null,
+      btw_te_betalen_rekening_id: null,
+    } as Partial<Client>);
+    const r = computeClientReadiness(client, [], [], [], [], allAccounts);
+    expect(r.configMissingDebiteurenRekening).toBe(true);
+    expect(r.configMissingCrediteurenRekening).toBe(true);
+    expect(r.configMissingBtwTeVorderenRekening).toBe(true);
+    expect(r.configMissingBtwTeBetalenRekening).toBe(true);
+    // The bank account is configured in this fixture and must not be
+    // affected by the other four being missing.
+    expect(r.configMissingBankRekening).toBe(false);
+    expect(r.status).toBe("config_ontbreekt");
   });
 });

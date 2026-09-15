@@ -128,6 +128,10 @@ function makeClient(overrides: Partial<Client> = {}): Client {
     crediteuren_rekening_id: "gb-1600",
     btw_te_vorderen_rekening_id: "gb-btw-v",
     btw_te_betalen_rekening_id: "gb-btw-b",
+    // 6C-b5a added a fifth required configuration field; the "fully
+    // configured" fixture below must include it too, or its "klaar"
+    // assertion would be testing an outdated definition of complete config.
+    bank_rekening_id: "gb-bank",
     ...overrides,
   } as Client;
 }
