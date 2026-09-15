@@ -321,6 +321,10 @@ export default function PurchaseInvoiceWorkspace() {
   const canSave = initialized && !hasPartialLine && !saving && !isPosted;
   const canApprove = canSave && headerComplete && linesMatch && meaningfulLines.length > 0;
 
+  // De database boekt alleen een gecontroleerde factuur; de knop volgt die regel
+  // zodat een nog te controleren factuur geen onvermijdelijke foutmelding geeft.
+  const isPostableStatus = ["gecontroleerd", "betaald", "geexporteerd"].includes(header.status);
+
   // Totals color state
   const totalsState: "green" | "amber" | "red" =
     (headerTotals.amount_incl == null && meaningfulLines.length > 0) ? "red"
@@ -784,6 +788,7 @@ export default function PurchaseInvoiceWorkspace() {
           >
             {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
           </Button>
+          </div>
         )}
       </div>
 
