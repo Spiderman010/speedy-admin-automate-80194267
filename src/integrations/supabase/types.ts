@@ -291,6 +291,7 @@ export type Database = {
           address: string | null
           afgesloten_boekjaar: number | null
           bank_dagboek: number | null
+          bank_rekening_id: string | null
           btw_number: string | null
           btw_te_betalen_rekening_id: string | null
           btw_te_vorderen_rekening_id: string | null
@@ -322,6 +323,7 @@ export type Database = {
           address?: string | null
           afgesloten_boekjaar?: number | null
           bank_dagboek?: number | null
+          bank_rekening_id?: string | null
           btw_number?: string | null
           btw_te_betalen_rekening_id?: string | null
           btw_te_vorderen_rekening_id?: string | null
@@ -353,6 +355,7 @@ export type Database = {
           address?: string | null
           afgesloten_boekjaar?: number | null
           bank_dagboek?: number | null
+          bank_rekening_id?: string | null
           btw_number?: string | null
           btw_te_betalen_rekening_id?: string | null
           btw_te_vorderen_rekening_id?: string | null
@@ -381,6 +384,13 @@ export type Database = {
           verwerkingsfrequentie?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "clients_bank_rekening_id_fkey"
+            columns: ["bank_rekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "clients_btw_te_betalen_rekening_id_fkey"
             columns: ["btw_te_betalen_rekening_id"]
