@@ -47,6 +47,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface ClientForm {
   name: string;
@@ -149,6 +150,7 @@ export default function Klanten() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const isMobile = useIsMobile();
   const { toast } = useToast();
   const { activeOrganizationId, isReady } = useActiveOrganization();
 
@@ -400,8 +402,9 @@ export default function Klanten() {
             />
           ) : (
             <>
-              {/* Mobiel en tablet: kaartweergave met de primaire kolommen. */}
-              <ul className="divide-y lg:hidden">
+              {/* Mobiel: kaartweergave met de primaire kolommen. */}
+              {isMobile ? (
+              <ul className="divide-y">
                 {sorted.map((client) => {
                   const openTasks = getOpenTasks(client.id);
                   const btwLabel = client.btw_type === "vrijgesteld" ? "Vrijgesteld" : client.btw_type === "mix" ? "Mix" : null;
@@ -466,8 +469,9 @@ export default function Klanten() {
                 })}
               </ul>
 
-              {/* Desktop: volledige tabel, scrollt binnen de eigen container. */}
-              <div className="hidden overflow-x-auto lg:block">
+              ) : (
+              /* Tablet en desktop: volledige tabel, scrollt binnen de eigen container. */
+              <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -547,6 +551,7 @@ export default function Klanten() {
                   </TableBody>
                 </Table>
               </div>
+              )}
             </>
           )}
         </CardContent>
