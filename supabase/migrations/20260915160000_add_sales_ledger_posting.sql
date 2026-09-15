@@ -226,6 +226,17 @@ CREATE INDEX IF NOT EXISTS idx_sales_invoice_postings_client
 --    revoked here from mutating the marker directly. No edge function
 --    currently needs to post sales invoices; if one ever does, that is a
 --    deliberate, separately-reviewed grant, not a default to fall into.
+--
+--    The reset is REVOKE ALL then GRANT SELECT, not an enumerated REVOKE list.
+--    Enumerating (INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, ...)
+--    is a list that can always be one item short of whatever Lovable Cloud's
+--    default privileges hand out next — MAINTAIN exists as of PostgreSQL 17,
+--    for instance, and nothing here otherwise blocks a future default from
+--    granting it. REVOKE ALL has no such gap: it clears every privilege that
+--    exists on the table for that role, known or not yet invented, and the
+--    single GRANT SELECT immediately afterwards restores exactly the read
+--    access this table is meant to have. This is a full reset, not a
+--    difference from some assumed starting privilege set.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 ALTER TABLE public.sales_invoice_postings ENABLE ROW LEVEL SECURITY;
@@ -235,9 +246,7 @@ CREATE POLICY role_sales_invoice_postings_select ON public.sales_invoice_posting
   FOR SELECT TO authenticated
   USING (public.has_min_role(auth.uid(), organization_id, 'read_only'));
 
-REVOKE ALL ON public.sales_invoice_postings FROM anon;
-REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
-  ON public.sales_invoice_postings FROM anon, authenticated, service_role;
+REVOKE ALL ON public.sales_invoice_postings FROM anon, authenticated, service_role;
 GRANT SELECT ON public.sales_invoice_postings TO authenticated, service_role;
 
 COMMENT ON TABLE public.sales_invoice_postings IS
@@ -437,7 +446,17 @@ $$;
 
 -- Trigger-only/administrative surface hardening: the function must be callable
 -- by the app, but never by anon, never by service_role, never by PUBLIC.
-REVOKE ALL ON FUNCTION public.post_sales_invoice(uuid) FROM PUBLIC;
+--
+-- REVOKE FROM PUBLIC alone is not sufficient. PUBLIC is a pseudo-role that new
+-- privileges are not granted to by default, but Lovable Cloud has already been
+-- observed granting role-specific privileges directly to individual roles on
+-- newly created objects (the marker table in this same file, before this fix,
+-- needed the same correction) — a grant made straight to anon or service_role
+-- survives a REVOKE that only names PUBLIC. The revoke below names every
+-- application role explicitly, so nothing is left to a default surviving
+-- unnoticed.
+REVOKE ALL ON FUNCTION public.post_sales_invoice(uuid)
+  FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.post_sales_invoice(uuid) TO authenticated;
 
 COMMENT ON FUNCTION public.post_sales_invoice(uuid) IS
@@ -530,10 +549,18 @@ CREATE TRIGGER validate_sales_source_claim_trigger
 --    invoice can never have it true (the writer refuses those), so a later
 --    phase that adds verlegde-BTW support cannot retroactively flip a booked
 --    invoice's tax character. Also invoice_number (audit identity). Payment
---    and workflow state must keep
---    moving: status (gecontroleerd -> betaald), due_date, remaining_amount,
---    notes, pdf_path and updated_at all stay editable, because none of them
+--    and workflow state must keep moving: due_date, remaining_amount, notes,
+--    pdf_path and updated_at all stay fully editable, because none of them
 --    changes what was booked.
+--
+--    status is the one field that is neither frozen nor fully free: a posted
+--    invoice may only move gecontroleerd -> betaald, or stay put. Leaving it
+--    wholly unconstrained would let a posted invoice's status be set back to
+--    concept or verzonden — exactly the states post_sales_invoice() refuses to
+--    post from — leaving the row simultaneously "posted" (marker + immutable
+--    ledger rows exist) and "not yet reviewed" (status). The accounting-field
+--    check above does not look at status at all, so this is a second,
+--    independent condition in the same trigger, not a special case of it.
 --
 --    There is no line-mutation guard here, unlike purchase: sales has no
 --    lines table, so there is nothing to reassign between invoices.
@@ -569,6 +596,24 @@ BEGIN
      OR NEW.ledger_account_text IS DISTINCT FROM OLD.ledger_account_text
   THEN
     RAISE EXCEPTION 'Deze verkoopfactuur is geboekt; boekhoudkundige gegevens kunnen niet meer worden gewijzigd. Een correctie vereist een tegenboeking.'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- status is deliberately NOT in the frozen list above — payment progression
+  -- must keep working after posting. But "not frozen" cannot mean "any value":
+  -- an unrestricted status column would let a posted invoice be set back to
+  -- concept or verzonden, which are exactly the states post_sales_invoice()
+  -- refuses to post from. That would leave a row simultaneously "posted" (a
+  -- marker exists, immutable ledger rows exist) and "not yet reviewed"
+  -- (status), an inconsistency nothing else here catches. Only forward payment
+  -- progression is allowed: gecontroleerd may stay or move to betaald; betaald
+  -- may only stay betaald. Every other transition on a posted invoice is
+  -- refused, independent of the accounting-field check above, which does not
+  -- look at status at all.
+  IF NEW.status IS DISTINCT FROM OLD.status
+     AND NOT (OLD.status = 'gecontroleerd' AND NEW.status = 'betaald')
+  THEN
+    RAISE EXCEPTION 'Deze verkoopfactuur is geboekt; status kan alleen nog van gecontroleerd naar betaald. Een correctie vereist een tegenboeking.'
       USING ERRCODE = '42501';
   END IF;
 

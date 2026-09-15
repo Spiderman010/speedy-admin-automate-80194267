@@ -44,11 +44,18 @@ describe("Migratie — claimtabel", () => {
     expect(sql).toMatch(/GRANT SELECT ON public\.sales_invoice_postings TO authenticated, service_role;/);
   });
 
-  it("5. trekt ook de minder voor de hand liggende rechten in", () => {
+  it("5. reset alle rechten met REVOKE ALL in plaats van een opsomming", () => {
+    // Een opsomming (INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, ...)
+    // kan altijd één item te kort zijn ten opzichte van wat Lovable Cloud als
+    // default-rechten uitdeelt (bv. MAINTAIN, sinds PostgreSQL 17). REVOKE ALL
+    // is een volledige reset, ongeacht welke rechten bestaan.
     expect(sql).toMatch(
-      /REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER\s+ON public\.sales_invoice_postings FROM anon, authenticated, service_role;/,
+      /REVOKE ALL ON public\.sales_invoice_postings FROM anon, authenticated, service_role;/,
     );
-    expect(sql).toMatch(/REVOKE ALL ON public\.sales_invoice_postings FROM anon;/);
+    expect(sql).toMatch(
+      /GRANT SELECT ON public\.sales_invoice_postings TO authenticated, service_role;/,
+    );
+    expect(sql).not.toMatch(/REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER/);
   });
 });
 
@@ -149,10 +156,16 @@ describe("Migratie — de writer", () => {
     expect(st.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("22. is SECURITY DEFINER met vast search_path, zonder PUBLIC- of service_role-rechten", () => {
+  it("22. is SECURITY DEFINER met vast search_path, en trekt expliciet in van anon en service_role, niet alleen PUBLIC", () => {
     expect(fn.slice(0, 300)).toMatch(/SECURITY DEFINER/);
     expect(fn.slice(0, 300)).toMatch(/SET search_path = public/);
-    expect(sql).toMatch(/REVOKE ALL ON FUNCTION public\.post_sales_invoice\(uuid\) FROM PUBLIC;/);
+    // REVOKE FROM PUBLIC alleen is onvoldoende: Lovable Cloud is gezien terwijl
+    // het rechten rechtstreeks aan afzonderlijke rollen toekende, die een
+    // REVOKE die alleen PUBLIC noemt overleven. Dit moet dus elke rol expliciet
+    // noemen, niet enkel de afwezigheid van een GRANT aantonen.
+    expect(sql).toMatch(
+      /REVOKE ALL ON FUNCTION public\.post_sales_invoice\(uuid\)\s+FROM PUBLIC, anon, authenticated, service_role;/,
+    );
     expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.post_sales_invoice\(uuid\) TO authenticated;/);
     expect(sql).not.toMatch(/GRANT EXECUTE[^\n]*TO anon/);
     expect(sql).not.toMatch(/GRANT EXECUTE[^\n]*TO service_role/);
@@ -205,7 +218,12 @@ describe("Migratie — geboekte bron is bevroren", () => {
   });
 
   it("29. laat betaal- en workflowvelden bewust vrij", () => {
-    for (const allowed of ["status", "due_date", "remaining_amount", "notes", "pdf_path"]) {
+    // status is NIET in deze lijst: sinds fix 3 is status niet meer volledig
+    // vrij op een geboekte factuur (zie test 31-33) — het is bewust noch
+    // bevroren (test 28), noch onbeperkt vrij, maar een eigen, beperkte
+    // voorwaarde. due_date/remaining_amount/notes/pdf_path blijven wél volledig
+    // vrij: geen enkele IS DISTINCT FROM-check bestaat voor die velden.
+    for (const allowed of ["due_date", "remaining_amount", "notes", "pdf_path"]) {
       expect(hdr).not.toMatch(new RegExp(`NEW\\.${allowed}\\s+IS DISTINCT FROM`));
     }
   });
@@ -213,6 +231,49 @@ describe("Migratie — geboekte bron is bevroren", () => {
   it("30. heeft geen regel-mutatiebewaker — sales heeft geen regels", () => {
     expect(sql).not.toMatch(/sales_invoice_lines/);
     expect(sql).not.toMatch(/prevent_posted_sales_line_mutation/);
+  });
+
+  it("31. staat op een geboekte factuur uitsluitend gecontroleerd -> betaald toe", () => {
+    // Eén enkele voorwaarde bewijst statisch alle vier de vereisten: alleen de
+    // combinatie (OLD.status = 'gecontroleerd' AND NEW.status = 'betaald') is
+    // uitgezonderd van de exceptie, dus elke andere overgang — inclusief naar
+    // concept, naar verzonden, en betaald -> gecontroleerd — wordt geweigerd.
+    expect(hdr).toMatch(
+      /IF NEW\.status IS DISTINCT FROM OLD\.status\s+AND NOT \(OLD\.status = 'gecontroleerd' AND NEW\.status = 'betaald'\)\s+THEN/,
+    );
+    expect(hdr).toMatch(
+      /status kan alleen nog van gecontroleerd naar betaald\. Een correctie vereist een tegenboeking\./,
+    );
+  });
+
+  it("32. staat status niet los van de bevroren-headervelden-check maar als eigen onafhankelijke voorwaarde", () => {
+    // De status-guard mag geen speciaal geval zijn van de accounting-veld-check
+    // erboven: "status" hoort niet in de bevroren-veldenlijst van test 28, en de
+    // status-IF staat er als eigen, onafhankelijke blok naast.
+    const statusGuardIndex = hdr.search(/IF NEW\.status IS DISTINCT FROM OLD\.status/);
+    const frozenFieldsIndex = hdr.search(/NEW\.client_id\s+IS DISTINCT FROM OLD\.client_id/);
+    expect(statusGuardIndex).toBeGreaterThan(-1);
+    expect(frozenFieldsIndex).toBeGreaterThan(-1);
+    expect(statusGuardIndex).toBeGreaterThan(frozenFieldsIndex);
+    expect(hdr).not.toMatch(/NEW\.status\s+IS DISTINCT FROM OLD\.status[\s\S]{0,10}OR/);
+  });
+
+  it("33. weigert elke andere statusovergang op een geboekte factuur dan gecontroleerd->betaald", () => {
+    // Statische dekking van de vier vereiste gevallen via de enige voorwaarde:
+    // gecontroleerd->betaald is de uitzondering die NIET raiset; alle vier
+    // hieronder impliceren, gegeven die ene voorwaarde, een RAISE EXCEPTION.
+    const guard = /NOT \(OLD\.status = 'gecontroleerd' AND NEW\.status = 'betaald'\)/;
+    expect(hdr).toMatch(guard);
+    const transitions: Array<[string, string, boolean]> = [
+      ["gecontroleerd", "betaald", true], // MUST SUCCEED (uitgezonderd van de exceptie)
+      ["gecontroleerd", "concept", false], // MUST FAIL
+      ["gecontroleerd", "verzonden", false], // MUST FAIL
+      ["betaald", "gecontroleerd", false], // MUST FAIL
+    ];
+    for (const [oldStatus, newStatus, mustSucceed] of transitions) {
+      const isExempt = oldStatus === "gecontroleerd" && newStatus === "betaald";
+      expect(isExempt).toBe(mustSucceed);
+    }
   });
 });
 
