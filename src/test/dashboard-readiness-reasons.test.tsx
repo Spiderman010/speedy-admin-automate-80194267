@@ -42,6 +42,7 @@ const makeClient = (over: Partial<any> = {}) => ({
   crediteuren_rekening_id: "gb-1600",
   btw_te_vorderen_rekening_id: "gb-btw-vorderen",
   btw_te_betalen_rekening_id: "gb-btw-betalen",
+  bank_rekening_id: "gb-bank",
   ...over,
 });
 

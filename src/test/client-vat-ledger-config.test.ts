@@ -128,6 +128,9 @@ function makeClient(overrides: Partial<Client> = {}): Client {
     crediteuren_rekening_id: "gb-1600",
     btw_te_vorderen_rekening_id: "gb-btw-v",
     btw_te_betalen_rekening_id: "gb-btw-b",
+    // 6C-b5a maakte de bankgrootboekrekening verplichte configuratie; zonder
+    // deze regel zou "volledig geconfigureerd" hieronder niet meer kloppen.
+    bank_rekening_id: "gb-bank",
     ...overrides,
   } as Client;
 }

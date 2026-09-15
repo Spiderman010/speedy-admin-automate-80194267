@@ -267,9 +267,43 @@ select to_regclass('public.sales_invoice_postings') as marker_table,
        (select count(*) from pg_proc where proname = 'post_sales_invoice') as rpc;
 ```
 
+### Phase 6C-b5a — client bank ledger configuration
+
+Migration file:
+```
+supabase/migrations/20260916120000_add_client_bank_ledger_config.sql
+```
+
+**Purpose:** adds the bank general-ledger account as explicit per-administratie configuration, so the bank settlement writer of 6C-b5b has a provable account to post against.
+
+| Column | Label | Used by |
+|---|---|---|
+| `clients.bank_rekening_id` | Bankrekening grootboek | bank settlement postings (6C-b5b) |
+
+**Why it is needed.** Nothing in the schema identified a client's bank grootboekrekening before this phase: `clients.bank_dagboek` is a SnelStart *dagboek* integer (not a `grootboekrekeningen` FK, often NULL, with a `?? 1100` UI fallback), `bank_transactions.grootboekrekening_id` is the *contra* account of a mutation, `bank_transactions.ledger_account_id` points at the legacy `ledger_accounts` table, and `grootboekrekeningen.categorie` has no `bank` value. The account is therefore configured explicitly and **never inferred** from a number (least of all 1100), from `categorie`, or from `bank_dagboek`.
+
+**Phase split:** 6C-b5a (this migration) is configuration only — no posting logic, no settlement marker, no writer. 6C-b5b adds the bank settlement writer that consumes the column.
+
+Rules:
+
+- **No backfill, no default.** The column starts NULL for every administratie. There is no unambiguous default: an administratie may use 1100, 1101, one account per bank/IBAN, or any other number, and guessing would silently post settlements to the wrong account on an immutable ledger. `client-readiness` surfaces the absence as `config_ontbreekt` on the dashboard (display only — it gates no posting and no export).
+- **Account scope is the strict one.** The new check in `enforce_client_ledger_org()` reuses `posting_account_ok()`: same organisation, and the account must be either organisation-wide (`client_id IS NULL`) or owned by this very administratie — the same predicate `ledger_postings` enforces per row, so configuration cannot record an account that posting would later refuse. NULL is explicitly allowed. The debiteuren/crediteuren columns keep their looser org-only check, untouched.
+- **The trigger is recreated** with `bank_rekening_id` added to its `UPDATE OF` list (alongside the four pre-existing columns and `organization_id`); without that, an update touching only the new column would skip validation entirely.
+- FK `ON DELETE SET NULL` (optional configuration, not accounting identity), plus an index on the column. No new SECURITY DEFINER function is introduced.
+
+**Status: ⏳ Not yet applied.**
+Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
+
+Verification query:
+```sql
+select column_name, is_nullable, column_default
+from information_schema.columns
+where table_schema='public' and table_name='clients' and column_name='bank_rekening_id';
+```
+
 ---
 
-Future phases: 6C-b5 bank settlement posting, 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
+Future phases: 6C-b5b bank settlement posting (the writer consuming `clients.bank_rekening_id` configured in 6C-b5a), 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
 
 **Status: ⏳ Not yet applied.**
 Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
