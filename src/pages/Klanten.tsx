@@ -197,6 +197,35 @@ export default function Klanten() {
     return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
   };
 
+  /** Sorteerbare kolomkop: toetsenbordbedienbaar en met aria-sort. */
+  const SortableHead = ({
+    col, children, className,
+  }: { col: SortKey; children: React.ReactNode; className?: string }) => (
+    <TableHead
+      className={className}
+      aria-sort={sortKey === col ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => toggleSort(col)}
+        className="inline-flex select-none items-center rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        {children}
+        <SortArrow col={col} />
+      </button>
+    </TableHead>
+  );
+
+  /** Statuslabel: kleur én tekst, nooit kleur alleen. */
+  const StatusBadge = ({ openTasks }: { openTasks: number }) => (
+    <Badge
+      variant={openTasks === 0 ? "secondary" : openTasks > 3 ? "destructive" : "default"}
+      className="whitespace-nowrap font-medium tabular-nums"
+    >
+      {openTasks === 0 ? "Bijgewerkt" : `${openTasks} taken`}
+    </Badge>
+  );
+
   const getOpenTasks = (clientId: string) =>
     invoices?.filter((i) => i.client_id === clientId && i.status === "te_controleren").length ?? 0;
 
