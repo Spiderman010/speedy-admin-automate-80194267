@@ -124,12 +124,23 @@ const ACCOUNTING_FIELDS = [
   "ledger_account_text",
 ] as const;
 
+/**
+ * De set die vóór boeken exact gelijk moet zijn aan de gepersisteerde factuur:
+ * de boekhoudkundige velden plus `status`. post_sales_invoice() leest de
+ * gepersisteerde status om te bepalen óf er geboekt mag worden (alleen
+ * gecontroleerd of betaald), dus met een niet-opgeslagen statuswijziging zou de
+ * RPC op een andere status boeken dan de gebruiker op het scherm ziet. Dit
+ * maakt status géén bevroren boekhoudkundig veld in de database: de migratie
+ * blijft ongewijzigd en na boeken blijft gecontroleerd → betaald toegestaan.
+ */
+const PRE_POST_FIELDS = [...ACCOUNTING_FIELDS, "status"] as const;
+
 /** String/number-veilige gelijkheid — geen nieuwe boekhoudkundige logica. */
-function isAccountingFormDirty(
+function isPrePostStateDirty(
   form: ReturnType<typeof deriveFormFromInvoice>,
   persisted: ReturnType<typeof deriveFormFromInvoice>,
 ): boolean {
-  return ACCOUNTING_FIELDS.some((key) => form[key] !== persisted[key]);
+  return PRE_POST_FIELDS.some((key) => form[key] !== persisted[key]);
 }
 
 interface Props {
@@ -209,7 +220,7 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
     () => (invoice ? deriveFormFromInvoice(invoice) : null),
     [invoice],
   );
-  const isDirty = !!persistedForm && isAccountingFormDirty(form, persistedForm);
+  const isDirty = !!persistedForm && isPrePostStateDirty(form, persistedForm);
 
   if (!invoice) return null;
 

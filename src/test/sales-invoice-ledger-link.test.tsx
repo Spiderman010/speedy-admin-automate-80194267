@@ -346,3 +346,97 @@ describe("Verkoopfactuur — dirty-check vóór boeken (P1-fix)", () => {
     expect(screen.queryByTestId("sales-posting-dirty-hint")).not.toBeInTheDocument();
   });
 });
+
+// post_sales_invoice() leest de *gepersisteerde* status om te bepalen of er
+// geboekt mag worden. Een niet-opgeslagen statuswijziging zou de RPC dus op een
+// andere status laten boeken dan de gebruiker ziet; daarom telt status mee in
+// de pre-post gelijkheidscheck (niet in de database-freeze).
+describe("Verkoopfactuur — onopgeslagen statuswijziging blokkeert boeken", () => {
+  const postButton = () => screen.getByTestId("sales-posting-button") as HTMLButtonElement;
+  const dirtyHint = () => screen.queryByTestId("sales-posting-dirty-hint");
+  // De status-Select toont de huidige waarde; de gelijknamige Badge in de
+  // titel is geen button, vandaar de closest("button")-filter.
+  const statusTrigger = () =>
+    screen
+      .getAllByText("Gecontroleerd")
+      .map((node) => node.closest("button"))
+      .find(Boolean)!;
+  const pickStatus = (label: string) => {
+    fireEvent.click(statusTrigger());
+    fireEvent.click(screen.getByRole("option", { name: label }));
+  };
+
+  it("gepersisteerd gecontroleerd -> onopgeslagen concept: boeken geblokkeerd", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Concept");
+
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toHaveTextContent(
+      "Sla de wijzigingen eerst op voordat je de factuur boekt.",
+    );
+  });
+
+  it("gepersisteerd gecontroleerd -> onopgeslagen verzonden: boeken geblokkeerd", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Verzonden");
+
+    await waitFor(() => expect(postButton()).toBeDisabled());
+    expect(dirtyHint()).toBeInTheDocument();
+  });
+
+  it("een onopgeslagen statuswijziging roept post_sales_invoice niet aan", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Concept");
+    await waitFor(() => expect(postButton()).toBeDisabled());
+
+    fireEvent.click(postButton());
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(rpcSpy).not.toHaveBeenCalled();
+  });
+
+  it("gepersisteerd gecontroleerd zonder statuswijziging: boeken toegestaan", async () => {
+    renderDialog(makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" }));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+    expect(dirtyHint()).not.toBeInTheDocument();
+  });
+
+  it("na save/refetch van de nieuwe status verdwijnt de dirty-state; de RPC krijgt alleen het id", async () => {
+    const initial = makeInvoice({ status: "gecontroleerd", grootboekrekening_id: "gb-8000" });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (inv: any) => (
+      <QueryClientProvider client={queryClient}>
+        <SalesInvoiceEditDialog
+          invoice={inv}
+          open
+          onOpenChange={() => {}}
+          onSave={onSaveSpy}
+          onApprove={onApproveSpy}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(initial));
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+
+    pickStatus("Betaald");
+    await waitFor(() => expect(postButton()).toBeDisabled());
+
+    // Parent's save->refetch: de nieuwe prop bevat de opgeslagen status.
+    rerender(view({ ...initial, status: "betaald" }));
+
+    await waitFor(() => expect(postButton()).not.toBeDisabled());
+    expect(dirtyHint()).not.toBeInTheDocument();
+
+    // De client stuurt nooit een status mee: of er daadwerkelijk geboekt mag
+    // worden blijft een beslissing van post_sales_invoice() zelf.
+    fireEvent.click(postButton());
+    await waitFor(() => expect(rpcSpy).toHaveBeenCalledTimes(1));
+    expect(rpcSpy).toHaveBeenCalledWith("post_sales_invoice", { _invoice_id: "si-1" });
+  });
+});
