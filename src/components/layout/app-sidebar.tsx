@@ -58,9 +58,9 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader className="gap-0 p-0">
+      <SidebarHeader className="gap-0 border-b border-sidebar-border p-0">
         <div className="flex h-14 items-center gap-2 px-4 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary font-display text-sm font-bold text-sidebar-primary-foreground">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sidebar-primary font-display text-sm font-bold text-sidebar-primary-foreground shadow-sm">
             BA
           </div>
           <span className="truncate font-display text-lg font-semibold group-data-[collapsible=icon]:hidden">
@@ -74,7 +74,7 @@ export function AppSidebar() {
           {/* Organisatiekiezer — alleen zichtbaar als user lid is van > 1 organisatie */}
           <OrganizationSelector />
           <div className="border-b border-sidebar-border px-3 py-3">
-            <p className="mb-1.5 px-1 text-xs text-sidebar-foreground/50">Actieve klant</p>
+            <p className="mb-1.5 px-1 text-xs font-medium text-sidebar-foreground/60">Actieve klant</p>
             <Select value={selectedClientId} onValueChange={setSelectedClientId}>
               <SelectTrigger
                 aria-label="Actieve klant"
@@ -97,11 +97,11 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent>
+      <SidebarContent className="py-2">
         {NAV_SECTIONS.map((section, i) => (
           <SidebarGroup key={section.label ?? `top-${i}`}>
             {section.label && (
-              <SidebarGroupLabel className="text-sidebar-foreground/50">
+              <SidebarGroupLabel className="text-[11px] font-semibold uppercase text-sidebar-foreground/50">
                 {section.label}
               </SidebarGroupLabel>
             )}
@@ -127,7 +127,7 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border">
+      <SidebarFooter className="border-t border-sidebar-border py-3">
         <SidebarMenu>
           <SidebarMenuItem>
             <div className="flex items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-sm group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
