@@ -858,6 +858,176 @@ export type Database = {
           },
         ]
       }
+      manual_journal_lines: {
+        Row: {
+          created_at: string
+          credit_amount: number
+          debit_amount: number
+          grootboekrekening_id: string | null
+          id: string
+          manual_journal_id: string
+          omschrijving: string | null
+          organization_id: string
+          sort_order: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          grootboekrekening_id?: string | null
+          id?: string
+          manual_journal_id: string
+          omschrijving?: string | null
+          organization_id: string
+          sort_order?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          grootboekrekening_id?: string | null
+          id?: string
+          manual_journal_id?: string
+          omschrijving?: string | null
+          organization_id?: string
+          sort_order?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_journal_lines_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_journal_lines_manual_journal_id_fkey"
+            columns: ["manual_journal_id"]
+            isOneToOne: false
+            referencedRelation: "manual_journals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_journal_lines_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      manual_journal_postings: {
+        Row: {
+          client_id: string
+          created_at: string
+          line_count: number
+          manual_journal_id: string
+          organization_id: string
+          posting_date: string
+          posting_group_id: string
+          total_amount: number
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          line_count: number
+          manual_journal_id: string
+          organization_id: string
+          posting_date: string
+          posting_group_id: string
+          total_amount: number
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          line_count?: number
+          manual_journal_id?: string
+          organization_id?: string
+          posting_date?: string
+          posting_group_id?: string
+          total_amount?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_journal_postings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_journal_postings_manual_journal_id_fkey"
+            columns: ["manual_journal_id"]
+            isOneToOne: true
+            referencedRelation: "manual_journals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_journal_postings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      manual_journals: {
+        Row: {
+          client_id: string
+          created_at: string
+          description: string | null
+          id: string
+          organization_id: string
+          posting_date: string
+          reference: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          organization_id: string
+          posting_date: string
+          reference?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          organization_id?: string
+          posting_date?: string
+          reference?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "manual_journals_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "manual_journals_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_members: {
         Row: {
           created_at: string
@@ -1407,6 +1577,7 @@ export type Database = {
         Args: { _allocation_id: string }
         Returns: string
       }
+      post_manual_journal: { Args: { _journal_id: string }; Returns: string }
       post_purchase_invoice: { Args: { _invoice_id: string }; Returns: string }
       post_sales_invoice: { Args: { _invoice_id: string }; Returns: string }
       posting_account_ok: {
@@ -1445,6 +1616,10 @@ export type Database = {
       role_rank: {
         Args: { _role: Database["public"]["Enums"]["app_role"] }
         Returns: number
+      }
+      save_manual_journal_lines: {
+        Args: { _journal_id: string; _lines: Json }
+        Returns: undefined
       }
       save_purchase_invoice_with_lines: {
         Args: { _header_updates: Json; _invoice_id: string; _lines: Json }
