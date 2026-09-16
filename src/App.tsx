@@ -15,6 +15,7 @@ import Boekingen from "./pages/Boekingen";
 import Overzichten from "./pages/Overzichten";
 import Grootboek from "./pages/Grootboek";
 import GrootboekMutaties from "./pages/GrootboekMutaties";
+import Memoriaal from "./pages/Memoriaal";
 import Vraagposten from "./pages/Vraagposten";
 import Leveranciers from "./pages/Leveranciers";
 import Instellingen from "./pages/Instellingen";
@@ -77,6 +78,7 @@ const App = () => (
               <Route path="/overzichten" element={<Overzichten />} />
               <Route path="/grootboek" element={<Grootboek />} />
               <Route path="/grootboek/mutaties" element={<GrootboekMutaties />} />
+              <Route path="/grootboek/memoriaal" element={<Memoriaal />} />
               <Route path="/vraagposten" element={<Vraagposten />} />
               <Route path="/ai-chat" element={<AIChat />} />
               <Route path="/instellingen" element={<Instellingen />} />
