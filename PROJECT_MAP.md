@@ -456,9 +456,35 @@ select to_regclass('public.manual_journals') as header_table,
           'set_manual_journal_line_org_trigger')) as own_triggers;
 ```
 
+### Phase 6C-b7 — true Grootboek: reporting from `ledger_postings`
+
+**Research decisions (final):** `ledger_postings` is the sole source for the new Grootboek/reporting layer; `journal_entries` is never summed into ledger figures; no historical backfill; no migrations; no Balans/W&V and no opening-balance logic until an opening-balance mechanism exists; no category schema change. The 6C-b7 research pass established that before this phase **nothing read `ledger_postings` at all** — it was write-only, and the `["ledger-postings"]` query key the four posting hooks invalidate had no consumer.
+
+#### PR 1 — ledger reporting core (no UI)
+
+```
+src/lib/ledger-reporting.ts      pure, framework-free reporting kernel
+src/hooks/useLedgerPostings.ts   the first reader of ledger_postings
+```
+
+- **Query contract:** plain `SELECT` under RLS (read floor `read_only`); no view, no RPC, no `SECURITY DEFINER`. `client_id` is mandatory — RLS is organisation-wide and does **not** replace the administratie predicate, so the hook refuses to run without one and the pure layer re-asserts it on the result. Optional half-open period: the query fetches everything with `posting_date < toExclusive` so opening balance and period come from one set. Batched at 1000 rows in the fixed order `posting_date, posting_group_id, line_no, id` (PostgREST's cap; mirrors `fetchAllBankTransactions`). Never filters on `reversal_of_posting_id`, `actief`, `currency` or `boekjaar`. Uses the reserved `["ledger-postings", clientId, from, toExclusive]` key, so the existing invalidations from the four posting hooks are now live.
+- **Money:** integer cents at the boundary (`toCents`: exact string parse, `Math.round(n*100)` for the float form of a two-decimal value). Every invariant is compared in cents; no float equality anywhere.
+- **Sign:** `signed = debit − credit`, debit-positive. **No sign-flip by category** — a credit balance is a negative number, as in a proef- en saldibalans.
+- **Period convention: half-open `[from, toExclusive)` on `posting_date`**, ISO strings compared lexicographically — the existing app convention (`getLedgerYearRange`, `getYearDateRange`). `boekjaar` is carried but never filters. Because the 6C-b2 group trigger enforces one `posting_date` per group, a period boundary can never split a journaalpost.
+- **Account rollup:** per account `opening = Σ(debit − credit) before from`, `periodDebit`, `periodCredit`, `closing = opening + periodDebit − periodCredit`. Accounts are resolved from the **all-accounts** list, never the active-only hook: an inactive account keeps its postings and balance. An unresolvable id becomes `Onbekende rekening` (`resolved: false`, `categorie: "onbekend"`) and keeps its postings; it sorts last.
+- **Self-check:** `Σ periodDebit === Σ periodCredit` and `Σ opening === 0`, in cents. On failure the result is `{ ok: false, failures }` with **no rollups at all** — numbers from an unbalanced set are never returned.
+- **Currency guard:** EUR only. One non-EUR row anywhere in the set (period or not) is a hard `LedgerReportingError("currency")`; rows are never silently dropped and currencies are never summed together.
+- **Classification:** stored `categorie` → `activa | passiva | omzet | kosten | privé | onbekend` (trimmed, case-insensitive; the column is unconstrained text). `privé` is recognised but deliberately has **no** statement placement — the module exports no category→Balans/W&V map, and a test asserts that. Unknown text maps to `onbekend` and stays visible.
+- **Running balance:** one account, opening + chronological lines + debit-positive running balance, in the fixed order above, independent of input order.
+- **Reversals:** never filtered. A future reversal group (`reversal_of_posting_id` set, its own `source_type`) participates in normal summation and nets the original to zero — tested with a fixture.
+- **Source drill-down:** `purchase_invoice → /facturen/inkoop/:id`, `sales_invoice → /verkoop`, `bank_allocation → /bank`, `manual_journal → /grootboek/memoriaal` (all existing routes in `App.tsx`); unknown `source_type` or a missing id → an explicit `unresolved` result, never an invented route.
+- **Double-counting invariant (static test):** neither file queries or imports `journal_entries`, the document tables, their totals (`amount_incl`/`amount_excl`/`btw_amount`) or the legacy helpers; the only table read is `ledger_postings`.
+
+**No UI in this PR.** PR 2 (saldilijst + mutaties per rekening) and PR 3 (proef- en saldibalans with a completeness indicator) build on this kernel; Balans/W&V wait for an opening-balance phase and the owner decisions on `privé` and the equity/liability split inside `passiva`.
+
 ---
 
-Future phases: 6C-b6 manual journal posting is the section above (PR 1 schema + writer, PR 2 application layer — both done), 6C-b7 Grootboek reading from real postings is next. Source-level idempotency is handled per writer (purchase, sales, bank and manual journal each guard their own `source_type` on `ledger_postings`) — see the 6C-b2 migration header for why no universal uniqueness constraint is safe.
+Future phases: 6C-b6 manual journal posting is the section above (PR 1 schema + writer, PR 2 application layer — both done), 6C-b7 is the section above (PR 1 reporting core done; UI PRs follow). Source-level idempotency is handled per writer (purchase, sales, bank and manual journal each guard their own `source_type` on `ledger_postings`) — see the 6C-b2 migration header for why no universal uniqueness constraint is safe.
 
 **Status of the 6C-b2 … 6C-b5b chain: ✅ Applied to production** (`alxlbdhpbwlehbdbfejw`). Evidence: the generated `src/integrations/supabase/types.ts` contains `bank_allocation_postings` and `post_bank_allocation`, which only exist once the whole chain (6C-b2 foundation → 6C-b2a → 6C-b3 → 6C-b4 → 6C-b5a → 6C-b5b) has been applied; the 6C-b5b prerequisite guard would have refused otherwise.
 
