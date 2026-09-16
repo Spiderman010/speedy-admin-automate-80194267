@@ -90,11 +90,16 @@ describe("Migratie — brontabellen", () => {
     expect(headerTable).toMatch(/updated_at\s+timestamptz NOT NULL DEFAULT now\(\)/);
   });
 
-  it("4. regels: vier CHECKs, numeric(12,2), nooit float/money, sort_order DEFAULT 0 en niet uniek", () => {
+  it("4. regels: vier CHECKs (>= 0 ×2, één zijde, geen NaN), géén dode two_decimals-CHECK, numeric(12,2), nooit float/money, sort_order DEFAULT 0 en niet uniek", () => {
     expect(linesTable).toMatch(/CONSTRAINT manual_journal_lines_debit_amount_check\s+CHECK \(debit_amount >= 0\)/);
     expect(linesTable).toMatch(/CONSTRAINT manual_journal_lines_credit_amount_check\s+CHECK \(credit_amount >= 0\)/);
     expect(linesTable).toMatch(/CONSTRAINT manual_journal_lines_single_side_check\s+CHECK \(debit_amount = 0 OR credit_amount = 0\)/);
-    expect(linesTable).toMatch(/CONSTRAINT manual_journal_lines_two_decimals_check\s+CHECK \(debit_amount = round\(debit_amount, 2\) AND credit_amount = round\(credit_amount, 2\)\)/);
+    // NaN: ">= 0", "= 0 OR", "= round(x, 2)" en zelfs "<>" in de balanscheck laten NaN door; alleen "x <> 'NaN'" is FALSE voor NaN.
+    expect(linesTable).toMatch(/CONSTRAINT manual_journal_lines_no_nan_check\s+CHECK \(debit_amount <> 'NaN'::numeric AND credit_amount <> 'NaN'::numeric\)/);
+    // De numeric(12,2)-typmod rondt vóór de CHECK af, dus een "x = round(x, 2)"-CHECK kan nooit falen: bewust afwezig.
+    expect(sql).not.toMatch(/two_decimals_check/);
+    expect(linesTable).not.toMatch(/round\(/);
+    expect((linesTable.match(/CONSTRAINT manual_journal_lines_\w+_check/g) ?? []).length).toBe(4);
     expect(linesTable).toMatch(/debit_amount\s+numeric\(12,2\) NOT NULL DEFAULT 0/);
     expect(linesTable).toMatch(/credit_amount\s+numeric\(12,2\) NOT NULL DEFAULT 0/);
     expect(sql).not.toMatch(/\b(float|float4|float8|double precision|real|money)\b/i);
@@ -117,7 +122,7 @@ describe("Migratie — brontabellen", () => {
     expect(markerTable).toMatch(/manual_journal_id\s+uuid\s+PRIMARY KEY/);
     expect(markerTable).toMatch(/posting_group_id\s+uuid\s+NOT NULL UNIQUE/);
     expect(markerTable).toMatch(/CONSTRAINT manual_journal_postings_line_count_check\s+CHECK \(line_count >= 2\)/);
-    expect(markerTable).toMatch(/CONSTRAINT manual_journal_postings_total_amount_check\s+CHECK \(total_amount > 0\)/);
+    expect(markerTable).toMatch(/CONSTRAINT manual_journal_postings_total_amount_check\s+CHECK \(total_amount > 0 AND total_amount <> 'NaN'::numeric\)/);
     for (const col of ["organization_id", "client_id", "user_id"]) {
       expect(markerTable).toMatch(new RegExp(`${col}\\s+uuid\\s+NOT NULL`));
     }
@@ -275,16 +280,32 @@ describe("Migratie — save_manual_journal_lines", () => {
     expect(saveFn).toMatch(/Memoriaalboeking niet gevonden' USING ERRCODE = 'P0002'/);
   });
 
-  it("17. weigert op een marker, eist een JSON-array, en valideert bedragen (twee decimalen, geen negatief, één zijde)", () => {
+  it("17. weigert op een marker, eist een JSON-array, en valideert bedragen (NaN eerst, geen negatief, één zijde, twee decimalen vóór de cast)", () => {
     expect(saveFn).toMatch(/IF EXISTS \(SELECT 1 FROM public\.manual_journal_postings WHERE manual_journal_id = _journal_id\) THEN\s+RAISE EXCEPTION 'Deze memoriaalboeking is geboekt; regels kunnen niet meer worden gewijzigd'\s+USING ERRCODE = '42501'/);
     expect(saveFn).toMatch(/jsonb_typeof\(_lines\) <> 'array'/);
-    expect(saveFn).toMatch(/v_debit <> round\(v_debit, 2\) OR v_credit <> round\(v_credit, 2\)/);
+    // NaN-weigering per element, vóór elke andere bedragcontrole (NaN < 0 is FALSE, NaN > 0 is TRUE, NaN = round(NaN) is TRUE).
+    const nan = saveFn.search(/IF v_debit = 'NaN'::numeric OR v_credit = 'NaN'::numeric THEN\s+RAISE EXCEPTION 'Bedragen moeten getallen zijn' USING ERRCODE = '22023'/);
+    const negative = saveFn.search(/IF v_debit < 0 OR v_credit < 0 THEN/);
+    const bothSides = saveFn.search(/IF v_debit > 0 AND v_credit > 0 THEN/);
+    const decimals = saveFn.search(/IF v_debit <> round\(v_debit, 2\) OR v_credit <> round\(v_credit, 2\) THEN/);
+    const insert = saveFn.indexOf("INSERT INTO public.manual_journal_lines");
+    expect(nan).toBeGreaterThan(-1);
+    expect(negative).toBeGreaterThan(nan);
+    expect(bothSides).toBeGreaterThan(negative);
+    expect(decimals).toBeGreaterThan(bothSides);
+    expect(insert).toBeGreaterThan(decimals);
     expect(saveFn).toMatch(/Bedragen mogen maximaal twee decimalen hebben/);
-    expect(saveFn).toMatch(/IF v_debit < 0 OR v_credit < 0 THEN/);
-    expect(saveFn).toMatch(/IF v_debit > 0 AND v_credit > 0 THEN/);
+    // De decimalencheck is het ENIGE pad dat >2 decimalen weigert: hij werkt op een ONGEBONDEN numeric-variabele,
+    // vóór de cast naar numeric(12,2) bij de INSERT (een numeric(12,2)-variabele zou 0.005 al tot 0.01 hebben afgerond).
+    expect(saveFn).toMatch(/v_debit\s+numeric;/);
+    expect(saveFn).toMatch(/v_credit\s+numeric;/);
+    expect(saveFn).not.toMatch(/v_(debit|credit)\s+numeric\(/);
     expect(saveFn).toMatch(/IF v_uid IS NULL THEN\s+RAISE EXCEPTION 'Niet ingelogd' USING ERRCODE = '28000'/);
     // user_id = de aanroeper; organization_id wordt door de regeltrigger gezet, niet hier.
     expect(saveFn).toMatch(/INSERT INTO public\.manual_journal_lines \(\s+manual_journal_id, user_id, sort_order, grootboekrekening_id, omschrijving,\s+debit_amount, credit_amount\s+\)/);
+    // omschrijving: whitespace-bewust genormaliseerd (tabs/newlines tellen als leeg), niet alleen spaties.
+    expect(saveFn).toMatch(/NULLIF\(btrim\(COALESCE\(elem->>'omschrijving', ''\), E' \\t\\r\\n'\), ''\)/);
+    expect(saveFn).not.toMatch(/btrim\([^,()]*\)/);
   });
 });
 
@@ -341,11 +362,19 @@ describe("Migratie — post_manual_journal", () => {
     expect(postFn).toMatch(/IF v_sum_debit <= 0 OR v_sum_credit <= 0 THEN/);
   });
 
-  it("22. weigert regels zonder rekening, zonder bedrag, tweezijdig, negatief, met >2 decimalen of van een andere organisatie", () => {
+  it("22. weigert regels zonder rekening, zonder bedrag, tweezijdig, negatief, NaN (vóór de balanscheck), met >2 decimalen of van een andere organisatie", () => {
     expect(postFn).toMatch(/COUNT\(\*\) FILTER \(WHERE l\.grootboekrekening_id IS NULL\)/);
     expect(postFn).toMatch(/COUNT\(\*\) FILTER \(WHERE l\.debit_amount = 0 AND l\.credit_amount = 0\)/);
     expect(postFn).toMatch(/COUNT\(\*\) FILTER \(WHERE l\.debit_amount > 0 AND l\.credit_amount > 0\)/);
     expect(postFn).toMatch(/COUNT\(\*\) FILTER \(WHERE l\.debit_amount < 0 OR l\.credit_amount < 0\)/);
+    // NaN passeert de nul-, zijde-, negatief- en decimalenfilters én de balanscheck (NaN = NaN is TRUE): eigen filter, eigen weigering.
+    expect(postFn).toMatch(/COUNT\(\*\) FILTER \(WHERE l\.debit_amount = 'NaN'::numeric OR l\.credit_amount = 'NaN'::numeric\)/);
+    expect(postFn).toMatch(/v_nan\s+integer;/);
+    const nanRefusal = postFn.search(/IF v_nan > 0 THEN\s+RAISE EXCEPTION 'Bedragen moeten getallen zijn' USING ERRCODE = '22023'/);
+    const balance = postFn.indexOf("IF v_sum_debit <> v_sum_credit THEN");
+    expect(nanRefusal).toBeGreaterThan(-1);
+    expect(nanRefusal).toBeLessThan(balance);
+    // Decimalenfilter blijft (onbereikbaar via de numeric(12,2)-typmod; de writer leunt niet op een typmod die hij niet bezit).
     expect(postFn).toMatch(/l\.debit_amount <> round\(l\.debit_amount, 2\)\s+OR l\.credit_amount <> round\(l\.credit_amount, 2\)/);
     expect(postFn).toMatch(/l\.organization_id IS DISTINCT FROM v_journal\.organization_id/);
     expect(postFn).toMatch(/% regel\(s\) zonder grootboekrekening; boeken is niet mogelijk/);
@@ -369,7 +398,9 @@ describe("Migratie — post_manual_journal", () => {
   it("24. schrijft één grootboekregel per memoriaalregel, zoals opgeslagen, in EUR, met source_line_id = regel-id", () => {
     expect(postFn).toMatch(/FOR v_line IN\s+SELECT id, grootboekrekening_id, debit_amount, credit_amount, omschrijving\s+FROM public\.manual_journal_lines\s+WHERE manual_journal_id = v_journal\.id\s+ORDER BY sort_order, id\s+LOOP/);
     expect(postFn).toMatch(/v_journal\.posting_date, v_boekjaar, v_line\.debit_amount, v_line\.credit_amount, 'EUR',/);
-    expect(postFn).toMatch(/COALESCE\(NULLIF\(btrim\(v_line\.omschrijving\), ''\), v_journal\.description\),\s+'manual_journal', v_journal\.id, v_line\.id, v_uid/);
+    // Whitespace-bewuste fallback: een omschrijving van alleen tabs/newlines valt terug op de kop.
+    expect(postFn).toMatch(/COALESCE\(NULLIF\(btrim\(v_line\.omschrijving, E' \\t\\r\\n'\), ''\), v_journal\.description\),\s+'manual_journal', v_journal\.id, v_line\.id, v_uid/);
+    expect(postFn).not.toMatch(/btrim\([^,()]*\)/);
     expect(postFn).not.toMatch(/, NULL, v_uid/);
     expect(postFn).not.toMatch(/reversal_of_posting_id/);
     expect(postFn).toMatch(/EXTRACT\(YEAR FROM v_journal\.posting_date\)/);
@@ -378,8 +409,8 @@ describe("Migratie — post_manual_journal", () => {
     expect(postFn).not.toMatch(/now\(\)|current_date/i);
   });
 
-  it("25. eist een omschrijving en een administratie binnen de organisatie", () => {
-    expect(postFn).toMatch(/v_journal\.description IS NULL OR btrim\(v_journal\.description\) = ''/);
+  it("25. eist een omschrijving (whitespace-bewust: tabs/newlines tellen als leeg) en een administratie binnen de organisatie", () => {
+    expect(postFn).toMatch(/v_journal\.description IS NULL OR btrim\(v_journal\.description, E' \\t\\r\\n'\) = ''/);
     expect(postFn).toMatch(/Memoriaalboeking heeft geen omschrijving; boeken is niet mogelijk/);
     expect(postFn).toMatch(/IF NOT FOUND OR v_client\.organization_id IS DISTINCT FROM v_journal\.organization_id THEN/);
     expect(postFn).toMatch(/Administratie hoort niet bij de organisatie van deze memoriaalboeking/);
@@ -535,9 +566,15 @@ describe("Migratie — scope en veiligheid", () => {
     expect(rb.indexOf("DROP POLICY")).toBeLessThan(rb.indexOf("DROP INDEX"));
     expect(rb.indexOf("DROP INDEX")).toBeLessThan(rb.indexOf("DROP TABLE"));
     expect(rb.indexOf("DROP TABLE IF EXISTS public.manual_journal_lines")).toBeLessThan(rb.indexOf("DROP TABLE IF EXISTS public.manual_journals;"));
+    // Voorwaarde: alleen veilig vóór de eerste boeking (ledger_postings is append-only; anders raken 'manual_journal'-rijen voorgoed wees).
+    const pre = raw.slice(raw.indexOf("ROLLBACK PRECONDITION"), raw.indexOf("-- rollback:"));
+    expect(pre).toMatch(/only safe BEFORE the first\s+--\s+posting/);
+    expect(pre).toMatch(/append-only/);
+    expect(pre).toMatch(/orphaned/);
+    expect(pre).toMatch(/SELECT count\(\*\) FROM public\.ledger_postings WHERE source_type = 'manual_journal';/);
   });
 
-  it("35. documenteert de boeking, de grendelvolgorde, de rollen, de bewuste uitzondering, de duurzame regel-id en het ene 40P01-pad", () => {
+  it("35. documenteert de boeking, de grendelvolgorde, de rollen, de bewuste uitzondering, de duurzame regel-id, beide 40P01-paden, decimalen en NaN eerlijk", () => {
     expect(raw).toMatch(/THE ENTRY/);
     expect(raw).toMatch(/LOCK ORDER/);
     expect(raw).toMatch(/NO BACKFILL/);
@@ -547,8 +584,22 @@ describe("Migratie — scope en veiligheid", () => {
     expect(raw).toMatch(/WHY source_line_id IS PERSISTED HERE/);
     expect(raw).toMatch(/WHY NEW TABLES, NOT journal_entries/);
     expect(raw).toMatch(/40P01/);
-    expect(raw).toMatch(/never(\s+--)?\s+an accounting one/);
+    // Beide handmatige deadlockpaden: (a) multi-row regelstatement in heapvolgorde, (b) één ruwe transactie UPDATE regel → INSERT regel
+    // (regelgrendel vóór de kop-KEY SHARE in de freeze-trigger) tegen een poster die de kop houdt en op LOCK 2 wacht.
+    expect(raw).toMatch(/Two paths CAN deadlock, both non-application/);
+    expect(raw).toMatch(/\(a\) a raw MULTI-ROW line statement/);
+    expect(raw).toMatch(/\(b\) a single raw TRANSACTION that first UPDATEs \(or DELETEs\) a line/);
+    expect(raw).toMatch(/Line → header inverts the documented header → lines\s+--\s+order/);
+    expect(raw).toMatch(/never an accounting\s+--\s+one/);
+    expect(raw).toMatch(/never enters either cycle/);
     expect(raw).toMatch(/KEY SHARE/);
+    // Decimalen en NaN eerlijk gedocumenteerd, inclusief de foundation-gap als follow-up buiten scope.
+    expect(raw).toMatch(/DECIMALS — honest statement of who refuses what/);
+    expect(raw).toMatch(/can never fail and is deliberately NOT declared/);
+    expect(raw).toMatch(/NaN — 'NaN'::numeric is a legal numeric value/);
+    expect(raw).toMatch(/public\.ledger_postings and the purchase\/sales\/bank marker tables have\s+--\s+the same gap at the foundation level/);
+    expect(raw).toMatch(/unreachable through the numeric\(12,2\) typmod/);
+    expect(raw).toMatch(/does not lean on a typmod it does not own/);
     expect(raw).toMatch(/VAT v1/);
     expect(raw).toMatch(/NUMBERING/);
     expect(raw).toMatch(/REVERSAL ENGINE/);

@@ -52,9 +52,32 @@
 -- The writer mirrors the lines exactly as the accountant stored them. There
 -- are NO implicit legs: no automatic VAT line, no automatic contra account, no
 -- rounding line, no suspense line. A line is either debit or credit (never
--- both, never neither), amounts are non-negative NUMERIC(12,2) with at most
--- two decimals, and the group must balance exactly (SUM(debit) = SUM(credit)
--- in exact NUMERIC, no tolerance) with at least one debit and one credit line.
+-- both, never neither), amounts are non-negative NUMERIC(12,2), and the group
+-- must balance exactly (SUM(debit) = SUM(credit) in exact NUMERIC, no
+-- tolerance) with at least one debit and one credit line.
+--
+-- DECIMALS — honest statement of who refuses what. The column type
+-- numeric(12,2) ROUNDS a direct write (PostgREST INSERT/UPDATE, SQL editor)
+-- to two decimals before any CHECK runs, so a table CHECK "x = round(x, 2)"
+-- can never fail and is deliberately NOT declared. The save RPC — the
+-- application path — checks the incoming JSON value in an unconstrained
+-- numeric BEFORE the cast and refuses >2 decimals with a clear message; that
+-- is the ONLY path that refuses instead of rounding. The poster keeps an
+-- equivalent filter that is unreachable through the typmod, so the writer
+-- does not lean on a column type it does not own.
+--
+-- NaN — 'NaN'::numeric is a legal numeric value and passes every ordinary
+-- amount predicate: NaN >= 0, NaN > 0, NaN = 0 OR …, NaN = round(NaN, 2) and
+-- even SUM(debit) <> SUM(credit) are all "not violated" (NaN = NaN is TRUE in
+-- PostgreSQL). One NaN line would post and turn every SUM over that account
+-- into NaN. Three layers refuse it: CHECK manual_journal_lines_no_nan_check
+-- and the marker's total_amount CHECK ("x <> 'NaN'::numeric" is FALSE for
+-- NaN, which is the point), save_manual_journal_lines() per element, and
+-- post_manual_journal() over the locked lines, before the balance check.
+-- NOTE: public.ledger_postings and the purchase/sales/bank marker tables have
+-- the same gap at the foundation level (their CHECKs are ">= 0"-shaped and the
+-- balance trigger uses "<>"); that is out of scope here and a follow-up on
+-- 6C-b2, not on this writer.
 --
 -- VAT v1: there is no automatic VAT. If a memoriaalboeking carries VAT, the
 -- accountant books the VAT account as an ordinary line, like any other line.
@@ -66,7 +89,10 @@
 -- to the purchase, sales and bank writers. currency = 'EUR', passed
 -- explicitly, exactly as the other writers do. description per ledger row =
 -- the line's omschrijving when present, else the header's description (which
--- is required to be non-blank to post).
+-- is required to be non-blank to post). "Blank" means empty after trimming
+-- spaces, tabs, carriage returns and newlines — btrim(x, E' \t\r\n') — in all
+-- three places (header refusal, ledger fallback, save normalisation), because
+-- plain btrim() trims spaces only and would let E'\t\n' pass as a description.
 --
 -- source_type = 'manual_journal' (the value the foundation's COMMENT already
 -- reserved for 6C-b6), source_id = manual_journals.id, source_line_id =
@@ -140,17 +166,24 @@
 --     poster has not reached LOCK 2 yet it commits first and the poster then
 --     reads the committed new state under LOCK 2.
 --
--- The one path that CAN deadlock is non-application: a raw MULTI-ROW line
--- statement in the SQL editor (e.g. UPDATE public.manual_journal_lines SET
--- omschrijving = … WHERE manual_journal_id = X) locks line rows in heap order
--- while the poster locks them in (sort_order, id) order under LOCK 2; if both
--- are mid-flight on the same journal PostgreSQL detects the cycle (40P01) and
--- aborts one side. Nothing partial is ever committed: the posting either
--- commits cleanly or is retried, and once it committed the mutation is refused
--- anyway by the freeze. This is an availability edge on a manual path, never
--- an accounting one — the app's own line writes go through
--- save_manual_journal_lines(), which locks the header first and therefore
--- never enters that cycle.
+-- Two paths CAN deadlock, both non-application (manual SQL only):
+--   (a) a raw MULTI-ROW line statement in the SQL editor (e.g. UPDATE
+--       public.manual_journal_lines SET omschrijving = … WHERE
+--       manual_journal_id = X) locks line rows in heap order while the poster
+--       locks them in (sort_order, id) order under LOCK 2;
+--   (b) a single raw TRANSACTION that first UPDATEs (or DELETEs) a line — a
+--       line lock, taken before the poster reached LOCK 2 — and then INSERTs a
+--       line: that INSERT takes FOR KEY SHARE on the header inside the line
+--       freeze trigger and waits behind the poster's FOR UPDATE (LOCK 1),
+--       while the poster is waiting at LOCK 2 on the line the transaction
+--       already updated. Line → header inverts the documented header → lines
+--       order.
+-- In both cases PostgreSQL detects the cycle (40P01) and aborts one side.
+-- Nothing partial is ever committed: the posting either commits cleanly or is
+-- retried, and once it committed the mutation is refused anyway by the
+-- freeze. This is an availability edge on a manual path, never an accounting
+-- one — the app's own line writes go through save_manual_journal_lines(),
+-- which locks the header first and therefore never enters either cycle.
 --
 -- ─────────────────────────────────────────────────────────────────────────────
 -- ROLES — accountant posting floor, assistant lines-DELETE exception
@@ -198,6 +231,17 @@
 -- marker is a hard claim — and neither its header's accounting fields nor any
 -- of its lines can change or be deleted (section 8). Corrections require the
 -- future reversal workflow that writes NEW immutable rows.
+--
+-- ROLLBACK PRECONDITION: the block below is only safe BEFORE the first
+-- posting, i.e. while public.manual_journal_postings is empty and
+-- public.ledger_postings holds no source_type = 'manual_journal' row.
+-- ledger_postings is append-only (6C-b2 seal: no UPDATE, no DELETE), so once a
+-- memoriaalboeking has been posted, dropping these tables would leave its
+-- ledger rows pointing at a source_id / source_line_id that no longer exists —
+-- permanently orphaned, with no way to explain them. Check first:
+--   SELECT count(*) FROM public.ledger_postings WHERE source_type = 'manual_journal';
+-- and do not run the rollback unless that is 0. After a posting, the only
+-- correction path is the future reversal engine.
 --
 -- rollback:
 --   DROP TRIGGER IF EXISTS validate_manual_journal_source_claim_trigger ON public.ledger_postings;
@@ -451,9 +495,12 @@ COMMENT ON TABLE public.manual_journals IS
 --    the unused side is an explicit 0, never NULL. Unlike the ledger, a DRAFT
 --    line may be 0/0 (an accountant types the account first and the amount
 --    later); the poster refuses such a line, the table does not. A line may
---    never be both debit and credit, never negative, and never carry more than
---    two decimals — those are refused at the table level so no draft can hold
---    an amount the ledger could not represent.
+--    never be both debit and credit, never negative and never NaN — those are
+--    refused at the table level so no draft can hold an amount the ledger
+--    could not represent. Decimals are a different story: numeric(12,2)
+--    rounds a direct write to two decimals BEFORE any CHECK could see it, so
+--    a "two decimals" CHECK would be dead code and is not declared (header:
+--    DECIMALS). The save RPC refuses >2 decimals before the cast.
 --
 --    sort_order is NOT unique: a UI reorders lines by rewriting sort_order in
 --    bulk, and a transient duplicate during that rewrite would otherwise fail.
@@ -480,8 +527,11 @@ CREATE TABLE IF NOT EXISTS public.manual_journal_lines (
   created_at            timestamptz   NOT NULL DEFAULT now(),
   CONSTRAINT manual_journal_lines_single_side_check
     CHECK (debit_amount = 0 OR credit_amount = 0),
-  CONSTRAINT manual_journal_lines_two_decimals_check
-    CHECK (debit_amount = round(debit_amount, 2) AND credit_amount = round(credit_amount, 2))
+  -- NaN passes every predicate above (NaN >= 0 and NaN = 0 OR … are TRUE).
+  -- "x <> 'NaN'::numeric" evaluates to FALSE for NaN, so this CHECK is the
+  -- one that actually refuses it.
+  CONSTRAINT manual_journal_lines_no_nan_check
+    CHECK (debit_amount <> 'NaN'::numeric AND credit_amount <> 'NaN'::numeric)
 );
 
 -- The ONLY ON DELETE CASCADE in this file: deleting a DRAFT header removes its
@@ -630,7 +680,7 @@ CREATE TRIGGER prevent_org_user_rebind_trg
 -- The posted-line freeze trigger is attached in section 8.
 
 COMMENT ON TABLE public.manual_journal_lines IS
-'Regels van een memoriaalboeking: één regel = één debet- óf creditzijde op één grootboekrekening. Concept zolang de kop niet is geboekt; daarna bevroren. organization_id wordt altijd van de kop overgenomen; manual_journal_id kan niet wijzigen.';
+'Regels van een memoriaalboeking: één regel = één debet- óf creditzijde op één grootboekrekening. Concept zolang de kop niet is geboekt; daarna bevroren. organization_id wordt altijd van de kop overgenomen; manual_journal_id kan niet wijzigen. Bedragen: numeric(12,2) (directe schrijfacties worden afgerond op twee decimalen; save_manual_journal_lines weigert méér dan twee decimalen), nooit negatief, nooit tweezijdig, nooit NaN.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 3) The claim marker — same design as the invoice and allocation markers,
@@ -665,7 +715,7 @@ CREATE TABLE IF NOT EXISTS public.manual_journal_postings (
                                    CHECK (line_count >= 2),
   total_amount       numeric(12,2) NOT NULL
                                    CONSTRAINT manual_journal_postings_total_amount_check
-                                   CHECK (total_amount > 0),
+                                   CHECK (total_amount > 0 AND total_amount <> 'NaN'::numeric),
   created_at         timestamptz   NOT NULL DEFAULT now()
 );
 
@@ -926,7 +976,10 @@ BEGIN
 
   -- Per-element validation before anything is deleted. Draft semantics: a
   -- line may be 0/0 (unfinished) and may lack an account; it may never be
-  -- negative, both-sided, or carry more than two decimals.
+  -- NaN, negative, both-sided, or carry more than two decimals. v_debit and
+  -- v_credit are UNCONSTRAINED numeric on purpose: a numeric(12,2) variable
+  -- would already have rounded 0.005 to 0.01 before the decimals check below
+  -- could see it (header: DECIMALS).
   FOR v_elem IN SELECT * FROM jsonb_array_elements(_lines)
   LOOP
     v_idx := v_idx + 1;
@@ -958,6 +1011,13 @@ BEGIN
       RAISE EXCEPTION 'Regel %: debit_amount en credit_amount moeten numeriek zijn', v_idx USING ERRCODE = '22023';
     END;
 
+    -- 'NaN' casts to numeric without error and would pass every check below
+    -- (NaN < 0 is FALSE, NaN > 0 is TRUE, NaN = round(NaN, 2) is TRUE), so it
+    -- is refused first and explicitly.
+    IF v_debit = 'NaN'::numeric OR v_credit = 'NaN'::numeric THEN
+      RAISE EXCEPTION 'Bedragen moeten getallen zijn' USING ERRCODE = '22023';
+    END IF;
+
     IF v_debit < 0 OR v_credit < 0 THEN
       RAISE EXCEPTION 'Negatieve bedragen worden niet ondersteund; boek het bedrag op de andere zijde'
         USING ERRCODE = '22023';
@@ -967,6 +1027,8 @@ BEGIN
       RAISE EXCEPTION 'Een regel kan niet tegelijk debet en credit zijn' USING ERRCODE = '22023';
     END IF;
 
+    -- The ONLY place that refuses >2 decimals instead of rounding them: this
+    -- runs on the unconstrained value, before the numeric(12,2) cast at INSERT.
     IF v_debit <> round(v_debit, 2) OR v_credit <> round(v_credit, 2) THEN
       RAISE EXCEPTION 'Bedragen mogen maximaal twee decimalen hebben' USING ERRCODE = '22023';
     END IF;
@@ -996,7 +1058,7 @@ BEGIN
     v_uid,
     COALESCE(NULLIF(elem->>'sort_order', '')::integer, (ord - 1)::integer),
     NULLIF(elem->>'grootboekrekening_id', '')::uuid,
-    NULLIF(btrim(COALESCE(elem->>'omschrijving', '')), ''),
+    NULLIF(btrim(COALESCE(elem->>'omschrijving', ''), E' \t\r\n'), ''),
     COALESCE(NULLIF(elem->>'debit_amount', '')::numeric, 0),
     COALESCE(NULLIF(elem->>'credit_amount', '')::numeric, 0)
   FROM jsonb_array_elements(_lines) WITH ORDINALITY AS t(elem, ord);
@@ -1008,7 +1070,7 @@ REVOKE ALL ON FUNCTION public.save_manual_journal_lines(uuid, jsonb)
 GRANT EXECUTE ON FUNCTION public.save_manual_journal_lines(uuid, jsonb) TO authenticated;
 
 COMMENT ON FUNCTION public.save_manual_journal_lines(uuid, jsonb) IS
-'Vervangt atomair alle regels van een concept-memoriaalboeking (verwijderen + opnieuw invoegen in één transactie). Draait als de aanroeper (SECURITY INVOKER): RLS bepaalt de rechten. Grendelt eerst de kop (FOR UPDATE, dezelfde grendel als post_manual_journal) en weigert zodra de memoriaalboeking is geboekt. Bedragen: niet negatief, niet tegelijk debet en credit, maximaal twee decimalen.';
+'Vervangt atomair alle regels van een concept-memoriaalboeking (verwijderen + opnieuw invoegen in één transactie). Draait als de aanroeper (SECURITY INVOKER): RLS bepaalt de rechten. Grendelt eerst de kop (FOR UPDATE, dezelfde grendel als post_manual_journal) en weigert zodra de memoriaalboeking is geboekt. Bedragen: geen NaN, niet negatief, niet tegelijk debet en credit, maximaal twee decimalen (gecontroleerd vóór de cast naar numeric(12,2); dit is het enige pad dat afkeurt in plaats van afrondt).';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 6) The writer
@@ -1045,6 +1107,7 @@ DECLARE
   v_zero_lines       integer;
   v_both_sides       integer;
   v_negative         integer;
+  v_nan              integer;
   v_decimals         integer;
   v_org_mismatch     integer;
   v_sum_debit        numeric;
@@ -1093,8 +1156,9 @@ BEGIN
   END IF;
 
   -- (6) A memoriaal without a description is not auditable: it is also the
-  -- fallback description of every ledger row whose line has none.
-  IF v_journal.description IS NULL OR btrim(v_journal.description) = '' THEN
+  -- fallback description of every ledger row whose line has none. Whitespace-
+  -- aware: btrim() alone trims spaces only and would accept E'\t\n'.
+  IF v_journal.description IS NULL OR btrim(v_journal.description, E' \t\r\n') = '' THEN
     RAISE EXCEPTION 'Memoriaalboeking heeft geen omschrijving; boeken is niet mogelijk'
       USING ERRCODE = '22023';
   END IF;
@@ -1118,18 +1182,25 @@ BEGIN
 
   -- (9) One aggregate over the locked lines, then refusals in a fixed order
   -- so the first message names the most fundamental problem.
+  --   • the NaN filter is real: a NaN line passes the zero / both-sides /
+  --     negative / decimals filters AND the balance check (NaN = NaN), so it
+  --     is counted separately and refused before the balance is compared.
+  --   • the decimals filter is unreachable through the numeric(12,2) typmod
+  --     (a stored value already has two decimals); it is kept so the writer
+  --     does not lean on a typmod it does not own.
   SELECT COUNT(*),
          COUNT(*) FILTER (WHERE l.grootboekrekening_id IS NULL),
          COUNT(*) FILTER (WHERE l.debit_amount = 0 AND l.credit_amount = 0),
          COUNT(*) FILTER (WHERE l.debit_amount > 0 AND l.credit_amount > 0),
          COUNT(*) FILTER (WHERE l.debit_amount < 0 OR l.credit_amount < 0),
+         COUNT(*) FILTER (WHERE l.debit_amount = 'NaN'::numeric OR l.credit_amount = 'NaN'::numeric),
          COUNT(*) FILTER (WHERE l.debit_amount <> round(l.debit_amount, 2)
                              OR l.credit_amount <> round(l.credit_amount, 2)),
          COUNT(*) FILTER (WHERE l.organization_id IS DISTINCT FROM v_journal.organization_id),
          COALESCE(SUM(l.debit_amount), 0),
          COALESCE(SUM(l.credit_amount), 0)
     INTO v_line_count, v_no_account, v_zero_lines, v_both_sides, v_negative,
-         v_decimals, v_org_mismatch, v_sum_debit, v_sum_credit
+         v_nan, v_decimals, v_org_mismatch, v_sum_debit, v_sum_credit
   FROM public.manual_journal_lines l
   WHERE l.manual_journal_id = v_journal.id;
 
@@ -1155,6 +1226,10 @@ BEGIN
   IF v_negative > 0 THEN
     RAISE EXCEPTION 'Negatieve bedragen worden niet ondersteund; boek het bedrag op de andere zijde'
       USING ERRCODE = '22023';
+  END IF;
+
+  IF v_nan > 0 THEN
+    RAISE EXCEPTION 'Bedragen moeten getallen zijn' USING ERRCODE = '22023';
   END IF;
 
   IF v_decimals > 0 THEN
@@ -1234,7 +1309,7 @@ BEGIN
     ) VALUES (
       v_journal.organization_id, v_journal.client_id, v_line.grootboekrekening_id, v_group_id, v_line_no,
       v_journal.posting_date, v_boekjaar, v_line.debit_amount, v_line.credit_amount, 'EUR',
-      COALESCE(NULLIF(btrim(v_line.omschrijving), ''), v_journal.description),
+      COALESCE(NULLIF(btrim(v_line.omschrijving, E' \t\r\n'), ''), v_journal.description),
       'manual_journal', v_journal.id, v_line.id, v_uid
     );
   END LOOP;
