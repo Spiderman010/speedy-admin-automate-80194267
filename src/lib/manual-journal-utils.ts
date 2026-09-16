@@ -313,7 +313,7 @@ export interface ClassifiedManualJournalError {
 }
 
 const SCHEMA_CODES = new Set(["PGRST204", "PGRST205", "42P01", "42883"]);
-const VALIDATION_CODES = new Set(["22023", "23514", "22004", "P0002", "28000", "23503"]);
+const VALIDATION_CODES = new Set(["22023", "23514", "22004", "P0002", "28000"]);
 
 /**
  * Vertaal een RPC-fout naar iets dat we kunnen tonen én waarop de UI kan
@@ -338,6 +338,14 @@ export function classifyManualJournalError(error: unknown): ClassifiedManualJour
     return {
       kind: "permission",
       message: raw || "Je hebt geen rechten voor deze actie, of de boeking is niet meer te wijzigen.",
+    };
+  }
+  if (code === "23503") {
+    // Een FK-schending komt als Engelse PostgreSQL-tekst met constraintnamen
+    // binnen; die tonen we nooit letterlijk.
+    return {
+      kind: "validation",
+      message: "De boeking verwijst naar een record dat niet (meer) bestaat. Ververs de pagina.",
     };
   }
   if (VALIDATION_CODES.has(code)) {

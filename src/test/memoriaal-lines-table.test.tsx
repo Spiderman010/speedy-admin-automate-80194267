@@ -115,6 +115,13 @@ describe("MemoriaalLinesTable", () => {
     expect(debit(1).value).toBe("1234,50");
   });
 
+  it("8b. blur rondt NIET af: 0,005 blijft staan zodat de RPC hem kan weigeren", () => {
+    render(<Harness />);
+    fireEvent.change(debit(1), { target: { value: "0,005" } });
+    fireEvent.blur(debit(1));
+    expect(debit(1).value).toBe("0,005");
+  });
+
   it("9. elke invoer heeft een toegankelijk label met regelnummer", () => {
     render(<Harness />);
     expect(screen.getByLabelText("Omschrijving regel 1")).toBeInTheDocument();

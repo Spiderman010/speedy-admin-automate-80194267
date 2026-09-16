@@ -15,6 +15,7 @@ import {
   formatAmount,
   lineTotals,
   parseAmount,
+  round2,
   VAT_HINT,
   type ManualJournalLineRow,
 } from "@/lib/manual-journal-utils";
@@ -108,7 +109,11 @@ export function MemoriaalLinesTable({ lines, readOnly = false, onChange }: Memor
                       onChange={(e) => patch(index, (l) => applyDebitInput(l, e.target.value))}
                       onBlur={() => {
                         const n = parseAmount(line.debit_input);
-                        if (n !== null) patch(index, (l) => ({ ...l, debit_input: formatAmount(n) }));
+                        // Alleen netjes uitlijnen, NOOIT afronden: 0,005 moet
+                        // ongewijzigd doorgaan zodat de RPC hem kan weigeren.
+                        if (n !== null && round2(n) === n) {
+                          patch(index, (l) => ({ ...l, debit_input: formatAmount(n) }));
+                        }
                       }}
                       placeholder="0,00"
                       aria-label={`Debet regel ${rowNumber}`}
@@ -123,7 +128,9 @@ export function MemoriaalLinesTable({ lines, readOnly = false, onChange }: Memor
                       onChange={(e) => patch(index, (l) => applyCreditInput(l, e.target.value))}
                       onBlur={() => {
                         const n = parseAmount(line.credit_input);
-                        if (n !== null) patch(index, (l) => ({ ...l, credit_input: formatAmount(n) }));
+                        if (n !== null && round2(n) === n) {
+                          patch(index, (l) => ({ ...l, credit_input: formatAmount(n) }));
+                        }
                       }}
                       placeholder="0,00"
                       aria-label={`Credit regel ${rowNumber}`}

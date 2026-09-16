@@ -113,7 +113,10 @@ export default function Memoriaal() {
   const journalQuery = useManualJournal(editingId ?? undefined);
   const linesQuery = useManualJournalLines(editingId ?? undefined);
   const { data: marker } = useManualJournalPosting(editingId ?? undefined);
-  const posted = !!marker;
+  // De lijst weet de status al, de claimquery is een tweede verzoek. Zonder
+  // die tweede bron staat een geboekte memoriaal heel even bewerkbaar in beeld.
+  const listedPosted = !!listQuery.data?.find((i) => i.journal.id === editingId)?.posted;
+  const posted = !!marker || listedPosted;
 
   const createJournal = useCreateManualJournal();
   const updateJournal = useUpdateManualJournal();
@@ -146,6 +149,9 @@ export default function Memoriaal() {
   // een achtergrond-refetch met identieke data overschrijft niets waar je in typt.
   useEffect(() => {
     if (editor?.mode !== "existing") return;
+    // Nooit typewerk overschrijven. Zodra er een basislijn is en het formulier
+    // afwijkt, laten we de invoer met rust; na opslaan lost het zichzelf op.
+    if (persistedForm && persistedLines && isDirty) return;
     const journal = journalQuery.data;
     const dbLines = linesQuery.data;
     if (!journal || !dbLines) return;
@@ -164,7 +170,7 @@ export default function Memoriaal() {
     setLines(nextLines);
     setPersistedForm(nextForm);
     setPersistedLines(nextLines);
-  }, [editor, journalQuery.data, linesQuery.data, accounts]);
+  }, [editor, journalQuery.data, linesQuery.data, accounts, persistedForm, persistedLines, isDirty]);
 
   const openEditor = (next: EditorState) => {
     syncedKey.current = null;
@@ -172,11 +178,16 @@ export default function Memoriaal() {
       const empty = createEmptyHeaderForm(hasSpecificClient ? selectedClientId : "");
       setForm(empty);
       setLines(createEmptyLineRows(2));
-      // Nog niets opgeslagen: het formulier is per definitie "dirty", dus
-      // boeken is geblokkeerd tot er een kop met regels staat.
-      setPersistedForm(null);
-      setPersistedLines(null);
+    } else {
+      // Een andere boeking openen: eerst leegmaken. Anders staat de vorige
+      // boeking nog in beeld terwijl de knop al de nieuwe id zou boeken.
+      setForm(createEmptyHeaderForm(""));
+      setLines([]);
     }
+    // Nog geen basislijn uit de database: het formulier telt als "dirty", dus
+    // boeken is geblokkeerd tot de opgeslagen toestand bekend is.
+    setPersistedForm(null);
+    setPersistedLines(null);
     setEditor(next);
   };
 
@@ -198,16 +209,24 @@ export default function Memoriaal() {
       return;
     }
     try {
-      const journalId =
-        editor?.mode === "existing"
-          ? (await updateJournal.mutateAsync({ id: editor.id, form })).id
-          : (await createJournal.mutateAsync(form)).id;
+      let journalId = editingId;
+      if (journalId) {
+        await updateJournal.mutateAsync({ id: journalId, form });
+      } else {
+        journalId = (await createJournal.mutateAsync(form)).id;
+        // Meteen vastleggen: als het opslaan van de regels hierna faalt, werkt
+        // een volgende poging deze kop bij in plaats van een tweede kop aan te
+        // maken (anders blijft er per mislukte poging een leeg concept achter).
+        setEditor({ mode: "existing", id: journalId });
+      }
 
       // Precies één aanroep; de database vervangt de hele regelset atomair.
       await saveLines.mutateAsync({ journalId, lines: buildSaveLinesPayload(lines) });
 
-      syncedKey.current = null;
-      setEditor({ mode: "existing", id: journalId });
+      // Bewust NIET syncedKey wissen: de cache bevat op dit moment nog de oude
+      // rijen, en die zouden het zojuist opgeslagen formulier terugdraaien. De
+      // sleutel van die oude rijen staat al geregistreerd, dus het effect laat
+      // ze met rust en synchroniseert pas wanneer de verse rijen binnen zijn.
       setPersistedForm(form);
       setPersistedLines(lines);
       toast({ title: "Memoriaalboeking opgeslagen" });
@@ -290,6 +309,16 @@ export default function Memoriaal() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-5">
+                {editingId && !persistedForm && (
+                  <p
+                    className="text-sm text-muted-foreground"
+                    role="status"
+                    aria-live="polite"
+                    data-testid="memoriaal-editor-loading"
+                  >
+                    Memoriaalboeking laden…
+                  </p>
+                )}
                 {posted && (
                   <p
                     className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"

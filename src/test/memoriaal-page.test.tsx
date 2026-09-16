@@ -283,6 +283,92 @@ describe("Memoriaal — pagina", () => {
     await waitFor(() => expect(screen.queryByTestId("memoriaal-editor")).toBeNull());
   });
 
+  it("9b. opslaan draait het formulier niet terug naar de nog niet ververste cache", async () => {
+    // Regressie: het sync-effect mocht na een geslaagde opslag niet opnieuw
+    // vuren op de oude gecachte rijen. Deed het dat wel, dan stond het scherm
+    // op de oude waarden terwijl de toast "opgeslagen" meldde — én met een
+    // ingeschakelde boekknop.
+    state.journals = [journalRow()];
+    state.journal = journalRow();
+    state.lines = [
+      lineRow(),
+      lineRow({ id: "l-2", sort_order: 1, grootboekrekening_id: "gb-2", debit_amount: 0, credit_amount: 100 }),
+    ];
+    render(<Memoriaal />);
+    fireEvent.click(screen.getByRole("button", { name: /open memoriaalboeking/i }));
+    await waitFor(() => expect(debit(1).value).toBe("100,00"));
+
+    fireEvent.change(debit(1), { target: { value: "150,00" } });
+    fireEvent.change(credit(2), { target: { value: "150,00" } });
+    fireEvent.click(screen.getByRole("button", { name: /concept opslaan/i }));
+
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith({ title: "Memoriaalboeking opgeslagen" }),
+    );
+    // De mock-cache is bewust NIET ververst: het scherm moet de opgeslagen
+    // waarden houden, niet terugvallen op 100,00.
+    expect(debit(1).value).toBe("150,00");
+    expect(saveLinesSpy.mock.calls[0][0].lines[0].debit_amount).toBe(150);
+  });
+
+  it("9c. een lopende bewerking wordt niet overschreven door een achtergrondrefetch", async () => {
+    state.journals = [journalRow()];
+    state.journal = journalRow();
+    state.lines = [lineRow()];
+    const { rerender } = render(<Memoriaal />);
+    fireEvent.click(screen.getByRole("button", { name: /open memoriaalboeking/i }));
+    await waitFor(() => expect(debit(1).value).toBe("100,00"));
+
+    fireEvent.change(debit(1), { target: { value: "250,00" } });
+    // Elders gewijzigde rij komt binnen terwijl de gebruiker aan het typen is.
+    state.journal = journalRow({ description: "Elders gewijzigd", updated_at: "2027-04-02T00:00:00Z" });
+    state.lines = [lineRow({ debit_amount: 999 })];
+    rerender(<Memoriaal />);
+
+    expect(debit(1).value).toBe("250,00");
+  });
+
+  it("9d. een mislukte regelopslag maakt bij een nieuwe poging geen tweede kop aan", async () => {
+    saveLinesSpy.mockRejectedValueOnce({
+      code: "22023",
+      message: "Negatieve bedragen worden niet ondersteund; boek het bedrag op de andere zijde",
+    });
+    render(<Memoriaal />);
+    fireEvent.click(newButton());
+    fireEvent.change(debit(1), { target: { value: "-5" } });
+    fireEvent.click(screen.getByRole("button", { name: /concept opslaan/i }));
+
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith({
+        title: "Opslaan niet gelukt",
+        description: "Negatieve bedragen worden niet ondersteund; boek het bedrag op de andere zijde",
+        variant: "destructive",
+      }),
+    );
+    expect(createSpy).toHaveBeenCalledTimes(1);
+
+    // Corrigeren en opnieuw opslaan: de bestaande kop wordt bijgewerkt.
+    fireEvent.change(debit(1), { target: { value: "5,00" } });
+    fireEvent.click(screen.getByRole("button", { name: /concept opslaan/i }));
+    await waitFor(() => expect(saveLinesSpy).toHaveBeenCalledTimes(2));
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(updateSpy).toHaveBeenCalledTimes(1);
+    expect(saveLinesSpy.mock.calls[1][0].journalId).toBe("mj-new");
+  });
+
+  it("9e. een bedrag met drie decimalen gaat onafgerond naar de RPC", async () => {
+    render(<Memoriaal />);
+    fireEvent.click(newButton());
+    fireEvent.change(debit(1), { target: { value: "0,005" } });
+    // Klikken op een knop haalt in een browser de focus weg; blur mag het
+    // bedrag niet stilletjes naar 0,01 afronden.
+    fireEvent.blur(debit(1));
+    fireEvent.click(screen.getByRole("button", { name: /concept opslaan/i }));
+
+    await waitFor(() => expect(saveLinesSpy).toHaveBeenCalledTimes(1));
+    expect(saveLinesSpy.mock.calls[0][0].lines[0].debit_amount).toBe(0.005);
+  });
+
   it("10. de pagina boekt nooit uit zichzelf", async () => {
     state.journals = [journalRow()];
     state.journal = journalRow();
@@ -314,11 +400,18 @@ describe("Memoriaal — geen regressie op de bestaande boekhouding", () => {
     }
   });
 
-  it("12. schrijft nooit rechtstreeks in ledger_postings en kent geen statuskolom", () => {
+  it("12. schrijft nooit rechtstreeks in ledger_postings en leest geen statuskolom", () => {
     for (const { path, text } of sources) {
       expect(text, path).not.toMatch(/from\(["']ledger_postings["']\)/);
-      expect(text, path).not.toMatch(/\bstatus\s*:/);
+      // Er bestaat geen status-/geboekt-kolom op manual_journals: geen enkele
+      // bron mag zo'n veld van een rij lezen of wegschrijven.
+      expect(text, path).not.toMatch(/\.status\b/);
+      expect(text, path).not.toMatch(/["']status["']\s*[:,)]/);
+      expect(text, path).not.toMatch(/\bis_posted\b|\bgeboekt_op\b/);
     }
+    // En "geboekt" wordt uitsluitend uit de claimtabel afgeleid.
+    const hooks = sources.find((s) => s.path === "src/hooks/useManualJournals.ts")!.text;
+    expect(hooks).toMatch(/posted:\s*!!marker/);
   });
 
   it("13. gebruikt de GrootboekCombobox ongewijzigd (geen postableOnly)", () => {

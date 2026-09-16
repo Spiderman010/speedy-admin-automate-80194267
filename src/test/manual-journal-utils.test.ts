@@ -303,6 +303,16 @@ describe("manual-journal-utils — overige helpers", () => {
       kind: "validation",
       message: "Memoriaalboeking is niet in balans: debet 100.00 is ongelijk aan credit 99.00",
     });
+    // Een FK-schending komt als Engelse PostgreSQL-tekst binnen en wordt vervangen.
+    expect(
+      classifyManualJournalError({
+        code: "23503",
+        message: 'insert or update on table "manual_journal_lines" violates foreign key constraint "…"',
+      }),
+    ).toEqual({
+      kind: "validation",
+      message: "De boeking verwijst naar een record dat niet (meer) bestaat. Ververs de pagina.",
+    });
     // Rauwe driver-/PostgreSQL-codes worden nooit letterlijk getoond.
     expect(classifyManualJournalError({ message: "XX000 internal" }).message).toBe(
       "Boeken is niet gelukt. Probeer het opnieuw.",
