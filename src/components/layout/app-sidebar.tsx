@@ -59,11 +59,11 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="gap-0 border-b border-sidebar-border p-0">
-        <div className="flex h-14 items-center gap-2 px-4 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sidebar-primary font-display text-sm font-bold text-sidebar-primary-foreground shadow-sm">
+        <div className="flex h-12 items-center gap-2 px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-sidebar-primary font-display text-xs font-bold text-sidebar-primary-foreground">
             BA
           </div>
-          <span className="truncate font-display text-lg font-semibold group-data-[collapsible=icon]:hidden">
+          <span className="truncate font-display text-base font-semibold group-data-[collapsible=icon]:hidden">
             BoekAssist
           </span>
         </div>
@@ -73,12 +73,12 @@ export function AppSidebar() {
         <div className="group-data-[collapsible=icon]:hidden">
           {/* Organisatiekiezer — alleen zichtbaar als user lid is van > 1 organisatie */}
           <OrganizationSelector />
-          <div className="border-b border-sidebar-border px-3 py-3">
-            <p className="mb-1.5 px-1 text-xs font-medium text-sidebar-foreground/60">Actieve klant</p>
+          <div className="border-b border-sidebar-border px-2.5 py-2.5">
+            <p className="mb-1 px-1 text-[11px] font-medium text-sidebar-foreground/60">Actieve klant</p>
             <Select value={selectedClientId} onValueChange={setSelectedClientId}>
               <SelectTrigger
                 aria-label="Actieve klant"
-                className="h-9 w-full border-sidebar-border bg-sidebar-accent text-sm text-sidebar-foreground"
+                className="h-8 w-full border-sidebar-border bg-sidebar-accent text-xs text-sidebar-foreground"
               >
                 <SelectValue placeholder="Kies een klant">
                   {selectedClientId === "all"
@@ -97,11 +97,11 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="py-2">
+      <SidebarContent className="py-1.5">
         {NAV_SECTIONS.map((section, i) => (
           <SidebarGroup key={section.label ?? `top-${i}`}>
             {section.label && (
-              <SidebarGroupLabel className="text-[11px] font-semibold uppercase text-sidebar-foreground/50">
+              <SidebarGroupLabel className="h-7 text-[10px] font-semibold uppercase text-sidebar-foreground/45">
                 {section.label}
               </SidebarGroupLabel>
             )}
@@ -127,10 +127,10 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
 
-      <SidebarFooter className="border-t border-sidebar-border py-3">
+      <SidebarFooter className="border-t border-sidebar-border py-2">
         <SidebarMenu>
           <SidebarMenuItem>
-            <div className="flex items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 text-sm group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+            <div className="flex items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-sm group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
               <UserRound className="h-4 w-4 shrink-0 text-sidebar-foreground/70" />
               <span
                 className="truncate text-xs text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden"
