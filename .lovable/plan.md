@@ -1,29 +1,23 @@
-# Rapportages moderniseren
+# Gedeelde UI-polish
 
 ## Doel
-De bestaande pagina `Overzichten` omvormen tot een professionele, responsieve rapportagewerkruimte zonder queries, berekeningen, exports of boekhoudlogica te wijzigen.
+BoekAssist met zo weinig mogelijk gedeelde wijzigingen visueel consistenter, rustiger en professioneler maken, zonder bestaand gedrag te veranderen.
 
 ## Uitvoering
-- De bestaande paginakop behouden en aanpassen naar **Rapportages** met de gevraagde beschrijving.
-- De administratiekeuze mobiel onder de titel over de volle breedte tonen; lange namen veilig afkappen.
-- Een compacte rapportselector toevoegen met vijf rapporttypen. Niet-ondersteunde rapporten krijgen uitsluitend een duidelijke beschikbaarheidsstatus.
-- Een filterstrook toevoegen met de werkende administratiekeuze en uitgeschakelde velden voor boekjaar, periode en vergelijking; er komt geen nieuwe filterlogica.
-- De bestaande exportactie, drie bestaande totalen en tabel met recente inkoopfacturen behouden. Alleen visuele hiërarchie, uitlijning, tabel-scroll en numerieke typografie verbeteren.
-- Bestaande query-resultaten gebruiken voor laad-, fout-, geen-administratie- en geen-dataweergaven. Een herlaadknop gebruikt alleen de al aanwezige `refetch`-functies.
-- Eén gericht testbestand toevoegen voor renderen, administratiekeuze, rapportkaarten, toestanden, responsieve klassen, bestaand rapportbereik en afwezigheid van nieuwe database-mutaties of financiële rekenlogica.
-- Responsieve tests mogen klassen controleren, maar gebruiken waar mogelijk ook echte render/asserties voor zichtbare bediening, staten en rapportkaarten.
+- De globale visuele basis verfijnen: rustigere oppervlakken, borders en focusweergave via bestaande semantische kleurrollen.
+- De app-shell compact en helder afwerken: consistente bovenbalk, inhoudsruimte en subtielere navigatiehiërarchie, zonder routes of navigatiestructuur te wijzigen.
+- De gedeelde kaart, tabel, knop, invoer, select, label en skeleton-stijlen harmoniseren voor consistente dichtheid, states en touch targets.
+- Bestaande `PageHeader` en `EmptyState` gebruiken als centrale verbetering voor koppen en lege schermen.
+- Alleen bestaande shadcn/Tailwind-patronen toepassen; geen nieuwe pagina-specifieke functies of bibliotheken.
 
 ## Technische afbakening
-- Alleen `src/pages/Overzichten.tsx` en één gericht rapportage-testbestand wijzigen.
-- Geen wijzigingen aan gedeelde componenten, projectkaart, database, migraties, gegenereerde types, grootboekpostings, boekingslogica of SnelStart-export.
-- De bestaande sommen en exportaanroep blijven byte-inhoudelijk en functioneel gelijk waar relevant.
-- Als `Overzichten.tsx` tijdens de uitvoering blijkt te zijn gewijzigd sinds de startcontrole, direct stoppen en eerst de nieuwe diff rapporteren.
+- Alleen presentatiebestanden binnen de app-shell en gedeelde UI-bouwstenen wijzigen.
+- Geen pagina's wijzigen tenzij een zichtbaar probleem aantoonbaar niet gedeeld oplosbaar is.
+- Geen wijzigingen aan business- of boekhoudlogica, hooks, queries, routes, database, migraties, rechten, gegenereerde types of omgevingsvariabelen.
+- De huidige feature branch is gebaseerd op de actuele `main`; niet rechtstreeks op `main` werken.
 
-## Validatie
-- `npx tsc --noEmit`
-- `npx tsc -p tsconfig.app.json --noEmit`
-- Gerichte Rapportages-tests
-- `npm run lint`
-- `npm run test`
-- `npm run build`
-- Visuele controle op 320, 375, 768, 1024 en 1440 pixels zonder pagina-overloop
+## Validatie en oplevering
+- Gerichte shell/UI-tests uitvoeren, gevolgd door typecheck, lint, volledige tests en productiebuild.
+- De preview visueel controleren op desktop en mobiel, inclusief overflow, focus, tabellen en navigatie.
+- De uiteindelijke diff controleren op strikte scope.
+- De wijziging committen, naar de feature branch pushen en een PR naar `main` openen.
