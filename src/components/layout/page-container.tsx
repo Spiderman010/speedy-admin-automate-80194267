@@ -13,7 +13,7 @@ export function PageContainer({
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn("mx-auto w-full max-w-screen-2xl px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-7", className)}>
+    <div className={cn("mx-auto w-full max-w-[1600px] px-4 py-4 sm:px-5 sm:py-5 lg:px-6", className)}>
       {children}
     </div>
   );
