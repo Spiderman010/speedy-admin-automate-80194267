@@ -1,6 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useLocation } from "react-router-dom";
-import { LogOut, UserRound } from "lucide-react";
+import { BookOpenCheck, LogOut, UserRound } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -60,8 +60,11 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="gap-0 border-b border-sidebar-border p-0">
         <div className="flex h-12 items-center gap-2 px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-sidebar-primary font-display text-xs font-bold text-sidebar-primary-foreground">
-            BA
+          <div
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground"
+            aria-hidden="true"
+          >
+            <BookOpenCheck className="h-4 w-4" strokeWidth={2.25} />
           </div>
           <span className="truncate font-display text-base font-semibold group-data-[collapsible=icon]:hidden">
             BoekAssist
