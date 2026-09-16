@@ -58,11 +58,19 @@ export async function fetchLedgerPostings(opts: {
   if (period) assertLedgerPeriod(period);
 
   const all: LedgerPosting[] = [];
-  for (let offset = 0; ; offset += LEDGER_FETCH_BATCH_SIZE) {
+  const seen = new Set<string>();
+  // De offset schuift op met het aantal werkelijk ontvangen rijen, niet met
+  // de constante: is de servercap ooit lager dan LEDGER_FETCH_BATCH_SIZE, dan
+  // worden er zo geen rijen tussen cap en stap overgeslagen.
+  for (let offset = 0; ; ) {
     let query = supabase.from("ledger_postings").select("*").eq("client_id", clientId);
     if (period) query = query.lt("posting_date", period.toExclusive);
-    // Dezelfde volledige volgorde als compareLedgerRows, zodat batchvensters
-    // elkaar nooit overlappen of rijen overslaan.
+    // Dezelfde volledige volgorde als compareLedgerRows. Het grootboek is
+    // append-only: een boeking die tijdens het ophalen wordt toegevoegd en
+    // vóór de batchgrens sorteert, schuift alles erna op — een rij kan dan
+    // twee keer terugkomen, nooit overgeslagen worden. Daarom ontdubbelen op
+    // id; een groep die precies op de grens doormidden valt, wordt door de
+    // groepscontrole van de rapportagekern als ongeldig gemeld.
     const { data, error } = await query
       .order("posting_date", { ascending: true })
       .order("posting_group_id", { ascending: true })
@@ -71,8 +79,16 @@ export async function fetchLedgerPostings(opts: {
       .range(offset, offset + LEDGER_FETCH_BATCH_SIZE - 1);
     if (error) throw error;
     const batch = (data ?? []) as LedgerPosting[];
-    all.push(...batch);
-    if (batch.length < LEDGER_FETCH_BATCH_SIZE) break;
+    for (const row of batch) {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        all.push(row);
+      }
+    }
+    // Doorgaan tot een lege batch: zo hangt de volledigheid niet af van de
+    // aanname dat de servercap minstens LEDGER_FETCH_BATCH_SIZE is.
+    if (batch.length === 0) break;
+    offset += batch.length;
   }
 
   // Verdediging in de diepte: de query filtert al op client_id, maar een

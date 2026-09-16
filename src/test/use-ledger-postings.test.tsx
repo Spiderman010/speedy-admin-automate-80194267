@@ -82,8 +82,11 @@ describe("useLedgerPostings / fetchLedgerPostings", () => {
     state.rows = [posting()];
     const rows = await fetchLedgerPostings({ clientId: "c-1" });
     expect(rows).toHaveLength(1);
-    expect(state.calls.map((c) => c.table)).toEqual(["ledger_postings"]);
-    expect(state.calls[0].filters).toContainEqual(["client_id", "eq", "c-1"]);
+    // Elke aanroep (ook de lege afsluitende batch) leest alleen ledger_postings
+    // en draagt het klantpredicaat.
+    expect(state.calls.length).toBeGreaterThanOrEqual(1);
+    expect(state.calls.every((c) => c.table === "ledger_postings")).toBe(true);
+    for (const c of state.calls) expect(c.filters).toContainEqual(["client_id", "eq", "c-1"]);
   });
 
   it("2. zonder client_id draait er geen query en faalt een directe aanroep hard", async () => {
@@ -119,22 +122,87 @@ describe("useLedgerPostings / fetchLedgerPostings", () => {
     expect(cols.sort()).toEqual(["client_id"]);
   });
 
-  it("5. batcht voorbij de PostgREST-limiet in een stabiele volgorde", async () => {
+  it("5. batcht voorbij de PostgREST-limiet in een stabiele volgorde, tot een lege batch", async () => {
     state.rows = Array.from({ length: LEDGER_FETCH_BATCH_SIZE * 2 + 7 }, (_, i) =>
       posting({ id: `p-${String(i).padStart(5, "0")}` }),
     );
     const rows = await fetchLedgerPostings({ clientId: "c-1" });
     expect(rows).toHaveLength(LEDGER_FETCH_BATCH_SIZE * 2 + 7);
+    // Een vierde, lege batch sluit af (de offset volgt de ontvangen rijen, dus
+    // hij begint op 2007): de volledigheid hangt niet af van de aanname dat de
+    // servercap minstens LEDGER_FETCH_BATCH_SIZE is.
+    const n = LEDGER_FETCH_BATCH_SIZE;
     expect(state.calls.map((c) => c.range)).toEqual([
-      [0, LEDGER_FETCH_BATCH_SIZE - 1],
-      [LEDGER_FETCH_BATCH_SIZE, LEDGER_FETCH_BATCH_SIZE * 2 - 1],
-      [LEDGER_FETCH_BATCH_SIZE * 2, LEDGER_FETCH_BATCH_SIZE * 3 - 1],
+      [0, n - 1],
+      [n, n * 2 - 1],
+      [n * 2, n * 3 - 1],
+      [n * 2 + 7, n * 3 + 6],
     ]);
     for (const c of state.calls) {
       expect(c.orders).toEqual(["posting_date", "posting_group_id", "line_no", "id"]);
       expect(c.filters).toContainEqual(["client_id", "eq", "c-1"]);
     }
     expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+  });
+
+  it("5b. een lagere servercap dan de batchgrootte kapt niets af", async () => {
+    // Simuleer db-max-rows = 300: elke batch levert hoogstens 300 rijen.
+    state.rows = Array.from({ length: 1234 }, (_, i) => posting({ id: `p-${String(i).padStart(5, "0")}` }));
+    const cap = 300;
+    const original = state.rows;
+    state.rows = new Proxy(original, {
+      get(target, prop, receiver) {
+        if (prop === "slice") return (from: number, to: number) => target.slice(from, Math.min(to, from + cap));
+        return Reflect.get(target, prop, receiver);
+      },
+    }) as typeof original;
+    const rows = await fetchLedgerPostings({ clientId: "c-1" });
+    expect(rows).toHaveLength(1234);
+    expect(new Set(rows.map((r) => r.id)).size).toBe(1234);
+    // De offset volgt de werkelijk ontvangen rijen: 0, 300, 600, 900, 1200, dan leeg.
+    expect(state.calls.map((c) => c.range?.[0])).toEqual([0, 300, 600, 900, 1200, 1234]);
+  });
+
+  it("5c. een boeking die tijdens het ophalen vóór de batchgrens landt, levert geen dubbele rijen op", async () => {
+    // Regressie (review P2): offset-batchen op een append-only tabel. Tussen
+    // batch 1 en 2 posten we een 2-regelgroep die vóór positie 1000 sorteert;
+    // alles erna schuift twee plaatsen op en batch 2 geeft twee al geziene
+    // rijen terug. Zonder ontdubbeling zou een complete, gebalanceerde groep
+    // dubbel meetellen — en de set-controle merkt dat niet.
+    const N = LEDGER_FETCH_BATCH_SIZE + 10;
+    const base = Array.from({ length: N }, (_, i) =>
+      posting({ id: `p-${String(i).padStart(5, "0")}`, posting_group_id: `g-${String(i).padStart(5, "0")}` }),
+    );
+    state.rows = base;
+    let inserted = false;
+    const shifting = new Proxy(base, {
+      get(target, prop, receiver) {
+        if (prop === "slice") {
+          return (from: number, to: number) => {
+            const page = target.slice(from, to + 1);
+            if (from > 0 && !inserted) {
+              inserted = true;
+              // Landt op positie 500: alles vanaf 500 schuift 2 op.
+              target.splice(500, 0,
+                posting({ id: "p-new-1", posting_group_id: "g-00500-new", posting_date: "2027-02-01" }),
+                posting({ id: "p-new-2", posting_group_id: "g-00500-new", posting_date: "2027-02-01", debit_amount: 0, credit_amount: 10, line_no: 2 }),
+              );
+              return target.slice(from, to + 1);
+            }
+            return page;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    state.rows = shifting as typeof base;
+    const rows = await fetchLedgerPostings({ clientId: "c-1" });
+    const ids = rows.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    // De oorspronkelijke N rijen zijn er allemaal (niets overgeslagen)…
+    for (const b of base.filter((r) => !r.id.startsWith("p-new"))) expect(ids).toContain(b.id);
+    // …en de rijen 998/999 die na de verschuiving opnieuw terugkwamen, staan er één keer.
+    expect(ids.filter((id) => id === "p-00998" || id === "p-00999")).toHaveLength(2);
   });
 
   it("6. een niet-EUR-rij maakt de fetch hard ongeldig; niets wordt weggelaten", async () => {

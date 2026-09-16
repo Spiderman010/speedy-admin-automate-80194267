@@ -109,6 +109,19 @@ describe("ledger-reporting — geld en teken", () => {
     expect(centsToAmount(123456)).toBe(1234.56);
     expect(() => toCents("abc")).toThrow(LedgerReportingError);
     expect(() => toCents(Number.NaN)).toThrow(LedgerReportingError);
+    // Geen wetenschappelijke notatie, komma's of plusteken: dat is geen numeric(12,2)-tekst.
+    for (const bad of ["1e3", "1,50", "+1.00", "1.", ".5", "1.005"]) {
+      expect(() => toCents(bad), bad).toThrow(LedgerReportingError);
+    }
+    expect(toCents(" 12.5 ")).toBe(1250);
+    expect(toCents("00012.30")).toBe(1230);
+    // Review P3-3: -0 wordt 0, zodat ook Object.is/toEqual niet struikelen.
+    expect(Object.is(toCents("-0"), 0)).toBe(true);
+    expect(Object.is(toCents(-0), 0)).toBe(true);
+    expect(Object.is(toCents("-0.00"), 0)).toBe(true);
+    // Grootste numeric(12,2): exact, ver onder 2^53.
+    expect(toCents("9999999999.99")).toBe(999999999999);
+    expect(toCents(9999999999.99)).toBe(999999999999);
   });
 
   it("signedAmount = debet − credit, debet-positief, geen categorie-omklap", () => {
@@ -311,8 +324,8 @@ describe("ledger-reporting — rekeningrollup", () => {
     });
     expect(ghost.closingCents).toBe(3300);
     // Zonder rekeningenlijst is álles onbekend, maar niets verdwijnt.
-    const bare = buildAccountReport({ rows: r.rollups.length ? group("g-2", "2027-02-01", [["gb-4000", 1, 0], ["gb-1600", 0, 1]]) : [], clientId: C1, period: Q1 });
-    expect(bare.ok && bare.rollups.every((x) => !x.account.resolved)).toBe(true);
+    const bare = buildAccountReport({ rows: group("g-2", "2027-02-01", [["gb-4000", 1, 0], ["gb-1600", 0, 1]]), clientId: C1, period: Q1 });
+    expect(bare.ok && bare.rollups.length === 2 && bare.rollups.every((x) => !x.account.resolved)).toBe(true);
     // Onbekende rekeningen sorteren achteraan.
     expect(r.rollups.map((x) => x.account.id)).toEqual(["gb-1600", "gb-ghost"]);
   });
@@ -348,6 +361,13 @@ describe("ledger-reporting — rekeningrollup", () => {
     // eigenschap van de set, niet van de periode.
     const outside = [...rows.slice(0, 2), ...group("g-3", "2025-01-01", [["gb-4000", 1, 0], ["gb-1600", 0, 1]], { currency: "GBP" })];
     expect(() => buildAccountReport({ rows: outside, clientId: C1, period: Q1, accounts })).toThrow(/GBP/);
+    // Review P3-2: ook het lopend saldo controleert de héle set, niet alleen de
+    // eigen rekening — een USD-rij op de tegenrekening maakt het rapport ongeldig.
+    const mixedGroup = [
+      row({ grootboekrekening_id: "gb-4000", debit_amount: 100, posting_date: "2027-02-01" }),
+      row({ grootboekrekening_id: "gb-1600", credit_amount: 100, posting_date: "2027-02-01", line_no: 2, currency: "USD" }),
+    ];
+    expect(() => buildRunningBalance({ rows: mixedGroup, clientId: C1, accountId: "gb-4000", period: Q1, accounts })).toThrow(/USD/);
   });
 
   it("22. een bewust ongebalanceerde fixture faalt de zelfcontrole en levert geen cijfers", () => {
@@ -358,7 +378,10 @@ describe("ledger-reporting — rekeningrollup", () => {
     const r = buildAccountReport({ rows, clientId: C1, period: Q1, accounts });
     expect(r.ok).toBe(false);
     if (r.ok !== false) return;
+    // Beide rijen zitten in groep g-1: de groepscontrole slaat als eerste aan,
+    // de set-controle bevestigt het.
     expect(r.failures).toEqual([
+      { kind: "group_unbalanced", postingGroupId: "g-1", differenceCents: 1 },
       { kind: "period_unbalanced", periodDebitCents: 10000, periodCreditCents: 9999, differenceCents: 1 },
     ]);
     expect("rollups" in r).toBe(false);
@@ -367,7 +390,53 @@ describe("ledger-reporting — rekeningrollup", () => {
     const skewedOpening = [row({ grootboekrekening_id: "gb-1100", debit_amount: 5, posting_date: "2026-01-01" })];
     const o = buildAccountReport({ rows: skewedOpening, clientId: C1, period: Q1, accounts });
     expect(o.ok).toBe(false);
-    if (o.ok === false) expect(o.failures).toEqual([{ kind: "opening_unbalanced", openingCents: 500 }]);
+    if (o.ok === false) {
+      expect(o.failures).toEqual([
+        { kind: "group_unbalanced", postingGroupId: "g-1", differenceCents: 500 },
+        { kind: "opening_unbalanced", openingCents: 500 },
+      ]);
+    }
+  });
+
+  it("22b. de zelfcontrole is per boekingsgroep: twee elkaar opheffende halve groepen slagen niet", () => {
+    // Review P3-6: set-niveau alleen zou dit als 'in balans' zien. De
+    // databasetrigger garandeert balans per groep — dat is de echte invariant.
+    const rows = [
+      row({ grootboekrekening_id: "gb-4000", debit_amount: 100, posting_date: "2027-02-01", posting_group_id: "g-a" }),
+      row({ grootboekrekening_id: "gb-1600", credit_amount: 100, posting_date: "2027-02-01", posting_group_id: "g-b" }),
+    ];
+    const r = buildAccountReport({ rows, clientId: C1, period: Q1, accounts });
+    expect(r.ok).toBe(false);
+    if (r.ok === false) {
+      expect(r.failures).toEqual([
+        { kind: "group_unbalanced", postingGroupId: "g-a", differenceCents: 10000 },
+        { kind: "group_unbalanced", postingGroupId: "g-b", differenceCents: -10000 },
+      ]);
+    }
+  });
+
+  it("22c. een groep die door batchen half is opgehaald of gedupliceerd wordt gemeld, niet gerapporteerd", () => {
+    // Review P2: een complete groep twee keer in de set passeert de
+    // set-controle (Σ debet = Σ credit blijft waar) — maar alle cijfers zouden
+    // verdubbelen. De hook ontdubbelt op id; hier bewijzen we dat de kern een
+    // op de batchgrens doormidden gevallen groep als ongeldig aanmerkt.
+    const full = group("g-1", "2027-02-01", [["gb-4000", 100, 0], ["gb-1520", 21, 0], ["gb-1600", 0, 121]]);
+    const halved = full.slice(0, 2); // regel 3 (credit 121) nog niet opgehaald
+    const r = buildAccountReport({ rows: halved, clientId: C1, period: Q1, accounts });
+    expect(r.ok).toBe(false);
+    if (r.ok === false) {
+      expect(r.failures[0]).toEqual({ kind: "group_unbalanced", postingGroupId: "g-1", differenceCents: 12100 });
+      expect("rollups" in r).toBe(false);
+    }
+  });
+
+  it("22d. includeZeroAccounts=false laat een rekening met alleen een (niet-nul) beginsaldo staan", () => {
+    const rows = group("g-0", "2026-06-01", [["gb-1100", 500, 0], ["gb-8000", 0, 500]]);
+    const r = buildAccountReport({ rows, clientId: C1, period: Q1, accounts, includeZeroAccounts: false });
+    expect(r.ok && r.rollups.map((x) => [x.account.id, x.openingCents, x.closingCents])).toEqual([
+      ["gb-1100", 50000, 50000],
+      ["gb-8000", -50000, -50000],
+    ]);
   });
 
   it("23. grote set: integer-centen blijven exact waar floats zouden driften", () => {
@@ -465,8 +534,13 @@ describe("ledger-reporting — hulpfuncties", () => {
     expect(resolveLedgerAccount("gb-1100", undefined).resolved).toBe(false);
   });
 
-  it("een ongeldige periode wordt geweigerd", () => {
+  it("een ongeldige periode wordt geweigerd — ook een niet-bestaande kalenderdatum", () => {
     expect(() => buildAccountReport({ rows: [], clientId: C1, period: { from: "2027-01-01", toExclusive: "2027-01-01" } })).toThrow(/vóór/);
     expect(() => buildAccountReport({ rows: [], clientId: C1, period: { from: "1-1-2027", toExclusive: "2027-02-01" } })).toThrow(/ISO/);
+    // Review P3-5: vorm klopt, datum bestaat niet.
+    for (const bad of ["2027-13-01", "2027-02-30", "2027-00-10", "2027-04-31"]) {
+      expect(() => buildAccountReport({ rows: [], clientId: C1, period: { from: bad, toExclusive: "2028-01-01" } }), bad).toThrow(/bestaande/);
+    }
+    expect(() => buildAccountReport({ rows: [], clientId: C1, period: { from: "2028-02-29", toExclusive: "2028-03-01" } })).not.toThrow();
   });
 });

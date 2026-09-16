@@ -84,12 +84,13 @@ export function toCents(value: number | string): number {
     const m = DECIMAL_RE.exec(value.trim());
     if (!m) throw new LedgerReportingError("amount", `Ongeldig bedrag: "${value}"`);
     const cents = Number(m[2]) * 100 + Number((m[3] ?? "0").padEnd(2, "0"));
-    return m[1] ? -cents : cents;
+    // "+ 0" normaliseert -0 naar 0.
+    return (m[1] ? -cents : cents) + 0;
   }
   if (!Number.isFinite(value)) {
     throw new LedgerReportingError("amount", `Ongeldig bedrag: ${String(value)}`);
   }
-  return Math.round(value * 100);
+  return Math.round(value * 100) + 0;
 }
 
 /** Hele centen → number in euro's, voor weergave via de bestaande formatters. */
@@ -113,9 +114,16 @@ export interface LedgerPeriod {
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Echte kalenderdatum: vorm én bestaan (2027-02-30 en 2027-13-01 vallen af). */
+function isCalendarDate(value: string): boolean {
+  if (!ISO_DATE_RE.test(value)) return false;
+  const d = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value;
+}
+
 export function assertLedgerPeriod(period: LedgerPeriod): void {
-  if (!ISO_DATE_RE.test(period.from) || !ISO_DATE_RE.test(period.toExclusive)) {
-    throw new LedgerReportingError("period", "Periode moet uit ISO-datums (yyyy-mm-dd) bestaan");
+  if (!isCalendarDate(period.from) || !isCalendarDate(period.toExclusive)) {
+    throw new LedgerReportingError("period", "Periode moet uit bestaande ISO-datums (yyyy-mm-dd) bestaan");
   }
   if (!(period.from < period.toExclusive)) {
     throw new LedgerReportingError("period", "Periode: from moet vóór toExclusive liggen");
@@ -266,7 +274,9 @@ export interface LedgerReportTotals {
 
 export type LedgerSelfCheckFailure =
   | { kind: "period_unbalanced"; periodDebitCents: number; periodCreditCents: number; differenceCents: number }
-  | { kind: "opening_unbalanced"; openingCents: number };
+  | { kind: "opening_unbalanced"; openingCents: number }
+  /** Eén boekingsgroep is op zichzelf niet in balans (bv. half opgehaald of half gedupliceerd). */
+  | { kind: "group_unbalanced"; postingGroupId: string; differenceCents: number };
 
 export type LedgerAccountReport =
   | { ok: true; rollups: LedgerAccountRollup[]; totals: LedgerReportTotals }
@@ -284,10 +294,12 @@ export interface BuildAccountReportInput {
 /**
  * Per rekening: beginsaldo, periodedebet, periodecredit, eindsaldo.
  *
- * Zelfcontrole: over alle rekeningen moet Σ periodedebet = Σ periodecredit
- * (elke boekingsgroep is in balans en valt op precies één datum bij precies
- * één administratie) en Σ beginsaldo = 0. Faalt een van beide, dan geeft dit
- * GEEN cijfers terug maar een expliciet ongeldig resultaat.
+ * Zelfcontrole, in centen: (1) elke boekingsgroep in de set is op zichzelf in
+ * balans — dat is de invariant die de databasetrigger werkelijk garandeert,
+ * en hij vangt een groep die door batchen half is opgehaald of half is
+ * gedupliceerd; (2) over alle rekeningen Σ periodedebet = Σ periodecredit;
+ * (3) Σ beginsaldo = 0. Faalt er één, dan geeft dit GEEN cijfers terug maar
+ * een expliciet ongeldig resultaat.
  */
 export function buildAccountReport(input: BuildAccountReportInput): LedgerAccountReport {
   const { rows, clientId, period, accounts, includeZeroAccounts = true } = input;
@@ -313,18 +325,22 @@ export function buildAccountReport(input: BuildAccountReportInput): LedgerAccoun
   };
 
   let rowCount = 0;
+  const groupNet = new Map<string, number>();
   for (const row of rows) {
+    const inScope = isBeforePeriod(row.posting_date, period) || isInPeriod(row.posting_date, period);
+    // Rijen op/na toExclusive tellen nergens mee.
+    if (!inScope) continue;
+    const signed = signedAmountCents(row);
+    groupNet.set(row.posting_group_id, (groupNet.get(row.posting_group_id) ?? 0) + signed);
     if (isBeforePeriod(row.posting_date, period)) {
-      rollupFor(row.grootboekrekening_id).openingCents += signedAmountCents(row);
-      rowCount++;
-    } else if (isInPeriod(row.posting_date, period)) {
+      rollupFor(row.grootboekrekening_id).openingCents += signed;
+    } else {
       const r = rollupFor(row.grootboekrekening_id);
       r.periodDebitCents += toCents(row.debit_amount);
       r.periodCreditCents += toCents(row.credit_amount);
       r.periodLineCount++;
-      rowCount++;
     }
-    // Rijen op/na toExclusive tellen nergens mee.
+    rowCount++;
   }
 
   const totals: LedgerReportTotals = {
@@ -347,6 +363,9 @@ export function buildAccountReport(input: BuildAccountReportInput): LedgerAccoun
   }
 
   const failures: LedgerSelfCheckFailure[] = [];
+  for (const [postingGroupId, net] of groupNet) {
+    if (net !== 0) failures.push({ kind: "group_unbalanced", postingGroupId, differenceCents: net });
+  }
   if (totals.periodDebitCents !== totals.periodCreditCents) {
     failures.push({
       kind: "period_unbalanced",
@@ -409,8 +428,9 @@ export function buildRunningBalance(input: BuildRunningBalanceInput): LedgerRunn
   const { rows, clientId, accountId, period, accounts } = input;
   assertLedgerPeriod(period);
   assertSingleClient(rows, clientId);
+  // Valuta is een eigenschap van de hele set, niet van één rekening.
+  assertReportingCurrency(rows);
   const own = rows.filter((r) => r.grootboekrekening_id === accountId);
-  assertReportingCurrency(own);
 
   let openingCents = 0;
   const inPeriod: LedgerPostingLike[] = [];
