@@ -222,9 +222,15 @@ export default function Grootboek() {
           className="w-full sm:max-w-sm"
         />
         <div className="flex flex-wrap items-center gap-2">
+          {/* Fase 6C-b7: het grootboek zelf (ledger_postings), onder Grootboek zonder eigen nav-item. */}
+          <Button variant="outline" asChild>
+            <Link to="/grootboek/saldi">
+              <ArrowUpRight className="mr-2 h-4 w-4" />Grootboeksaldi
+            </Link>
+          </Button>
           <Button variant="outline" asChild>
             <Link to="/grootboek/mutaties">
-              <ArrowUpRight className="mr-2 h-4 w-4" />Mutaties bekijken
+              <ArrowUpRight className="mr-2 h-4 w-4" />Bronmutaties
             </Link>
           </Button>
           {/* Fase 6C-b6: memoriaal hangt onder Grootboek, zonder eigen nav-item. */}

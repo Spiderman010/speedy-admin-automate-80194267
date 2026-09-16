@@ -154,7 +154,8 @@ describe("Grootboekmutaties — basis", () => {
   it("31. rendert de pagina met sr-only titel", () => {
     renderPage();
     const h1 = document.querySelector("h1");
-    expect(h1).toHaveTextContent("Grootboekmutaties");
+    // 6C-b7: renamed so it cannot be mistaken for the ledger at /grootboek/saldi.
+    expect(h1).toHaveTextContent("Bronmutaties");
     expect(h1).toHaveClass("sr-only");
   });
 

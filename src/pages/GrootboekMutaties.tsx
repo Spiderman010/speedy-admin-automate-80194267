@@ -178,15 +178,22 @@ export default function GrootboekMutaties() {
 
   return (
     <>
-      <h1 className="sr-only">Grootboekmutaties</h1>
+      {/* 6C-b7: renamed to "Bronmutaties" so it can never be mistaken for the ledger at /grootboek/saldi. */}
+      <h1 className="sr-only">Bronmutaties</h1>
 
       {/* Explainability — this is deliberately not presented as a closing ledger. */}
       <div className="mb-4 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
-        <p>
-          Dit overzicht toont financiële bronmutaties zonder betalingen dubbel te tellen. Afgeletterde
-          bankbetalingen worden niet nogmaals als kosten of omzet opgenomen.
-        </p>
+        <div>
+          <p className="font-medium text-foreground">Bronmutaties</p>
+          <p data-testid="bronmutaties-clarification">
+            Dit overzicht is afgeleid uit brondocumenten en is niet het officiële grootboek.
+          </p>
+          <p>
+            Het toont financiële bronmutaties zonder betalingen dubbel te tellen. Afgeletterde
+            bankbetalingen worden niet nogmaals als kosten of omzet opgenomen.
+          </p>
+        </div>
       </div>
 
       {/* Administratie + zoeken */}

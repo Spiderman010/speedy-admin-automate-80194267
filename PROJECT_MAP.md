@@ -480,7 +480,30 @@ src/hooks/useLedgerPostings.ts   the first reader of ledger_postings
 - **Source drill-down:** `purchase_invoice → /facturen/inkoop/:id`, `sales_invoice → /verkoop`, `bank_allocation → /bank`, `manual_journal → /grootboek/memoriaal` (all existing routes in `App.tsx`); unknown `source_type` or a missing id → an explicit `unresolved` result, never an invented route.
 - **Double-counting invariant (static test):** neither file queries or imports `journal_entries`, the document tables, their totals (`amount_incl`/`amount_excl`/`btw_amount`) or the legacy helpers; the only table read is `ledger_postings`.
 
-**No UI in this PR.** PR 2 (saldilijst + mutaties per rekening) and PR 3 (proef- en saldibalans with a completeness indicator) build on this kernel; Balans/W&V wait for an opening-balance phase and the owner decisions on `privé` and the equity/liability split inside `passiva`.
+**No UI in PR 1.** Balans/W&V wait for an opening-balance phase and the owner decisions on `privé` and the equity/liability split inside `passiva`.
+
+#### PR 2 — Grootboek saldilijst + mutaties per rekening (UI)
+
+```
+src/pages/GrootboekSaldi.tsx                              /grootboek/saldi and /grootboek/saldi/:accountId
+src/components/grootboek/GrootboekSaldiTable.tsx          saldilijst (presentation only)
+src/components/grootboek/GrootboekAccountMutations.tsx    one account, running balance
+src/components/grootboek/LedgerCompletenessNotice.tsx     "is this ledger complete?" metadata
+src/lib/ledger-completeness.ts                            pure completeness counts
+src/hooks/useLedgerCompleteness.ts                        head-counts + id lists per client
+src/lib/grootboek-saldi-utils.ts                          period selection, labels, cents formatting
+```
+
+- **Routes:** two lines in `App.tsx`, nested under `/grootboek`; `nav.ts` untouched — the existing prefix matching keeps "Grootboek" the active/parent item. Entry point: a "Grootboeksaldi" button in the Grootboek action bar (next to "Bronmutaties").
+- **Only accounting source: `ledger_postings`** via `useLedgerPostings`; all arithmetic via `buildAccountReport` / `buildRunningBalance` (PR 1). The page sums nothing itself and never reads `journal_entries`, invoice or bank totals (static tests). Accounts come from the **all-accounts** hook, so inactive accounts with activity stay visible (badge "Inactief"); an unresolvable id stays visible as "Onbekende rekening"; free-text `categorie` shows badge "Onbekend"; `privé` shows "Privé" with no Balans/W&V placement.
+- **Saldilijst columns:** nummer, omschrijving, categorie, beginsaldo, debet, credit, eindsaldo — debit-positive, `closing = opening + debit − credit`, **no sign-flip by category**, so credit balances are negative. Totals row from the report totals. Each account name links to `/grootboek/saldi/:accountId`.
+- **Period:** year chips (current year and four before), "Alle jaren" (`2000-01-01`..`2101-01-01`, the ledger's `boekjaar` CHECK bounds), or a "Van / Tot en met" range. The user's inclusive end date is converted **once**, in `inclusiveEndToExclusive`, to PR 1's half-open `[from, toExclusive)`. `posting_date` is the filter; `boekjaar` never is.
+- **Account page:** header (nummer, omschrijving, categorie, period), summary (begin/debet/credit/eind), table (datum, omschrijving, bron, debet, credit, lopend saldo, actie) in PR 1's fixed order — the component contains no `.sort(`. Drill-down via `resolveLedgerSource`; an unknown `source_type` or a missing id renders "Bron niet beschikbaar" with no link.
+- **Report integrity:** a failed self-check renders a blocking `role="alert"` ("Het grootboekrapport kan niet veilig worden opgebouwd omdat de boekingscontrole niet sluit.") and **no figures**; a `LedgerReportingError` (non-EUR, foreign client) likewise; no fallback to source totals. An empty ledger shows "Nog geen geboekte grootboekmutaties voor deze periode." — never a table of zeros.
+- **Completeness (mandatory, metadata only):** per source, posted / postable, from `count(head)` queries and id lists scoped by `client_id`; **never a monetary column**. Purchase: status in `gecontroleerd|betaald|geexporteerd` (reverse charge is not detectable on purchase — stated honestly in a note, not counted). Sales: status in `gecontroleerd|betaald` **and** `btw_verlegd = false`; `btw_verlegd = true` invoices are counted separately as **"geweigerd (BTW verlegd)"**, never as "nog niet geboekt", because `post_sales_invoice()` refuses them. Bank: an allocation is postable only once its invoice is posted (6C-b5b requires it); the rest are "wachten op het boeken van de factuur". Manual: posted / total. If counts cannot be fetched the notice says "Volledigheid onbekend" rather than inventing numbers.
+- **Bronmutaties:** the old `GrootboekMutaties` page keeps its source-derived logic byte-for-byte (`ledger-mutations.ts` untouched, asserted via `git diff` in a test) but is retitled **"Bronmutaties"** with the sentence "Dit overzicht is afgeleid uit brondocumenten en is niet het officiële grootboek." so nobody compares it with `/grootboek/saldi` as if they were the same source.
+- **Mobile:** both tables scroll horizontally inside their container (`min-w`), never the page.
+- **A11y:** one `h1` per page (PageHeader), `<caption>` + `scope="col"`, status by badge text not colour, account links and source links have accessible names, `role="alert"` on every blocking state.
 
 ---
 
