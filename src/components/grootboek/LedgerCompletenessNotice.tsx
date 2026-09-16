@@ -66,8 +66,8 @@ export function LedgerCompletenessNotice({ completeness, isLoading, isError }: L
       {incomplete ? <Info className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
       <AlertTitle>
         {incomplete
-          ? "Let op: dit grootboek is mogelijk onvolledig"
-          : "Alle postbare documenten zijn geboekt"}
+          ? "Let op: dit grootboek is mogelijk onvolledig (alle jaren)"
+          : "Alle postbare documenten zijn geboekt (alle jaren)"}
       </AlertTitle>
       <AlertDescription>
         <p className="mb-2">

@@ -54,9 +54,14 @@ export interface LedgerCompleteness {
 
 function statusFor(posted: number, eligible: number): LedgerSourceStatus {
   if (eligible === 0 && posted === 0) return "empty";
-  if (posted >= eligible) return "complete";
+  // Meer geboekt dan postbaar kan niet kloppen (bv. een marker zonder
+  // postbaar document): dan weten we het niet, en zeggen we dat.
+  if (posted > eligible) return "unknown";
+  if (posted === eligible) return "complete";
   return "incomplete";
 }
+
+const INCONSISTENT_NOTE = "Geboekt overtreft postbaar; de tellingen zijn niet consistent en de volledigheid is onbekend.";
 
 function nonNegative(n: number): number {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
@@ -85,8 +90,13 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
       refused: null,
       refusedLabel: null,
       // Inkoop heeft geen veld voor verlegde BTW; zo'n factuur is niet te
-      // onderscheiden en telt hier gewoon als postbaar.
-      note: "Verlegde BTW op inkoop is niet herkenbaar in de gegevens en is hier niet apart geteld.",
+      // onderscheiden en telt hier als "niet in het grootboek". Ook andere
+      // weigeringen van de schrijver (regel zonder rekening, afgesloten
+      // boekjaar) zijn hier niet vooraf te zien.
+      note:
+        purchasePosted > purchaseEligible
+          ? INCONSISTENT_NOTE
+          : "Telt facturen met een postbare status die niet in het grootboek staan; verlegde BTW op inkoop is niet herkenbaar en niet apart geteld.",
     },
     {
       key: "sales_invoice",
@@ -97,7 +107,7 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
       status: statusFor(salesPosted, salesEligible),
       refused: salesRefused,
       refusedLabel: salesRefused > 0 ? "geweigerd (BTW verlegd)" : null,
-      note: null,
+      note: salesPosted > salesEligible ? INCONSISTENT_NOTE : null,
     },
     {
       key: "bank_allocation",
@@ -109,9 +119,11 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
       refused: null,
       refusedLabel: null,
       note:
-        bankAwaiting > 0
-          ? `${bankAwaiting} koppeling${bankAwaiting === 1 ? "" : "en"} wacht${bankAwaiting === 1 ? "" : "en"} op het boeken van de factuur.`
-          : null,
+        bankPosted > bankEligible
+          ? INCONSISTENT_NOTE
+          : bankAwaiting > 0
+            ? `${bankAwaiting} koppeling${bankAwaiting === 1 ? "" : "en"} wacht${bankAwaiting === 1 ? "" : "en"} op het boeken van de factuur.`
+            : null,
     },
     {
       key: "manual_journal",
@@ -122,7 +134,7 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
       status: statusFor(manualPosted, manualTotal),
       refused: null,
       refusedLabel: null,
-      note: null,
+      note: manualPosted > manualTotal ? INCONSISTENT_NOTE : null,
     },
   ];
 

@@ -26,7 +26,9 @@ describe("computeLedgerCompleteness", () => {
     const c = computeLedgerCompleteness(base());
     const s = c.sources.find((x) => x.key === "purchase_invoice")!;
     expect(s).toMatchObject({ posted: 7, eligible: 10, outstanding: 3, status: "incomplete", refused: null });
-    expect(s.note).toMatch(/Verlegde BTW op inkoop is niet herkenbaar/);
+    expect(s.note).toMatch(/verlegde BTW op inkoop is niet herkenbaar/i);
+    // Eerlijke woordkeus (review P3-1): "niet in het grootboek", niet "postbaar" als belofte.
+    expect(s.note).toMatch(/niet in het grootboek/);
     expect(c.mayBeIncomplete).toBe(true);
     expect(c.totalOutstanding).toBe(3 + 0 + 0 + 1);
   });
@@ -66,6 +68,17 @@ describe("computeLedgerCompleteness", () => {
       expect(Object.keys(s)).not.toContain("total_amount");
     }
     expect(Number.isInteger(c.totalOutstanding)).toBe(true);
+  });
+
+  it("28b. meer geboekt dan postbaar → 'unknown' met kanttekening, nooit 'volledig' (review P2-1)", () => {
+    const c = computeLedgerCompleteness({ ...base(), purchase: { eligible: 2, posted: 3 } });
+    const s = c.sources.find((x) => x.key === "purchase_invoice")!;
+    expect(s.status).toBe("unknown");
+    expect(s.note).toMatch(/niet consistent/);
+    expect(c.mayBeIncomplete).toBe(true);
+    // Geldt voor elke bron.
+    const m = computeLedgerCompleteness({ ...base(), manual: { total: 1, posted: 2 } }).sources.find((x) => x.key === "manual_journal")!;
+    expect(m.status).toBe("unknown");
   });
 
   it("alles leeg → status 'empty', niet 'incomplete'", () => {
@@ -149,7 +162,7 @@ vi.mock("@/integrations/supabase/client", () => ({
         },
         eq: (c: string, v: unknown) => (call.filters.push([c, "eq", v]), b),
         in: (c: string, v: unknown) => (call.filters.push([c, "in", v]), b),
-        order: () => b,
+        order: (c: string) => (call.filters.push([c, "order", "asc"]), b),
         range: async (from: number, to: number) => ({ data: (lists[table] ?? []).slice(from, to + 1), error: null }),
         then: (res: (v: unknown) => unknown) =>
           Promise.resolve({ count: counts[key()] ?? 0, error: null }).then(res),
@@ -168,12 +181,15 @@ describe("fetchLedgerCompletenessCounts", () => {
     for (const k of Object.keys(lists)) delete lists[k];
   });
 
-  it("telt per administratie met head-counts, en leest alleen id-kolommen", async () => {
-    counts["purchase_invoices:client_id=eq=c-1&status=in=gecontroleerd,betaald,geexporteerd"] = 10;
-    counts["purchase_invoice_postings:client_id=eq=c-1"] = 7;
-    counts["sales_invoices:client_id=eq=c-1&status=in=gecontroleerd,betaald&btw_verlegd=eq=false"] = 5;
+  it("telt per administratie: geboekt = doorsnede van postbare id's en markers (review P2-1)", async () => {
+    // Inkoop: 3 postbaar (pi-1, pi-2, pi-3); markers voor pi-1 én voor pi-0,
+    // een factuur die na het boeken is teruggezet naar te_controleren. Naïef
+    // aftrekken zou 2/3 of erger geven; de doorsnede zegt eerlijk 1/3.
+    lists["purchase_invoices"] = [{ id: "pi-1" }, { id: "pi-2" }, { id: "pi-3" }];
+    lists["purchase_invoice_postings"] = [{ purchase_invoice_id: "pi-1" }, { purchase_invoice_id: "pi-0" }];
+    lists["sales_invoices"] = [{ id: "si-1" }, { id: "si-2" }];
+    lists["sales_invoice_postings"] = [{ sales_invoice_id: "si-1" }];
     counts["sales_invoices:client_id=eq=c-1&status=in=gecontroleerd,betaald&btw_verlegd=eq=true"] = 2;
-    counts["sales_invoice_postings:client_id=eq=c-1"] = 5;
     counts["bank_allocation_postings:client_id=eq=c-1"] = 1;
     counts["manual_journals:client_id=eq=c-1"] = 2;
     counts["manual_journal_postings:client_id=eq=c-1"] = 1;
@@ -182,22 +198,40 @@ describe("fetchLedgerCompletenessCounts", () => {
       { id: "a2", invoice_id: "pi-9", invoice_type: "inkoop" },
       { id: "a3", invoice_id: "si-1", invoice_type: "verkoop" },
     ];
-    lists["purchase_invoice_postings"] = [{ purchase_invoice_id: "pi-1" }];
-    lists["sales_invoice_postings"] = [{ sales_invoice_id: "si-1" }];
 
     const c = await fetchLedgerCompletenessCounts("c-1");
     expect(c).toEqual({
-      purchase: { eligible: 10, posted: 7 },
-      sales: { eligible: 5, posted: 5, refusedVerlegd: 2 },
+      purchase: { eligible: 3, posted: 1 },
+      sales: { eligible: 2, posted: 1, refusedVerlegd: 2 },
       bank: { eligible: 2, posted: 1, awaitingInvoice: 1 },
       manual: { total: 2, posted: 1 },
     });
-    // Elke aanroep draagt het klantpredicaat.
+    // Elke aanroep draagt het klantpredicaat en de postbare-statusfilters zijn die van de schrijvers.
     for (const call of calls) expect(call.filters).toContainEqual(["client_id", "eq", "c-1"]);
+    const purchaseList = calls.find((x) => x.table === "purchase_invoices")!;
+    expect(purchaseList.filters).toContainEqual(["status", "in", ["gecontroleerd", "betaald", "geexporteerd"]]);
+    const salesList = calls.find((x) => x.table === "sales_invoices" && !x.head)!;
+    expect(salesList.filters).toContainEqual(["status", "in", ["gecontroleerd", "betaald"]]);
+    expect(salesList.filters).toContainEqual(["btw_verlegd", "eq", false]);
     // Geen bedragkolommen, nergens.
     for (const call of calls) expect(call.columns).not.toMatch(/amount|total|bedrag/);
-    expect(calls.filter((c) => c.head)).toHaveLength(8);
-    expect(calls.every((c) => c.table !== "journal_entries" && c.table !== "ledger_postings")).toBe(true);
+    expect(calls.every((x) => x.table !== "journal_entries" && x.table !== "ledger_postings")).toBe(true);
+  });
+
+  it("id-lijsten worden op een unieke sleutel gepagineerd en ontdubbeld (review P2-2)", async () => {
+    // 1003 koppelingen; de mock levert bij batch 2 de laatste rij van batch 1 nog eens (instabiele paginering).
+    const allocs = Array.from({ length: 1003 }, (_, i) => ({ id: `a-${String(i).padStart(4, "0")}`, invoice_id: "pi-x", invoice_type: "inkoop" }));
+    lists["bank_transaction_allocations"] = allocs;
+    const original = allocs.slice;
+    (lists["bank_transaction_allocations"] as unknown as { slice: (f: number, t: number) => unknown[] }).slice = function (f: number, t: number) {
+      const page = original.call(this, f, t) as unknown[];
+      // Instabiele paginering nabootsen: de laatste rij van de vorige pagina komt nog eens mee.
+      return f > 0 && page.length > 0 ? [allocs[f - 1], ...page] : page;
+    };
+    const c = await fetchLedgerCompletenessCounts("c-1");
+    expect(c.bank.awaitingInvoice).toBe(1003);
+    const allocCalls = calls.filter((x) => x.table === "bank_transaction_allocations");
+    expect(allocCalls.length).toBeGreaterThanOrEqual(2);
   });
 
   it("zonder administratie wordt er niets geteld", async () => {

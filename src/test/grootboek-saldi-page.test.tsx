@@ -112,7 +112,6 @@ const accounts = [
 ];
 
 const rows = () => screen.getAllByTestId("saldi-row");
-const rowFor = (id: string) => screen.getByTestId("saldi-row", { exact: true, selector: `[data-account-id="${id}"]` } as never) ?? rows().find((r) => r.getAttribute("data-account-id") === id)!;
 
 beforeEach(() => {
   ledgerSpy.mockClear();
@@ -206,7 +205,8 @@ describe("GrootboekSaldi — saldilijst", () => {
     renderPage();
     const r = rows().find((x) => x.getAttribute("data-account-id") === "gb-ghost")!;
     expect(r).toHaveTextContent("Onbekende rekening");
-    expect(r).toHaveTextContent("Onbekend");
+    // De categoriekolom (index 2) toont zelfstandig "Onbekend" — niet alleen de rekeningbadge.
+    expect(r.querySelectorAll("td")[2]).toHaveTextContent(/^Onbekend$/);
     expect(r.querySelectorAll("td")[6]).toHaveTextContent("€ 33,00");
   });
 
@@ -250,6 +250,17 @@ describe("GrootboekSaldi — saldilijst", () => {
     );
     expect(screen.queryByTestId("saldi-row")).toBeNull();
     expect(screen.queryByTestId("saldi-totals")).toBeNull();
+  });
+
+  it("13b. ook op /grootboek/saldi/:accountId blokkeert een falende zelfcontrole de cijfers", () => {
+    state.postings = [
+      p({ grootboekrekening_id: "gb-4000", debit_amount: 100, posting_date: inYear("03-01"), posting_group_id: "g-a" }),
+      p({ grootboekrekening_id: "gb-1600", credit_amount: 100, posting_date: inYear("03-01"), posting_group_id: "g-b" }),
+    ];
+    renderPage("/grootboek/saldi/gb-4000");
+    expect(screen.getByTestId("ledger-self-check-failed")).toBeInTheDocument();
+    expect(screen.queryByTestId("account-summary")).toBeNull();
+    expect(screen.queryByTestId("mutation-row")).toBeNull();
   });
 
   it("14. een niet-EUR-rij blokkeert de cijfers", () => {
@@ -329,11 +340,13 @@ describe("GrootboekSaldi — statische grenzen", () => {
   });
 
   it("35/36. geen wijziging aan gegenereerde types en geen migratie in deze branch", () => {
-    // Bewaakt door de reviewer via git; hier: de pagina raakt de types niet aan en
-    // er staat geen SQL in de nieuwe bestanden.
-    for (const { path, text } of files) {
-      expect(text, path).not.toMatch(/CREATE (TABLE|FUNCTION|POLICY|VIEW)|SECURITY DEFINER|\.rpc\(/);
-    }
+    // Echte controle via git (de bronbestanden zelf kunnen geen SQL "bevatten"
+    // op een manier die iets bewijst). Zie ook bronmutaties-rename.test.tsx.
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    const changed = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], { encoding: "utf8" });
+    expect(changed).not.toMatch(/integrations\/supabase\/types\.ts/);
+    expect(changed).not.toMatch(/supabase\/migrations\//);
+    for (const { path, text } of files) expect(text, path).not.toMatch(/\.rpc\(/);
   });
 
   it("de pagina rekent niet zelf: alle bedragen komen uit ledger-reporting", () => {
