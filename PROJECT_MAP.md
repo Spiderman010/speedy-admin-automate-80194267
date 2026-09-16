@@ -415,10 +415,32 @@ No implicit legs: no automatic VAT line, no contra account, no rounding or suspe
 - **No historic backfill.** Nothing existing is posted or converted; `journal_entries` is untouched.
 - **Rollback precondition:** the migration's `-- rollback:` block is only safe **before the first posting**. `ledger_postings` is append-only, so after a post, dropping the tables would orphan its `source_type = 'manual_journal'` rows permanently. Check `SELECT count(*) FROM public.ledger_postings WHERE source_type = 'manual_journal'` = 0 first; after a posting the only correction path is the future reversal engine.
 
-**Deliberately unsupported in this PR:** journal numbering (no number column; header carries a free-text `reference`), automatic VAT (VAT is an ordinary line — nothing reads `clients.btw_*`), reversal engine, SnelStart export of memoriaal postings, and any UI/hooks/routes/generated types (PR 2, after the production apply).
+**Deliberately unsupported:** journal numbering (no number column; header carries a free-text `reference`), automatic VAT (VAT is an ordinary line — nothing reads `clients.btw_*`), reversal engine, SnelStart export of memoriaal postings, recurring journals, templates, attachments, approvals and opening-balance handling. Unchanged in PR 2.
 
-**Status: ⏳ Not yet applied.**
-Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
+#### PR 2 — application layer (UI)
+
+The consuming UI, added once the migration was applied and the generated types contained the three tables and both RPCs.
+
+```
+src/pages/Memoriaal.tsx                              route /grootboek/memoriaal
+src/lib/manual-journal-utils.ts                      pure logic (totals, gate, payloads)
+src/hooks/useManualJournals.ts                       drafts: header rows + the save RPC
+src/hooks/useManualJournalPosting.ts                 marker, role check, post RPC
+src/components/memoriaal/MemoriaalLinesTable.tsx     debit/credit line editor
+src/components/memoriaal/MemoriaalPostingAction.tsx  "Boeken in grootboek"
+```
+
+- **Route:** `/grootboek/memoriaal`, one line in `App.tsx` next to the existing `/grootboek/mutaties`. **No new nav item** — `nav.ts` is untouched; `isNavItemActive`/`parentNavItemForPath` already resolve any `/grootboek/*` path to the existing "Grootboek" item, so the header title and breadcrumb work by themselves. Reachable through a "Memoriaalboekingen" link button in the Grootboek action bar, mirroring "Mutaties bekijken".
+- **Draft flow:** header through a normal single-row PostgREST insert/update (`client_id`, `posting_date`, `description`, `reference`, plus `user_id` because the INSERT policy requires `user_id = auth.uid()`); **`organization_id` is never sent** — `set_organization_id()` derives it from `client_id`. The lines go exclusively through **one** call to `save_manual_journal_lines(_journal_id, _lines)`; there is no client-side header-update → delete-lines → insert-lines sequence anywhere. Unbalanced and incomplete drafts may be saved; a new journal starts with two empty lines.
+- **Posting flow:** one call to `post_manual_journal(_journal_id)` with nothing but the id. The button is offered only at `accountant` level, established by calling `has_min_role(auth.uid(), org, 'accountant')` — the ladder stays in the database, the client does not rank roles. Unknown ("still loading") is treated as "not allowed", never as allowed. **Success is only reported after the claim row is re-read**: if the marker is not visible after the RPC returns, the UI says the posting is unconfirmed instead of claiming success.
+- **UI gate is advisory only.** `firstBlockingReason()` disables the button for deploy-window/loading, unsaved changes, missing role, missing date/description, fewer than two lines, a line without an account, a `0/0` line, a both-sided line, a negative amount, a zero total and an out-of-balance total. Everything the database alone can know — account scope, inactive accounts, closed boekjaar, the real role, NaN, >2 decimals — is deliberately *not* re-implemented; the RPC refuses and its Dutch message is shown. Amounts are sent unrounded so `0,005` is refused by the RPC rather than silently becoming `0,01`.
+- **Posted state:** derived from the marker, never from a status column. All header fields and lines become read-only, the draft delete action disappears, and the page shows "Deze memoriaalboeking is geboekt. Een correctie vereist een tegenboeking." No reversal is implemented.
+- **Error handling:** `23505` → re-read and switch to the posted view (informational, not an error); `42501` → permission/immutability message; `22023`/`23514`/`22004`/`P0002`/`28000` → the server's own Dutch message; `PGRST204`/`PGRST205`/`42P01`/`42883` → the neutral deploy-window text, following the `BankAllocationPostingAction` precedent. A raw SQLSTATE is never shown.
+- **List:** Datum, Omschrijving, Referentie, Bedrag, Status, Acties. Status is derived (marker → Geboekt, else Concept); the amount is `marker.total_amount` when posted and the filled-in side of the draft otherwise.
+- **VAT:** no automatic logic, only the hint "BTW boek je als aparte regel op de BTW-rekening."
+- **Untouched:** `journal_entries`, `Boekingen.tsx`, `useJournalEntries.ts`, `ledger-mutations.ts`, `GrootboekMutaties.tsx`, `snelstart-export.ts`, `GrootboekCombobox.tsx` (used as-is, no `postableOnly` prop), `nav.ts`, the migration, RLS, the RPCs and the generated types.
+
+**Status: ✅ Applied to production** (`alxlbdhpbwlehbdbfejw`), postcheck verified, and the generated `src/integrations/supabase/types.ts` contains `manual_journals`, `manual_journal_lines`, `manual_journal_postings`, `post_manual_journal` and `save_manual_journal_lines`. The application layer (PR 2) is implemented on top of it.
 
 Verification query:
 ```sql
@@ -436,7 +458,7 @@ select to_regclass('public.manual_journals') as header_table,
 
 ---
 
-Future phases: 6C-b6 manual journal posting is the section above (PR 1 schema + writer; UI follows), 6C-b7 Grootboek reading from real postings is next. Source-level idempotency is handled per writer (purchase, sales, bank and manual journal each guard their own `source_type` on `ledger_postings`) — see the 6C-b2 migration header for why no universal uniqueness constraint is safe.
+Future phases: 6C-b6 manual journal posting is the section above (PR 1 schema + writer, PR 2 application layer — both done), 6C-b7 Grootboek reading from real postings is next. Source-level idempotency is handled per writer (purchase, sales, bank and manual journal each guard their own `source_type` on `ledger_postings`) — see the 6C-b2 migration header for why no universal uniqueness constraint is safe.
 
 **Status of the 6C-b2 … 6C-b5b chain: ✅ Applied to production** (`alxlbdhpbwlehbdbfejw`). Evidence: the generated `src/integrations/supabase/types.ts` contains `bank_allocation_postings` and `post_bank_allocation`, which only exist once the whole chain (6C-b2 foundation → 6C-b2a → 6C-b3 → 6C-b4 → 6C-b5a → 6C-b5b) has been applied; the 6C-b5b prerequisite guard would have refused otherwise.
 
