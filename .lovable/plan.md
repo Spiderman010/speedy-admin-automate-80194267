@@ -28,13 +28,17 @@ De bestaande UI-polish en merk-kleuren behouden, maar de gedeelde visuele struct
 
 Geen individuele pagina wordt aangepast tenzij de preview aantoont dat een zichtbaar referentieverschil onmogelijk via deze gedeelde laag kan worden opgelost.
 
-## Referentiecriteria
-- Desktop-sidebar ongeveer in de compacte verhouding van de referentie, met kleinere verticale tussenruimte en een subtiel blauw actief item.
-- Topbar rustig en dun, zonder dubbele concurrentie met de paginatitel.
-- Witte, laag-schaduw kaarten met duidelijke KPI-cijfers en consistente padding.
-- Dichte maar leesbare tabellen met subtiele kopachtergrond en compacte acties.
-- Primaire acties herkenbaar blauw; secundaire bediening visueel stiller.
-- Op mobiel: geen horizontale pagina-overloop, toegankelijke aanraakdoelen en een goed bereikbare zijbalk.
+## Primaire referentiecriteria
+Het scherpe dashboardvoorbeeld `image-15.png` is de primaire visuele referentie. De bestaande BoekAssist-inhoud wordt niet vervangen of uitgebreid; alleen de herbruikbare presentatielaag neemt de volgende verhoudingen en behandeling over:
+
+- Desktop-sidebar in de compacte verhouding van de referentie: diepe navy kolom, smalle binnenmarges, strak uitgelijnde 16px-iconen en labels, en een helder maar subtiel blauw gevuld actief item.
+- Een dunne, lichte topbar met rustige onderrand; bestaande context en acties blijven exact behouden. De zoekbalk, meldingen en profielbediening uit de referentie worden niet als nieuwe functies toegevoegd.
+- Heldere scheiding tussen topbar, paginatitel en inhoud, met compacte verticale ruimte en acties rechts uitgelijnd waar de bestaande component dit al ondersteunt.
+- Witte kaarten met subtiele 1px-rand, kleine radius en vrijwel geen schaduw; KPI-labels klein en rustig, cijfers groot en zwaar, iconen compact in licht getinte vlakken.
+- Dichte maar leesbare tabellen zoals in de referentie: subtiele blauwgrijze kop, fijne rijlijnen, rustige hover, vaste cijferuitlijning en compacte acties.
+- Primaire acties herkenbaar helder blauw; secundaire en ghost-bediening wit of transparant met subtiele rand.
+- De navy/blauw/teal-balans van de bestaande tokenpass blijft behouden; geen gradients of extra decoratie.
+- Op mobiel: geen horizontale pagina-overloop, toegankelijke aanraakdoelen en een goed bereikbare zijbalk zonder de desktopdichtheid letterlijk te forceren.
 
 ## Validatie
 - Voor/na-visuele vergelijking met de referentie op desktop en mobiel, inclusief sidebar, topbar, kaarten/KPI’s, tabellen, knoppen, velden en lege staten.
