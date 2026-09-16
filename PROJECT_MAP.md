@@ -373,24 +373,82 @@ select to_regclass('public.bank_allocation_postings') as marker_table,
           'prevent_posted_bank_transaction_mutation_trigger')) as triggers;
 ```
 
----
+### Phase 6C-b6 — manual journals (memoriaal)
 
-Future phases: 6C-b6 manual journal posting, 6C-b7 Grootboek reading from real postings. Source-level idempotency is deliberately deferred to those writers — see the migration header for why no universal uniqueness constraint is safe yet.
+Migration file:
+```
+supabase/migrations/20260918120000_add_manual_journal_posting.sql
+```
+
+**Purpose:** the fourth production accounting writer, and the first whose source is authored by hand. A memoriaalboeking is a free-form journal entry (header `public.manual_journals` + N lines `public.manual_journal_lines`, each line DEBIT or CREDIT on one grootboekrekening) that is prepared as a draft and then posted, exactly once, by `public.post_manual_journal(_journal_id uuid)` as one balanced, immutable, tenant-safe group in `ledger_postings`. **PR 1 (this section) is schema + writer + tests only — no UI, no hooks, no routes, no generated types.** The consuming UI follows in a separate PR once the migration is applied (deploy-order rule, build strategy §6).
+
+**Why new tables, not `journal_entries`.** `journal_entries` holds one signed amount on one account per row, has no header/group identity, no debit/credit sides and no posting marker, and its consumers (`Boekingen.tsx`, `useJournalEntries.ts`, `snelstart-export.ts`) rely on exactly that shape. It is not touched, not read and not migrated.
+
+**The entry** (one ledger row per line, exactly as stored, `ORDER BY sort_order, id`)
+
+```
+line.debit_amount  > 0  →  DEBIT   line.grootboekrekening_id   line.debit_amount
+line.credit_amount > 0  →  CREDIT  line.grootboekrekening_id   line.credit_amount
+```
+
+No implicit legs: no automatic VAT line, no contra account, no rounding or suspense line. `posting_date = manual_journals.posting_date`, `boekjaar` = its calendar year, `currency = 'EUR'` explicit, ledger `description` = the line's `omschrijving` or else the header's `description`.
+
+**Contract**
+
+- **Draft vs posted is derived** from the existence of a `manual_journal_postings` row. The header has no `status`, `boekjaar`, `currency`, number, VAT or reversal column.
+- **Idempotency key = `manual_journals.id`.** `public.manual_journal_postings` has `manual_journal_id` as PRIMARY KEY and `posting_group_id UNIQUE`, and records `posting_date`, `line_count` and `total_amount` (debit total) as audit trail. Claim INSERT first, ledger rows after, same transaction; the second concurrent caller blocks on the key and fails with `23505`. No `EXISTS` pre-check.
+- **Atomic line save:** `public.save_manual_journal_lines(_journal_id uuid, _lines jsonb)` — SECURITY INVOKER (RLS is the authorization), locks the header `FOR UPDATE` (the same lock the poster takes first), refuses once a marker exists (`42501`), validates every element (uuid/text/integer/numeric shape, **no NaN** ("Bedragen moeten getallen zijn", checked first), no negatives, not both-sided, max two decimals — checked on an unconstrained `numeric` **before** the `numeric(12,2)` cast, so this RPC is the only path that refuses `0.005` instead of rounding it; `0/0` and a missing account are allowed in a draft), normalises a whitespace-only `omschrijving` (spaces, tabs, CR, LF) to NULL, then DELETE + INSERT in one function transaction, with a post-DELETE guard so an RLS-skipped row can never survive next to a new set. `organization_id` of a line is always derived from the header by trigger; `user_id` is the caller.
+- **Posting floor = accountant** (owner decision): `post_manual_journal` requires `has_min_role(auth.uid(), organization_id, 'accountant')`. Assistants prepare and edit drafts (INSERT/UPDATE at `assistant` on both draft tables, `user_id = auth.uid()` on both INSERT policies), but cannot post. Stricter than the purchase/sales/bank writers, deliberately.
+- **Documented exception — `manual_journal_lines` DELETE floor = assistant** (every other table: accountant). Required because the save RPC performs its atomic delete + replace under the caller's own RLS; an accountant DELETE floor would make every assistant save fail. Draft lines only: the freeze trigger refuses INSERT/UPDATE/DELETE on posted lines for every role without consulting roles at all. The header keeps the normal `accountant` DELETE floor.
+- **Balancing rules (exact NUMERIC, no tolerance, no rounding, no line-count cap):** at least two lines; every line has an account; no `0/0` line; no both-sided line; no negatives; **no NaN** (refused before the balance check — `'NaN'::numeric` passes `>= 0`, `> 0`, `= round(x, 2)` and even `SUM(debit) <> SUM(credit)`, because `NaN = NaN` is TRUE in PostgreSQL, and one NaN line would turn every SUM over that account into NaN); max two decimals (filter kept, unreachable through the column type); every line in the header's organisation; `SUM(debit) > 0 AND SUM(credit) > 0`; `SUM(debit) = SUM(credit)`. Each refusal has its own Dutch message. Table CHECKs refuse negatives, both-sided lines and NaN (`manual_journal_lines_no_nan_check`; the marker's `total_amount` CHECK refuses NaN too) at the draft level; **direct writes are rounded to 2 decimals by the column type `numeric(12,2)`** (a direct INSERT of `0.005` stores `0.01` — there is deliberately no "two decimals" table CHECK, it could never fail), while the save RPC — the application path — refuses >2 decimals before the cast; `0/0` and a missing account are draft-only states the poster refuses. Known foundation gap, out of scope here: `ledger_postings` and the purchase/sales/bank marker tables have no NaN CHECK (follow-up on 6C-b2).
+- **Scope + actief:** every account must pass `posting_account_ok(account, organization_id, client_id)` (same org, shared or owned by this administratie — an account with `organization_id IS NULL` or owned by another administratie is refused), and must be `actief`.
+- **Closed year:** `boekjaar <= clients.afgesloten_boekjaar` is refused; no fallback year. A blank `description` is refused (it is the ledger fallback text); "blank" is whitespace-aware — `btrim(x, E' \t\r\n')` in the poster's refusal, in the ledger `description` fallback (a tab-only line `omschrijving` falls back to the header) and in the save RPC's normalisation, because plain `btrim()` trims spaces only. The administratie must belong to the header's organisation (checked at INSERT/UPDATE by `enforce_manual_journal_client_org` via `posting_client_org_ok`, and again by the poster from stored data).
+- **Immutability, header** (`prevent_posted_manual_journal_mutation`, BEFORE UPDATE OR DELETE, explicit `TG_OP` branches, never `COALESCE(NEW.x, OLD.x)`): once posted `id, organization_id, client_id, user_id, posting_date, description, reference` are frozen, DELETE is refused (so the lines' cascade can never fire), re-pointing another header onto a posted `id` is refused; `created_at`/`updated_at` stay free. Additionally, `client_id` cannot change while lines exist (unposted too), and `manual_journal_id` of a line can never change.
+- **Immutability, lines** (`prevent_posted_manual_journal_line_mutation`, BEFORE INSERT OR UPDATE OR DELETE): INSERT/UPDATE refused when a marker exists for `NEW.manual_journal_id`, UPDATE/DELETE refused when one exists for `OLD.manual_journal_id`. On INSERT the trigger first takes `FOR KEY SHARE` on the header, because a BEFORE INSERT trigger runs before the FK's own KEY SHARE lock — without it a raw line INSERT racing a post could pass the marker check and land after the post committed (proven in C5).
+- **Source mapping:** `source_type = 'manual_journal'`, `source_id = manual_journals.id`, **`source_line_id = manual_journal_lines.id`** — the first writer to persist a line id. Patterns §2 forbids that unless the id is durable; here it is durable by construction: save is refused after post, every line mutation is refused after post, lines cannot be re-parented, the poster locks header **and** lines before reading, and the marker is written before the first ledger row. (Purchase stays `NULL` because its lines are replaced on every save with ledger rows present.)
+- **Claim trigger on `ledger_postings`** (`enforce_manual_journal_source_claim`, BEFORE INSERT, scoped strictly to `source_type = 'manual_journal'`): requires a marker for `source_id`; `posting_group_id`, org, client and `posting_date` must equal the marker; `1 <= line_no <= marker.line_count`; `reversal_of_posting_id` must be NULL ("Een tegenboeking gebruikt een eigen bronsoort"); `source_line_id` must be a line of that journal and the row's account and both amounts must equal the frozen line. Plus a partial unique index `idx_ledger_postings_manual_journal_line ON ledger_postings (posting_group_id, source_line_id) WHERE source_type = 'manual_journal'` so one line can never be mirrored twice even inside the posting transaction (only reachable if the claim trigger were disabled — proven as defence in depth).
+- **Lock order:** header `FOR UPDATE` → lines `ORDER BY sort_order, id FOR UPDATE` → reads → claim INSERT → ledger INSERTs. Both RPCs lock the header first, so save-vs-post always serialises: post after save reads the committed new line set; save after post is refused. App writes are single statements or these RPCs. Two **non-application** paths can deadlock: (a) a raw multi-row line statement in the SQL editor (heap-order row locks) against the poster's `(sort_order, id)` line locks; (b) a single raw transaction that first UPDATEs/DELETEs a line (line lock) and then INSERTs a line — the INSERT takes `FOR KEY SHARE` on the header inside the freeze trigger and waits behind the poster's header `FOR UPDATE`, while the poster waits at LOCK 2 on the updated line (line → header inverts the documented order). In both cases PostgreSQL detects it (`40P01`) and aborts one side; nothing partial is committed, and once the post committed the mutation is refused anyway (path (b) proven with two real sessions: the raw transaction got `40P01` inside the KEY SHARE, the post committed, its edit was rolled back). Availability edge, never an accounting one.
+- **Reversal compatibility:** no reversal columns here; a future reversal engine writes a new group with `reversal_of_posting_id` set under its **own** `source_type`, which the claim trigger forces (a `'manual_journal'` row with `reversal_of_posting_id` is refused).
+- **Security:** poster `SECURITY DEFINER` + `SET search_path = public`, `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role`, `GRANT EXECUTE TO authenticated` only (same for the save RPC, which is INVOKER). Marker: `REVOKE ALL` then `GRANT SELECT TO authenticated, service_role`. Draft tables: `REVOKE ALL` then `GRANT SELECT, INSERT, UPDATE, DELETE TO authenticated`, `GRANT SELECT TO service_role`, nothing for `anon`. All five trigger functions are `SECURITY DEFINER`, `REVOKE ALL FROM PUBLIC`, and contain no `auth.uid()`/`has_min_role()` (integrity, not authorization — patterns §5B).
+- **FKs:** 10× `ON DELETE RESTRICT`; exactly one `ON DELETE CASCADE` (`manual_journal_lines.manual_journal_id → manual_journals`, so deleting a **draft** removes its lines; a posted header cannot be deleted). `posting_date` is CHECK-bounded to 2000..2100, matching the ledger's `boekjaar` CHECK.
+- **Prerequisite guard:** refuses to run unless `ledger_postings`, `posting_account_ok(uuid,uuid,uuid)`, `posting_client_org_ok(uuid,uuid)`, `has_min_role(uuid,uuid,app_role)` and `clients.afgesloten_boekjaar` exist. Required apply order: 6C-b2 → … → 6C-b5b → 6C-b6.
+- **No historic backfill.** Nothing existing is posted or converted; `journal_entries` is untouched.
+- **Rollback precondition:** the migration's `-- rollback:` block is only safe **before the first posting**. `ledger_postings` is append-only, so after a post, dropping the tables would orphan its `source_type = 'manual_journal'` rows permanently. Check `SELECT count(*) FROM public.ledger_postings WHERE source_type = 'manual_journal'` = 0 first; after a posting the only correction path is the future reversal engine.
+
+**Deliberately unsupported in this PR:** journal numbering (no number column; header carries a free-text `reference`), automatic VAT (VAT is an ordinary line — nothing reads `clients.btw_*`), reversal engine, SnelStart export of memoriaal postings, and any UI/hooks/routes/generated types (PR 2, after the production apply).
 
 **Status: ⏳ Not yet applied.**
 Apply in the Lovable Cloud SQL editor for project `alxlbdhpbwlehbdbfejw` after review.
 
-Verification query (for future reference):
+Verification query:
 ```sql
-select to_regclass('public.ledger_postings') as postings_table;
+select to_regclass('public.manual_journals') as header_table,
+       to_regclass('public.manual_journal_lines') as lines_table,
+       to_regclass('public.manual_journal_postings') as marker_table,
+       (select count(*) from pg_proc where proname in ('post_manual_journal','save_manual_journal_lines')) as rpcs,
+       (select count(*) from pg_trigger where tgname in
+         ('validate_manual_journal_source_claim_trigger',
+          'prevent_posted_manual_journal_mutation_trigger',
+          'prevent_posted_manual_journal_line_mutation_trigger',
+          'validate_manual_journal_client_org_trigger',
+          'set_manual_journal_line_org_trigger')) as own_triggers;
 ```
 
-Expected result:
+---
+
+Future phases: 6C-b6 manual journal posting is the section above (PR 1 schema + writer; UI follows), 6C-b7 Grootboek reading from real postings is next. Source-level idempotency is handled per writer (purchase, sales, bank and manual journal each guard their own `source_type` on `ledger_postings`) — see the 6C-b2 migration header for why no universal uniqueness constraint is safe.
+
+**Status of the 6C-b2 … 6C-b5b chain: ✅ Applied to production** (`alxlbdhpbwlehbdbfejw`). Evidence: the generated `src/integrations/supabase/types.ts` contains `bank_allocation_postings` and `post_bank_allocation`, which only exist once the whole chain (6C-b2 foundation → 6C-b2a → 6C-b3 → 6C-b4 → 6C-b5a → 6C-b5b) has been applied; the 6C-b5b prerequisite guard would have refused otherwise.
+
+Verification query (for future reference):
+```sql
+select to_regclass('public.ledger_postings') as postings_table,
+       to_regclass('public.purchase_invoice_postings') as purchase_marker,
+       to_regclass('public.sales_invoice_postings') as sales_marker,
+       to_regclass('public.bank_allocation_postings') as bank_marker;
 ```
-postings_table
-─────────────────────────────────────
-ledger_postings
-```
+
+Expected result: all four names, none NULL.
 
 ---
 
