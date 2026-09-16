@@ -22,9 +22,9 @@ export function AppHeader() {
   const parent = parentNavItemForPath(location.pathname);
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
-      <SidebarTrigger className="-ml-1" aria-label="Zijbalk in- of uitklappen" />
-      <Separator orientation="vertical" className="mr-1 h-4" />
+    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 px-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-6">
+      <SidebarTrigger className="-ml-2 h-9 w-9" aria-label="Zijbalk in- of uitklappen" />
+      <Separator orientation="vertical" className="mr-2 h-5" />
       {parent ? (
         <Breadcrumb>
           <BreadcrumbList>
@@ -40,7 +40,7 @@ export function AppHeader() {
           </BreadcrumbList>
         </Breadcrumb>
       ) : (
-        <span className="text-sm font-medium">{title}</span>
+        <span className="truncate text-sm font-semibold">{title}</span>
       )}
     </header>
   );
