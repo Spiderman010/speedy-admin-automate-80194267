@@ -191,7 +191,12 @@
 --       The only two writers of either state are the two SECURITY DEFINER RPCs
 --       (the marker table is not writable by any application role, and the nil
 --       columns are excluded from the column-level INSERT/UPDATE grants), so
---       there is no third path that could skip the lock.
+--       there is no third path that could skip the lock. Both directions of the
+--       rule are ALSO refused declaratively, for callers that no grant can stop
+--       (a definer- or owner-level statement in the SQL editor): the marker
+--       trigger refuses a claim for a nil-declared administratie, and the freeze
+--       trigger in section 10 refuses a nil declaration for an administratie
+--       that already has a claim.
 --
 -- ISOLATION: both RPCs refuse anything other than READ COMMITTED, for the same
 -- reason 6C-b2 does. Under REPEATABLE READ a transaction can establish its
@@ -1960,6 +1965,24 @@ BEGIN
                    OR EXISTS (
                      SELECT 1 FROM public.opening_balance_postings WHERE opening_balance_id = OLD.id
                    );
+
+  -- The other half of the CROSS-kind rule, and the reason it is here rather
+  -- than only in declare_opening_balance_nil(): the marker trigger in section 3
+  -- refuses a claim for an administratie that is nil-declared, but nothing
+  -- declarative refused the reverse — setting a nil declaration on a DIFFERENT
+  -- header of an administratie that already has a posted beginbalans. The
+  -- column-level grants keep every application role out of these columns and
+  -- the nil RPC checks it, so no reachable application path could do it; a
+  -- definer- or owner-level UPDATE (the SQL editor) could. Refused here, so the
+  -- rule holds for every caller instead of only for the ones that ask nicely.
+  IF OLD.nil_declared_at IS NULL AND NEW.nil_declared_at IS NOT NULL
+     AND EXISTS (
+       SELECT 1 FROM public.opening_balance_postings obp
+       WHERE obp.client_id = OLD.client_id
+     ) THEN
+    RAISE EXCEPTION 'Deze administratie heeft al een geboekte beginbalans; een nihil-verklaring is niet mogelijk'
+      USING ERRCODE = '23505';
+  END IF;
 
   IF v_was_settled THEN
     IF NEW.id                IS DISTINCT FROM OLD.id

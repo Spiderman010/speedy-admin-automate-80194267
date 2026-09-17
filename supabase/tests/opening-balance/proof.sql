@@ -490,6 +490,21 @@ SELECT proof.expect_error('24f', 'een tweede nihil-verklaring op dezelfde kop wo
   $$SELECT public.declare_opening_balance_nil('00000000-0000-0000-0000-00000000b010')$$,
   'al op nihil verklaard');
 
+-- 26b posted + nil is refused even for a caller no grant can stop ──────────
+-- (the proof runs as `authenticated`, so it drops to the owner for this one
+--  statement: this is the SQL-editor path, not an application path.)
+RESET ROLE;
+SELECT proof.expect_error('26b', 'ook een eigenaar-UPDATE kan geen nihil zetten naast een geboekte beginbalans', $$
+  UPDATE public.opening_balances
+  SET nil_declaration = true, nil_declared_at = now(), nil_declared_by = '00000000-0000-0000-0000-0000000000e1'
+  WHERE id = '00000000-0000-0000-0000-00000000b002'
+$$, 'al een geboekte beginbalans');
+SELECT proof.expect_true('26c', 'de administratie heeft nog steeds precies één bewering', $$
+  SELECT (SELECT count(*) FROM public.opening_balance_postings WHERE client_id = '00000000-0000-0000-0000-0000000000c1') = 1
+     AND (SELECT count(*) FROM public.opening_balances WHERE client_id = '00000000-0000-0000-0000-0000000000c1' AND nil_declared_at IS NOT NULL) = 0
+$$);
+SET ROLE authenticated;
+
 -- 27 nil + post impossible ──────────────────────────────────────────────────
 SELECT proof.draft('00000000-0000-0000-0000-00000000b011', '00000000-0000-0000-0000-0000000000c8', DATE '2027-01-01');
 SELECT proof.line('00000000-0000-0000-0000-00000000b011', '00000000-0000-0000-0000-00000000f001', 3.00, 0, 1);

@@ -181,9 +181,12 @@ describe("6C-b8 PR 1 — domeinuniciteit: draft / geboekt / nihil", () => {
     expect(postFn).toContain("Deze administratie heeft al een nihil-verklaring");
     expect(nilFn).toContain("opening_balance_postings");
     expect(nilFn).toContain("Deze administratie heeft al een geboekte beginbalans");
-    // En als staande bewaking op de claimtabel zelf.
+    // En als staande bewaking in BEIDE richtingen, ook voor een aanroeper die
+    // geen enkel recht tegenhoudt (een eigenaar-statement in de SQL-editor).
     expect(markerExclusivityFn).toContain("nil_declared_at IS NOT NULL");
     expect(sql).toContain("CREATE TRIGGER validate_opening_balance_marker_exclusivity_trigger");
+    expect(headerGuard).toContain("OLD.nil_declared_at IS NULL AND NEW.nil_declared_at IS NOT NULL");
+    expect(headerGuard).toContain("WHERE obp.client_id = OLD.client_id");
   });
 
   it("15. beide beweringen nemen dezelfde advisory lock op de administratie", () => {
