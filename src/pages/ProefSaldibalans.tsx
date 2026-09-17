@@ -90,7 +90,8 @@ export default function ProefSaldibalans() {
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   // Bewust ALLE rekeningen, ook inactieve: die kunnen saldo dragen.
-  const { data: accounts } = useGrootboekrekeningen({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
+  const accountsQuery = useGrootboekrekeningen({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
+  const accounts = accountsQuery.data;
   const postingsQuery = useLedgerPostings({ clientId, period, enabled: orgEnabled });
   const completenessQuery = useLedgerCompleteness(clientId);
 
@@ -122,7 +123,19 @@ export default function ProefSaldibalans() {
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const years = recentYears();
-  const geldig = balans?.ok === true;
+
+  // De exportpoort moet PRECIES dezelfde toestand volgen als het scherm.
+  // React Query houdt `data` vast wanneer een achtergrondverversing faalt, dus
+  // `balans` kan best geldig zijn terwijl de pagina een laadfout toont — zonder
+  // `isError` hierin zou de knop dan de cijfers van vóór de fout exporteren.
+  // Een leeg rapport levert niets exporteerbaars op en telt ook als ongeldig.
+  const geldig =
+    !postingsQuery.isError &&
+    !accountsQuery.isError &&
+    !accountsQuery.isPending &&
+    built?.kind === "ok" &&
+    balans?.ok === true &&
+    balans.rows.length > 0;
 
   const applyRange = () => {
     if (rangeFrom && rangeTo && rangeFrom <= rangeTo) {
@@ -131,9 +144,9 @@ export default function ProefSaldibalans() {
   };
 
   const exporteer = () => {
-    // Nooit exporteren op een ongeldig of ontbrekend rapport: dezelfde poort
-    // als de knop, zodat een toetsenbordpad er ook niet omheen kan.
-    if (!balans || balans.ok !== true) return;
+    // Dezelfde poort als de knop, zodat een toetsenbord- of scriptpad er niet
+    // omheen kan wanneer de knop zelf al uit staat.
+    if (!geldig || !balans || balans.ok !== true) return;
     const inhoud = trialBalanceToCsv({
       rows: balans.rows,
       totals: balans.totals,
@@ -168,6 +181,27 @@ export default function ProefSaldibalans() {
         </Alert>
       );
     }
+    // Zonder rekeningschema is elke rij "Onbekende rekening" en elk
+    // rekeningnummer leeg: een rapport dat er gezaghebbend uitziet en het niet
+    // is. Dat weigeren we liever dan het te tonen.
+    if (accountsQuery.isError) {
+      return (
+        <Alert variant="destructive" data-testid="psb-accounts-error">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Rekeningschema laden is mislukt</AlertTitle>
+          <AlertDescription>
+            <p>
+              Zonder het rekeningschema zijn de rekeningnummers en categorieën niet te bepalen.
+              Het rapport wordt daarom niet getoond.
+            </p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => accountsQuery.refetch()}>
+              Opnieuw proberen
+            </Button>
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    if (accountsQuery.isPending) return <ReportSkeleton />;
     // Let op de volgorde: een rapportagefout moet VOOR de skeletoncontrole
     // komen. Bij een fout is `balans` null, dus een gecombineerde
     // `!built || !balans`-poort zou een harde weigering als eeuwig laden tonen.
@@ -202,7 +236,9 @@ export default function ProefSaldibalans() {
         </Alert>
       );
     }
-    if (built.report.ok === true && built.report.totals.rowCount === 0) {
+    // De lege staat gaat NIET voor wanneer de gebruiker juist om het volledige
+    // rekeningschema heeft gevraagd en dat er ook is.
+    if (built.report.ok === true && built.report.totals.rowCount === 0 && balans.rows.length === 0) {
       return <EmptyState icon={FileBarChart} message={EMPTY_LEDGER_MESSAGE} />;
     }
     if (balans.rows.length === 0) {

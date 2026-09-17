@@ -16,6 +16,8 @@ const state = {
   postingsPending: false,
   postingsError: null as { message: string } | null,
   accounts: [] as Array<Record<string, unknown>>,
+  accountsPending: false,
+  accountsError: false,
   completeness: undefined as unknown,
   completenessPending: false,
   completenessError: false,
@@ -33,13 +35,21 @@ vi.mock("@/hooks/useClients", () => ({
   useClients: () => ({ data: [{ id: "c-1", name: "Résidence Atlas", organization_id: "org-1" }] }),
 }));
 vi.mock("@/hooks/useGrootboekrekeningen", () => ({
-  useGrootboekrekeningen: () => ({ data: state.accounts }),
+  useGrootboekrekeningen: () => ({
+    data: state.accounts,
+    isPending: state.accountsPending,
+    isError: state.accountsError,
+    refetch: vi.fn(),
+  }),
 }));
 vi.mock("@/hooks/useLedgerPostings", () => ({
   useLedgerPostings: (opts: unknown) => {
     ledgerSpy(opts);
     return {
-      data: state.postingsPending || state.postingsError ? undefined : state.postings,
+      // React Query houdt `data` vast wanneer een achtergrondverversing faalt;
+      // die combinatie moet uitdrukbaar zijn, anders blijft de staleexport-bug
+      // onzichtbaar voor de test.
+      data: state.postingsPending ? undefined : state.postings,
       isPending: state.postingsPending,
       isError: !!state.postingsError,
       error: state.postingsError,
@@ -129,6 +139,8 @@ beforeEach(() => {
   state.postingsPending = false;
   state.postingsError = null;
   state.accounts = accounts;
+  state.accountsPending = false;
+  state.accountsError = false;
   state.completeness = undefined;
   state.completenessPending = false;
   state.completenessError = false;
@@ -301,6 +313,55 @@ describe("ProefSaldibalans — pagina", () => {
     expect(csv).toContain('"121,50"');
     expect(csv).not.toContain("€");
     expect(laatsteNaam).toBe(`proef-en-saldibalans-residence-atlas-${YEAR}.csv`);
+  });
+
+  it("31b. een mislukte verversing met behouden data: geen cijfers EN geen export (review P1)", () => {
+    state.postings = grp("g-1", `${YEAR}-02-01`, [["gb-4000", 121, 0], ["gb-1600", 0, 121]]);
+    state.postingsError = { message: "JWT expired" };
+    renderPage();
+    // Het scherm faalt dicht…
+    expect(screen.getByTestId("psb-error")).toHaveTextContent("JWT expired");
+    expect(screen.queryByTestId("psb-row")).toBeNull();
+    // …en de export mag de cijfers van vóór de fout niet meer weggeven.
+    expect(exportBtn().disabled).toBe(true);
+    fireEvent.click(exportBtn());
+    expect(blobDelen).toEqual([]);
+    expect(laatsteNaam).toBe("");
+  });
+
+  it("P2. een mislukt rekeningschema blokkeert het rapport in plaats van 'Onbekende rekening' overal", () => {
+    state.postings = grp("g-1", `${YEAR}-02-01`, [["gb-4000", 121, 0], ["gb-1600", 0, 121]]);
+    state.accounts = [];
+    state.accountsError = true;
+    renderPage();
+    expect(screen.getByTestId("psb-accounts-error")).toHaveAttribute("role", "alert");
+    expect(screen.queryByTestId("psb-row")).toBeNull();
+    expect(exportBtn().disabled).toBe(true);
+    fireEvent.click(exportBtn());
+    expect(blobDelen).toEqual([]);
+  });
+
+  it("P2b. terwijl het rekeningschema laadt verschijnt er nog geen rapport", () => {
+    state.postings = grp("g-1", `${YEAR}-02-01`, [["gb-4000", 121, 0], ["gb-1600", 0, 121]]);
+    state.accountsPending = true;
+    renderPage();
+    expect(screen.getByText("Proef- en saldibalans laden…")).toBeInTheDocument();
+    expect(screen.queryByTestId("psb-row")).toBeNull();
+    expect(exportBtn().disabled).toBe(true);
+  });
+
+  it("P3-2. een leeg rapport levert geen exporteerbaar bestand op", () => {
+    renderPage();
+    expect(screen.getByText("Nog geen geboekte grootboekmutaties voor deze periode.")).toBeInTheDocument();
+    expect(exportBtn().disabled).toBe(true);
+  });
+
+  it("P3-3. met 'Toon nulrekeningen' aan wint het rekeningschema van de lege staat", () => {
+    renderPage(); // geen boekingen
+    fireEvent.click(screen.getByLabelText("Toon nulrekeningen"));
+    expect(screen.queryByText("Nog geen geboekte grootboekmutaties voor deze periode.")).toBeNull();
+    expect(rows().length).toBe(accounts.length);
+    expect(exportBtn().disabled).toBe(false);
   });
 
   it("er is precies één h1 en de tabel heeft een caption", () => {

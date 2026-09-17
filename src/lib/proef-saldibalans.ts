@@ -6,15 +6,23 @@
 //   1. PRESENTATIE — het debet-positieve saldo van de kern wordt gesplitst in
 //      een debet- en een creditkolom. De onderliggende tekenconventie blijft
 //      ongemoeid: er wordt niets omgeklapt, en zeker niet per categorie.
-//   2. VERZOENING — de zes kolomtotalen worden opnieuw opgeteld uit de
-//      ZICHTBARE rijen en moeten paarsgewijs gelijk zijn. Dat is bewust een
-//      tweede, onafhankelijke controle bovenop de zelfcontrole van de kern.
+//   2. VERZOENING — de zichtbare rijen worden teruggelegd tegen de kern.
 //
-// Waarom die tweede controle iets toevoegt: een rij kan alleen worden
-// weggelaten zonder de balans te breken wanneer al haar zes bedragen nul zijn.
-// Zou hier dus per ongeluk een rij met saldo wegvallen, dan sluit minstens een
-// van de drie paren niet meer en valt het rapport dicht — in plaats van stil
-// een te laag totaal te tonen.
+// Die verzoening bestaat uit twee lagen, en het verschil is de moeite waard:
+//
+//   a. PAARSGEWIJS (begin Dr = Cr, periode Dr = Cr, eind Dr = Cr). Dit is
+//      verdediging in de diepte en NIET onafhankelijk: zolang de kern zijn
+//      eigen zelfcontrole doorstaat volgt dit er wiskundig uit, en de
+//      zichtbaarheidsfilter kan per definitie alleen rijen weglaten waarvan
+//      alle zes bedragen nul zijn. Deze laag kan vandaag dus niet aanslaan.
+//      Hij blijft staan als vangnet voor een toekomstige fout in de filter.
+//   b. TEGEN DE KERNTOTALEN. Dit is de laag die wél iets toevoegt: de som van
+//      de gesplitste kolommen wordt vergeleken met `report.totals` van de kern
+//      zelf. Zou de splitsing systematisch omklappen (alles in de verkeerde
+//      kolom), dan blijft (a) keurig kloppen — de twee totalen wisselen
+//      immers gewoon van plaats — terwijl (b) het meteen ziet. Hetzelfde
+//      geldt voor een verkeerd overgenomen periodekolom of een rij die bij
+//      het filteren zoekraakt.
 //
 // Wat deze module NIET doet: geen journal_entries, geen factuur- of banktotalen,
 // geen balans/W&V-indeling, geen tekenomklap per categorie, geen filter op
@@ -65,6 +73,7 @@ export interface TrialBalanceTotals {
 
 export type TrialBalanceFailure =
   | { kind: "kernel"; failures: LedgerSelfCheckFailure[] }
+  | { kind: "kernel_mismatch"; veld: string; verwacht: number; gevonden: number }
   | { kind: "opening_unbalanced"; debitCents: number; creditCents: number }
   | { kind: "period_unbalanced"; debitCents: number; creditCents: number }
   | { kind: "closing_unbalanced"; debitCents: number; creditCents: number };
@@ -211,6 +220,19 @@ export function buildTrialBalance(input: BuildTrialBalanceInput): TrialBalance {
   }
 
   const failures: TrialBalanceFailure[] = [];
+
+  // (b) Terug naar de kern. `report.totals` is door de kern zelf berekend,
+  // los van de splitsing en de filter hierboven.
+  const kern = report.totals;
+  const vergelijk = (veld: string, verwacht: number, gevonden: number) => {
+    if (verwacht !== gevonden) failures.push({ kind: "kernel_mismatch", veld, verwacht, gevonden });
+  };
+  vergelijk("beginsaldo", kern.openingCents, totals.openingDebitCents - totals.openingCreditCents);
+  vergelijk("periode debet", kern.periodDebitCents, totals.periodDebitCents);
+  vergelijk("periode credit", kern.periodCreditCents, totals.periodCreditCents);
+  vergelijk("eindsaldo", kern.closingCents, totals.closingDebitCents - totals.closingCreditCents);
+
+  // (a) Paarsgewijs.
   if (totals.openingDebitCents !== totals.openingCreditCents) {
     failures.push({
       kind: "opening_unbalanced",

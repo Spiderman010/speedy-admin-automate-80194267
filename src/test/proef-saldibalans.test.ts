@@ -201,6 +201,35 @@ describe("proef-saldibalans — fail-closed", () => {
     }
   });
 
+  it("16c. de verzoening tegen de KERNTOTALEN vangt wat de paarsgewijze controle mist", () => {
+    // Rollups die paarsgewijs prima sluiten, maar niet overeenkomen met de
+    // totalen die de kern zelf berekende. Precies het geval van een
+    // systematisch omgeklapte splitsing: (a) blijft kloppen, (b) niet.
+    const mismatch: LedgerAccountReport = {
+      ok: true,
+      rollups: [
+        {
+          account: { id: "a", nummer: 1, omschrijving: "A", categorie: "activa", actief: true, resolved: true },
+          openingCents: 5000, periodDebitCents: 0, periodCreditCents: 0, closingCents: 5000, periodLineCount: 0,
+        },
+        {
+          account: { id: "b", nummer: 2, omschrijving: "B", categorie: "passiva", actief: true, resolved: true },
+          openingCents: -5000, periodDebitCents: 0, periodCreditCents: 0, closingCents: -5000, periodLineCount: 0,
+        },
+      ],
+      // De kern beweert iets anders dan de rijen optellen.
+      totals: { openingCents: 9900, periodDebitCents: 0, periodCreditCents: 0, closingCents: 9900, rowCount: 2 },
+    };
+    const b = buildTrialBalance({ report: mismatch });
+    expect(b.ok).toBe(false);
+    if (b.ok === false) {
+      const velden = b.failures.filter((f) => f.kind === "kernel_mismatch").map((f) => (f as { veld: string }).veld);
+      expect(velden).toEqual(["beginsaldo", "eindsaldo"]);
+      // De paarsgewijze controle zou dit NIET hebben gezien.
+      expect(b.failures.some((f) => f.kind.endsWith("_unbalanced"))).toBe(false);
+    }
+  });
+
   it("16b. een weggevallen rij met saldo breekt de verzoening (dat is het nut ervan)", () => {
     const heel: LedgerAccountReport = {
       ok: true,
