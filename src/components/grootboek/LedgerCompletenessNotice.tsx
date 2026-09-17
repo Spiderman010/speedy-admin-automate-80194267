@@ -57,17 +57,23 @@ export function LedgerCompletenessNotice({ completeness, isLoading, isError }: L
   }
 
   const incomplete = completeness.mayBeIncomplete;
+  // Kon geen enkele bron worden geteld, dan is "onvolledig" al te stellig:
+  // we weten het simpelweg niet. `unknownLedgerCompleteness()` levert precies
+  // die toestand, en die hoort ook zo in beeld te komen.
+  const allesOnbekend = completeness.sources.every((s) => s.status === "unknown");
   return (
     <Alert
       data-testid="ledger-completeness"
-      data-status={incomplete ? "incomplete" : "complete"}
+      data-status={allesOnbekend ? "unknown" : incomplete ? "incomplete" : "complete"}
       className={incomplete ? "border-amber-500/50" : undefined}
     >
       {incomplete ? <Info className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
       <AlertTitle>
-        {incomplete
-          ? "Let op: dit grootboek is mogelijk onvolledig (alle jaren)"
-          : "Alle postbare documenten zijn geboekt (alle jaren)"}
+        {allesOnbekend
+          ? "Volledigheid onbekend"
+          : incomplete
+            ? "Let op: dit grootboek is mogelijk onvolledig (alle jaren)"
+            : "Alle postbare documenten zijn geboekt (alle jaren)"}
       </AlertTitle>
       <AlertDescription>
         <p className="mb-2">

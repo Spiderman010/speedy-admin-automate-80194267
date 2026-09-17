@@ -505,9 +505,29 @@ src/lib/grootboek-saldi-utils.ts                          period selection, labe
 - **Mobile:** both tables scroll horizontally inside their container (`min-w`), never the page.
 - **A11y:** one `h1` per page (PageHeader), `<caption>` + `scope="col"`, status by badge text not colour, account links and source links have accessible names, `role="alert"` on every blocking state.
 
+#### PR 3 — proef- en saldibalans
+
+```
+src/pages/ProefSaldibalans.tsx                            /overzichten/proef-saldibalans
+src/components/overzichten/ProefSaldibalansTable.tsx      negen kolommen, presentatie only
+src/lib/proef-saldibalans.ts                              splitsing, verzoening, CSV — puur
+```
+
+- **Route:** one line in `App.tsx`, nested under `/overzichten`. `nav.ts` untouched. Entry point: the "Proef- en saldibalans" card on Overzichten is now a link; Balans and W&V stay inert with the truthful status **"Beschikbaar na openingsbalans"**.
+- **Source:** `ledger_postings` only, through `useLedgerPostings` → `buildAccountReport()` (PR 1) → `buildTrialBalance()`. The page adds no arithmetic of its own; static tests assert no `journal_entries`, no document totals, no table query in any of the three new files.
+- **Nine columns:** Rekening, Omschrijving, Categorie, Beginsaldo Dr/Cr, Periode Dr/Cr, Eindsaldo Dr/Cr. The kernel stays debit-positive; the split is **presentation only** (`balance > 0` → debet, `< 0` → credit as a positive number, `= 0` → 0/0). No sign flip by category.
+- **Two independent checks.** The kernel's own self-check remains authoritative; on top of it the six column totals are re-summed **from the visible rows** and must be pairwise equal (opening Dr = Cr, period Dr = Cr, closing Dr = Cr). That second check is not decoration: a row can only be dropped without breaking a pair when all six of its figures are zero, so a silently missing row with a balance closes the report instead of understating a total. Either failure ⇒ `role="alert"`, no figures, CSV disabled, never a fallback to document totals.
+- **Period:** exactly PR 2's helpers and half-open `[from, toExclusive)` on `posting_date`; year chips, "Alle jaren", or Van/Tot-en-met with the same single inclusive→exclusive conversion. `boekjaar` never filters.
+- **Zero accounts:** hidden by default (a row is shown when it has a non-zero opening, period movement or non-zero closing). The "Toon nulrekeningen" switch also brings in chart-of-account rows that have no postings at all, marked "Geen boekingen" — nothing is fabricated, and they never move a total. **An unresolved account that carries postings stays visible even when all six figures are zero**, so a posting on an unidentifiable account can never drop out of sight.
+- **Sorting:** account number, then description, then id. Unresolved accounts (no number) sort last. Never by balance, never grouped by category.
+- **Drilldown:** the account name links to the existing `/grootboek/saldi/:accountId` from PR 2; no second mutations implementation.
+- **CSV:** UTF-8 BOM (an explicit `﻿` escape, not an invisible character in the source), `;` delimiter, Dutch decimal comma, no `€`, every field quoted with `""` escaping. Same rows, same order and same totals as the screen, because both render through `formatAmountNl` and the same model. Disabled while the report is invalid, and the handler re-checks validity so a keyboard path cannot bypass the button. Filename `proef-en-saldibalans-<client>-<period>.csv`.
+- **Completeness:** `LedgerCompletenessNotice` reused unchanged in meaning; it is metadata and touches no amount. One minimal fix to that component: an all-unknown completeness now renders `data-status="unknown"` with the title "Volledigheid onbekend" instead of being reported as merely "incomplete".
+- **Explicitly out of scope:** Balans, W&V, opening-balance engine, result transfer, equity/liability split, the `privé` classification decision, year closing.
+
 ---
 
-Future phases: 6C-b6 manual journal posting is the section above (PR 1 schema + writer, PR 2 application layer — both done), 6C-b7 is the section above (PR 1 reporting core done; UI PRs follow). Source-level idempotency is handled per writer (purchase, sales, bank and manual journal each guard their own `source_type` on `ledger_postings`) — see the 6C-b2 migration header for why no universal uniqueness constraint is safe.
+Future phases: 6C-b6 manual journal posting is the section above (PR 1 schema + writer, PR 2 application layer — both done), 6C-b7 is the section above (PR 1 reporting core, PR 2 Grootboeksaldi and PR 3 proef- en saldibalans done; Balans/W&V wait for an opening-balance phase). Source-level idempotency is handled per writer (purchase, sales, bank and manual journal each guard their own `source_type` on `ledger_postings`) — see the 6C-b2 migration header for why no universal uniqueness constraint is safe.
 
 **Status of the 6C-b2 … 6C-b5b chain: ✅ Applied to production** (`alxlbdhpbwlehbdbfejw`). Evidence: the generated `src/integrations/supabase/types.ts` contains `bank_allocation_postings` and `post_bank_allocation`, which only exist once the whole chain (6C-b2 foundation → 6C-b2a → 6C-b3 → 6C-b4 → 6C-b5a → 6C-b5b) has been applied; the 6C-b5b prerequisite guard would have refused otherwise.
 

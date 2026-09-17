@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,9 +47,17 @@ import { useToast } from "@/hooks/use-toast";
 import { formatEuro } from "@/lib/format";
 
 const reportTypes = [
-  { title: "Proef- en saldibalans", icon: FileBarChart, status: "Beschikbaar na grootboekintegratie" },
-  { title: "Balans", icon: Landmark, status: "Beschikbaar na grootboekintegratie" },
-  { title: "Winst-en-verliesrekening", icon: BarChart3, status: "Beschikbaar na grootboekintegratie" },
+  {
+    title: "Proef- en saldibalans",
+    icon: FileBarChart,
+    status: "Beschikbaar",
+    href: "/overzichten/proef-saldibalans",
+  },
+  // Balans en W&V blijven dicht: zonder openingsbalans zou een balans elke
+  // post missen die dateert van vóór het eerste geboekte document, en zonder
+  // resultaatbestemming sluit hij per definitie niet. Zie PROJECT_MAP 6C-b7.
+  { title: "Balans", icon: Landmark, status: "Beschikbaar na openingsbalans" },
+  { title: "Winst-en-verliesrekening", icon: BarChart3, status: "Beschikbaar na openingsbalans" },
   { title: "Grootboek", icon: BookOpen, status: "Nog niet beschikbaar" },
   { title: "BTW-overzicht", icon: ReceiptText, status: "Nog niet beschikbaar" },
 ] as const;
@@ -184,21 +193,37 @@ export default function Overzichten() {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-          {reportTypes.map(({ title, icon: Icon, status }) => (
-            <Card key={title} className="min-w-0 shadow-sm">
+          {reportTypes.map((rapport) => {
+            const { title, icon: Icon, status } = rapport;
+            const href = "href" in rapport ? rapport.href : undefined;
+            const inhoud = (
               <CardContent className="flex min-h-32 flex-col justify-between p-4">
                 <div className="flex min-w-0 items-start gap-3">
                   <div className="rounded-md border bg-muted/50 p-2" aria-hidden="true">
-                    <Icon className="h-4 w-4 text-muted-foreground" />
+                    <Icon className={`h-4 w-4 ${href ? "text-primary" : "text-muted-foreground"}`} />
                   </div>
                   <h3 className="min-w-0 break-words text-sm font-semibold leading-5">{title}</h3>
                 </div>
-                <Badge variant="outline" className="mt-4 w-fit max-w-full whitespace-normal text-left font-normal text-muted-foreground">
+                <Badge
+                  variant="outline"
+                  className={`mt-4 w-fit max-w-full whitespace-normal text-left font-normal ${href ? "" : "text-muted-foreground"}`}
+                >
                   {status}
                 </Badge>
               </CardContent>
-            </Card>
-          ))}
+            );
+            // Alleen een beschikbaar rapport is aanklikbaar; de rest blijft een
+            // inerte kaart, zodat niemand op een dood pad klikt.
+            return href ? (
+              <Card key={title} className="min-w-0 shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/30">
+                <Link to={href} className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open ${title}`}>
+                  {inhoud}
+                </Link>
+              </Card>
+            ) : (
+              <Card key={title} className="min-w-0 shadow-sm">{inhoud}</Card>
+            );
+          })}
         </div>
       </section>
 
@@ -266,8 +291,11 @@ export default function Overzichten() {
       ) : (
         <section aria-labelledby="huidig-overzicht-heading" className="space-y-4">
           <div>
-            <h2 id="huidig-overzicht-heading" className="font-display text-base font-semibold">Huidig financieel overzicht</h2>
-            <p className="text-sm text-muted-foreground">Beschikbare gegevens voor de geselecteerde administratie.</p>
+            <h2 id="huidig-overzicht-heading" className="font-display text-base font-semibold">Brondocumenten van deze administratie</h2>
+            <p className="text-sm text-muted-foreground">
+              Tellingen uit de brondocumenten, niet uit het grootboek. Voor geboekte grootboekcijfers:
+              zie de proef- en saldibalans hierboven.
+            </p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
