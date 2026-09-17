@@ -14,11 +14,13 @@
 --   3. public.opening_balance_postings  — the atomic source-claim marker
 --   4. RLS + grants (including the column-level grants that make the nil
 --      columns unwritable outside the RPC)
---   5. public.save_opening_balance_lines(uuid, jsonb) — atomic replace of a draft's lines
---   6. public.post_opening_balance(uuid)             — the only supported ledger write path
---   7. public.declare_opening_balance_nil(uuid)      — the audited "no opening balance" assertion
---   8. enforce_opening_balance_source_claim()        — ledger_postings guard for this source
---   9. freeze — posted OR nil-declared header and lines become immutable
+--   5. opening_balance_client_lock_key(uuid)        — the shared per-administratie lock key
+--   6. public.save_opening_balance_lines(uuid, jsonb) — atomic replace of a draft's lines
+--   7. public.post_opening_balance(uuid)             — the only supported ledger write path
+--   8. public.declare_opening_balance_nil(uuid)      — the audited "no opening balance" assertion
+--   9. enforce_opening_balance_source_claim()        — ledger_postings guard for this source
+--  10. enforce_no_posting_before_opening_balance()   — nothing may be posted before it
+--  11. freeze — posted OR nil-declared header and lines become immutable
 --
 -- NO BACKFILL. Nothing existing is posted, converted or read for figures by
 -- this migration. public.journal_entries is NOT touched, NOT read and NOT
@@ -114,7 +116,11 @@
 -- opening balance silently double-counts everything that precedes it, and no
 -- later check would ever catch it: the group itself balances, so every
 -- invariant in 6C-b2 and every self-check in the reporting kernel stays happy
--- while the figures are wrong. It is refused at the only moment it can be seen.
+-- while the figures are wrong. The mirror image — a back-dated purchase, sales,
+-- bank or memoriaal row posted AFTER the beginbalans, into the period it
+-- already summarises — is the same double count from the other side, and is
+-- refused by the trigger in section 10. Section 10 also states the one race
+-- the pair does not close.
 --
 -- source_type = 'opening_balance' (the value the foundation's COMMENT already
 -- reserved), source_id = opening_balances.id, source_line_id =
@@ -128,7 +134,7 @@
 -- construction and not by convention:
 --   • save_opening_balance_lines() only exists for a DRAFT. It refuses (42501)
 --     as soon as a marker exists or the header is nil-declared, and the line
---     freeze trigger (section 9) refuses every INSERT/UPDATE/DELETE on the
+--     freeze trigger (section 11) refuses every INSERT/UPDATE/DELETE on the
 --     lines of a posted or nil-declared header for every role.
 --   • the poster locks header AND lines (FOR UPDATE) before reading them and
 --     writes the marker BEFORE the first ledger row, in one transaction. A
@@ -156,7 +162,7 @@
 --                 draft → nil      via declare_opening_balance_nil()   (accountant)
 --                 draft → deleted  ordinary DELETE                      (accountant)
 --                 posted/nil → *   NONE. Both are terminal in v1 and frozen by
---                                  section 9. A correction requires the future
+--                                  section 11. A correction requires the future
 --                                  reversal engine.
 --
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -168,11 +174,12 @@
 --
 --   (a) UNIQUE INDEX uniq_opening_balance_postings_client ON
 --       opening_balance_postings (client_id)
---       — declarative, and the serialisation point for two concurrent posts of
---       DIFFERENT headers of the same administratie: the second transaction
---       blocks on the uncommitted key and then fails with unique_violation.
---       Deliberately an INDEX, not a PRIMARY KEY and not a UNIQUE CONSTRAINT —
---       see RELAXATION below.
+--       — the declarative backstop for two concurrent posts of DIFFERENT
+--       headers of the same administratie. In practice the advisory lock in (c)
+--       serialises them first, so the second caller is refused with a readable
+--       message rather than a unique_violation; the index is what still holds if
+--       a caller ever reaches the marker without that lock. Deliberately an
+--       INDEX, not a PRIMARY KEY and not a UNIQUE CONSTRAINT — see RELAXATION.
 --
 --   (b) UNIQUE INDEX uniq_opening_balance_nil_per_client ON
 --       opening_balances (client_id) WHERE nil_declared_at IS NOT NULL
@@ -184,7 +191,7 @@
 --   (c) the CROSS-kind rule (posted vs nil) cannot be one index, because the
 --       two states live in two tables. It is enforced by a transaction-scoped
 --       ADVISORY LOCK keyed on client_id, taken by BOTH RPCs before either
---       reads the other's state (section 6 and 7), plus a BEFORE INSERT trigger
+--       reads the other's state (sections 7 and 8), plus a BEFORE INSERT trigger
 --       on the marker. The advisory lock is what makes it race-free rather than
 --       merely checked: without it, post and nil could each read "the other
 --       state does not exist" from their own snapshot and both commit.
@@ -195,7 +202,7 @@
 --       rule are ALSO refused declaratively, for callers that no grant can stop
 --       (a definer- or owner-level statement in the SQL editor): the marker
 --       trigger refuses a claim for a nil-declared administratie, and the freeze
---       trigger in section 10 refuses a nil declaration for an administratie
+--       trigger in section 11 refuses a nil declaration for an administratie
 --       that already has a claim.
 --
 -- ISOLATION: both RPCs refuse anything other than READ COMMITTED, for the same
@@ -216,7 +223,7 @@
 -- (b) is already partial and relaxes the same way (add a withdrawn_at column,
 -- extend the predicate). Had (a) been a PRIMARY KEY on client_id, the same
 -- change would have meant dropping and recreating the key that the marker's own
--- identity rests on. The freeze in section 9 and the append-only ledger are
+-- identity rests on. The freeze in section 11 and the append-only ledger are
 -- untouched by any of this: a reversal still writes NEW rows under its OWN
 -- source_type and never edits a posted one.
 --
@@ -243,11 +250,15 @@
 -- committed new line set; save after post blocks and is then refused because
 -- the marker exists. A mixed old/new line set can never be posted.
 --
--- client_id is IMMUTABLE on the header (it is not in the column-level UPDATE
--- grant, and the freeze refuses it outright). That is what makes LOCK 0 sound:
--- the administratie a header belongs to cannot change under a lock already
--- taken on it. Moving a draft to another administratie means deleting it and
--- creating a new one.
+-- client_id is immutable ON A ROW (it is not in the column-level UPDATE grant,
+-- and enforce_opening_balance_client_org() refuses a change outright), so
+-- moving a draft to another administratie means deleting it and creating a new
+-- one. That is NOT by itself enough to make LOCK 0 sound: the header id is
+-- caller-suppliable and a draft may be deleted and re-created under the same id
+-- for a DIFFERENT administratie while another session waits at LOCK 0. Both
+-- RPCs therefore re-check, after LOCK 1, that the row they locked still belongs
+-- to the administratie whose advisory lock they hold, and abort with 40001 if
+-- it does not.
 --
 -- Deadlock, non-application paths only: a raw MULTI-ROW line statement in the
 -- SQL editor locks line rows in heap order while the poster locks them in
@@ -282,7 +293,7 @@
 --
 --   • REVERSAL ENGINE. No reversal columns here. A reversal writes a NEW ledger
 --     group with reversal_of_posting_id set and its OWN source_type; the claim
---     trigger in section 8 refuses any 'opening_balance' row that carries
+--     trigger in section 9 refuses any 'opening_balance' row that carries
 --     reversal_of_posting_id, so a reversal can never masquerade as, or be
 --     appended to, an original beginbalans group. UNTIL IT EXISTS, POSTING IS
 --     FINAL: a posted or nil-declared beginbalans cannot be edited, re-posted,
@@ -312,6 +323,7 @@
 -- After a posting the only correction path is the future reversal engine.
 --
 -- rollback:
+--   DROP TRIGGER IF EXISTS validate_no_posting_before_opening_balance_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS validate_opening_balance_source_claim_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS prevent_settled_opening_balance_line_mutation_trigger ON public.opening_balance_lines;
 --   DROP TRIGGER IF EXISTS set_opening_balance_line_scope_trigger ON public.opening_balance_lines;
@@ -323,6 +335,7 @@
 --   DROP TRIGGER IF EXISTS validate_opening_balance_client_org_trigger ON public.opening_balances;
 --   DROP TRIGGER IF EXISTS set_organization_id_trigger ON public.opening_balances;
 --   DROP TRIGGER IF EXISTS validate_opening_balance_marker_exclusivity_trigger ON public.opening_balance_postings;
+--   DROP FUNCTION IF EXISTS public.enforce_no_posting_before_opening_balance();
 --   DROP FUNCTION IF EXISTS public.enforce_opening_balance_source_claim();
 --   DROP FUNCTION IF EXISTS public.prevent_settled_opening_balance_line_mutation();
 --   DROP FUNCTION IF EXISTS public.prevent_settled_opening_balance_mutation();
@@ -607,7 +620,7 @@ CREATE TRIGGER update_opening_balances_updated_at
   BEFORE UPDATE ON public.opening_balances
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
--- The freeze trigger is attached in section 9, after its function and the
+-- The freeze trigger is attached in section 11, after its function and the
 -- marker table it reads exist.
 
 COMMENT ON TABLE public.opening_balances IS
@@ -668,7 +681,7 @@ CREATE TABLE IF NOT EXISTS public.opening_balance_lines (
 
 -- The ONLY ON DELETE CASCADE in this file: deleting a DRAFT header removes its
 -- lines. It can never reach a settled line, because a posted or nil-declared
--- header cannot be deleted (section 9 freeze + the RESTRICT FK from the marker).
+-- header cannot be deleted (section 11 freeze + the RESTRICT FK from the marker).
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -842,7 +855,7 @@ COMMENT ON TABLE public.opening_balance_lines IS
 --    The marker also records what was claimed (boekjaar, opening_date,
 --    line_count, total_amount = the debit total of the group) so the audit
 --    trail survives independently of the header it explains, and so the claim
---    trigger in section 8 can pin the shape of the group without re-reading the
+--    trigger in section 9 can pin the shape of the group without re-reading the
 --    header.
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -957,7 +970,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_opening_balance_postings_client
 -- CROSS-kind rule (c), declaratively visible in the schema instead of only in
 -- a function body: a marker may not appear for an administratie that has a nil
 -- declaration. Race-freedom comes from the advisory lock both RPCs take
--- (sections 6 and 7); this trigger is the standing guard that also covers an
+-- (sections 7 and 8); this trigger is the standing guard that also covers an
 -- owner-level INSERT, which no grant can stop.
 CREATE OR REPLACE FUNCTION public.enforce_opening_balance_marker_exclusivity()
 RETURNS trigger
@@ -1329,6 +1342,7 @@ AS $$
 DECLARE
   v_uid          uuid := auth.uid();
   v_header       public.opening_balances%ROWTYPE;
+  v_locked_client uuid;
   v_client       public.clients%ROWTYPE;
   v_group_id     uuid := gen_random_uuid();
   v_line_count   integer;
@@ -1360,17 +1374,17 @@ BEGIN
   END IF;
 
   -- (3) Read the header WITHOUT a lock first, only to learn the administratie
-  -- the advisory lock must be taken on. client_id is immutable (section 1), so
-  -- this value cannot go stale between here and LOCK 1.
+  -- the advisory lock must be taken on.
   SELECT * INTO v_header FROM public.opening_balances WHERE id = _opening_balance_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Beginbalans niet gevonden' USING ERRCODE = 'P0002';
   END IF;
+  v_locked_client := v_header.client_id;
 
   -- (4) LOCK 0 — the administratie. Serialises this posting against every other
   -- opening-balance assertion of the same administratie, including a nil
   -- declaration of a DIFFERENT header, which no index could cover.
-  PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_header.client_id));
+  PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_locked_client));
 
   -- (5) LOCK 1 — the header, FOR UPDATE, re-read under the advisory lock.
   SELECT * INTO v_header
@@ -1379,6 +1393,20 @@ BEGIN
   FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Beginbalans niet gevonden' USING ERRCODE = 'P0002';
+  END IF;
+
+  -- (5a) The lock must cover the row we are about to act on. client_id is
+  -- immutable ON A ROW, but the header id → administratie MAPPING is not: a
+  -- draft may be deleted and re-created under the same id (id is caller-
+  -- suppliable, DELETE sits at the accountant floor), and the window for that
+  -- is exactly the wait at LOCK 0 — widest precisely when the lock matters.
+  -- Without this, a posting could commit for an administratie whose advisory
+  -- lock is held by someone else, which would silently disarm the only
+  -- mechanism that makes "geboekt XOR nihil" race-free. Retryable: the caller
+  -- simply calls again and then locks the right administratie.
+  IF v_header.client_id IS DISTINCT FROM v_locked_client THEN
+    RAISE EXCEPTION 'De beginbalans is tussentijds gewijzigd; probeer opnieuw'
+      USING ERRCODE = '40001';
   END IF;
 
   -- (6) Tenant + role, both from stored data. POSTING FLOOR = accountant.
@@ -1482,11 +1510,15 @@ BEGIN
 
   -- (16) One aggregate over the locked lines, then refusals in a fixed order so
   -- the first message names the most fundamental problem.
-  --   • the NaN filter is real: a NaN line passes the zero / both-sides /
-  --     negative / decimals filters AND the balance check (NaN = NaN), so it is
-  --     counted separately and refused before the balance is compared;
-  --   • the decimals filter is unreachable through the numeric(12,2) typmod; it
-  --     is kept so the writer does not lean on a typmod it does not own.
+  --   ALL of these filters are unreachable through a stored line, and that is
+  --   deliberate rather than an oversight: both-sides, negative and NaN are
+  --   refused by the CHECKs on opening_balance_lines, >2 decimals by the
+  --   numeric(12,2) typmod, and a scope mismatch by set_opening_balance_line_scope,
+  --   which always overwrites organization_id and client_id from the header. The
+  --   writer keeps them so it does not lean on constraints and triggers it does
+  --   not own. The NaN filter still runs BEFORE the balance comparison, because
+  --   NaN = NaN is TRUE in PostgreSQL and an unbalanced NaN group would
+  --   otherwise be reported as balanced.
   SELECT COUNT(*),
          COUNT(*) FILTER (WHERE l.grootboekrekening_id IS NULL),
          COUNT(*) FILTER (WHERE l.debit_amount = 0 AND l.credit_amount = 0),
@@ -1662,6 +1694,7 @@ AS $$
 DECLARE
   v_uid    uuid := auth.uid();
   v_header public.opening_balances%ROWTYPE;
+  v_locked_client uuid;
   v_client public.clients%ROWTYPE;
   v_lines  integer;
 BEGIN
@@ -1676,15 +1709,15 @@ BEGIN
       USING ERRCODE = '25000';
   END IF;
 
-  -- (3) Unlocked read, only to learn the administratie for LOCK 0. client_id is
-  -- immutable, so it cannot go stale before LOCK 1.
+  -- (3) Unlocked read, only to learn the administratie for LOCK 0.
   SELECT * INTO v_header FROM public.opening_balances WHERE id = _opening_balance_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Beginbalans niet gevonden' USING ERRCODE = 'P0002';
   END IF;
+  v_locked_client := v_header.client_id;
 
   -- (4) LOCK 0 — the administratie, the same lock post_opening_balance() takes.
-  PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_header.client_id));
+  PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_locked_client));
 
   -- (5) LOCK 1 — the header, FOR UPDATE, re-read under the advisory lock.
   SELECT * INTO v_header
@@ -1693,6 +1726,14 @@ BEGIN
   FOR UPDATE;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Beginbalans niet gevonden' USING ERRCODE = 'P0002';
+  END IF;
+
+  -- (5a) The lock must cover the row we are about to act on — see the same
+  -- step in post_opening_balance() for why the id → administratie mapping is
+  -- not stable across the wait at LOCK 0.
+  IF v_header.client_id IS DISTINCT FROM v_locked_client THEN
+    RAISE EXCEPTION 'De beginbalans is tussentijds gewijzigd; probeer opnieuw'
+      USING ERRCODE = '40001';
   END IF;
 
   -- (6) Tenant + role, both from stored data. FLOOR = accountant, the same as
@@ -1753,7 +1794,7 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- (11) Record it. The freeze in section 9 makes the row immutable from here.
+  -- (11) Record it. The freeze in section 11 makes the row immutable from here.
   UPDATE public.opening_balances
   SET nil_declaration = true,
       nil_declared_at = now(),
@@ -1864,9 +1905,13 @@ BEGIN
     RAISE EXCEPTION 'source_line_id hoort niet bij deze beginbalans' USING ERRCODE = '23514';
   END IF;
 
-  IF NEW.grootboekrekening_id <> v_line.grootboekrekening_id
-     OR NEW.debit_amount <> v_line.debit_amount
-     OR NEW.credit_amount <> v_line.credit_amount THEN
+  -- IS DISTINCT FROM, not <>: a NULL on either side would make <> evaluate to
+  -- NULL and let the row through. Unreachable today (the poster refuses a line
+  -- without an account before the marker exists, and lines freeze afterwards),
+  -- but this is the one guard whose whole job is to fail closed.
+  IF NEW.grootboekrekening_id IS DISTINCT FROM v_line.grootboekrekening_id
+     OR NEW.debit_amount IS DISTINCT FROM v_line.debit_amount
+     OR NEW.credit_amount IS DISTINCT FROM v_line.credit_amount THEN
     RAISE EXCEPTION 'Grootboekregel wijkt af van de bevroren beginbalansregel' USING ERRCODE = '23514';
   END IF;
 
@@ -1898,7 +1943,79 @@ COMMENT ON FUNCTION public.enforce_opening_balance_source_claim() IS
 'Bewaakt dat elke grootboekregel met source_type=opening_balance exact overeenkomt met de claim in opening_balance_postings én met de bevroren beginbalansregel (source_line_id: rekening en bedragen). Sluit een tweede boekingsgroep, een extra of afwijkende regel, een afwijkende datum of boekjaar en een tegenboeking onder deze bronsoort uit.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 10) A settled beginbalans is frozen — header and lines
+-- 10) Nothing may be posted BEFORE a posted beginbalans
+--
+--     post_opening_balance() refuses a beginbalans that is not the earliest
+--     fact of its administratie. That check runs once, in one direction. The
+--     other direction stayed wide open: after a beginbalans is posted, any of
+--     the four existing writers could still post a back-dated purchase, sales,
+--     bank or memoriaal row into the period the beginbalans already summarises
+--     — the exact silent double count the earlier check exists to prevent, and
+--     one an accountant can cause with an ordinary typo rather than an attack.
+--
+--     So the rule is enforced from both sides. This trigger is scoped to
+--     administraties that HAVE a posted beginbalans: for every other
+--     administratie — which today is all of them — it changes nothing, and it
+--     never refuses a row for an administratie that has only a draft or a nil
+--     declaration. Rows of this source type are skipped, so the poster's own
+--     rows (dated exactly opening_date) are never judged by it.
+--
+--     Integrity, not authorization: no auth.uid(), no role check. It must hold
+--     for every DML path, including service-role and maintenance paths.
+--
+--     HONEST LIMIT, stated rather than papered over: this trigger and the
+--     poster's own earliest-fact check both read committed state. Two
+--     transactions that commit at the same instant — one posting the
+--     beginbalans, one posting a back-dated document — can still interleave so
+--     that neither sees the other. Closing that would mean making every writer
+--     take the beginbalans advisory lock of its administratie, which would
+--     serialise all posting per administratie for a race that requires the two
+--     events to land in the same instant. That trade-off is an owner decision
+--     and is deliberately NOT made here.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.enforce_no_posting_before_opening_balance()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_opening date;
+BEGIN
+  -- The beginbalans itself is dated ON its opening date, never before it.
+  IF NEW.source_type = 'opening_balance' THEN
+    RETURN NEW;
+  END IF;
+
+  -- At most one row: uniq_opening_balance_postings_client.
+  SELECT obp.opening_date INTO v_opening
+  FROM public.opening_balance_postings obp
+  WHERE obp.client_id = NEW.client_id;
+
+  IF v_opening IS NOT NULL AND NEW.posting_date < v_opening THEN
+    RAISE EXCEPTION 'De beginbalans van deze administratie staat op %; een boeking van % ligt daarvóór en zou dubbel tellen', v_opening, NEW.posting_date
+      USING ERRCODE = '22023';
+  END IF;
+
+  RETURN NEW;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.enforce_no_posting_before_opening_balance() FROM PUBLIC;
+
+-- "validate_" keeps it after set_organization_id_trigger, so client_id and
+-- organization_id are already resolved when they are read.
+DROP TRIGGER IF EXISTS validate_no_posting_before_opening_balance_trigger ON public.ledger_postings;
+CREATE TRIGGER validate_no_posting_before_opening_balance_trigger
+  BEFORE INSERT ON public.ledger_postings
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_no_posting_before_opening_balance();
+
+COMMENT ON FUNCTION public.enforce_no_posting_before_opening_balance() IS
+'Weigert een grootboekregel met een boekingsdatum vóór de geboekte beginbalans van dezelfde administratie: die periode is al in de beginbalans samengevat, dus zo''n regel telt dubbel. Raakt alleen administraties met een geboekte beginbalans en nooit de beginbalans zelf.';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 11) A settled beginbalans is frozen — header and lines
 --
 --     "Settled" means EITHER a marker exists OR nil_declared_at is set. Both
 --     are terminal accounting assertions and both must become immutable, for
@@ -1943,6 +2060,22 @@ AS $$
 DECLARE
   v_was_settled boolean;
 BEGIN
+  -- A header is ALWAYS born a draft. The nil columns are excluded from the
+  -- column-level INSERT grant, so no application role can do otherwise; this
+  -- branch closes the same door for a definer- or owner-level INSERT, which no
+  -- grant can stop. Without it the cross-kind rule was asymmetric: the marker
+  -- trigger refused a claim next to a nil declaration on INSERT, but a header
+  -- could be INSERTed already nil-declared next to a posted beginbalans — two
+  -- effective assertions for one administratie, which is exactly what the
+  -- DOMAIN UNIQUENESS block promises can never exist.
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.nil_declared_at IS NOT NULL OR NEW.nil_declared_by IS NOT NULL OR NEW.nil_declaration THEN
+      RAISE EXCEPTION 'Een nihil-verklaring wordt vastgelegd met declare_opening_balance_nil(), niet bij het aanmaken van een beginbalans'
+        USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+  END IF;
+
   IF TG_OP = 'DELETE' THEN
     IF OLD.nil_declared_at IS NOT NULL THEN
       RAISE EXCEPTION 'Deze beginbalans is op nihil verklaard; verwijderen is niet mogelijk.'
@@ -2074,7 +2207,7 @@ REVOKE ALL ON FUNCTION public.prevent_settled_opening_balance_line_mutation() FR
 
 DROP TRIGGER IF EXISTS prevent_settled_opening_balance_mutation_trigger ON public.opening_balances;
 CREATE TRIGGER prevent_settled_opening_balance_mutation_trigger
-  BEFORE UPDATE OR DELETE ON public.opening_balances
+  BEFORE INSERT OR UPDATE OR DELETE ON public.opening_balances
   FOR EACH ROW EXECUTE FUNCTION public.prevent_settled_opening_balance_mutation();
 
 DROP TRIGGER IF EXISTS prevent_settled_opening_balance_line_mutation_trigger ON public.opening_balance_lines;

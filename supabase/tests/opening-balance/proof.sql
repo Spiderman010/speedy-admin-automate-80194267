@@ -258,7 +258,7 @@ SELECT proof.expect_true('29a', 'de partiële unieke index op (groep, bronregel)
     AND indexdef LIKE '%posting_group_id, source_line_id%'
     AND indexdef LIKE '%opening_balance%'
 $$);
-SELECT proof.expect_error('29b', 'dezelfde beginbalansregel kan niet twee keer in het grootboek staan', $$
+SELECT proof.expect_error('29b', 'een tweede grootboekregel op een al vastgelegde boekingsgroep wordt geweigerd (6C-b2 zegel)', $$
   INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
     line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, source_id, source_line_id, user_id)
   SELECT lp.organization_id, lp.client_id, lp.grootboekrekening_id, lp.posting_group_id, 2,
@@ -489,6 +489,15 @@ SELECT proof.expect_error('24e', 'save_opening_balance_lines weigert een nihil-v
 SELECT proof.expect_error('24f', 'een tweede nihil-verklaring op dezelfde kop wordt geweigerd',
   $$SELECT public.declare_opening_balance_nil('00000000-0000-0000-0000-00000000b010')$$,
   'al op nihil verklaard');
+-- 24g toetst de bevriezing zelf, niet het kolomrecht: als eigenaar, dus zonder
+-- enig recht dat de UPDATE al eerder tegenhoudt.
+RESET ROLE;
+SELECT proof.expect_error('24g', 'ook een eigenaar kan een nihil-verklaring niet intrekken', $$
+  UPDATE public.opening_balances
+  SET nil_declaration = false, nil_declared_at = NULL, nil_declared_by = NULL
+  WHERE id = '00000000-0000-0000-0000-00000000b010'
+$$, 'vastgelegd');
+SET ROLE authenticated;
 
 -- 26b posted + nil is refused even for a caller no grant can stop ──────────
 -- (the proof runs as `authenticated`, so it drops to the owner for this one
@@ -571,6 +580,53 @@ SELECT proof.expect_ok('39b', 'en de beginbalans kan daarna alsnog gewoon worden
 SELECT proof.draft('00000000-0000-0000-0000-00000000b015', '00000000-0000-0000-0000-0000000000cc', DATE '2027-01-01');
 SELECT proof.expect_ok('S1', 'twee concepten voor één administratie mogen naast elkaar bestaan',
   $$SELECT proof.draft('00000000-0000-0000-0000-00000000b016', '00000000-0000-0000-0000-0000000000cc', DATE '2027-01-01')$$);
+
+-- 44 een kop kan niet al nihil-verklaard geboren worden ────────────────────
+RESET ROLE;
+SELECT proof.expect_error('44', 'ook een eigenaar kan geen kop invoegen die al op nihil staat', $$
+  INSERT INTO public.opening_balances (organization_id, client_id, user_id, boekjaar, opening_date,
+    description, nil_declaration, nil_declared_at, nil_declared_by)
+  VALUES ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000c1',
+    '00000000-0000-0000-0000-0000000000e1', 2027, DATE '2027-01-01', 'Sluiproute',
+    true, now(), '00000000-0000-0000-0000-0000000000e1')
+$$, 'declare_opening_balance_nil()');
+SELECT proof.expect_true('44b', 'klant 1 heeft nog steeds precies één bewering', $$
+  SELECT (SELECT count(*) FROM public.opening_balance_postings WHERE client_id = '00000000-0000-0000-0000-0000000000c1') = 1
+     AND (SELECT count(*) FROM public.opening_balances WHERE client_id = '00000000-0000-0000-0000-0000000000c1' AND nil_declared_at IS NOT NULL) = 0
+$$);
+SET ROLE authenticated;
+
+-- 45 na een geboekte beginbalans kan er niets meer vóór die datum ──────────
+-- Klant 1 heeft een geboekte beginbalans op 2027-01-01 (proef 1).
+SELECT proof.expect_error('45', 'een terugwerkende boeking vóór de beginbalans wordt geweigerd', $$
+  INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
+    line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
+  SELECT '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000c1', g,
+         '00000000-0000-0000-0000-0000000099f2'::uuid, n, DATE '2026-12-31', 2026, d, c, 'EUR',
+         'purchase_invoice', '00000000-0000-0000-0000-0000000000e1'
+  FROM (VALUES
+    ('00000000-0000-0000-0000-00000000f001'::uuid, 1, 3.00::numeric, 0::numeric),
+    ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 3.00::numeric)
+  ) AS v(g, n, d, c)
+$$, 'zou dubbel tellen');
+SELECT proof.expect_true('45b', 'en het grootboek van die administratie is onveranderd', $$
+  SELECT count(*) = 2 FROM public.ledger_postings WHERE client_id = '00000000-0000-0000-0000-0000000000c1'
+$$);
+-- Een administratie ZONDER geboekte beginbalans merkt er niets van: klant 6
+-- kreeg in proef 19a al een boeking op 2026-12-31 en mag er nog een krijgen.
+SELECT proof.expect_ok('45c', 'een administratie zonder geboekte beginbalans wordt niet geraakt', $$
+  INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
+    line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
+  SELECT '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000c6', g,
+         '00000000-0000-0000-0000-0000000099f3'::uuid, n, DATE '2026-11-30', 2026, d, c, 'EUR',
+         'purchase_invoice', '00000000-0000-0000-0000-0000000000e1'
+  FROM (VALUES
+    ('00000000-0000-0000-0000-00000000f001'::uuid, 1, 4.00::numeric, 0::numeric),
+    ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 4.00::numeric)
+  ) AS v(g, n, d, c)
+$$);
+-- En de beginbalans zelf wordt nooit door zijn eigen bewaker geweigerd: proef
+-- 1, 2, 21, 37 en 39b boekten allemaal op of ná hun openingsdatum.
 
 -- read_only may not write ───────────────────────────────────────────────────
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e3', false);

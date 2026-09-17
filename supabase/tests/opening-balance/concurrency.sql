@@ -59,7 +59,11 @@ INSERT INTO public.clients (id, organization_id, name) VALUES
   ('00000000-0000-0000-0000-0000000000d3', '00000000-0000-0000-0000-0000000000a1', 'Race 3'),
   ('00000000-0000-0000-0000-0000000000d4', '00000000-0000-0000-0000-0000000000a1', 'Race 4'),
   ('00000000-0000-0000-0000-0000000000d5', '00000000-0000-0000-0000-0000000000a1', 'Race 5'),
-  ('00000000-0000-0000-0000-0000000000d6', '00000000-0000-0000-0000-0000000000a1', 'Race 6');
+  ('00000000-0000-0000-0000-0000000000d6', '00000000-0000-0000-0000-0000000000a1', 'Race 6'),
+  ('00000000-0000-0000-0000-0000000000d7', '00000000-0000-0000-0000-0000000000a1', 'Race 7'),
+  ('00000000-0000-0000-0000-0000000000d8', '00000000-0000-0000-0000-0000000000a1', 'Race 8'),
+  ('00000000-0000-0000-0000-0000000000d9', '00000000-0000-0000-0000-0000000000a1', 'Race 9'),
+  ('00000000-0000-0000-0000-0000000000da', '00000000-0000-0000-0000-0000000000a1', 'Race 10');
 
 SELECT proof.draft('00000000-0000-0000-0000-000000000ab1', '00000000-0000-0000-0000-0000000000d1', DATE '2027-01-01');
 SELECT proof.line('00000000-0000-0000-0000-000000000ab1', '00000000-0000-0000-0000-00000000f001', 10.00, 0, 1);
@@ -87,6 +91,21 @@ SELECT proof.line('00000000-0000-0000-0000-000000000ab8', '00000000-0000-0000-00
 SELECT proof.line('00000000-0000-0000-0000-000000000ab8', '00000000-0000-0000-0000-00000000f002', 0, 60.00, 2);
 
 SELECT proof.draft('00000000-0000-0000-0000-000000000ab9', '00000000-0000-0000-0000-0000000000d6', DATE '2027-01-01');
+
+-- C43: de kop wordt onder de wachtende boeker vandaan verwisseld.
+SELECT proof.draft('00000000-0000-0000-0000-000000000aba', '00000000-0000-0000-0000-0000000000d7', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-000000000aba', '00000000-0000-0000-0000-00000000f001', 70.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-000000000aba', '00000000-0000-0000-0000-00000000f002', 0, 70.00, 2);
+
+-- C44: losse regel-INSERT tegen een lopende boeking.
+SELECT proof.draft('00000000-0000-0000-0000-000000000abb', '00000000-0000-0000-0000-0000000000d9', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-000000000abb', '00000000-0000-0000-0000-00000000f001', 80.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-000000000abb', '00000000-0000-0000-0000-00000000f002', 0, 80.00, 2);
+
+-- C45: regels opslaan en dan boeken.
+SELECT proof.draft('00000000-0000-0000-0000-000000000abc', '00000000-0000-0000-0000-0000000000da', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-000000000abc', '00000000-0000-0000-0000-00000000f001', 1.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-000000000abc', '00000000-0000-0000-0000-00000000f002', 0, 1.00, 2);
 
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
@@ -194,6 +213,84 @@ SELECT proof.remote_result('42', 'gelijktijdig op nihil verklaren en regels opsl
 SELECT dblink_exec('b', 'ROLLBACK');
 SELECT proof.expect_true('42b', 'de nihil-verklaarde beginbalans heeft nog steeds geen regels', $$
   SELECT count(*) = 0 FROM public.opening_balance_lines WHERE opening_balance_id = '00000000-0000-0000-0000-000000000ab9'
+$$);
+
+-- ── C43: de advisory lock moet de administratie dekken die werkelijk wordt
+--        geschreven. Drie sessies: C houdt de grendel van administratie 7,
+--        B wil daar boeken en wacht, en A verwisselt intussen de kop naar
+--        administratie 8. Zonder de hercontrole na LOCK 1 zou B committen voor
+--        een administratie waarvan de grendel bij iemand anders ligt.
+
+SELECT dblink_connect('c', :'conn');
+SELECT * FROM dblink('c', $$SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)$$) AS t(x text);
+SELECT dblink_exec('c', 'BEGIN');
+SELECT * FROM dblink('c', $$SELECT pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key('00000000-0000-0000-0000-0000000000d7'))::text$$) AS t(x text);
+
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_send_query('b', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-000000000aba')::text$$);
+SELECT pg_sleep(0.4);
+
+-- A verwisselt de kop: zelfde id, andere administratie.
+DELETE FROM public.opening_balance_lines WHERE opening_balance_id = '00000000-0000-0000-0000-000000000aba';
+DELETE FROM public.opening_balances WHERE id = '00000000-0000-0000-0000-000000000aba';
+SELECT proof.draft('00000000-0000-0000-0000-000000000aba', '00000000-0000-0000-0000-0000000000d8', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-000000000aba', '00000000-0000-0000-0000-00000000f001', 70.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-000000000aba', '00000000-0000-0000-0000-00000000f002', 0, 70.00, 2);
+
+SELECT dblink_exec('c', 'ROLLBACK');   -- grendel van administratie 7 los; B loopt door
+
+SELECT proof.remote_result('43', 'een kop die onder de wachtende boeker is verwisseld, wordt niet geboekt',
+  'b', 'tussentijds gewijzigd');
+-- COMMIT, niet ROLLBACK: als de tweede sessie tóch had geboekt, moet die
+-- boeking blijven staan, zodat 43b hem ziet. (Op een afgebroken transactie is
+-- COMMIT een rollback, dus na een terechte weigering verandert er niets.)
+SELECT dblink_exec('b', 'COMMIT');
+SELECT proof.expect_true('43b', 'er is niets geboekt voor de administratie waarvan de grendel niet werd gehouden', $$
+  SELECT (SELECT count(*) FROM public.opening_balance_postings WHERE client_id = '00000000-0000-0000-0000-0000000000d8') = 0
+     AND (SELECT count(*) FROM public.opening_balance_postings WHERE client_id = '00000000-0000-0000-0000-0000000000d7') = 0
+$$);
+SELECT dblink_disconnect('c');
+
+-- ── C44: een losse regel-INSERT die tegen een lopende boeking aanloopt. De
+--        bevriezingstrigger grendelt bij INSERT eerst de kop (FOR KEY SHARE),
+--        dus de regel kan nooit ná de boeking alsnog binnenkomen.
+
+SELECT dblink_exec('b', 'BEGIN');
+BEGIN;
+SELECT public.post_opening_balance('00000000-0000-0000-0000-000000000abb');
+SELECT dblink_send_query('b', $$INSERT INTO public.opening_balance_lines
+  (opening_balance_id, organization_id, client_id, user_id, grootboekrekening_id, debit_amount, sort_order)
+  VALUES ('00000000-0000-0000-0000-000000000abb', '00000000-0000-0000-0000-0000000000a1',
+          '00000000-0000-0000-0000-0000000000d9', '00000000-0000-0000-0000-0000000000e1',
+          '00000000-0000-0000-0000-00000000f001', 5, 9)$$);
+SELECT pg_sleep(0.4);
+COMMIT;
+
+SELECT proof.remote_result('44r', 'een losse regel kan niet ná een gelijktijdige boeking binnenkomen',
+  'b', 'vastgelegd');
+SELECT dblink_exec('b', 'ROLLBACK');
+SELECT proof.expect_true('44r2', 'de geboekte groep telt nog steeds twee regels', $$
+  SELECT count(*) = 2 AND SUM(debit_amount) = 80.00
+  FROM public.ledger_postings WHERE source_id = '00000000-0000-0000-0000-000000000abb'
+$$);
+
+-- ── C45: de andere richting van de kopgrendel — eerst opslaan, dan boeken.
+--        De boeker wacht op LOCK 1 en leest daarna de vastgelegde NIEUWE regels.
+
+SELECT dblink_exec('b', 'BEGIN');
+BEGIN;
+SELECT public.save_opening_balance_lines('00000000-0000-0000-0000-000000000abc',
+  '[{"grootboekrekening_id":"00000000-0000-0000-0000-00000000f001","debit_amount":90},
+    {"grootboekrekening_id":"00000000-0000-0000-0000-00000000f002","credit_amount":90}]'::jsonb);
+SELECT dblink_send_query('b', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-000000000abc')::text$$);
+SELECT pg_sleep(0.4);
+COMMIT;
+
+SELECT proof.remote_result('45r', 'boeken ná een gelijktijdige opslag slaagt', 'b', '');
+SELECT dblink_exec('b', 'COMMIT');
+SELECT proof.expect_true('45r2', 'en het geboekte bedrag is de NIEUWE regelset, niet de oude', $$
+  SELECT count(*) = 2 AND SUM(debit_amount) = 90.00 AND SUM(credit_amount) = 90.00
+  FROM public.ledger_postings WHERE source_id = '00000000-0000-0000-0000-000000000abc'
 $$);
 
 SELECT dblink_disconnect('b');

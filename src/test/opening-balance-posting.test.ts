@@ -30,6 +30,7 @@ const OWN_FUNCTIONS = [
   "post_opening_balance",
   "declare_opening_balance_nil",
   "enforce_opening_balance_source_claim",
+  "enforce_no_posting_before_opening_balance",
   "prevent_settled_opening_balance_mutation",
   "prevent_settled_opening_balance_line_mutation",
 ];
@@ -54,6 +55,7 @@ const claimFn = body("enforce_opening_balance_source_claim");
 const headerGuard = body("prevent_settled_opening_balance_mutation");
 const lineGuard = body("prevent_settled_opening_balance_line_mutation");
 const lineScopeFn = body("set_opening_balance_line_scope");
+const periodFn = body("enforce_no_posting_before_opening_balance");
 const markerExclusivityFn = body("enforce_opening_balance_marker_exclusivity");
 
 const headerTable = table("opening_balances");
@@ -192,10 +194,19 @@ describe("6C-b8 PR 1 — domeinuniciteit: draft / geboekt / nihil", () => {
   it("15. beide beweringen nemen dezelfde advisory lock op de administratie", () => {
     for (const [name, fn] of [["post", postFn], ["nil", nilFn]] as const) {
       expect(fn, name).toContain(
-        "PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_header.client_id));",
+        "PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_locked_client));",
       );
       // De grendel wordt genomen vóór de kop wordt gegrendeld (LOCK 0 → LOCK 1).
       expect(fn.indexOf("pg_advisory_xact_lock"), name).toBeLessThan(fn.indexOf("FOR UPDATE"));
+      // En de grendel moet de rij dekken die daarna wordt geschreven: de
+      // id → administratie koppeling is niet stabiel (een concept kan onder
+      // dezelfde id opnieuw worden aangemaakt voor een andere administratie),
+      // dus na LOCK 1 wordt hercontroleerd en anders afgebroken met 40001.
+      expect(fn, name).toContain("v_locked_client := v_header.client_id;");
+      expect(fn, name).toContain("IF v_header.client_id IS DISTINCT FROM v_locked_client THEN");
+      expect(fn, name).toContain("USING ERRCODE = '40001'");
+      expect(fn.indexOf("v_locked_client :="), name).toBeLessThan(fn.indexOf("pg_advisory_xact_lock"));
+      expect(fn, name).toContain("opening_balance_client_lock_key(v_locked_client)");
     }
   });
 
@@ -363,9 +374,11 @@ describe("6C-b8 PR 1 — claimtrigger op ledger_postings", () => {
     ]) {
       expect(claimFn, needle).toContain(needle);
     }
-    expect(claimFn).toContain("NEW.grootboekrekening_id <> v_line.grootboekrekening_id");
-    expect(claimFn).toContain("NEW.debit_amount <> v_line.debit_amount");
-    expect(claimFn).toContain("NEW.credit_amount <> v_line.credit_amount");
+    // IS DISTINCT FROM, niet <>: een NULL mag deze bewaking nooit openzetten.
+    expect(claimFn).toContain("NEW.grootboekrekening_id IS DISTINCT FROM v_line.grootboekrekening_id");
+    expect(claimFn).toContain("NEW.debit_amount IS DISTINCT FROM v_line.debit_amount");
+    expect(claimFn).toContain("NEW.credit_amount IS DISTINCT FROM v_line.credit_amount");
+    expect(claimFn).not.toMatch(/NEW\.\w+ <> v_line\./);
   });
 
   it("35. heeft een partiële unieke index op (groep, bronregel)", () => {
@@ -380,7 +393,38 @@ describe("6C-b8 PR 1 — claimtrigger op ledger_postings", () => {
   });
 });
 
+describe("6C-b8 PR 1 — niets vóór de beginbalans", () => {
+  it("48. een aparte trigger weigert elke boeking vóór een geboekte beginbalans", () => {
+    expect(periodFn).toContain("FROM public.opening_balance_postings obp");
+    expect(periodFn).toContain("WHERE obp.client_id = NEW.client_id");
+    expect(periodFn).toContain("NEW.posting_date < v_opening");
+    expect(periodFn).toContain("zou dubbel tellen");
+    // De beginbalans zelf wordt nooit door zijn eigen bewaker geweigerd.
+    expect(periodFn).toContain("IF NEW.source_type = 'opening_balance' THEN\n    RETURN NEW;");
+    // Integriteit, geen autorisatie.
+    expect(periodFn).not.toMatch(/auth\.uid\(\)|has_min_role/);
+    expect(sql).toContain(
+      "CREATE TRIGGER validate_no_posting_before_opening_balance_trigger\n  BEFORE INSERT ON public.ledger_postings",
+    );
+  });
+
+  it("49. en de migratie zegt eerlijk welke race dat paar NIET sluit", () => {
+    expect(raw).toContain("HONEST LIMIT");
+    expect(raw).toContain("can still interleave so");
+    expect(raw).toContain("is deliberately NOT made here");
+  });
+});
+
 describe("6C-b8 PR 1 — bevriezing", () => {
+  it("47b. een kop wordt altijd als concept geboren", () => {
+    expect(sql).toContain(
+      "CREATE TRIGGER prevent_settled_opening_balance_mutation_trigger\n  BEFORE INSERT OR UPDATE OR DELETE ON public.opening_balances",
+    );
+    expect(headerGuard).toContain("IF TG_OP = 'INSERT' THEN");
+    expect(headerGuard).toContain("NEW.nil_declared_at IS NOT NULL OR NEW.nil_declared_by IS NOT NULL OR NEW.nil_declaration");
+    expect(headerGuard).toContain("declare_opening_balance_nil(), niet bij het aanmaken");
+  });
+
   it("37. bevriest zowel de geboekte als de nihil-verklaarde staat", () => {
     expect(headerGuard).toContain("OLD.nil_declared_at IS NOT NULL");
     expect(headerGuard).toContain("FROM public.opening_balance_postings WHERE opening_balance_id = OLD.id");
