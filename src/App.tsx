@@ -17,6 +17,7 @@ import Grootboek from "./pages/Grootboek";
 import GrootboekMutaties from "./pages/GrootboekMutaties";
 import Memoriaal from "./pages/Memoriaal";
 import GrootboekSaldi from "./pages/GrootboekSaldi";
+import ProefSaldibalans from "./pages/ProefSaldibalans";
 import Vraagposten from "./pages/Vraagposten";
 import Leveranciers from "./pages/Leveranciers";
 import Instellingen from "./pages/Instellingen";
@@ -77,6 +78,7 @@ const App = () => (
               <Route path="/verkoop" element={<Verkoop />} />
               <Route path="/boekingen" element={<Boekingen />} />
               <Route path="/overzichten" element={<Overzichten />} />
+              <Route path="/overzichten/proef-saldibalans" element={<ProefSaldibalans />} />
               <Route path="/grootboek" element={<Grootboek />} />
               <Route path="/grootboek/mutaties" element={<GrootboekMutaties />} />
               <Route path="/grootboek/memoriaal" element={<Memoriaal />} />

@@ -1,4 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+// Overzichten bevat sinds 6C-b7 PR 3 een <Link> naar de proef- en saldibalans.
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -53,14 +55,14 @@ beforeEach(() => {
 
 describe("Rapportages pagina", () => {
   it("rendert de paginakop en de toegankelijke administratiekeuze", () => {
-    render(<Overzichten />);
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
     expect(screen.getByRole("heading", { level: 1, name: "Rapportages" })).toBeInTheDocument();
     expect(screen.getByText("Financiële overzichten per administratie")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Administratie selecteren" })).toBeInTheDocument();
   });
 
   it("rendert alle vijf rapportkaarten met tekstuele beschikbaarheidsstatus", () => {
-    render(<Overzichten />);
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
     [
       "Proef- en saldibalans",
       "Balans",
@@ -68,12 +70,15 @@ describe("Rapportages pagina", () => {
       "Grootboek",
       "BTW-overzicht",
     ].forEach((title) => expect(screen.getByRole("heading", { level: 3, name: title })).toBeInTheDocument());
-    expect(screen.getAllByText("Beschikbaar na grootboekintegratie")).toHaveLength(3);
+    // 6C-b7 PR 3: de proef- en saldibalans is beschikbaar; Balans en W&V
+    // wachten op een openingsbalans.
+    expect(screen.getAllByText("Beschikbaar")).toHaveLength(1);
+    expect(screen.getAllByText("Beschikbaar na openingsbalans")).toHaveLength(2);
     expect(screen.getAllByText("Nog niet beschikbaar")).toHaveLength(2);
   });
 
   it("toont niet-werkende periodefilters uitgeschakeld", () => {
-    render(<Overzichten />);
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
     expect(screen.getByRole("combobox", { name: "Boekjaar nog niet beschikbaar" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Periode nog niet beschikbaar" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Vergelijking nog niet beschikbaar" })).toBeDisabled();
@@ -81,27 +86,27 @@ describe("Rapportages pagina", () => {
 
   it("toont een duidelijke lege staat zonder administratie", () => {
     state.selectedClientId = "all";
-    render(<Overzichten />);
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
     expect(screen.getByText("Selecteer een administratie om rapportages te bekijken.")).toBeInTheDocument();
     expect(screen.queryByText("€ 0,00")).not.toBeInTheDocument();
   });
 
   it("toont ontbrekende financiële data niet als nulbedragen", () => {
-    render(<Overzichten />);
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
     expect(screen.getByText("Geen financiële gegevens beschikbaar")).toBeInTheDocument();
     expect(screen.queryByText("€ 0,00")).not.toBeInTheDocument();
   });
 
   it("toont skeletons tijdens laden", () => {
     state.isLoading = true;
-    const { container } = render(<Overzichten />);
+    const { container } = render(<MemoryRouter><Overzichten /></MemoryRouter>);
     expect(screen.getByLabelText("Rapportages laden")).toBeInTheDocument();
     expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
   });
 
   it("toont een foutmelding en gebruikt alleen bestaande refetch-acties", () => {
     state.isError = true;
-    render(<Overzichten />);
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: "Opnieuw proberen" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Rapportagegegevens konden niet worden geladen.");
     expect(refetchSpy).toHaveBeenCalledTimes(5);
@@ -117,8 +122,8 @@ describe("Rapportages pagina", () => {
       btw_amount: 21,
       amount_incl: 121,
     }];
-    render(<Overzichten />);
-    expect(screen.getByRole("heading", { level: 2, name: "Huidig financieel overzicht" })).toBeInTheDocument();
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
+    expect(screen.getByRole("heading", { level: 2, name: "Brondocumenten van deze administratie" })).toBeInTheDocument();
     expect(screen.getByText("Recente inkoopfacturen")).toBeInTheDocument();
     expect(screen.getByText("INV-2026-001")).toBeInTheDocument();
     expect(screen.getByText("Leverancier met een uitzonderlijk lange handelsnaam B.V.")).toHaveAttribute(
@@ -128,7 +133,7 @@ describe("Rapportages pagina", () => {
   });
 
   it("stapelt en schaalt de werkruimte responsief zonder pagina-overloop", () => {
-    render(<Overzichten />);
+    render(<MemoryRouter><Overzichten /></MemoryRouter>);
     const workspace = screen.getByRole("heading", { level: 1, name: "Rapportages" }).closest("div.min-w-0");
     expect(workspace).toHaveClass("overflow-x-hidden");
     expect(source).toContain("grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5");
