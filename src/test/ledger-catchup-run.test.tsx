@@ -201,11 +201,72 @@ describe("overzicht en telling", () => {
   });
 });
 
+describe("niet-positieve boekingsregels", () => {
+  it("4b. een regel van nul blokkeert de factuur, ook al klopt de kop", async () => {
+    db.purchase_invoices = [pi()];
+    db.purchase_invoice_lines = [
+      line("pi-1", { id: "l-a", amount_excl: 100 }),
+      line("pi-1", { id: "l-b", amount_excl: 0 }),
+    ];
+
+    const { result } = await laad();
+    const record = result.current.data!.records[0];
+    expect(record.state).toBe("geblokkeerd");
+    expect(record.blocks.map((b) => b.code)).toContain("regel_bedrag_niet_positief");
+  });
+
+  it("4c. +120 en −20 bij een kop van 100: som klopt, regels niet", async () => {
+    db.purchase_invoices = [pi()];
+    db.purchase_invoice_lines = [
+      line("pi-1", { id: "l-a", amount_excl: 120 }),
+      line("pi-1", { id: "l-b", amount_excl: -20 }),
+    ];
+
+    const { result } = await laad();
+    const record = result.current.data!.records[0];
+    expect(record.state).toBe("geblokkeerd");
+    const codes = record.blocks.map((b) => b.code);
+    expect(codes).toContain("regel_bedrag_niet_positief");
+    // De som is exact 100 en sluit dus wél aan; daar mag niet over geklaagd worden.
+    expect(codes).not.toContain("regels_sluiten_niet_aan");
+  });
+
+  it("4d. uitsluitend positieve regels blijven klaar", async () => {
+    db.purchase_invoices = [pi()];
+    db.purchase_invoice_lines = [
+      line("pi-1", { id: "l-a", amount_excl: 60 }),
+      line("pi-1", { id: "l-b", amount_excl: 40 }),
+    ];
+
+    const { result } = await laad();
+    expect(result.current.data!.records[0].state).toBe("klaar");
+  });
+});
+
 describe("bulkactie", () => {
   async function run(records: readonly unknown[], blocked = 0) {
     const hook = renderHook(() => useRunLedgerCatchup(), { wrapper });
     return hook.result.current.mutateAsync({ records: records as never, blocked });
   }
+
+  it("5b. een factuur met een niet-positieve regel wordt nooit aan de writer aangeboden", async () => {
+    db.purchase_invoices = [pi({ id: "pi-goed" }), pi({ id: "pi-nulregel" })];
+    db.purchase_invoice_lines = [
+      line("pi-goed", { id: "l-goed", amount_excl: 100 }),
+      line("pi-nulregel", { id: "l-1", amount_excl: 120 }),
+      line("pi-nulregel", { id: "l-2", amount_excl: -20 }),
+    ];
+
+    const { result } = await laad();
+    const alle = result.current.data!.records;
+    const uitkomst = await run(alle, 1);
+
+    expect(uitkomst).toMatchObject({ attempted: 1, posted: 1 });
+    // Alleen de gezonde factuur is geprobeerd; de andere is nooit aangeraakt,
+    // dus er komt ook geen voorspelbare writerweigering uit.
+    expect(rpcCalls.map((c) => c.args._invoice_id)).toEqual(["pi-goed"]);
+    expect(uitkomst.failures).toEqual([]);
+  });
 
   it("5. alleen 'klaar' wordt aangeboden; geblokkeerd en geboekt nooit", async () => {
     db.purchase_invoices = [

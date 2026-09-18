@@ -51,6 +51,7 @@ export type CatchupBlockCode =
   | "geen_omzetrekening"
   | "geen_boekingsregels"
   | "regel_zonder_rekening"
+  | "regel_bedrag_niet_positief"
   | "regels_sluiten_niet_aan"
   | "bedragen_sluiten_niet_aan";
 
@@ -111,6 +112,15 @@ export interface CatchupLineAggregate {
   count: number;
   sumExcl: number;
   withoutAccount: number;
+  /**
+   * Regels met `amount_excl <= 0`. De writer loopt de regels één voor één af
+   * en weigert elke individuele regel die niet positief is — een grootboekregel
+   * moet één positieve kant hebben, en een regel stilzwijgend overslaan zou de
+   * aansluiting breken. De SOM zegt daar niets over: +120 en −20 tellen op tot
+   * de kop van 100, waarna deze laag "klaar" zou zeggen terwijl de writer
+   * voorspelbaar weigert.
+   */
+  nonPositiveAmountCount: number;
 }
 
 export interface CatchupSalesInvoice {
@@ -128,7 +138,9 @@ export interface CatchupSalesInvoice {
   grootboekrekening_id: string | null;
 }
 
-const GEEN_REGELS: CatchupLineAggregate = { count: 0, sumExcl: 0, withoutAccount: 0 };
+const GEEN_REGELS: CatchupLineAggregate = {
+  count: 0, sumExcl: 0, withoutAccount: 0, nonPositiveAmountCount: 0,
+};
 
 /**
  * De writer rekent in NUMERIC en hanteert GEEN tolerantie. In JavaScript zijn
@@ -252,6 +264,21 @@ export function evaluatePurchaseInvoice(input: {
         lines.withoutAccount === 1
           ? "Eén boekingsregel heeft geen grootboekrekening"
           : `${lines.withoutAccount} boekingsregels hebben geen grootboekrekening`,
+    });
+  }
+
+  // Per REGEL, niet op de som: de writer loopt de regels af en weigert elke
+  // regel met amount_excl <= 0. Een factuur met +120 en −20 sluit op de kop
+  // van 100 aan en zou zonder deze controle als "klaar" verschijnen, waarna de
+  // writer hem voorspelbaar weigert. Los van `withoutAccount`, want een regel
+  // kan beide gebreken hebben en de gebruiker moet ze allebei zien.
+  if (lines.count > 0 && lines.nonPositiveAmountCount > 0) {
+    blocks.push({
+      code: "regel_bedrag_niet_positief",
+      label:
+        lines.nonPositiveAmountCount === 1
+          ? "Eén boekingsregel heeft een bedrag van nul of lager; zo'n regel kan niet worden geboekt"
+          : `${lines.nonPositiveAmountCount} boekingsregels hebben een bedrag van nul of lager; zulke regels kunnen niet worden geboekt`,
     });
   }
 

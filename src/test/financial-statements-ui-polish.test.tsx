@@ -416,7 +416,14 @@ describe("scope", () => {
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
     expect(changed!.filter((f) => f.startsWith("supabase/") || f.endsWith(".sql"))).toEqual([]);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
-    // Geen routewijziging in een pure polish-PR.
-    expect(changed).not.toContain("src/App.tsx");
+
+    // Voorheen: "src/App.tsx staat niet in de diff". Dat was een uitspraak over
+    // de SCOPE van één polish-PR, geen invariant — elke latere branch die
+    // terecht een route toevoegt, laat hem omvallen. Wat hier werkelijk
+    // beschermd moet worden zijn de twee jaarrekeningroutes zelf: die mogen
+    // niet verdwijnen of verhangen worden.
+    const app = readFileSync("src/App.tsx", "utf8");
+    expect(app).toContain('path="/grootboek/balans"');
+    expect(app).toContain('path="/grootboek/winst-verlies"');
   });
 });

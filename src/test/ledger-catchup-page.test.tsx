@@ -53,15 +53,15 @@ function records(): CatchupRecord[] {
   return [
     evaluatePurchaseInvoice({
       invoice: factuur({ id: "pi-klaar" }), config: CONFIG,
-      lines: { count: 1, sumExcl: 100, withoutAccount: 0 }, postingGroupId: null,
+      lines: { count: 1, sumExcl: 100, withoutAccount: 0, nonPositiveAmountCount: 0 }, postingGroupId: null,
     }),
     evaluatePurchaseInvoice({
       invoice: factuur({ id: "pi-blok", status: "te_controleren" }), config: CONFIG,
-      lines: { count: 1, sumExcl: 100, withoutAccount: 0 }, postingGroupId: null,
+      lines: { count: 1, sumExcl: 100, withoutAccount: 0, nonPositiveAmountCount: 0 }, postingGroupId: null,
     }),
     evaluatePurchaseInvoice({
       invoice: factuur({ id: "pi-geboekt" }), config: CONFIG,
-      lines: { count: 1, sumExcl: 100, withoutAccount: 0 }, postingGroupId: "pg-1",
+      lines: { count: 1, sumExcl: 100, withoutAccount: 0, nonPositiveAmountCount: 0 }, postingGroupId: "pg-1",
     }),
   ];
 }

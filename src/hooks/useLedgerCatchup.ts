@@ -84,8 +84,11 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
 }
 
 /**
- * Dezelfde aggregatie die de writer zelf in één SELECT doet: aantal regels,
- * som exclusief BTW en het aantal regels zonder grootboekrekening.
+ * De regelgegevens waar de writer op controleert: aantal regels, som exclusief
+ * BTW, het aantal regels zonder grootboekrekening en het aantal regels met een
+ * bedrag van nul of lager. Dat laatste is een controle PER REGEL — de writer
+ * weigert elke individuele regel met `amount_excl <= 0`, en dat is niet uit de
+ * som af te leiden.
  */
 async function fetchLineAggregates(invoiceIds: readonly string[]): Promise<Map<string, CatchupLineAggregate>> {
   const perInvoice = new Map<string, CatchupLineAggregate>();
@@ -101,10 +104,14 @@ async function fetchLineAggregates(invoiceIds: readonly string[]): Promise<Map<s
       (r) => r.id,
     );
     for (const row of rows) {
-      const current = perInvoice.get(row.purchase_invoice_id) ?? { count: 0, sumExcl: 0, withoutAccount: 0 };
+      const current = perInvoice.get(row.purchase_invoice_id)
+        ?? { count: 0, sumExcl: 0, withoutAccount: 0, nonPositiveAmountCount: 0 };
+      const amount = row.amount_excl ?? 0;
       current.count += 1;
-      current.sumExcl += row.amount_excl ?? 0;
+      current.sumExcl += amount;
       if (!row.grootboekrekening_id) current.withoutAccount += 1;
+      // Exact de drempel van de writer: nul telt mee, niet alleen negatief.
+      if (amount <= 0) current.nonPositiveAmountCount += 1;
       perInvoice.set(row.purchase_invoice_id, current);
     }
   }

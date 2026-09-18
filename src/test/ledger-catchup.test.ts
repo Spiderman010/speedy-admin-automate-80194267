@@ -8,6 +8,7 @@ import {
   postableRecords,
   summarize,
   type CatchupClientConfig,
+  type CatchupLineAggregate,
   type CatchupPurchaseInvoice,
   type CatchupSalesInvoice,
 } from "@/lib/ledger-catchup";
@@ -44,8 +45,12 @@ const INKOOP: CatchupPurchaseInvoice = {
   btw_amount: 21,
 };
 
+const regels = (over: Partial<CatchupLineAggregate> = {}): CatchupLineAggregate => ({
+  count: 1, sumExcl: 100, withoutAccount: 0, nonPositiveAmountCount: 0, ...over,
+});
+
 /** Eén regel die exact op het bedrag exclusief BTW aansluit, mét rekening. */
-const GOEDE_REGELS = { count: 1, sumExcl: 100, withoutAccount: 0 };
+const GOEDE_REGELS = regels();
 
 const VERKOOP: CatchupSalesInvoice = {
   id: "si-1",
@@ -142,20 +147,20 @@ describe("inkoop — configuratie en documentgebreken", () => {
   });
 
   it("8. een regel zonder grootboekrekening blokkeert (geen kostenrekening geraden)", () => {
-    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, { count: 2, sumExcl: 100, withoutAccount: 1 });
+    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, regels({ count: 2, withoutAccount: 1 }));
     expect(r.state).toBe("geblokkeerd");
     expect(codes(r)).toContain("regel_zonder_rekening");
   });
 
   it("9. helemaal geen boekingsregels blokkeert", () => {
-    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, { count: 0, sumExcl: 0, withoutAccount: 0 });
+    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, regels({ count: 0, sumExcl: 0 }));
     expect(codes(r)).toContain("geen_boekingsregels");
     // Bij nul regels is "sluiten niet aan" geen zinvolle tweede klacht.
     expect(codes(r)).not.toContain("regels_sluiten_niet_aan");
   });
 
   it("10. regels die niet op het factuurbedrag aansluiten blokkeren", () => {
-    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, { count: 1, sumExcl: 99, withoutAccount: 0 });
+    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, regels({ sumExcl: 99 }));
     expect(codes(r)).toContain("regels_sluiten_niet_aan");
   });
 
@@ -167,7 +172,7 @@ describe("inkoop — configuratie en documentgebreken", () => {
     const fijn = evaluatePurchaseInvoice({
       invoice: inkoop({ amount_excl: 0.1, btw_amount: 0.2, amount_incl: 0.3 }),
       config: VOLLEDIGE_CONFIG,
-      lines: { count: 1, sumExcl: 0.1, withoutAccount: 0 },
+      lines: regels({ sumExcl: 0.1 }),
       postingGroupId: null,
     });
     expect(codes(fijn)).not.toContain("bedragen_sluiten_niet_aan");
@@ -175,10 +180,40 @@ describe("inkoop — configuratie en documentgebreken", () => {
 
   it("12. ontbrekende bedragen en niet-positieve bedragen blokkeren", () => {
     expect(codes(evalInkoop(inkoop({ amount_incl: null })))).toContain("bedragen_ontbreken");
-    const nul = evalInkoop(inkoop({ amount_excl: 0, btw_amount: 0, amount_incl: 0 }), VOLLEDIGE_CONFIG, {
-      count: 1, sumExcl: 0, withoutAccount: 0,
-    });
+    const nul = evalInkoop(inkoop({ amount_excl: 0, btw_amount: 0, amount_incl: 0 }), VOLLEDIGE_CONFIG, regels({ sumExcl: 0, nonPositiveAmountCount: 1 }));
     expect(codes(nul)).toContain("bedrag_niet_positief");
+  });
+
+  it("12b. één regel van nul blokkeert, ook al klopt de kop", () => {
+    // De writer loopt de regels één voor één af en weigert elke regel met
+    // amount_excl <= 0 (migratie 20260915140000). Op de SOM is daar niets van
+    // te zien, dus zonder deze telling zou de factuur als "klaar" verschijnen.
+    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, regels({ count: 2, nonPositiveAmountCount: 1 }));
+    expect(r.state).toBe("geblokkeerd");
+    expect(codes(r)).toContain("regel_bedrag_niet_positief");
+    expect(r.blocks.find((b) => b.code === "regel_bedrag_niet_positief")?.label).toMatch(/nul of lager/i);
+    // Het is geen configuratieprobleem, dus geen link naar de instellingen.
+    expect(r.blocks.find((b) => b.code === "regel_bedrag_niet_positief")?.configuratie).toBeUndefined();
+  });
+
+  it("12c. een negatieve regel met compenserende positieve regel blokkeert", () => {
+    // +120 en −20 tellen op tot de kop van 100: de aansluiting klopt, de
+    // regels zelf niet. Precies het geval uit de review.
+    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, regels({ count: 2, sumExcl: 100, nonPositiveAmountCount: 1 }));
+    expect(r.state).toBe("geblokkeerd");
+    expect(codes(r)).toContain("regel_bedrag_niet_positief");
+    // De som klopt wél, dus daar mag niet over geklaagd worden.
+    expect(codes(r)).not.toContain("regels_sluiten_niet_aan");
+  });
+
+  it("12d. uitsluitend positieve regels blijven gewoon klaar", () => {
+    expect(evalInkoop(INKOOP, VOLLEDIGE_CONFIG, regels({ count: 3, sumExcl: 100 })).state).toBe("klaar");
+    expect(evalInkoop().state).toBe("klaar");
+  });
+
+  it("12e. meerdere niet-positieve regels worden in meervoud gemeld", () => {
+    const r = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, regels({ count: 4, nonPositiveAmountCount: 2 }));
+    expect(r.blocks.find((b) => b.code === "regel_bedrag_niet_positief")?.label).toMatch(/^2 boekingsregels/);
   });
 
   it("13. een afgesloten boekjaar wordt nooit omzeild", () => {
