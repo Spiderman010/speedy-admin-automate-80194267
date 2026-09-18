@@ -6,9 +6,9 @@
 // tekenomklap, geen totaal dat hier ontstaat.
 
 import { CSV_SEPARATOR, formatAmountNl } from "@/lib/proef-saldibalans";
+import { formatCents } from "@/lib/grootboek-saldi-utils";
 import type {
   BalanceSheetResult,
-  FinancialStatementAccountLine,
   FinancialStatementGroup,
   FinancialStatementSystemLine,
   ProfitLossResult,
@@ -68,28 +68,42 @@ export function accountLabel(nummer: number | null, omschrijving: string): strin
 }
 
 /**
- * De tekst bij een beginbalansbijdrage op W&V-rekeningen. `null` betekent
- * "niet vastgesteld" en wordt NOOIT als nul gepresenteerd.
+ * De tekst bij een beginbalansbijdrage op W&V-rekeningen.
+ *
+ * Let op het verschil tussen "geen beginbalansposten" en "beginbalansposten die
+ * elkaar opheffen". `cents` is een SALDO: staat er in een cutover €700 opbrengst
+ * tegenover €700 kosten, dan is het saldo 0 terwijl er wel degelijk €1.400 aan
+ * openingsbedragen in dit rapport zit. Daarom bepaalt `insidePeriod` (uit de
+ * diagnostics van de engine) óf er iets te melden valt, en het saldo alleen
+ * hoevéél. `null` betekent "niet vastgesteld" en wordt NOOIT als nul getoond.
  */
-export function openingContributionNotice(cents: number | null): string | null {
+export function openingContributionNotice(
+  cents: number | null,
+  insidePeriod: boolean,
+): string | null {
   if (cents === null) {
     return "De bijdrage van beginbalansposten aan deze winst-en-verliesrekening is niet vastgesteld.";
   }
-  if (cents === 0) return null;
-  // Het bedrag komt uit de engine; hier wordt alleen het teken gedraaid voor
-  // leesbaarheid (een opbrengst staat credit, dus negatief in de kern).
-  return `Deze winst-en-verliesrekening bevat ${formatEuroCents(-cents)} aan openings-/cutoverbedragen.`;
+  if (!insidePeriod) return null;
+  if (cents === 0) {
+    return "Deze winst-en-verliesrekening bevat openings-/cutoverbedragen die per saldo tegen elkaar wegvallen.";
+  }
+  // Dezelfde omrekening als het resultaat zelf: de W&V toont een resultaat als
+  // −(getekende mutatie), dus de bijdrage áán dat resultaat ook. Geen vrije
+  // tekenkeuze, maar exact de presentatieregel van de engine.
+  return `Deze winst-en-verliesrekening bevat ${formatCents(-cents)} aan openings-/cutoverbedragen.`;
 }
 
-/** Centen → "€ 1.234,56" met nl-NL-scheiding; negatief blijft negatief. */
-export function formatEuroCents(cents: number): string {
-  const negatief = cents < 0;
-  const absolute = Math.abs(cents);
-  const euros = Math.trunc(absolute / 100);
-  const rest = String(absolute % 100).padStart(2, "0");
-  const gegroepeerd = euros.toLocaleString("nl-NL");
-  return `${negatief ? "-" : ""}€ ${gegroepeerd},${rest}`;
-}
+/**
+ * Bedragen op het scherm gebruiken de bestaande app-formatter (`formatCents`,
+ * dezelfde die de grootboeksaldi tonen), zodat het minteken en de
+ * euro-notatie overal in BoekAssist gelijk zijn. De CSV gebruikt bewust
+ * `formatAmountNl` — de exportconventie van de proef- en saldibalans, zonder
+ * valutateken en Excel-vriendelijk. Beide lezen dezelfde centen uit de engine,
+ * dus scherm en export kunnen niet uit elkaar lopen; alleen de weergave
+ * verschilt.
+ */
+export { formatCents } from "@/lib/grootboek-saldi-utils";
 
 // ── CSV ─────────────────────────────────────────────────────────────────────
 
@@ -178,19 +192,6 @@ export function profitLossToCsv(input: {
   regels.push(csvRegel(["Resultaat", "", "Resultaat", formatAmountNl(profitLoss.netResultCents)]));
   regels.push(...unclassifiedRegels(unclassified, (a) => a.rawSignedMovementCents));
   return `${regels.join("\r\n")}\r\n`;
-}
-
-/** Alleen regels met een bedrag of met activiteit; puur een weergavefilter. */
-export function visibleLines(lines: readonly FinancialStatementAccountLine[], toonNul: boolean): FinancialStatementAccountLine[] {
-  return toonNul ? [...lines] : lines.filter((l) => l.displayedCents !== 0 || l.hasActivity);
-}
-
-/** Groepen zonder zichtbare regels en zonder saldo hoeven niet te verschijnen. */
-export function visibleGroups(groups: readonly FinancialStatementGroup[], toonNul: boolean): FinancialStatementGroup[] {
-  if (toonNul) return [...groups];
-  return groups
-    .map((g) => ({ ...g, lines: visibleLines(g.lines, toonNul) }))
-    .filter((g) => g.lines.length > 0 || g.totalCents !== 0);
 }
 
 export type { FinancialStatementSystemLine };

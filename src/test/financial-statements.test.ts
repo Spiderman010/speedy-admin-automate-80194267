@@ -917,8 +917,12 @@ describe("branch-scope", () => {
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
   });
 
-  branchIt("geen UI in deze PR: geen pagina, component, route of nav-item", () => {
-    expect(changed!.filter((f) => /^src\/pages\/|^src\/components\/|App\.tsx$|nav\.ts$/.test(f))).toEqual([]);
-    expect(changed!.filter((f) => f.endsWith(".tsx") && !f.startsWith("src/test/"))).toEqual([]);
+  it("de engine zelf blijft vrij van UI: geen JSX, geen React, geen route", () => {
+    // Voorheen: "geen UI in deze PR" — een scope-uitspraak van PR 3, geen
+    // invariant: PR 4 bouwt juist de Balans- en W&V-pagina's op deze engine.
+    // Wat bewaakt moet blijven is dat de engine een pure rekenlaag is.
+    const engine = readFileSync("src/lib/financial-statements.ts", "utf8");
+    expect(engine).not.toMatch(/from\s+["']react|useState|useEffect|jsx|tsx/);
+    expect(engine).not.toMatch(/react-router|<[A-Z]\w*[\s/>]/);
   });
 });

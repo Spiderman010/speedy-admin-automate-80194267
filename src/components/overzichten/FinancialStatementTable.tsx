@@ -1,10 +1,10 @@
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { accountLabel, formatEuroCents } from "@/lib/financial-statements-presentation";
+import { accountLabel, formatCents } from "@/lib/financial-statements-presentation";
 import type {
   FinancialStatementGroup,
   FinancialStatementSystemLine,
@@ -79,12 +79,12 @@ export function FinancialStatementTable({
             </TableRow>
           ))}
         </TableBody>
-        <tfoot>
+        <TableFooter>
           <TableRow className="border-t-2 font-semibold hover:bg-transparent" data-testid="statement-total">
             <TableCell colSpan={2}>{totalLabel}</TableCell>
             <Bedrag cents={totalCents} />
           </TableRow>
-        </tfoot>
+        </TableFooter>
       </Table>
     </div>
   );
@@ -112,7 +112,7 @@ function GroupRows({
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <Link
                 to={accountPath(line.accountId)}
-                className="truncate underline-offset-4 hover:underline focus-visible:underline"
+                className="min-w-0 truncate underline-offset-4 hover:underline focus-visible:underline"
                 aria-label={`Open mutaties van ${accountLabel(line.accountNumber, line.accountName)}`}
               >
                 {line.accountName}
@@ -150,7 +150,7 @@ function Bedrag({ cents, emphasis }: { cents: number; emphasis?: boolean }) {
     <TableCell
       className={cn("whitespace-nowrap text-right font-mono tabular-nums", emphasis && "font-semibold")}
     >
-      {formatEuroCents(cents)}
+      {formatCents(cents)}
     </TableCell>
   );
 }

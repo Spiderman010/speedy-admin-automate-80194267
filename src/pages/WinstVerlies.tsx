@@ -22,7 +22,7 @@ import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
 import {
-  formatEuroCents,
+  formatCents,
   openingContributionNotice,
   profitLossToCsv,
   statementCsvFilename,
@@ -139,11 +139,11 @@ export default function WinstVerlies() {
         <dl className="grid gap-2 rounded-lg border p-3 sm:grid-cols-3" data-testid="wv-summary">
           <div className="flex items-center justify-between gap-2 sm:flex-col sm:items-start">
             <dt className="text-xs text-muted-foreground">Opbrengsten</dt>
-            <dd className="font-mono tabular-nums" data-testid="wv-revenue">{formatEuroCents(profitLoss.revenueCents)}</dd>
+            <dd className="font-mono tabular-nums" data-testid="wv-revenue">{formatCents(profitLoss.revenueCents)}</dd>
           </div>
           <div className="flex items-center justify-between gap-2 sm:flex-col sm:items-start">
             <dt className="text-xs text-muted-foreground">Kosten</dt>
-            <dd className="font-mono tabular-nums" data-testid="wv-expense">{formatEuroCents(profitLoss.expenseCents)}</dd>
+            <dd className="font-mono tabular-nums" data-testid="wv-expense">{formatCents(profitLoss.expenseCents)}</dd>
           </div>
           <div className="flex items-center justify-between gap-2 sm:flex-col sm:items-start">
             <dt className="text-xs font-medium">Resultaat</dt>
@@ -152,9 +152,9 @@ export default function WinstVerlies() {
               data-testid="wv-result"
               data-result={profitLoss.netResultCents}
             >
-              {formatEuroCents(profitLoss.netResultCents)}
+              {formatCents(profitLoss.netResultCents)}
               <span className="ml-2 text-xs font-normal text-muted-foreground">
-                {profitLoss.netResultCents >= 0 ? "winst" : "verlies"}
+                {profitLoss.netResultCents === 0 ? "neutraal" : profitLoss.netResultCents > 0 ? "winst" : "verlies"}
               </span>
             </dd>
           </div>
@@ -202,7 +202,10 @@ export default function WinstVerlies() {
           {ready && <StatementCompletenessNotice completeness={ready.completeness} />}
           {ready && (
             <OpeningBalanceContributionNotice
-              notice={openingContributionNotice(ready.profitLoss.openingBalanceContributionCents)}
+              notice={openingContributionNotice(
+                ready.profitLoss.openingBalanceContributionCents,
+                ready.diagnostics.openingBalanceInsidePeriod,
+              )}
             />
           )}
           <Card>

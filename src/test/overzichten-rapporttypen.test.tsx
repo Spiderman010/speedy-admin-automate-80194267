@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { readFileSync } from "node:fs";
@@ -51,7 +51,9 @@ describe("Overzichten — rapporttypen", () => {
     for (const [titel, href] of Object.entries(verwacht)) {
       const kop = screen.getByRole("heading", { name: titel, level: 3 });
       const kaart = kop.closest("div[class*='min-h-32']")!;
-      expect(kaart).toHaveTextContent("Beschikbaar");
+      // Exacte tekst op de badge zelf: "Beschikbaar na openingsbalans"
+      // zou een substring-match op de kaart ten onrechte laten slagen.
+      expect(within(kaart as HTMLElement).getByText("Beschikbaar")).toBeInTheDocument();
       expect(screen.getByRole("link", { name: `Open ${titel}` })).toHaveAttribute("href", href);
     }
   });

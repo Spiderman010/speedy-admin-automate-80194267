@@ -22,7 +22,7 @@ import { useFinancialStatements } from "@/hooks/useFinancialStatements";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
 import {
   balanceSheetToCsv,
-  formatEuroCents,
+  formatCents,
   statementCsvFilename,
 } from "@/lib/financial-statements-presentation";
 
@@ -162,7 +162,7 @@ export default function Balans() {
         >
           <span className="text-sm font-medium">Verschil activa − passiva</span>
           <span className="font-mono tabular-nums font-semibold">
-            {formatEuroCents(balanceSheet.differenceCents)}
+            {formatCents(balanceSheet.differenceCents)}
           </span>
         </div>
 
@@ -171,7 +171,7 @@ export default function Balans() {
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>De balans sluit niet</AlertTitle>
             <AlertDescription>
-              Het verschil is {formatEuroCents(balanceSheet.differenceCents)}. Dat is precies het deel van het
+              Het verschil is {formatCents(balanceSheet.differenceCents)}. Dat is precies het deel van het
               grootboek dat nog geen plaats in de balans heeft; classificeer de rekeningen hieronder.
             </AlertDescription>
           </Alert>

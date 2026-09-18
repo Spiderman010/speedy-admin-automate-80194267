@@ -70,8 +70,20 @@ vi.mock("@/hooks/useLedgerPostings", () => ({
 import Balans from "@/pages/Balans";
 import WinstVerlies from "@/pages/WinstVerlies";
 import { buildAccountReport, yearPeriod } from "@/lib/ledger-reporting";
-import { buildFinancialStatements } from "@/lib/financial-statements";
-import { formatEuroCents } from "@/lib/financial-statements-presentation";
+import {
+  buildFinancialStatements,
+  movementOnPeriodStartFromRows,
+  openingBalanceContributionFromRows,
+} from "@/lib/financial-statements";
+import { formatCents } from "@/lib/financial-statements-presentation";
+
+/**
+ * `formatCents` gebruikt Intl en dus een harde spatie (U+00A0) tussen € en het
+ * bedrag. `toHaveTextContent` normaliseert de witruimte in de DOM, dus moet de
+ * verwachting dezelfde normalisatie ondergaan — anders vergelijk je een harde
+ * met een gewone spatie.
+ */
+const bedrag = (cents: number) => formatCents(cents).replace(/\u00a0/g, " ");
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -103,11 +115,23 @@ const KAPITAAL = acc({ id: "a-kap", nummer: 610, omschrijving: "Kapitaal", categ
 const OMZET = acc({ id: "a-omzet", nummer: 8000, omschrijving: "Omzet", categorie: "omzet", statement_type: "winst_verlies", report_group: "netto_omzet" });
 const KOSTEN = acc({ id: "a-kosten", nummer: 4700, omschrijving: "Advieskosten", categorie: "kosten", statement_type: "winst_verlies", report_group: "overige_bedrijfskosten" });
 
-/** Dezelfde berekening als de pagina, zodat we tegen de engine kunnen ijken. */
+/**
+ * Precies dezelfde aanroep als useFinancialStatements(), inclusief de twee
+ * diagnosekaarten — anders zou de ijking langs een ander pad lopen dan de
+ * pagina en dus niets bewijzen.
+ */
 function engineResult(period = yearPeriod(new Date().getFullYear())) {
-  const rows = state.rows.filter((r) => r.client_id === state.clientId);
+  const rows = state.rows.filter(
+    (r) => r.client_id === state.clientId && r.posting_date < period.toExclusive,
+  );
   const report = buildAccountReport({ rows, clientId: state.clientId, period, accounts: state.accounts });
-  return buildFinancialStatements({ report, period, accounts: state.accounts });
+  return buildFinancialStatements({
+    report,
+    period,
+    accounts: state.accounts,
+    openingBalanceContribution: openingBalanceContributionFromRows(rows, period),
+    movementOnPeriodStart: movementOnPeriodStartFromRows(rows, period),
+  });
 }
 
 const renderBalans = () => render(<MemoryRouter initialEntries={["/grootboek/balans"]}><Balans /></MemoryRouter>);
@@ -163,10 +187,10 @@ describe("Balans", () => {
     const activa = screen.getByTestId("balans-activa-table");
     const passiva = screen.getByTestId("balans-passiva-table");
     expect(within(activa).getByTestId("statement-total")).toHaveTextContent(
-      formatEuroCents(engine.balanceSheet.totalAssetsCents),
+      bedrag(engine.balanceSheet.totalAssetsCents),
     );
     expect(within(passiva).getByTestId("statement-total")).toHaveTextContent(
-      formatEuroCents(engine.balanceSheet.totalLiabilitiesEquityCents),
+      bedrag(engine.balanceSheet.totalLiabilitiesEquityCents),
     );
   });
 
@@ -175,7 +199,7 @@ describe("Balans", () => {
     renderBalans();
     const verschil = screen.getByTestId("balans-difference");
     expect(verschil).toHaveAttribute("data-difference", "0");
-    expect(verschil).toHaveTextContent(formatEuroCents(0));
+    expect(verschil).toHaveTextContent(bedrag(0));
     expect(screen.queryByTestId("balans-difference-warning")).toBeNull();
   });
 
@@ -189,7 +213,7 @@ describe("Balans", () => {
     expect(engine.balanceSheet.differenceCents).not.toBe(0);
     expect(screen.getByTestId("balans-difference-warning")).toBeInTheDocument();
     expect(screen.getByTestId("balans-difference")).toHaveTextContent(
-      formatEuroCents(engine.balanceSheet.differenceCents),
+      bedrag(engine.balanceSheet.differenceCents),
     );
   });
 
@@ -225,8 +249,8 @@ describe("Balans", () => {
     renderBalans();
     const passiva = screen.getByTestId("balans-passiva-table");
     const rij = within(passiva).getAllByTestId("statement-line").find((r) => r.getAttribute("data-account-id") === "a-prive")!;
-    expect(rij).toHaveTextContent(formatEuroCents(-100_000));
-    expect(within(passiva).getByTestId("statement-total")).toHaveTextContent(formatEuroCents(400_000));
+    expect(rij).toHaveTextContent(bedrag(-100_000));
+    expect(within(passiva).getByTestId("statement-total")).toHaveTextContent(bedrag(400_000));
     expect(screen.getByTestId("balans-difference")).toHaveAttribute("data-difference", "0");
   });
 
@@ -241,10 +265,10 @@ describe("Balans", () => {
     ];
     renderBalans();
     const rij = screen.getAllByTestId("statement-line").find((r) => r.getAttribute("data-account-id") === "a-cum")!;
-    expect(rij).toHaveTextContent(formatEuroCents(-30_000));
+    expect(rij).toHaveTextContent(bedrag(-30_000));
     expect(within(rij).getByText("Tegenrekening")).toBeInTheDocument();
     const activa = screen.getByTestId("balans-activa-table");
-    expect(within(activa).getByTestId("statement-total")).toHaveTextContent(formatEuroCents(70_000));
+    expect(within(activa).getByTestId("statement-total")).toHaveTextContent(bedrag(70_000));
   });
 
   it("30. report_sort bepaalt de volgorde binnen een groep", () => {
@@ -288,10 +312,10 @@ describe("Winst-en-verliesrekening", () => {
     const resultaat = screen.getByTestId("wv-result");
     expect(engine.profitLoss.netResultCents).toBe(60_000);
     expect(resultaat).toHaveAttribute("data-result", String(engine.profitLoss.netResultCents));
-    expect(resultaat).toHaveTextContent(formatEuroCents(engine.profitLoss.netResultCents));
+    expect(resultaat).toHaveTextContent(bedrag(engine.profitLoss.netResultCents));
     expect(resultaat).toHaveTextContent("winst");
     // Ook de totaalregel van de tabel is het resultaat van de engine.
-    expect(screen.getByTestId("statement-total")).toHaveTextContent(formatEuroCents(engine.profitLoss.netResultCents));
+    expect(screen.getByTestId("statement-total")).toHaveTextContent(bedrag(engine.profitLoss.netResultCents));
   });
 
   it("14. een verlies leest als verlies", () => {
@@ -312,8 +336,8 @@ describe("Winst-en-verliesrekening", () => {
     const engine = engineResult();
     if (!engine.ok) throw new Error("engine faalde");
     renderWv();
-    expect(screen.getByTestId("wv-revenue")).toHaveTextContent(formatEuroCents(engine.profitLoss.revenueCents));
-    expect(screen.getByTestId("wv-expense")).toHaveTextContent(formatEuroCents(engine.profitLoss.expenseCents));
+    expect(screen.getByTestId("wv-revenue")).toHaveTextContent(bedrag(engine.profitLoss.revenueCents));
+    expect(screen.getByTestId("wv-expense")).toHaveTextContent(bedrag(engine.profitLoss.expenseCents));
   });
 
   it("22. een beginbalansbijdrage aan de W&V wordt gemeld", () => {
@@ -325,7 +349,25 @@ describe("Winst-en-verliesrekening", () => {
     renderWv();
     const notice = screen.getByTestId("statement-opening-contribution");
     expect(notice).toHaveTextContent(/openings-\/cutoverbedragen/);
-    expect(notice).toHaveTextContent(formatEuroCents(70_000));
+    expect(notice).toHaveTextContent(bedrag(70_000));
+  });
+
+  it("22b. beginbalansposten die tegen elkaar wegvallen worden nog steeds gemeld", () => {
+    // Een saldo van nul betekent niet "geen cutover": €700 opbrengst tegenover
+    // €700 kosten heft elkaar op, maar er zit wél €1.400 aan openingsbedragen
+    // in dit rapport. Dat mag niet stilzwijgend verdwijnen.
+    state.accounts = [BANK, KAPITAAL, OMZET, KOSTEN];
+    state.rows = [
+      ...entry(BANK.id, OMZET.id, "700.00", d("07-01"), "opening_balance"),
+      ...entry(KOSTEN.id, BANK.id, "700.00", d("07-01"), "opening_balance"),
+    ];
+    const engine = engineResult();
+    if (!engine.ok) throw new Error("engine faalde");
+    expect(engine.profitLoss.openingBalanceContributionCents).toBe(0);
+    expect(engine.diagnostics.openingBalanceInsidePeriod).toBe(true);
+
+    renderWv();
+    expect(screen.getByTestId("statement-opening-contribution")).toHaveTextContent(/tegen elkaar wegvallen/);
   });
 
   it("23. zonder beginbalansposten verschijnt er geen melding — en nooit een nul als bevestiging", () => {
@@ -353,7 +395,7 @@ describe("niet geclassificeerd en volledigheid", () => {
     expect(rij).toHaveAttribute("data-account-id", "a-vreemd");
     expect(rij).toHaveTextContent("3000");
     expect(rij).toHaveTextContent("Onbekende post");
-    expect(rij).toHaveTextContent(formatEuroCents(5_000));
+    expect(rij).toHaveTextContent(bedrag(5_000));
     expect(within(rij).getByText("Geen rapport gekozen")).toBeInTheDocument();
   });
 
@@ -371,6 +413,25 @@ describe("niet geclassificeerd en volledigheid", () => {
     metVreemdeRekening();
     renderWv();
     expect(within(screen.getByTestId("wv-unclassified")).getByTestId("statement-unclassified-row")).toBeInTheDocument();
+  });
+
+  it("18b. een ongeclassificeerde rekening zónder beweging spreekt de groene status niet tegen", () => {
+    // Twee openingsboekingen die elkaar opheffen: de rekening wacht op
+    // classificatie, maar er is niets bewogen. De engine noemt het rapport dan
+    // volledig, dus de sectie mag geen rood alarm tonen.
+    state.accounts = [BANK, KAPITAAL, acc({ id: "a-stil", nummer: 3100, omschrijving: "Stille rekening" })];
+    state.rows = [
+      ...entry(BANK.id, KAPITAAL.id, "5000.00", `${YEAR - 1}-01-01`),
+      ...entry("a-stil", BANK.id, "500.00", `${YEAR - 1}-06-01`),
+      ...entry(BANK.id, "a-stil", "500.00", `${YEAR - 1}-07-01`),
+    ];
+    renderBalans();
+    expect(screen.getByTestId("statement-completeness")).toHaveAttribute("data-completeness", "complete");
+    const waarschuwing = screen.getByTestId("statement-unclassified-warning");
+    expect(waarschuwing).toHaveAttribute("data-has-activity", "false");
+    expect(waarschuwing).toHaveTextContent(/geen beweging/);
+    // De rekening blijft wél zichtbaar.
+    expect(screen.getByTestId("statement-unclassified-row")).toHaveAttribute("data-account-id", "a-stil");
   });
 
   it("17. onvolledig wordt zichtbaar als status", () => {
@@ -436,7 +497,7 @@ describe("administratie en periode", () => {
     // 9999 hoort bij een andere administratie en mag nergens verschijnen.
     expect(screen.queryByText(/9\.999,00/)).toBeNull();
     const activa = screen.getByTestId("balans-activa-table");
-    expect(within(activa).getByTestId("statement-total")).toHaveTextContent(formatEuroCents(500_000));
+    expect(within(activa).getByTestId("statement-total")).toHaveTextContent(bedrag(500_000));
   });
 
   it("27b. zonder specifieke administratie wordt er niets berekend", () => {
@@ -498,18 +559,50 @@ describe("statische grenzen", () => {
     const hook = bronnen.find((b) => b.p.endsWith("useFinancialStatements.ts"))!;
     const presentatie = bronnen.filter((b) => b !== hook);
 
+    // In deze bestanden komt elk bedrag binnen als member-expressie
+    // (`balanceSheet.totalAssetsCents`, `line.displayedCents`), dus de patronen
+    // moeten daar óók op aanslaan — anders bewaken ze precies de schrijfwijze
+    // niet die hier gebruikt zou worden.
+    const REKENT = [
+      /(?:\.|\b)\w*Cents\b\s*[+\-*/]\s/, //  a.xCents - b.yCents  /  xCents + 1
+      /[+\-*/]=\s*[\w.]*Cents\b/, //          total += line.displayedCents
+      /[-+]\s*[\w.]*Cents\b/, //           unaire min/plus op een bedrag
+      /\.reduce\(/,
+    ];
+
     for (const { p, code } of presentatie) {
-      // Geen reduce/sum over bedragen en geen eigen centenrekenwerk.
-      expect(code, p).not.toMatch(/\.reduce\(/);
-      expect(code, p).not.toMatch(/Cents\s*[+\-*/]\s*\w+Cents/);
+      for (const patroon of REKENT) {
+        expect(code, `${p} — ${patroon}`).not.toMatch(patroon);
+      }
       expect(code, p).not.toMatch(/buildAccountReport|toCents\(|signedAmountCents/);
       expect(code, p).not.toMatch(/buildFinancialStatements\(/);
     }
 
-    // En de hook zelf rekent ook niet zelf: hij geeft door.
+    // En de hook zelf rekent ook niet: hij geeft door.
     expect(hook.code).toContain("buildFinancialStatements(");
-    expect(hook.code).not.toMatch(/\.reduce\(/);
-    expect(hook.code).not.toMatch(/Cents\s*[+\-*/]\s*\w+Cents/);
+    for (const patroon of REKENT) {
+      expect(hook.code, `hook — ${patroon}`).not.toMatch(patroon);
+    }
+  });
+
+  it("4b. de bewaking slaat werkelijk aan op de manier waarop hier gerekend zóu worden", () => {
+    // Zonder deze controle zou een te nauwe regex ongemerkt niets bewaken.
+    const REKENT = [
+      /(?:\.|\b)\w*Cents\b\s*[+\-*/]\s/,
+      /[+\-*/]=\s*[\w.]*Cents\b/,
+      /[-+]\s*[\w.]*Cents\b/,
+      /\.reduce\(/,
+    ];
+    const overtredingen = [
+      "const diff = balanceSheet.totalAssetsCents - balanceSheet.totalLiabilitiesEquityCents;",
+      "let t = 0; for (const l of group.lines) t += l.displayedCents;",
+      "formatCents(a.displayedCents + b.displayedCents)",
+      "const netto = -profitLoss.netResultCents;",
+      "const totaal = lines.reduce((s, l) => s + l.displayedCents, 0);",
+    ];
+    for (const regel of overtredingen) {
+      expect(REKENT.some((p) => p.test(regel)), regel).toBe(true);
+    }
   });
 
   it("33/34/35. geen classificatie op rekeningnummer, categorie of een vaste sluitrekening", () => {

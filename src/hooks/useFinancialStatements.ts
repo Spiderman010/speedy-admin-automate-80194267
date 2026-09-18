@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useLedgerPostings } from "@/hooks/useLedgerPostings";
 import { buildAccountReport, LedgerReportingError, type LedgerPeriod } from "@/lib/ledger-reporting";
@@ -37,8 +38,14 @@ export interface UseFinancialStatementsOptions {
 
 export function useFinancialStatements({ clientId, period, enabled = true }: UseFinancialStatementsOptions) {
   // Bewust ALLE rekeningen, ook inactieve: die kunnen saldo dragen én een
-  // classificatie. Dezelfde bron als het rekeningschema zelf.
-  const accountsQuery = useGrootboekrekeningen({ enabled });
+  // classificatie. Met dezelfde organisatiescope als de proef- en
+  // saldibalans, zodat de cache wordt gedeeld in plaats van gedupliceerd en
+  // een organisatiewissel de query opnieuw sleutelt.
+  const { activeOrganizationId } = useActiveOrganization();
+  const accountsQuery = useGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled,
+  });
   const postingsQuery = useLedgerPostings({ clientId, period, enabled });
 
   const state = useMemo<FinancialStatementsState>(() => {

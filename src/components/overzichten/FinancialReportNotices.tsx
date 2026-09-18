@@ -11,7 +11,7 @@ import {
   UNCLASSIFIED_REASON_LABELS,
   UNCLASSIFIED_WARNING,
   accountLabel,
-  formatEuroCents,
+  formatCents,
 } from "@/lib/financial-statements-presentation";
 import type { StatementCompleteness, UnclassifiedAccount } from "@/lib/financial-statements";
 
@@ -59,13 +59,26 @@ export interface UnclassifiedSectionProps {
 
 export function UnclassifiedSection({ accounts, amountOf, testId = "statement-unclassified" }: UnclassifiedSectionProps) {
   if (accounts.length === 0) return null;
+  // Rekeningen zonder enige beweging maken het rapport niet onvolledig — de
+  // engine rekent ze ook niet mee voor de volledigheidsstatus. Ze blijven wel
+  // zichtbaar (ze wachten op classificatie), maar dan zonder alarm, zodat een
+  // groene badge en een rode waarschuwing elkaar nooit tegenspreken.
+  const heeftActiviteit = accounts.some((a) => a.hasActivity);
   return (
     <div className="space-y-3" data-testid={testId}>
-      <Alert variant="destructive" data-testid="statement-unclassified-warning">
-        <AlertTriangle className="h-4 w-4" />
+      <Alert
+        variant={heeftActiviteit ? "destructive" : "default"}
+        data-testid="statement-unclassified-warning"
+        data-has-activity={heeftActiviteit ? "true" : "false"}
+      >
+        {heeftActiviteit ? <AlertTriangle className="h-4 w-4" /> : <Info className="h-4 w-4" />}
         <AlertTitle>Niet geclassificeerd</AlertTitle>
         <AlertDescription>
-          <p>{UNCLASSIFIED_WARNING}</p>
+          <p>
+            {heeftActiviteit
+              ? UNCLASSIFIED_WARNING
+              : "Deze rekeningen zijn nog niet geclassificeerd. Ze hebben in deze periode geen beweging, dus het rapport blijft volledig."}
+          </p>
           <Button variant="outline" size="sm" className="mt-3" asChild>
             <Link to="/grootboek">Naar het rekeningschema</Link>
           </Button>
@@ -99,7 +112,7 @@ export function UnclassifiedSection({ accounts, amountOf, testId = "statement-un
                   </Link>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-right font-mono tabular-nums">
-                  {formatEuroCents(amountOf(a))}
+                  {formatCents(amountOf(a))}
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline" className="font-normal" data-reason={a.reason}>
