@@ -12,6 +12,8 @@ import { FinancialReportHeader } from "@/components/overzichten/FinancialReportH
 import { FinancialStatementTable } from "@/components/overzichten/FinancialStatementTable";
 import { FinancialCompletenessBadge } from "@/components/overzichten/FinancialCompletenessBadge";
 import {
+  NothingClassifiedNotice,
+  OpeningBalanceCarryForwardNotice,
   StatementCompletenessNotice,
   StatementFailureNotice,
   UnclassifiedSection,
@@ -20,6 +22,7 @@ import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
+import { useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
 import {
   balanceSheetToCsv,
@@ -72,6 +75,10 @@ export default function Balans() {
     period,
     enabled: orgEnabled,
   });
+  // De beginbalans is hier uitsluitend volledigheidsinformatie: hij bepaalt
+  // NOOIT of er cijfers verschijnen, alleen of de overloop uit eerdere jaren
+  // is vastgesteld.
+  const openingBalance = useOpeningBalanceCompleteness(clientId, period);
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
@@ -130,8 +137,20 @@ export default function Balans() {
       return <EmptyState icon={Landmark} message={BALANS_EMPTY_MESSAGE} />;
     }
 
+    // Geen enkele geclassificeerde regel terwijl er wél activiteit is: dan is
+    // het overzicht leeg om één reden, en die hoort bovenaan te staan.
+    const heeftGeclassificeerdeRegels = [...balanceSheet.assetGroups, ...balanceSheet.liabilityEquityGroups]
+      .some((g) => g.lines.length > 0);
+
     return (
       <div className="space-y-6">
+        {!heeftGeclassificeerdeRegels && (
+          <NothingClassifiedNotice
+            activityCount={unclassified.withActivityCount}
+            amountCents={unclassified.closingCents}
+            what="balans"
+          />
+        )}
         {/* Twee kolommen naast elkaar op een breed scherm, onder elkaar op een
             smal — elk met een eigen omkadering zodat Activa en Passiva ook
             gestapeld duidelijk twee kanten van dezelfde balans blijven. */}
@@ -269,6 +288,7 @@ export default function Balans() {
       ) : (
         <div className="space-y-4">
           {ready && <StatementCompletenessNotice completeness={ready.completeness} />}
+          {ready && <OpeningBalanceCarryForwardNotice completeness={openingBalance.data} />}
           <Card>
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
           </Card>

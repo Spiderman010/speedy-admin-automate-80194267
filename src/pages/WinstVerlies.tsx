@@ -11,6 +11,7 @@ import { FinancialReportHeader } from "@/components/overzichten/FinancialReportH
 import { FinancialStatementTable } from "@/components/overzichten/FinancialStatementTable";
 import { FinancialCompletenessBadge } from "@/components/overzichten/FinancialCompletenessBadge";
 import {
+  NothingClassifiedNotice,
   OpeningBalanceContributionNotice,
   StatementCompletenessNotice,
   StatementFailureNotice,
@@ -126,8 +127,17 @@ export default function WinstVerlies() {
       return <EmptyState icon={BarChart3} message={WV_EMPTY_MESSAGE} />;
     }
 
+    const heeftGeclassificeerdeRegels = profitLoss.groups.some((g) => g.lines.length > 0);
+
     return (
       <div className="space-y-6">
+        {!heeftGeclassificeerdeRegels && (
+          <NothingClassifiedNotice
+            activityCount={unclassified.withActivityCount}
+            amountCents={unclassified.movementCents}
+            what="winst-en-verliesrekening"
+          />
+        )}
         <FinancialStatementTable
           caption="Winst-en-verliesrekening"
           groups={profitLoss.groups}

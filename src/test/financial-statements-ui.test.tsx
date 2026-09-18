@@ -45,6 +45,19 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
     refetch: refetchAccounts,
   }),
 }));
+vi.mock("@/hooks/useLedgerCompleteness", () => ({
+  // De balans leest hier alleen de beginbalansSTATUS (volledigheid), nooit
+  // cijfers. Testinfrastructuur: standaard "niet ingesteld", zodat de tests
+  // precies het geval dekken waar deze fix over gaat.
+  useOpeningBalanceCompleteness: () => ({
+    data: {
+      state: "not_set", year: 2026, assertionYear: null, draftCount: 0,
+      label: "Niet ingesteld", severity: "incomplete", note: null,
+    },
+    isPending: false,
+    isError: false,
+  }),
+}));
 vi.mock("@/hooks/useLedgerPostings", () => ({
   useLedgerPostings: (opts: any) => {
     // Zoals de echte hook: filteren op administratie én op de half-open

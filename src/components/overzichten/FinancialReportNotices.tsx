@@ -14,6 +14,7 @@ import {
   formatCents,
 } from "@/lib/financial-statements-presentation";
 import type { StatementCompleteness, UnclassifiedAccount } from "@/lib/financial-statements";
+import type { OpeningBalanceCompleteness } from "@/lib/ledger-completeness";
 
 /**
  * Balans/W&V PR 4 — de waarschuwingen die bij een jaarrekeningrapport horen.
@@ -46,6 +47,74 @@ export function OpeningBalanceContributionNotice({ notice }: { notice: string | 
       <Info className="h-4 w-4" />
       <AlertTitle>Beginbalans in deze periode</AlertTitle>
       <AlertDescription>{notice}</AlertDescription>
+    </Alert>
+  );
+}
+
+/**
+ * Het overzicht is leeg terwijl er wél grootboekactiviteit is: geen enkele
+ * rekening met beweging heeft een rapportageclassificatie. Dat is precies de
+ * toestand van elke administratie vlak na de classificatiemigratie — die deed
+ * bewust geen backfill — en zonder deze melding lijkt het rapport kapot in
+ * plaats van onvolledig.
+ *
+ * De bedragen zijn niet verdwenen: ze staan verderop onder "Niet
+ * geclassificeerd". Deze melding zegt dat, en wijst de weg.
+ */
+export function NothingClassifiedNotice({
+  activityCount,
+  amountCents,
+  what,
+}: {
+  activityCount: number;
+  amountCents: number;
+  what: "balans" | "winst-en-verliesrekening";
+}) {
+  if (activityCount === 0) return null;
+  return (
+    <Alert variant="destructive" data-testid="statement-nothing-classified">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>Nog geen rekeningen geclassificeerd</AlertTitle>
+      <AlertDescription>
+        <p>
+          Deze {what} is leeg omdat geen enkele grootboekrekening met beweging een plaats in de
+          jaarrekening heeft gekregen. Er is {activityCount === 1 ? "één rekening" : `${activityCount} rekeningen`} met
+          activiteit ({formatCents(amountCents)}); die staan hieronder onder “Niet geclassificeerd”. De cijfers zijn
+          dus niet verdwenen — ze hebben alleen nog geen groep.
+        </p>
+        <p className="mt-2">
+          Ken in het rekeningschema per rekening een rapport en een groep toe; daarna vult dit overzicht zichzelf.
+        </p>
+        <Button variant="outline" size="sm" className="mt-3" asChild>
+          <Link to="/grootboek">Rekeningen classificeren</Link>
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/**
+ * De beginbalans is een volledigheidsgegeven, geen zichtbaarheidsvoorwaarde.
+ * Ontbreekt hij, dan zijn de getoonde bedragen gewoon de geboekte mutaties —
+ * alleen de overloop uit eerdere jaren is dan niet vastgesteld. Dat zeggen we,
+ * en we verbergen niets.
+ */
+export function OpeningBalanceCarryForwardNotice({
+  completeness,
+}: {
+  completeness: OpeningBalanceCompleteness | undefined;
+}) {
+  if (!completeness) return null;
+  if (completeness.severity === "complete") return null;
+  return (
+    <Alert data-testid="statement-carry-forward" data-ob-state={completeness.state}>
+      <Info className="h-4 w-4" />
+      <AlertTitle>Beginbalans: {completeness.label}</AlertTitle>
+      <AlertDescription>
+        {completeness.note ??
+          "Zolang er geen beginbalans is vastgesteld, is de overloop uit eerdere jaren onbekend. " +
+            "De bedragen hieronder komen uit de geboekte grootboekmutaties en blijven gewoon zichtbaar."}
+      </AlertDescription>
     </Alert>
   );
 }
