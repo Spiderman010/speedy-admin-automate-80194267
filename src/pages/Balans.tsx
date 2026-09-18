@@ -7,6 +7,7 @@ import { AlertTriangle, Download, Landmark } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { NoClientBanner } from "@/components/NoClientBanner";
 import { EmptyState } from "@/components/EmptyState";
+import { cn } from "@/lib/utils";
 import { FinancialReportHeader } from "@/components/overzichten/FinancialReportHeader";
 import { FinancialStatementTable } from "@/components/overzichten/FinancialStatementTable";
 import { FinancialCompletenessBadge } from "@/components/overzichten/FinancialCompletenessBadge";
@@ -131,37 +132,72 @@ export default function Balans() {
 
     return (
       <div className="space-y-6">
-        <div className="grid gap-6 lg:grid-cols-2">
-          <section aria-labelledby="balans-activa">
-            <h2 id="balans-activa" className="mb-2 text-sm font-semibold">Activa</h2>
-            <FinancialStatementTable
-              caption="Activa"
-              groups={balanceSheet.assetGroups}
-              totalLabel="Totaal activa"
-              totalCents={balanceSheet.totalAssetsCents}
-              testId="balans-activa-table"
-            />
+        {/* Twee kolommen naast elkaar op een breed scherm, onder elkaar op een
+            smal — elk met een eigen omkadering zodat Activa en Passiva ook
+            gestapeld duidelijk twee kanten van dezelfde balans blijven. */}
+        <div className="grid gap-4 lg:grid-cols-2 lg:gap-6">
+          <section aria-labelledby="balans-activa" className="min-w-0 rounded-lg border">
+            <h2
+              id="balans-activa"
+              className="border-b bg-muted/30 px-3 py-2 text-sm font-semibold uppercase tracking-wide"
+            >
+              Activa
+            </h2>
+            <div className="p-2 sm:p-3">
+              <FinancialStatementTable
+                caption="Activa"
+                groups={balanceSheet.assetGroups}
+                totalLabel="Totaal activa"
+                totalCents={balanceSheet.totalAssetsCents}
+                testId="balans-activa-table"
+              />
+            </div>
           </section>
-          <section aria-labelledby="balans-passiva">
-            <h2 id="balans-passiva" className="mb-2 text-sm font-semibold">Passiva</h2>
-            <FinancialStatementTable
-              caption="Passiva"
-              groups={balanceSheet.liabilityEquityGroups}
-              systemLines={balanceSheet.systemLines}
-              totalLabel="Totaal passiva"
-              totalCents={balanceSheet.totalLiabilitiesEquityCents}
-              testId="balans-passiva-table"
-            />
+          <section aria-labelledby="balans-passiva" className="min-w-0 rounded-lg border">
+            <h2
+              id="balans-passiva"
+              className="border-b bg-muted/30 px-3 py-2 text-sm font-semibold uppercase tracking-wide"
+            >
+              Passiva
+            </h2>
+            <div className="p-2 sm:p-3">
+              <FinancialStatementTable
+                caption="Passiva"
+                groups={balanceSheet.liabilityEquityGroups}
+                systemLines={balanceSheet.systemLines}
+                totalLabel="Totaal passiva"
+                totalCents={balanceSheet.totalLiabilitiesEquityCents}
+                testId="balans-passiva-table"
+              />
+            </div>
           </section>
         </div>
 
+        {/* Sluit de balans, dan is dit een rustige bevestiging; sluit hij niet,
+            dan moet het onmogelijk zijn eroverheen te lezen. Nooit kleur
+            alleen: de tekst zegt het ook. */}
         <div
-          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-2 rounded-lg border px-4 py-3",
+            balanceSheet.differenceCents === 0
+              ? "bg-muted/40"
+              : "border-destructive/60 bg-destructive/10",
+          )}
           data-testid="balans-difference"
           data-difference={balanceSheet.differenceCents}
         >
-          <span className="text-sm font-medium">Verschil activa − passiva</span>
-          <span className="font-mono tabular-nums font-semibold">
+          <span className="flex items-center gap-2 text-sm font-semibold">
+            {balanceSheet.differenceCents !== 0 && (
+              <AlertTriangle className="h-4 w-4 text-destructive" aria-hidden="true" />
+            )}
+            Verschil activa − passiva
+          </span>
+          <span
+            className={cn(
+              "font-mono text-base font-bold tabular-nums",
+              balanceSheet.differenceCents !== 0 && "text-destructive",
+            )}
+          >
             {formatCents(balanceSheet.differenceCents)}
           </span>
         </div>
@@ -191,12 +227,9 @@ export default function Balans() {
       <PageHeader
         title="Balans"
         description="De stand van bezittingen, schulden en eigen vermogen op de einddatum van de periode, uitsluitend uit geboekte grootboekmutaties. Bedragen in euro."
-      >
-        <Button type="button" variant="outline" onClick={exporteer} disabled={!exportable} data-testid="balans-export">
-          <Download className="mr-2 h-4 w-4" />CSV exporteren
-        </Button>
-      </PageHeader>
+      />
 
+      {/* Eén balk: waarover, welke periode, hoe volledig, en de export. */}
       <FinancialReportHeader
         clients={clients}
         selectedClientId={selectedClientId}
@@ -204,18 +237,26 @@ export default function Balans() {
         selection={selection}
         onSelectionChange={setSelection}
         idPrefix="balans"
+        status={ready ? <FinancialCompletenessBadge completeness={ready.completeness} /> : null}
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={exporteer}
+            disabled={!exportable}
+            data-testid="balans-export"
+          >
+            <Download className="mr-2 h-4 w-4" />CSV
+          </Button>
+        }
       />
 
       {!hasSpecificClient ? (
         <NoClientBanner message="Kies eerst een specifieke administratie om de balans te bekijken." />
       ) : (
         <div className="space-y-4">
-          {ready && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground">Volledigheid</span>
-              <FinancialCompletenessBadge completeness={ready.completeness} />
-            </div>
-          )}
           {ready && <StatementCompletenessNotice completeness={ready.completeness} />}
           <Card>
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>

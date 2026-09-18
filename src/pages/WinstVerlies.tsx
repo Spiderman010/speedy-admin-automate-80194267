@@ -136,24 +136,33 @@ export default function WinstVerlies() {
           testId="wv-table"
         />
 
-        <dl className="grid gap-2 rounded-lg border p-3 sm:grid-cols-3" data-testid="wv-summary">
-          <div className="flex items-center justify-between gap-2 sm:flex-col sm:items-start">
-            <dt className="text-xs text-muted-foreground">Opbrengsten</dt>
-            <dd className="font-mono tabular-nums" data-testid="wv-revenue">{formatCents(profitLoss.revenueCents)}</dd>
+        {/* Opbrengsten en kosten zijn de opmaat; het resultaat is de conclusie
+            en krijgt daarom de meeste nadruk. De duiding staat er als WOORD
+            bij — kleur alleen zou niet leesbaar zijn voor iedereen. */}
+        <dl className="overflow-hidden rounded-lg border" data-testid="wv-summary">
+          <div className="grid divide-y sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+            <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+              <dt className="text-sm text-muted-foreground">Opbrengsten</dt>
+              <dd className="font-mono text-sm tabular-nums" data-testid="wv-revenue">
+                {formatCents(profitLoss.revenueCents)}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-2 px-4 py-2.5">
+              <dt className="text-sm text-muted-foreground">Kosten</dt>
+              <dd className="font-mono text-sm tabular-nums" data-testid="wv-expense">
+                {formatCents(profitLoss.expenseCents)}
+              </dd>
+            </div>
           </div>
-          <div className="flex items-center justify-between gap-2 sm:flex-col sm:items-start">
-            <dt className="text-xs text-muted-foreground">Kosten</dt>
-            <dd className="font-mono tabular-nums" data-testid="wv-expense">{formatCents(profitLoss.expenseCents)}</dd>
-          </div>
-          <div className="flex items-center justify-between gap-2 sm:flex-col sm:items-start">
-            <dt className="text-xs font-medium">Resultaat</dt>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-foreground/20 bg-muted/40 px-4 py-3">
+            <dt className="text-sm font-semibold uppercase tracking-wide">Resultaat</dt>
             <dd
-              className="font-mono tabular-nums font-semibold"
+              className="flex items-baseline gap-2 font-mono text-lg font-bold tabular-nums"
               data-testid="wv-result"
               data-result={profitLoss.netResultCents}
             >
               {formatCents(profitLoss.netResultCents)}
-              <span className="ml-2 text-xs font-normal text-muted-foreground">
+              <span className="font-sans text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 {profitLoss.netResultCents === 0 ? "neutraal" : profitLoss.netResultCents > 0 ? "winst" : "verlies"}
               </span>
             </dd>
@@ -174,12 +183,9 @@ export default function WinstVerlies() {
       <PageHeader
         title="Winst-en-verliesrekening"
         description="Opbrengsten en kosten over de gekozen periode, uitsluitend uit geboekte grootboekmutaties. Bedragen in euro."
-      >
-        <Button type="button" variant="outline" onClick={exporteer} disabled={!exportable} data-testid="wv-export">
-          <Download className="mr-2 h-4 w-4" />CSV exporteren
-        </Button>
-      </PageHeader>
+      />
 
+      {/* Eén balk: waarover, welke periode, hoe volledig, en de export. */}
       <FinancialReportHeader
         clients={clients}
         selectedClientId={selectedClientId}
@@ -187,18 +193,26 @@ export default function WinstVerlies() {
         selection={selection}
         onSelectionChange={setSelection}
         idPrefix="wv"
+        status={ready ? <FinancialCompletenessBadge completeness={ready.completeness} /> : null}
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-9"
+            onClick={exporteer}
+            disabled={!exportable}
+            data-testid="wv-export"
+          >
+            <Download className="mr-2 h-4 w-4" />CSV
+          </Button>
+        }
       />
 
       {!hasSpecificClient ? (
         <NoClientBanner message="Kies eerst een specifieke administratie om de winst-en-verliesrekening te bekijken." />
       ) : (
         <div className="space-y-4">
-          {ready && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium text-muted-foreground">Volledigheid</span>
-              <FinancialCompletenessBadge completeness={ready.completeness} />
-            </div>
-          )}
           {ready && <StatementCompletenessNotice completeness={ready.completeness} />}
           {ready && (
             <OpeningBalanceContributionNotice
