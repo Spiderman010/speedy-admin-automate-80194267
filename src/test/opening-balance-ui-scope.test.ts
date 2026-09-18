@@ -22,10 +22,23 @@ const SOURCES = [
   "src/components/grootboek/OpeningBalanceNilAction.tsx",
 ].map((path) => ({ path, text: readFileSync(path, "utf8") }));
 
-function changedFiles(): string[] {
-  return execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], { encoding: "utf8" })
-    .split("\n")
-    .filter(Boolean);
+/**
+ * Bestanden die deze branch t.o.v. de merge-base met origin/main wijzigt.
+ * null wanneer origin/main niet beschikbaar is (ondiepe clone, fork): dan
+ * worden de branch-scope-tests overgeslagen in plaats van vals te slagen of
+ * te crashen.
+ */
+function changedFiles(): string[] | null {
+  try {
+    return execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split("\n")
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
 }
 
 describe("Beginbalans-UI — bronnen", () => {
@@ -94,14 +107,9 @@ describe("Beginbalans-UI — bronnen", () => {
 
 describe("Beginbalans-UI — branch-scope", () => {
   const changed = changedFiles();
+  const branchIt = changed === null ? it.skip : it;
 
-  it("54. geen migratie en geen SQL in deze branch", () => {
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed.filter((f) => f.endsWith(".sql"))).toEqual([]);
-  });
-
-  it("55. gegenereerde Supabase-types ongewijzigd, en alleen als typen geïmporteerd", () => {
-    expect(changed).not.toContain("src/integrations/supabase/types.ts");
+  it("55b. de gegenereerde types worden uitsluitend als typen geïmporteerd", () => {
     for (const { path, text } of SOURCES) {
       for (const line of text.split("\n").filter((l) => /integrations\/supabase\/types/.test(l))) {
         expect(line, path).toMatch(/^import type /);
@@ -109,13 +117,22 @@ describe("Beginbalans-UI — branch-scope", () => {
     }
   });
 
-  it("56. geen wijziging in package.json of lockfiles", () => {
-    expect(changed).not.toContain("package.json");
-    expect(changed.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
+  branchIt("54. geen migratie en geen SQL in deze branch", () => {
+    expect(changed!.filter((f) => f.startsWith("supabase/"))).toEqual([]);
+    expect(changed!.filter((f) => f.endsWith(".sql"))).toEqual([]);
   });
 
-  it("raakt de boekhoudkern niet aan (schrijvers, rapportage, nav)", () => {
-    for (const f of changed) {
+  branchIt("55. gegenereerde Supabase-types ongewijzigd", () => {
+    expect(changed).not.toContain("src/integrations/supabase/types.ts");
+  });
+
+  branchIt("56. geen wijziging in package.json of lockfiles", () => {
+    expect(changed).not.toContain("package.json");
+    expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
+  });
+
+  branchIt("raakt de boekhoudkern niet aan (schrijvers, rapportage, nav)", () => {
+    for (const f of changed!) {
       expect(f).not.toMatch(/ledger-reporting\.ts|proef-saldibalans\.ts|ledger-completeness\.ts|snelstart-export\.ts|nav\.ts$/);
       expect(f).not.toMatch(/useManualJournal|usePurchaseInvoicePosting|useSalesInvoicePosting|useBankAllocationPosting/);
     }

@@ -77,7 +77,7 @@ export function OpeningBalancePostingAction({
     isError: markerError,
     refetch: refetchMarker,
   } = useOpeningBalanceMarker(openingBalanceId ?? undefined);
-  const { data: canPost } = useCanAssertOpeningBalance();
+  const { data: canPost, isError: roleError } = useCanAssertOpeningBalance();
   const post = usePostOpeningBalance();
 
   if (marker) {
@@ -109,7 +109,11 @@ export function OpeningBalancePostingAction({
   if (canPost !== true) {
     return (
       <p className="text-xs text-muted-foreground" data-testid="beginbalans-posting-hint">
-        {canPost === undefined ? "Rechten worden gecontroleerd…" : "Alleen een accountant kan een beginbalans boeken."}
+        {roleError
+          ? "Rechten konden niet worden gecontroleerd; ververs de pagina."
+          : canPost === undefined
+            ? "Rechten worden gecontroleerd…"
+            : "Alleen een accountant kan een beginbalans boeken."}
       </p>
     );
   }

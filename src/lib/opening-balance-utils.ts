@@ -111,23 +111,28 @@ export const STALE_MESSAGE =
 
 // ── Geld: exacte centen uit tekst ───────────────────────────────────────────
 
+export type AmountProblem = "unparseable" | "negative" | "decimals" | "too-large";
+
 export type ParsedAmount =
   | { kind: "empty" }
   | { kind: "ok"; cents: number }
   | {
       kind: "invalid";
-      reason: "unparseable" | "negative" | "decimals";
+      reason: AmountProblem;
       /** De waarde zoals de RPC hem zou zien; null als er geen getal van te maken is. */
       value: number | null;
     };
 
 const AMOUNT_RE = /^(-)?(\d*)(?:[.,](\d*))?$/;
 
+/** numeric(12,2): hoogstens 9.999.999.999,99 — daarboven weigert de database (22003). */
+export const MAX_AMOUNT_CENTS = 999_999_999_999;
+
 /**
  * nl-NL of technische invoer ("1234,56", "1234.56", "12") → exacte centen.
  * Geen float-omweg: de tekst wordt cijfer voor cijfer gelezen. Meer dan twee
- * betekenisvolle decimalen of een negatief bedrag is `invalid`, mét de waarde
- * die naar de RPC gaat zodat de database het laatste woord houdt.
+ * betekenisvolle decimalen, een negatief of een te groot bedrag is `invalid`,
+ * mét de waarde die naar de RPC gaat zodat de database het laatste woord houdt.
  */
 export function parseExactAmount(raw: string | null | undefined): ParsedAmount {
   const text = (raw ?? "").replace(/\s+/g, "");
@@ -140,12 +145,16 @@ export function parseExactAmount(raw: string | null | undefined): ParsedAmount {
   }
   const negative = m[1] === "-";
   const value = Number(`${negative ? "-" : ""}${intPart || "0"}.${fracPart || "0"}`);
+  // Boven de kolomgrens is een exacte centenwaarde zinloos (en Number() zou
+  // precisie verliezen); de database weigert het bedrag toch.
+  if (intPart.replace(/^0+/, "").length > 10) return { kind: "invalid", reason: "too-large", value };
   const cents = Number(intPart || "0") * 100 + Number((fracPart + "00").slice(0, 2));
   // "-0" is gewoon nul; alles wat echt onder nul ligt is negatief.
   if (negative && value < 0) return { kind: "invalid", reason: "negative", value };
   if (fracPart.length > 2 && /[1-9]/.test(fracPart.slice(2))) {
     return { kind: "invalid", reason: "decimals", value };
   }
+  if (cents > MAX_AMOUNT_CENTS) return { kind: "invalid", reason: "too-large", value };
   return { kind: "ok", cents };
 }
 
@@ -290,9 +299,7 @@ export function lineTotals(lines: readonly OpeningBalanceLineRow[]): OpeningBala
 }
 
 export type LineIssueCode =
-  | "unparseable"
-  | "negative"
-  | "decimals"
+  | AmountProblem
   | "both-sides"
   | "unknown-account"
   | "inactive-account"
@@ -303,10 +310,11 @@ export interface LineIssue {
   message: string;
 }
 
-const AMOUNT_ISSUE_MESSAGES: Record<"unparseable" | "negative" | "decimals", string> = {
+const AMOUNT_ISSUE_MESSAGES: Record<AmountProblem, string> = {
   unparseable: "Ongeldig bedrag; gebruik cijfers met een komma voor de decimalen.",
   negative: "Negatieve bedragen worden niet ondersteund; boek het bedrag op de andere zijde.",
   decimals: "Maximaal twee decimalen; het bedrag wordt niet afgerond.",
+  "too-large": "Bedrag is te groot (maximaal 9.999.999.999,99).",
 };
 
 /**
@@ -570,8 +578,14 @@ export type OpeningBalanceState =
   | { kind: "none"; otherDrafts: OpeningBalanceRow[] }
   | { kind: "draft"; header: OpeningBalanceRow; otherDrafts: OpeningBalanceRow[] }
   | { kind: "multiple-drafts"; drafts: OpeningBalanceRow[]; otherDrafts: OpeningBalanceRow[] }
-  | { kind: "posted"; header: OpeningBalanceRow | null; marker: OpeningBalanceMarker }
-  | { kind: "nil"; header: OpeningBalanceRow }
+  | {
+      kind: "posted";
+      header: OpeningBalanceRow | null;
+      marker: OpeningBalanceMarker;
+      /** Concepten die na het boeken zijn achtergebleven; alleen nog te verwijderen. */
+      leftoverDrafts: OpeningBalanceRow[];
+    }
+  | { kind: "nil"; header: OpeningBalanceRow; leftoverDrafts: OpeningBalanceRow[] }
   | { kind: "conflict"; message: string };
 
 export function isNilHeader(header: Pick<OpeningBalanceRow, "nil_declaration" | "nil_declared_at">): boolean {
@@ -580,6 +594,9 @@ export function isNilHeader(header: Pick<OpeningBalanceRow, "nil_declaration" | 
 
 export const CONFLICT_POSTED_AND_NIL =
   "Deze administratie heeft zowel een geboekte beginbalans als een nihil-verklaring. Dat kan niet naast elkaar bestaan; de pagina is uit veiligheid alleen-lezen. Neem contact op met de beheerder.";
+
+export const CONFLICT_TWO_NIL =
+  "Deze administratie heeft meer dan één nihil-verklaring voor de beginbalans. Dat kan niet; de pagina is uit veiligheid alleen-lezen. Neem contact op met de beheerder.";
 
 export const CONFLICT_HALF_NIL =
   "Een beginbalans van deze administratie heeft een onvolledige nihil-verklaring. De pagina is uit veiligheid alleen-lezen. Neem contact op met de beheerder.";
@@ -590,6 +607,8 @@ export const CONFLICT_HALF_NIL =
  * nooit samengevoegd; een geboekte of nihil-bewering geldt voor de hele
  * administratie (ongeacht het gekozen jaar), concepten worden per boekjaar
  * gezocht en bij meer dan één concept wordt er nooit stilzwijgend gekozen.
+ * Concepten die naast een geboekte of nihil-bewering zijn blijven staan,
+ * blijven zichtbaar zodat ze opgeruimd kunnen worden.
  */
 export function deriveOpeningBalanceState(input: {
   headers: readonly OpeningBalanceRow[];
@@ -603,15 +622,22 @@ export function deriveOpeningBalanceState(input: {
   if (halfNil.length > 0) return { kind: "conflict", message: CONFLICT_HALF_NIL };
   const nilHeaders = headers.filter(isNilHeader);
   if (marker && nilHeaders.length > 0) return { kind: "conflict", message: CONFLICT_POSTED_AND_NIL };
-  if (nilHeaders.length > 1) return { kind: "conflict", message: CONFLICT_POSTED_AND_NIL };
+  if (nilHeaders.length > 1) return { kind: "conflict", message: CONFLICT_TWO_NIL };
   if (marker) {
     return {
       kind: "posted",
       header: headers.find((h) => h.id === marker.opening_balance_id) ?? null,
       marker,
+      leftoverDrafts: headers.filter((h) => h.id !== marker.opening_balance_id),
     };
   }
-  if (nilHeaders.length === 1) return { kind: "nil", header: nilHeaders[0] };
+  if (nilHeaders.length === 1) {
+    return {
+      kind: "nil",
+      header: nilHeaders[0],
+      leftoverDrafts: headers.filter((h) => h.id !== nilHeaders[0].id),
+    };
+  }
   const drafts = headers.filter((h) => h.boekjaar === boekjaar);
   const otherDrafts = headers.filter((h) => h.boekjaar !== boekjaar);
   if (drafts.length === 0) return { kind: "none", otherDrafts };
@@ -732,6 +758,11 @@ export interface ClassifiedOpeningBalanceError {
 const SCHEMA_CODES = new Set(["PGRST202", "PGRST204", "PGRST205", "42P01", "42883"]);
 const VALIDATION_CODES = new Set(["22023", "23514", "22004", "22P02", "P0002", "28000", "25000"]);
 
+export const NETWORK_MESSAGE =
+  "Netwerkfout: de server is niet bereikbaar. Controleer de verbinding en probeer opnieuw.";
+export const SESSION_EXPIRED_MESSAGE = "Je sessie is verlopen. Log opnieuw in en probeer het nog eens.";
+export const AMOUNT_OVERFLOW_MESSAGE = "Een bedrag is te groot voor de database (maximaal 9.999.999.999,99).";
+
 const CHECK_CONSTRAINT_MESSAGES: Record<string, string> = {
   opening_balances_boekjaar_matches_date_check:
     "Boekjaar en openingsdatum horen niet bij elkaar; v1 ondersteunt alleen kalenderjaren.",
@@ -770,6 +801,16 @@ export function classifyOpeningBalanceError(error: unknown): ClassifiedOpeningBa
 
   if (SCHEMA_CODES.has(code) || /schema cache/i.test(raw)) {
     return { kind: "schema", code, message: SCHEMA_UNAVAILABLE_MESSAGE };
+  }
+  // Een mislukte fetch is een TypeError zonder code, geen PostgREST-fout.
+  if (error instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(raw)) {
+    return { kind: "unknown", code: code || "netwerk", message: NETWORK_MESSAGE };
+  }
+  if (code === "PGRST301" || /jwt expired|invalid jwt/i.test(raw)) {
+    return { kind: "permission", code: code || "PGRST301", message: SESSION_EXPIRED_MESSAGE };
+  }
+  if (code === "22003") {
+    return { kind: "validation", code, message: AMOUNT_OVERFLOW_MESSAGE };
   }
   if (code === "40P01" || /deadlock detected/i.test(raw)) {
     return { kind: "deadlock", code: "40P01", message: DEADLOCK_MESSAGE };

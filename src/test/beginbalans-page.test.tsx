@@ -23,6 +23,8 @@ const state = {
   marker: null as Row | null,
   canAssert: true as boolean | undefined,
   overviewError: false,
+  /** Eerdere data aanwezig, laatste verversing mislukt. */
+  overviewRefreshError: false,
 };
 
 const {
@@ -118,9 +120,9 @@ vi.mock("@/hooks/useOpeningBalances", async () => {
       return {
         data: state.overviewError ? undefined : { headers: state.headers, marker: state.clientMarker },
         isPending: false,
-        isError: state.overviewError,
+        isError: state.overviewError || state.overviewRefreshError,
         isFetching: false,
-        error: state.overviewError ? { code: "PGRST205", message: "schema cache" } : null,
+        error: state.overviewError || state.overviewRefreshError ? { code: "PGRST205", message: "schema cache" } : null,
         refetch: async () => {
           overviewRefetchSpy();
           store.bump();
@@ -235,6 +237,27 @@ const markerRow = (over: Row = {}): Row => ({
 const nilRow = (over: Row = {}): Row =>
   headerRow({ nil_declaration: true, nil_declared_at: "2027-01-05T10:00:00Z", nil_declared_by: "u-9", ...over });
 
+/**
+ * Simuleert wat de echte hook doet: de RPC slaat op, daarna wordt de cache
+ * opnieuw opgehaald (hier: `state.lines` bijgewerkt + re-render) en pas dan
+ * lost de belofte op.
+ */
+const persistLines = async ({ openingBalanceId, lines }: { openingBalanceId: string; lines: Array<Record<string, unknown>> }) => {
+  state.lines = lines.map((l, i) =>
+    lineRow({
+      id: `l-saved-${i}`,
+      opening_balance_id: openingBalanceId,
+      sort_order: l.sort_order,
+      grootboekrekening_id: l.grootboekrekening_id,
+      description: l.description,
+      debit_amount: l.debit_amount,
+      credit_amount: l.credit_amount,
+    }),
+  );
+  store.bump();
+  return { openingBalanceId, refreshed: true };
+};
+
 /** Een opgeslagen, sluitend concept: Debiteuren 1000 / Crediteuren 1000. */
 function loadBalancedDraft() {
   state.headers = [headerRow()];
@@ -266,7 +289,7 @@ const pickAccount = (rowIndex: number, nummer: number) =>
 beforeEach(() => {
   createSpy.mockReset().mockResolvedValue({ id: "ob-new" });
   updateSpy.mockReset().mockResolvedValue({ id: "ob-1" });
-  saveLinesSpy.mockReset().mockResolvedValue("ob-1");
+  saveLinesSpy.mockReset().mockResolvedValue({ openingBalanceId: "ob-1", refreshed: true });
   deleteSpy.mockReset().mockResolvedValue("ob-1");
   postSpy.mockReset().mockResolvedValue("g-1");
   nilSpy.mockReset().mockResolvedValue("ob-1");
@@ -281,6 +304,7 @@ beforeEach(() => {
   state.marker = null;
   state.canAssert = true;
   state.overviewError = false;
+  state.overviewRefreshError = false;
 });
 
 describe("Beginbalans — toestanden", () => {
@@ -489,11 +513,16 @@ describe("Beginbalans — concept", () => {
   });
 
   it("26. een mislukte regelopslag maakt bij een nieuwe poging geen tweede kop aan en bewaart de regels", async () => {
-    saveLinesSpy.mockRejectedValueOnce({ code: "22023", message: "Negatieve bedragen worden niet ondersteund; boek het bedrag op de andere zijde" });
-    // Na het aanmaken bestaat de kop in de database (zonder regels).
+    saveLinesSpy
+      .mockRejectedValueOnce({ code: "22023", message: "Negatieve bedragen worden niet ondersteund; boek het bedrag op de andere zijde" })
+      .mockImplementation(persistLines);
+    // Na het aanmaken bestaat de kop in de database (zonder regels) en vindt
+    // het overzicht hem meteen — precies het moment waarop de getypte regels
+    // vroeger door lege databaserijen konden worden overschreven.
     createSpy.mockImplementation(async () => {
       state.header = headerRow({ id: "ob-new", reference: null });
       state.headers = [headerRow({ id: "ob-new", reference: null })];
+      store.bump();
       return { id: "ob-new" };
     });
     renderPage();
@@ -510,6 +539,7 @@ describe("Beginbalans — concept", () => {
     expect(createSpy).toHaveBeenCalledTimes(1);
     // De getypte regel is niet overschreven door de (lege) databaserijen.
     expect(debit(1).value).toBe("-5");
+    expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept");
 
     fireEvent.change(debit(1), { target: { value: "5,00" } });
     fireEvent.click(saveButton());
@@ -517,6 +547,118 @@ describe("Beginbalans — concept", () => {
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(updateSpy).toHaveBeenCalledTimes(1);
     expect(saveLinesSpy.mock.calls[1][0].openingBalanceId).toBe("ob-new");
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ title: "Beginbalans opgeslagen" }));
+    // Na de geslaagde opslag toont het formulier de opgeslagen (verse) rijen.
+    await waitFor(() => expect(debit(1).value).toBe("5,00"));
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("26b. opslaan van een bestaand concept toont daarna de verse rijen, nooit de oude cache", async () => {
+    loadBalancedDraft();
+    // De kop krijgt bij het bijwerken een nieuwe updated_at, zoals de trigger doet.
+    updateSpy.mockImplementation(async ({ id }: { id: string }) => {
+      state.header = headerRow({ id, updated_at: "2027-04-02T00:00:00Z" });
+      store.bump();
+      return { id };
+    });
+    saveLinesSpy.mockImplementation(persistLines);
+    renderPage();
+    await waitFor(() => expect(debit(1).value).toBe("1000,00"));
+    fireEvent.change(debit(1), { target: { value: "1500,00" } });
+    fireEvent.change(credit(2), { target: { value: "1500,00" } });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ title: "Beginbalans opgeslagen" }));
+    await waitFor(() => expect(debit(1).value).toBe("1500,00"));
+    expect(credit(2).value).toBe("1500,00");
+    // En het formulier is niet meer "gewijzigd": boeken is weer mogelijk.
+    await waitFor(() => expect(postButton()!.disabled).toBe(false));
+  });
+
+  it("26c. opgeslagen maar herladen mislukt: het formulier houdt de opgeslagen invoer vast tot de verse rijen er zijn", async () => {
+    loadBalancedDraft();
+    updateSpy.mockImplementation(async ({ id }: { id: string }) => {
+      state.header = headerRow({ id, updated_at: "2027-04-02T00:00:00Z" });
+      store.bump();
+      return { id };
+    });
+    // De RPC slaagde, maar het opnieuw laden niet: de cache houdt de oude rijen.
+    saveLinesSpy.mockImplementation(async ({ openingBalanceId }: { openingBalanceId: string }) => ({ openingBalanceId, refreshed: false }));
+    renderPage();
+    await waitFor(() => expect(debit(1).value).toBe("1000,00"));
+    fireEvent.change(debit(1), { target: { value: "1500,00" } });
+    fireEvent.change(credit(2), { target: { value: "1500,00" } });
+    fireEvent.click(saveButton());
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith(expect.objectContaining({ title: "Beginbalans opgeslagen", description: expect.stringMatching(/opnieuw laden is mislukt/) })),
+    );
+    // Niet teruggevallen op de oude cache (1000,00).
+    expect(debit(1).value).toBe("1500,00");
+    // Zodra de database de opgeslagen rijen wél teruggeeft, volgt het formulier ze.
+    state.lines = [
+      lineRow({ id: "l-a", debit_amount: 1500 }),
+      lineRow({ id: "l-b", sort_order: 1, grootboekrekening_id: "gb-1600", description: "Crediteuren", debit_amount: 0, credit_amount: 1500 }),
+    ];
+    store.bump();
+    await waitFor(() => expect(debit(1).value).toBe("1500,00"));
+    expect(credit(2).value).toBe("1500,00");
+  });
+
+  it("boekjaar wijzigen op een nieuw formulier met inhoud vervangt de invoer niet; het bestaande concept wordt gemeld", async () => {
+    state.headers = [headerRow({ id: "ob-prev", boekjaar: YEAR - 1, opening_date: `${YEAR - 1}-01-01`, description: "Vorig jaar" })];
+    state.header = headerRow({ id: "ob-prev", boekjaar: YEAR - 1, opening_date: `${YEAR - 1}-01-01`, description: "Vorig jaar" });
+    renderPage();
+    fireEvent.change(debit(1), { target: { value: "250,00" } });
+    fireEvent.change(screen.getByLabelText("Boekjaar"), { target: { value: String(YEAR - 1) } });
+    // De regel staat er nog, het concept van dat jaar is niet stilzwijgend geopend.
+    expect(debit(1).value).toBe("250,00");
+    expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nog geen beginbalans");
+    const note = screen.getByTestId("beginbalans-typed-year-drafts");
+    expect(note).toHaveTextContent(`Er bestaat al een concept voor boekjaar ${YEAR - 1}`);
+    // Openen is een expliciete keuze en vraagt eerst om bevestiging.
+    fireEvent.click(within(note).getByRole("button", { name: /Open concept/ }));
+    expect(await screen.findByText("Niet-opgeslagen wijzigingen")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /wijzigingen weggooien/i }));
+    await waitFor(() => expect((screen.getByLabelText("Omschrijving") as HTMLInputElement).value).toBe("Vorig jaar"));
+  });
+
+  it("boekjaar wijzigen op een leeg nieuw formulier opent het concept van dat jaar", async () => {
+    state.headers = [headerRow({ id: "ob-prev", boekjaar: YEAR - 1, opening_date: `${YEAR - 1}-01-01`, description: "Vorig jaar" })];
+    state.header = headerRow({ id: "ob-prev", boekjaar: YEAR - 1, opening_date: `${YEAR - 1}-01-01`, description: "Vorig jaar" });
+    renderPage();
+    fireEvent.change(screen.getByLabelText("Boekjaar"), { target: { value: String(YEAR - 1) } });
+    await waitFor(() => expect((screen.getByLabelText("Omschrijving") as HTMLInputElement).value).toBe("Vorig jaar"));
+    expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept");
+  });
+
+  it("boekjaar van een bestaand concept wijzigen en opslaan houdt het concept in beeld", async () => {
+    loadBalancedDraft();
+    updateSpy.mockImplementation(async ({ id, form }: { id: string; form: { boekjaar: string; opening_date: string } }) => {
+      const updated = headerRow({ id, boekjaar: Number(form.boekjaar), opening_date: form.opening_date, updated_at: "2027-04-02T00:00:00Z" });
+      state.header = updated;
+      state.headers = [updated];
+      store.bump();
+      return { id };
+    });
+    saveLinesSpy.mockImplementation(persistLines);
+    renderPage();
+    await waitFor(() => expect(debit(1).value).toBe("1000,00"));
+    fireEvent.change(screen.getByLabelText("Boekjaar"), { target: { value: String(YEAR - 1) } });
+    expect((screen.getByLabelText("Openingsdatum") as HTMLInputElement).value).toBe(`${YEAR - 1}-01-01`);
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ title: "Beginbalans opgeslagen" }));
+    expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept");
+    expect((screen.getByLabelText("Boekjaar") as HTMLInputElement).value).toBe(String(YEAR - 1));
+    expect(debit(1).value).toBe("1000,00");
+  });
+
+  it("een mislukte verversing mét eerdere data laat het formulier staan en meldt het", async () => {
+    loadBalancedDraft();
+    state.overviewRefreshError = true;
+    renderPage();
+    await waitFor(() => expect(debit(1).value).toBe("1000,00"));
+    expect(screen.getByTestId("beginbalans-refresh-error")).toHaveTextContent("kan verouderd zijn");
+    expect(screen.queryByTestId("beginbalans-load-error")).toBeNull();
+    expect(screen.getByTestId("beginbalans-header-card")).toBeInTheDocument();
   });
 
   it("een onleesbaar bedrag blokkeert opslaan (null zou server-side 0 worden)", async () => {
@@ -646,6 +788,24 @@ describe("Beginbalans — boeken", () => {
     expect(within(links).getByRole("link", { name: /Grootboeksaldi/ })).toHaveAttribute("href", "/grootboek/saldi");
   });
 
+  it("achtergebleven concepten naast een geboekte beginbalans blijven zichtbaar en zijn alleen te verwijderen", async () => {
+    loadBalancedDraft();
+    state.headers = [headerRow(), headerRow({ id: "ob-rest", opening_date: `${YEAR}-01-02`, description: "Restant" })];
+    state.clientMarker = markerRow();
+    state.marker = markerRow();
+    renderPage();
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Geboekt"));
+    const leftover = screen.getByTestId("beginbalans-leftover-drafts");
+    expect(within(leftover).getAllByTestId("beginbalans-leftover-draft")).toHaveLength(1);
+    expect(leftover).toHaveTextContent("Restant");
+    expect(within(leftover).queryByRole("button", { name: /Open concept/ })).toBeNull();
+    fireEvent.click(within(leftover).getByRole("button", { name: `Verwijder concept van 02-01-${YEAR}` }));
+    expect(await screen.findByText("Concept verwijderen?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Verwijderen" }));
+    await waitFor(() => expect(deleteSpy).toHaveBeenCalledWith("ob-rest"));
+    expect(postSpy).not.toHaveBeenCalled();
+  });
+
   it("31/47. 23505 (al geboekt) → claimrij opnieuw ophalen, geboekte weergave, geen foutmelding", async () => {
     loadBalancedDraft();
     renderPage();
@@ -659,6 +819,7 @@ describe("Beginbalans — boeken", () => {
     });
     fireEvent.click(within(dialog).getByTestId("beginbalans-post-confirm"));
     await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ title: "Deze beginbalans is al geboekt." }));
+    expect(toastSpy).not.toHaveBeenCalledWith(expect.objectContaining({ variant: "destructive" }));
     expect(overviewRefetchSpy).toHaveBeenCalled();
     await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Geboekt"));
     expect(screen.queryByTestId("beginbalans-save")).toBeNull();

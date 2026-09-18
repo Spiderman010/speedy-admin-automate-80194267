@@ -45,7 +45,10 @@ export interface OpeningBalanceTableProps {
   onChange: (updater: (prev: OpeningBalanceLineRow[]) => OpeningBalanceLineRow[]) => void;
 }
 
-const AMOUNT_INPUT_CLASS = "h-11 text-right font-mono tabular-nums sm:h-8";
+// 44 px op mobiel; de dichte 32 px op elk groter scherm (het Input-basisstijl
+// heeft een eigen md:h-9 die anders zou winnen van sm:h-8).
+const DENSE_INPUT_CLASS = "h-11 sm:h-8 md:h-8";
+const AMOUNT_INPUT_CLASS = `${DENSE_INPUT_CLASS} text-right font-mono tabular-nums`;
 
 export function OpeningBalanceTable({
   lines,
@@ -64,9 +67,10 @@ export function OpeningBalanceTable({
         if (i !== index) return line;
         const parsed = parseExactAmount(line[side]);
         // Alleen netjes uitlijnen, NOOIT afronden of leegmaken: ongeldige of
-        // te precieze invoer blijft letterlijk staan.
+        // te precieze invoer blijft letterlijk staan, en een getypte nul
+        // blijft een nul ("0,00").
         if (parsed.kind !== "ok") return line;
-        return { ...line, [side]: parsed.cents === 0 ? "" : formatCentsInput(parsed.cents) };
+        return { ...line, [side]: formatCentsInput(parsed.cents) };
       }),
     );
   };
@@ -109,7 +113,7 @@ export function OpeningBalanceTable({
                         onChange={(e) => patch(index, (l) => ({ ...l, description: e.target.value }))}
                         placeholder="Omschrijving"
                         aria-label={`Omschrijving regel ${rowNumber}`}
-                        className="h-11 sm:h-8"
+                        className={DENSE_INPUT_CLASS}
                       />
                     </TableCell>
                     <TableCell className="py-1.5">
@@ -123,7 +127,7 @@ export function OpeningBalanceTable({
                           clientId={clientId}
                           onValueChange={(v) => patch(index, (l) => ({ ...l, grootboek_label: v }))}
                           onIdChange={(id) => patch(index, (l) => ({ ...l, grootboekrekening_id: id || null }))}
-                          className="h-11 sm:h-8"
+                          className={DENSE_INPUT_CLASS}
                         />
                       )}
                     </TableCell>

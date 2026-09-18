@@ -19,7 +19,11 @@ const state = {
   canAssert: true as boolean | null,
 };
 
-const { rpcSpy, toastSpy } = vi.hoisted(() => ({ rpcSpy: vi.fn(), toastSpy: vi.fn() }));
+const { rpcSpy, toastSpy, tableWriteSpy } = vi.hoisted(() => ({
+  rpcSpy: vi.fn(),
+  toastSpy: vi.fn(),
+  tableWriteSpy: vi.fn(),
+}));
 
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u-1" }, loading: false }) }));
@@ -40,6 +44,20 @@ vi.mock("@/integrations/supabase/client", () => ({
           },
         }),
       }),
+      // Elke tabelschrijfactie vanuit deze componenten is een fout: boeken en
+      // nihil gaan uitsluitend via de RPC's.
+      insert: (...args: unknown[]) => {
+        tableWriteSpy(table, "insert", ...args);
+        throw new Error(`onverwachte insert op ${table}`);
+      },
+      update: (...args: unknown[]) => {
+        tableWriteSpy(table, "update", ...args);
+        throw new Error(`onverwachte update op ${table}`);
+      },
+      delete: (...args: unknown[]) => {
+        tableWriteSpy(table, "delete", ...args);
+        throw new Error(`onverwachte delete op ${table}`);
+      },
     }),
     rpc: rpcSpy,
   },
@@ -148,6 +166,7 @@ const rpcDefault = () =>
 beforeEach(() => {
   rpcSpy.mockReset();
   toastSpy.mockClear();
+  tableWriteSpy.mockClear();
   state.marker = null;
   state.markerError = null;
   state.header = { id: "ob-1", nil_declaration: false, nil_declared_at: null, nil_declared_by: null };
@@ -454,7 +473,41 @@ describe("OpeningBalanceNilAction", () => {
     expect(onDeclared).not.toHaveBeenCalled();
   });
 
-  it("de nihil-verklaring loopt uitsluitend via de RPC: geen update van nihil-kolommen", () => {
-    expect(rpcSpy.mock.calls.every((c) => typeof c[0] === "string")).toBe(true);
+  it("de nihil-verklaring loopt uitsluitend via de RPC: geen enkele tabelschrijfactie", async () => {
+    const { onDeclared } = renderNil();
+    await waitFor(() => expect(nilButton().disabled).toBe(false));
+    rpcSpy.mockImplementation(async (fn: string) => {
+      if (fn === "has_min_role") return { data: true, error: null };
+      state.header = nilHeader();
+      return { data: null, error: null };
+    });
+    await confirmNil();
+    await waitFor(() => expect(onDeclared).toHaveBeenCalledTimes(1));
+    expect(nilCalls()).toHaveLength(1);
+    // Geen insert/update/delete op welke tabel dan ook — de nihil-kolommen
+    // hebben geen kolomrecht en worden alleen door de RPC gezet.
+    expect(tableWriteSpy).not.toHaveBeenCalled();
+  });
+
+  it("boeken loopt uitsluitend via de RPC: geen enkele tabelschrijfactie", async () => {
+    const { onPosted } = renderPosting();
+    await waitFor(() => expect(button().disabled).toBe(false));
+    rpcSpy.mockImplementation(async (fn: string) => {
+      if (fn === "has_min_role") return { data: true, error: null };
+      state.marker = { opening_balance_id: "ob-1", posting_group_id: "g-1", total_amount: 1000 };
+      return { data: "g-1", error: null };
+    });
+    await confirmPost();
+    await waitFor(() => expect(onPosted).toHaveBeenCalledTimes(1));
+    expect(tableWriteSpy).not.toHaveBeenCalled();
+  });
+
+  it("rolcontrole mislukt → geen knop, uitleg in plaats van eeuwig 'controleren'", async () => {
+    rpcSpy.mockImplementation(async (fn: string) =>
+      fn === "has_min_role" ? { data: null, error: { code: "42501", message: "permission denied" } } : { data: null, error: null },
+    );
+    renderPosting();
+    await waitFor(() => expect(hint()).toHaveTextContent("Rechten konden niet worden gecontroleerd; ververs de pagina."));
+    expect(screen.queryByTestId("beginbalans-posting-button")).toBeNull();
   });
 });

@@ -32,14 +32,33 @@ export const OPENING_BALANCE_KEY = "opening-balance" as const;
 export const OPENING_BALANCE_LINES_KEY = "opening-balance-lines" as const;
 export const OPENING_BALANCE_POSTING_KEY = "opening-balance-posting" as const;
 
-/** Alles van één administratie in één keer ongeldig maken (na elke mutatie). */
-export function invalidateOpeningBalanceQueries(qc: QueryClient, openingBalanceId?: string | null) {
-  qc.invalidateQueries({ queryKey: [OPENING_BALANCES_KEY] });
+/**
+ * Alles van één administratie in één keer ongeldig maken (na elke mutatie).
+ * Geeft de refetch-belofte terug: een mutation-callback die hem teruggeeft
+ * laat `mutateAsync` pas oplossen wanneer de cache weer vers is, zodat de
+ * pagina daarna nooit op een tussentijdse, verouderde rij synchroniseert.
+ */
+export function invalidateOpeningBalanceQueries(
+  qc: QueryClient,
+  openingBalanceId?: string | null,
+): Promise<void> {
+  const tasks = [qc.invalidateQueries({ queryKey: [OPENING_BALANCES_KEY] })];
   if (openingBalanceId) {
-    qc.invalidateQueries({ queryKey: [OPENING_BALANCE_KEY, openingBalanceId] });
-    qc.invalidateQueries({ queryKey: [OPENING_BALANCE_LINES_KEY, openingBalanceId] });
-    qc.invalidateQueries({ queryKey: [OPENING_BALANCE_POSTING_KEY, openingBalanceId] });
+    tasks.push(
+      qc.invalidateQueries({ queryKey: [OPENING_BALANCE_KEY, openingBalanceId] }),
+      qc.invalidateQueries({ queryKey: [OPENING_BALANCE_LINES_KEY, openingBalanceId] }),
+      qc.invalidateQueries({ queryKey: [OPENING_BALANCE_POSTING_KEY, openingBalanceId] }),
+    );
   }
+  return Promise.all(tasks).then(() => undefined);
+}
+
+/** Is de cache van kop en regels na een refetch zonder fout gevuld? */
+function refreshedCleanly(qc: QueryClient, openingBalanceId: string): boolean {
+  return (
+    !qc.getQueryState([OPENING_BALANCE_KEY, openingBalanceId])?.error &&
+    !qc.getQueryState([OPENING_BALANCE_LINES_KEY, openingBalanceId])?.error
+  );
 }
 
 export interface OpeningBalanceOverview {
@@ -169,9 +188,20 @@ export function useUpdateOpeningBalance() {
   });
 }
 
+export interface SaveOpeningBalanceLinesResult {
+  openingBalanceId: string;
+  /**
+   * Kop en regels zijn na de opslag opnieuw en zonder fout uit de database
+   * gelezen. Zo niet, dan staat er mogelijk nog een oude rij in de cache en
+   * mag de pagina daar niet op synchroniseren.
+   */
+  refreshed: boolean;
+}
+
 /**
  * De enige schrijfweg voor regels. Precies één RPC-aanroep; de database doet
  * DELETE + INSERT atomair achter de kopgrendel. Bedragen gaan onafgerond mee.
+ * De belofte lost pas op nadat de cache opnieuw is opgehaald.
  */
 export function useSaveOpeningBalanceLines() {
   const qc = useQueryClient();
@@ -182,7 +212,7 @@ export function useSaveOpeningBalanceLines() {
     }: {
       openingBalanceId: string;
       lines: OpeningBalanceLinePayload[];
-    }) => {
+    }): Promise<SaveOpeningBalanceLinesResult> => {
       // null/NaN zou server-side stilletjes 0 worden: dat is geen opslag maar
       // een fout, en die hoort hier al te stoppen.
       if (lines.some((l) => !Number.isFinite(l.debit_amount) || !Number.isFinite(l.credit_amount))) {
@@ -195,10 +225,15 @@ export function useSaveOpeningBalanceLines() {
         _lines: lines as unknown as Json,
       });
       if (error) throw error;
-      return openingBalanceId;
+      // Pas ná de RPC opnieuw ophalen (invalidateQueries annuleert een nog
+      // lopende, oudere refetch), en wachten tot dat klaar is.
+      await invalidateOpeningBalanceQueries(qc, openingBalanceId);
+      return { openingBalanceId, refreshed: refreshedCleanly(qc, openingBalanceId) };
     },
-    onError: (error) => logMutationError("regels opslaan", error),
-    onSettled: (_data, _error, variables) => invalidateOpeningBalanceQueries(qc, variables.openingBalanceId),
+    onError: (error, variables) => {
+      logMutationError("regels opslaan", error);
+      return invalidateOpeningBalanceQueries(qc, variables.openingBalanceId);
+    },
   });
 }
 

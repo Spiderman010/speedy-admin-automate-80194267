@@ -40,16 +40,20 @@ import {
   classifyOpeningBalanceError,
   createEmptyLineRows,
   createHeaderForm,
+  dbAmountToCents,
+  defaultDescription,
   deriveOpeningBalanceState,
   DOUBLE_COUNT_WARNING,
   formatCentsEuro,
   formatDatumNL,
   formatTijdstipNL,
   headerIssues,
+  isBlankLine,
   isCompetingStateError,
   isHeaderDirty,
   isNilHeader,
   lineBlocksSave,
+  linesSnapshot,
   lineTotals,
   NIL_FINAL_NOTICE,
   NIL_NOTICE,
@@ -57,7 +61,6 @@ import {
   POSTED_FINAL_NOTICE,
   toHeaderForm,
   toLineRows,
-  dbAmountToCents,
   type OpeningBalanceAccountRef,
   type OpeningBalanceHeaderForm,
   type OpeningBalanceLineRow,
@@ -76,10 +79,14 @@ import {
  * declare_opening_balance_nil(). De pagina implementeert de boekhoudregels
  * niet opnieuw: de knoppen gaan uit bij duidelijk kansloze invoer, de database
  * beslist. Bij meer dan één concept voor het gekozen jaar wordt er nooit
- * stilzwijgend gekozen. Na elke mutatie wordt de waarheid opnieuw opgehaald.
+ * stilzwijgend gekozen. Na elke mutatie wordt de waarheid opnieuw opgehaald,
+ * en het formulier volgt de database pas wanneer die aantoonbaar vers is.
  */
 
 const CLIENT_BANNER = "Kies eerst een specifieke administratie om de beginbalans te bekijken.";
+
+/** Expliciete keuze van dit tabblad, gebonden aan de administratie waarvoor hij gold. */
+type Chosen = { clientId: string; id: string } | null;
 
 function LoadingBlock({ label }: { label: string }) {
   return (
@@ -118,6 +125,10 @@ function ReportLinks() {
   );
 }
 
+function draftLabel(draft: OpeningBalanceRow): string {
+  return `${formatDatumNL(draft.opening_date)} — ${draft.description || "zonder omschrijving"}`;
+}
+
 export default function Beginbalans() {
   const { toast } = useToast();
   const { selectedClientId } = useClientContext();
@@ -140,8 +151,10 @@ export default function Beginbalans() {
   }, [allAccounts]);
 
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
-  /** Expliciete keuze van dit tabblad: zojuist aangemaakt of uit de conceptenlijst geopend. */
-  const [chosenId, setChosenId] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<Chosen>(null);
+  // Alleen een keuze voor déze administratie telt; van een vorige administratie
+  // mag geen kop of regel ook maar één render lang in beeld komen.
+  const chosenId = chosen && chosen.clientId === clientId ? chosen.id : null;
 
   const overview = useOpeningBalanceOverview(clientId);
   const state = useMemo(
@@ -190,7 +203,11 @@ export default function Beginbalans() {
   const [persistedForm, setPersistedForm] = useState<OpeningBalanceHeaderForm | null>(null);
   const [persistedLines, setPersistedLines] = useState<OpeningBalanceLineRow[] | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OpeningBalanceRow | null>(null);
+  const [discardTarget, setDiscardTarget] = useState<OpeningBalanceRow | null>(null);
   const syncedKey = useRef<string | null>(null);
+  // Na een opslag waarvan het opnieuw laden mislukte: pas synchroniseren zodra
+  // de database precies de rijen teruggeeft die we opsloegen.
+  const holdUntil = useRef<string | null>(null);
 
   const dbHeader = headerQuery.data ?? null;
   const dbLines = linesQuery.data;
@@ -205,11 +222,20 @@ export default function Beginbalans() {
   const headerDirty = !!editorId && isHeaderDirty(form, persistedForm);
   const linesDirty = !!editorId && areLinesDirty(lines, persistedLines);
   const isDirty = headerDirty || linesDirty;
+  const typedYear = parseBoekjaar(form.boekjaar);
+  // Een nieuw, nog niet opgeslagen formulier met inhoud mag nooit stilzwijgend
+  // worden vervangen.
+  const formHasContent =
+    lines.some((l) => !isBlankLine(l)) ||
+    form.reference.trim() !== "" ||
+    form.description.trim() !== (typedYear !== null ? defaultDescription(typedYear) : "");
+  const hasUnsavedWork = editorId ? isDirty && !readOnly : formHasContent;
 
   // Andere administratie: alles terug naar het begin.
   useEffect(() => {
-    setChosenId(null);
+    setChosen(null);
     syncedKey.current = null;
+    holdUntil.current = null;
     setForm(createHeaderForm(selectedYear));
     setLines(createEmptyLineRows());
     setPersistedForm(null);
@@ -223,6 +249,7 @@ export default function Beginbalans() {
   useEffect(() => {
     if (editorId) return;
     syncedKey.current = null;
+    holdUntil.current = null;
     setForm(createHeaderForm(selectedYear));
     setLines(createEmptyLineRows());
     setPersistedForm(null);
@@ -237,6 +264,11 @@ export default function Beginbalans() {
   useEffect(() => {
     if (!editorId || !dbHeader || !dbLines) return;
     if (!readOnly && persistedForm && persistedLines && isDirty) return;
+    if (!readOnly && holdUntil.current !== null) {
+      if (linesSnapshot(toLineRows(dbLines, accountsById)) !== holdUntil.current) return;
+      holdUntil.current = null;
+      syncedKey.current = null;
+    }
     const key = [
       dbHeader.id,
       dbHeader.updated_at,
@@ -259,17 +291,18 @@ export default function Beginbalans() {
 
   // Niet-opgeslagen wijzigingen mogen niet ongemerkt verdwijnen.
   useEffect(() => {
-    if (!editorId || !isDirty || readOnly) return;
+    if (!hasUnsavedWork) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [editorId, isDirty, readOnly]);
+  }, [hasUnsavedWork]);
 
   const refetchTruth = () => {
     syncedKey.current = null;
+    holdUntil.current = null;
     void overview.refetch();
     if (editorId) {
       void headerQuery.refetch();
@@ -278,11 +311,32 @@ export default function Beginbalans() {
     }
   };
 
+  const openDraft = (draft: OpeningBalanceRow) => {
+    if (!clientId) return;
+    syncedKey.current = null;
+    holdUntil.current = null;
+    setPersistedForm(null);
+    setPersistedLines(null);
+    setChosen({ clientId, id: draft.id });
+    setSelectedYear(draft.boekjaar);
+  };
+
+  /** Een ander concept openen is een expliciete keuze; werk weggooien ook. */
+  const requestOpen = (draft: OpeningBalanceRow) => {
+    if (hasUnsavedWork) {
+      setDiscardTarget(draft);
+      return;
+    }
+    openDraft(draft);
+  };
+
   const handleBoekjaarChange = (raw: string) => {
     setForm((prev) => applyBoekjaarChange(prev, raw));
     // In het nieuwe formulier stuurt het boekjaar ook de zoektocht naar een
-    // bestaand concept; bij een bestaand concept volgt het pas na opslaan.
-    if (!editorId) {
+    // bestaand concept — maar nooit zolang er al iets getypt is: dan zou een
+    // gevonden concept de invoer stilzwijgend vervangen. Bij een bestaand
+    // concept volgt het jaar pas na opslaan.
+    if (!editorId && !formHasContent) {
       const year = parseBoekjaar(raw);
       if (year !== null) setSelectedYear(year);
     }
@@ -304,33 +358,65 @@ export default function Beginbalans() {
       });
       return;
     }
+    const wasNew = !editorId;
+    if (wasNew) {
+      // Basislijn vóór het aanmaken: de kop wordt zo meteen de waarheid en de
+      // regels nog niet. Zolang die niet zijn opgeslagen telt het formulier
+      // als gewijzigd, zodat een vroege refetch (het overzicht vindt de nieuwe
+      // kop al) de getypte regels niet met lege databaserijen kan overschrijven.
+      setPersistedForm(form);
+      setPersistedLines([]);
+    }
+    let createdId: string | null = null;
     try {
       let id = editorId;
       if (id) {
+        // De kop blijft de gekozen kop, ook als het boekjaar verandert: het
+        // overzicht vindt hem dan niet meer onder het gekozen jaar, en zonder
+        // expliciete keuze zou de editor midden in de opslag verdwijnen.
+        setChosen({ clientId, id });
         await updateHeader.mutateAsync({ id, form });
+        setPersistedForm(form);
       } else {
         id = (await createHeader.mutateAsync({ form, clientId })).id;
+        createdId = id;
         // Meteen vastleggen: als het opslaan van de regels hierna faalt, werkt
         // een volgende poging deze kop bij in plaats van een tweede kop aan te
         // maken (anders blijft er per mislukte poging een leeg concept achter).
-        // De kop is nu de basislijn en de regels nog niet: het formulier telt
-        // als gewijzigd, zodat de getypte regels niet door de (lege) databaserijen
-        // worden overschreven zolang ze niet zijn opgeslagen.
-        setChosenId(id);
-        setPersistedLines([]);
+        setChosen({ clientId, id });
       }
-      setPersistedForm(form);
 
       // Precies één aanroep; de database vervangt de hele regelset atomair.
-      await saveLines.mutateAsync({ openingBalanceId: id, lines: buildSaveLinesPayload(lines) });
+      // De belofte lost pas op nadat kop en regels opnieuw zijn opgehaald.
+      const result = await saveLines.mutateAsync({ openingBalanceId: id, lines: buildSaveLinesPayload(lines) });
 
-      // Bewust NIET syncedKey wissen: de cache bevat op dit moment nog de oude
-      // rijen en die zouden het zojuist opgeslagen formulier terugdraaien.
-      setPersistedLines(lines);
+      // De bewerkte kop blijft de gekozen kop, ook wanneer het boekjaar
+      // veranderde en het overzicht voor dat jaar nog niet is bijgewerkt.
+      setChosen({ clientId, id });
       const savedYear = parseBoekjaar(form.boekjaar);
       if (savedYear !== null) setSelectedYear(savedYear);
-      toast({ title: "Beginbalans opgeslagen" });
+      setPersistedLines(lines);
+      if (result.refreshed) {
+        // De cache is vers: het effect neemt de databaseweergave over (zelfde
+        // inhoud, genormaliseerd).
+        holdUntil.current = null;
+        syncedKey.current = null;
+        toast({ title: "Beginbalans opgeslagen" });
+      } else {
+        // Opgeslagen, maar opnieuw laden mislukte. Niet op een mogelijk oude
+        // cache synchroniseren: wachten tot de opgeslagen rijen terugkomen.
+        holdUntil.current = linesSnapshot(lines);
+        toast({
+          title: "Beginbalans opgeslagen",
+          description: "Het opnieuw laden is mislukt; ververs de pagina om de opgeslagen toestand te controleren.",
+        });
+      }
     } catch (e) {
+      if (wasNew && !createdId) {
+        // Er is niets aangemaakt: het formulier is weer gewoon "nieuw".
+        setPersistedForm(null);
+        setPersistedLines(null);
+      }
       const classified = classifyOpeningBalanceError(e);
       toast({ title: "Opslaan niet gelukt", description: classified.message, variant: "destructive" });
       // Al geboekt, nihil of tussentijds gewijzigd: de waarheid opnieuw laden
@@ -344,8 +430,9 @@ export default function Beginbalans() {
     if (!deleteTarget) return;
     try {
       await deleteDraft.mutateAsync(deleteTarget.id);
-      if (chosenId === deleteTarget.id) setChosenId(null);
+      if (chosenId === deleteTarget.id) setChosen(null);
       syncedKey.current = null;
+      holdUntil.current = null;
       setDeleteTarget(null);
       toast({ title: "Concept verwijderd" });
     } catch (e) {
@@ -363,7 +450,15 @@ export default function Beginbalans() {
   const totals = useMemo(() => lineTotals(lines), [lines]);
   const formIssues = headerIssues(form);
   const stateUncertain = overview.isPending || (!!editorId && (headerQuery.isPending || linesQuery.isPending));
-  const stateUnavailable = overview.isError;
+  // Zonder overzicht valt er niets te beslissen; een mislukte verversing mét
+  // eerdere data laat het scherm staan en meldt dat het verouderd kan zijn.
+  const stateUnavailable = overview.isError && !overview.data;
+  // Concept voor het getypte jaar terwijl de zoektocht (bewust) niet meeging.
+  const typedYearDrafts =
+    !editorId && overview.data && typedYear !== null && typedYear !== selectedYear
+      ? overview.data.headers.filter((h) => h.boekjaar === typedYear)
+      : [];
+  const leftoverDrafts = state?.kind === "posted" || state?.kind === "nil" ? state.leftoverDrafts : [];
 
   const statusBadge = posted ? (
     <Badge variant="success" data-testid="beginbalans-status">Geboekt</Badge>
@@ -373,6 +468,20 @@ export default function Beginbalans() {
     <Badge variant="secondary" data-testid="beginbalans-status">Concept</Badge>
   ) : (
     <Badge variant="outline" data-testid="beginbalans-status">Nog geen beginbalans</Badge>
+  );
+
+  const draftChip = (draft: OpeningBalanceRow, label: string) => (
+    <Button
+      key={draft.id}
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-11 sm:h-8"
+      onClick={() => requestOpen(draft)}
+      aria-label={`Open concept ${label}`}
+    >
+      {label}
+    </Button>
   );
 
   return (
@@ -390,7 +499,7 @@ export default function Beginbalans() {
             <LoadingBlock label="Beginbalans laden…" />
           </CardContent>
         </Card>
-      ) : overview.isError ? (
+      ) : stateUnavailable ? (
         <Alert variant="destructive" data-testid="beginbalans-load-error">
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Beginbalans kan niet worden geladen</AlertTitle>
@@ -403,6 +512,19 @@ export default function Beginbalans() {
         </Alert>
       ) : (
         <div className="space-y-6">
+          {overview.isError && (
+            <Alert variant="destructive" data-testid="beginbalans-refresh-error">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Verversen mislukt</AlertTitle>
+              <AlertDescription className="flex flex-col items-start gap-3">
+                <p>De laatste verversing is mislukt; de getoonde toestand kan verouderd zijn. De database blijft bij elke actie het laatste woord houden.</p>
+                <Button variant="outline" size="sm" onClick={refetchTruth}>
+                  Opnieuw laden
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {state?.kind === "conflict" && (
             <Alert variant="destructive" data-testid="beginbalans-conflict">
               <AlertTriangle className="h-4 w-4" />
@@ -425,7 +547,7 @@ export default function Beginbalans() {
                   {state.drafts.map((draft) => (
                     <li key={draft.id} className="flex flex-wrap items-center gap-2" data-testid="beginbalans-draft-option">
                       <span className="text-sm">
-                        {formatDatumNL(draft.opening_date)} — {draft.description || "zonder omschrijving"}{" "}
+                        {draftLabel(draft)}{" "}
                         <span className="font-mono text-xs text-muted-foreground">({draft.id})</span>
                       </span>
                       <Button
@@ -433,10 +555,7 @@ export default function Beginbalans() {
                         variant="outline"
                         size="sm"
                         className="h-11 sm:h-8"
-                        onClick={() => {
-                          syncedKey.current = null;
-                          setChosenId(draft.id);
-                        }}
+                        onClick={() => requestOpen(draft)}
                         aria-label={`Open concept van ${formatDatumNL(draft.opening_date)}`}
                       >
                         Openen
@@ -462,30 +581,63 @@ export default function Beginbalans() {
 
           {(state?.kind === "none" || state?.kind === "draft" || state?.kind === "multiple-drafts") &&
             state.otherDrafts.length > 0 && (
-              <p className="flex items-start gap-2 text-sm text-muted-foreground" data-testid="beginbalans-other-drafts">
-                <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>
-                  Deze administratie heeft ook concepten voor een ander boekjaar:{" "}
-                  {state.otherDrafts.map((d, i) => (
-                    <span key={d.id}>
-                      {i > 0 && ", "}
-                      <button
-                        type="button"
-                        className="underline underline-offset-2"
-                        onClick={() => {
-                          syncedKey.current = null;
-                          setChosenId(d.id);
-                          setSelectedYear(d.boekjaar);
-                        }}
-                      >
-                        {d.boekjaar} ({formatDatumNL(d.opening_date)})
-                      </button>
-                    </span>
-                  ))}
-                  .
-                </span>
-              </p>
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground" data-testid="beginbalans-other-drafts">
+                <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>Deze administratie heeft ook concepten voor een ander boekjaar:</span>
+                {state.otherDrafts.map((d) => draftChip(d, `${d.boekjaar} (${formatDatumNL(d.opening_date)})`))}
+              </div>
             )}
+
+          {typedYearDrafts.length > 0 && (
+            <Alert data-testid="beginbalans-typed-year-drafts">
+              <Info className="h-4 w-4" />
+              <AlertTitle>Er bestaat al een concept voor boekjaar {typedYear}</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>
+                  Je invoer is bewaard. Opslaan maakt een tweede concept voor {typedYear} aan; open liever het
+                  bestaande concept (je huidige invoer wordt dan weggegooid).
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {typedYearDrafts.map((d) => draftChip(d, draftLabel(d)))}
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {leftoverDrafts.length > 0 && (
+            <Alert data-testid="beginbalans-leftover-drafts">
+              <Info className="h-4 w-4" />
+              <AlertTitle>Achtergebleven concepten</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>
+                  De beginbalans van deze administratie is {posted ? "geboekt" : "op nihil gezet"}; deze concepten
+                  doen niets meer en kunnen alleen nog worden verwijderd{canAssert === true ? "" : " (door een accountant)"}.
+                </p>
+                <ul className="space-y-2">
+                  {leftoverDrafts.map((draft) => (
+                    <li key={draft.id} className="flex flex-wrap items-center gap-2" data-testid="beginbalans-leftover-draft">
+                      <span className="text-sm">
+                        {draft.boekjaar} · {draftLabel(draft)}{" "}
+                        <span className="font-mono text-xs text-muted-foreground">({draft.id})</span>
+                      </span>
+                      {canAssert === true && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-11 text-muted-foreground hover:text-destructive sm:h-8"
+                          onClick={() => setDeleteTarget(draft)}
+                          aria-label={`Verwijder concept van ${formatDatumNL(draft.opening_date)}`}
+                        >
+                          <Trash2 className="mr-1 h-4 w-4" />Verwijderen
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
 
           {(editorId || state?.kind === "none") && !conflict && (
             <>
@@ -510,7 +662,7 @@ export default function Beginbalans() {
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            setChosenId(null);
+                            setChosen(null);
                             refetchTruth();
                           }}
                         >
@@ -730,6 +882,36 @@ export default function Beginbalans() {
               onClick={handleDeleteConfirm}
             >
               {deleteDraft.isPending ? "Verwijderen…" : "Verwijderen"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={discardTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDiscardTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Niet-opgeslagen wijzigingen</AlertDialogTitle>
+            <AlertDialogDescription>
+              Het huidige formulier heeft wijzigingen die nog niet zijn opgeslagen. Weggooien en het andere
+              concept openen?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Terug</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                const next = discardTarget;
+                setDiscardTarget(null);
+                if (next) openDraft(next);
+              }}
+            >
+              Wijzigingen weggooien
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

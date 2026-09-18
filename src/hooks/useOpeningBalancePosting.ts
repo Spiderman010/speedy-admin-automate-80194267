@@ -81,10 +81,11 @@ export function usePostOpeningBalance() {
     onError: (error) => console.warn("[beginbalans] boeken mislukt", safeErrorMetadata(error)),
     // Ook na een fout: een 23505/40001 betekent dat iemand anders de toestand
     // veranderde, en de cache mag daar niet achterlopen.
-    onSettled: (_data, _error, openingBalanceId) => {
-      invalidateOpeningBalanceQueries(queryClient, openingBalanceId);
-      queryClient.invalidateQueries({ queryKey: [LEDGER_POSTINGS_QUERY_KEY] });
-    },
+    onSettled: (_data, _error, openingBalanceId) =>
+      Promise.all([
+        invalidateOpeningBalanceQueries(queryClient, openingBalanceId),
+        queryClient.invalidateQueries({ queryKey: [LEDGER_POSTINGS_QUERY_KEY] }),
+      ]).then(() => undefined),
   });
 }
 

@@ -7,7 +7,9 @@ import {
   buildHeaderInsertPayload,
   buildHeaderUpdatePayload,
   buildSaveLinesPayload,
+  AMOUNT_OVERFLOW_MESSAGE,
   classifyOpeningBalanceError,
+  CONFLICT_TWO_NIL,
   createEmptyLineRow,
   createEmptyLineRows,
   createHeaderForm,
@@ -23,6 +25,7 @@ import {
   lineBlocksSave,
   lineIssues,
   lineTotals,
+  NETWORK_MESSAGE,
   parseExactAmount,
   POST_CONFIRM_POINTS,
   safeErrorMetadata,
@@ -151,6 +154,13 @@ describe("parseExactAmount — exacte centen", () => {
     expect(parseExactAmount("1,234")).toEqual({ kind: "invalid", reason: "decimals", value: 1.234 });
     // Alleen nullen na de tweede decimaal is wél een tweedecimaal bedrag.
     expect(parseExactAmount("1,500")).toEqual({ kind: "ok", cents: 150 });
+  });
+
+  it("een bedrag boven de kolomgrens (numeric(12,2)) is ongeldig, niet afgekapt", () => {
+    expect(parseExactAmount("9999999999,99")).toEqual({ kind: "ok", cents: 999999999999 });
+    expect(parseExactAmount("10000000000")).toEqual({ kind: "invalid", reason: "too-large", value: 10000000000 });
+    expect(parseExactAmount("99999999999999999999")).toMatchObject({ kind: "invalid", reason: "too-large" });
+    expect(lineIssues(line({ debit_input: "10000000000" }), accountsById, "c-1")[0].code).toBe("too-large");
   });
 
   it("onleesbare tekst is ongeldig zonder waarde", () => {
@@ -402,6 +412,15 @@ describe("deriveOpeningBalanceState — vier toestanden, nooit samengevoegd", ()
     expect(s.kind).toBe("conflict");
   });
 
+  it("twee nihil-verklaringen zijn een eigen conflict; achtergebleven concepten blijven zichtbaar", () => {
+    const nil = (id: string) => headerRow({ id, nil_declaration: true, nil_declared_at: "2027-01-05T10:00:00Z", nil_declared_by: "u-9" });
+    expect(deriveOpeningBalanceState({ headers: [nil("a"), nil("b")], marker: null, boekjaar: 2027 })).toEqual({ kind: "conflict", message: CONFLICT_TWO_NIL });
+    const posted = deriveOpeningBalanceState({ headers: [headerRow(), headerRow({ id: "rest" })], marker: markerRow(), boekjaar: 2027 });
+    expect(posted.kind === "posted" && posted.leftoverDrafts.map((d) => d.id)).toEqual(["rest"]);
+    const nilState = deriveOpeningBalanceState({ headers: [nil("a"), headerRow({ id: "rest" })], marker: null, boekjaar: 2027 });
+    expect(nilState.kind === "nil" && nilState.leftoverDrafts.map((d) => d.id)).toEqual(["rest"]);
+  });
+
   it("een halve nihil-verklaring (vlag zonder tijdstip) is een conflict, geen nihil", () => {
     const s = deriveOpeningBalanceState({ headers: [headerRow({ nil_declaration: true })], marker: null, boekjaar: 2027 });
     expect(s.kind).toBe("conflict");
@@ -583,6 +602,14 @@ describe("classifyOpeningBalanceError — Nederlandse meldingen, nooit een SQLST
     ]) {
       expect(classifyOpeningBalanceError(err)).toMatchObject({ kind: "schema", message: SCHEMA_UNAVAILABLE_MESSAGE });
     }
+  });
+
+  it("22003, netwerkfouten en een verlopen sessie krijgen een eigen Nederlandse tekst", () => {
+    expect(classifyOpeningBalanceError({ code: "22003", message: "numeric field overflow" })).toMatchObject({ kind: "validation", message: AMOUNT_OVERFLOW_MESSAGE });
+    expect(classifyOpeningBalanceError(new TypeError("Failed to fetch"))).toMatchObject({ kind: "unknown", message: NETWORK_MESSAGE });
+    expect(classifyOpeningBalanceError({ message: "NetworkError when attempting to fetch resource." }).message).toBe(NETWORK_MESSAGE);
+    expect(classifyOpeningBalanceError({ code: "PGRST301", message: "JWT expired" })).toMatchObject({ kind: "permission" });
+    expect(classifyOpeningBalanceError({ code: "PGRST301", message: "JWT expired" }).message).not.toMatch(/JWT/);
   });
 
   it("onbekend → nooit een rauwe SQLSTATE of lege tekst", () => {
