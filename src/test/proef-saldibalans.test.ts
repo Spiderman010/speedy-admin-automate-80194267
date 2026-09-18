@@ -448,9 +448,40 @@ describe("proef-saldibalans — statische grenzen", () => {
   it("44/45/46. geen migratie, geen gegenereerde types, nav.ts ongewijzigd", () => {
     const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
     const gewijzigd = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], { encoding: "utf8" });
-    expect(gewijzigd).not.toMatch(/supabase\/migrations\//);
+    // Voorheen: "deze branch bevat geen migratie". Dat was een uitspraak over de
+    // SCOPE van één UI-PR, geen invariant — zodra een latere fase wél een
+    // migratie meebrengt (6C-b8, beginbalans) kan hij niet meer kloppen. Wat
+    // hier werkelijk beschermd moet worden is het contract waar deze laag op
+    // leest: een migratie in deze branch mag de fundering uit 6C-b2 niet
+    // wijzigen of weggooien.
+    for (const bestand of gewijzigd.split("\n").filter((f) => f.startsWith("supabase/migrations/"))) {
+      const sql = readFileSync(bestand, "utf8")
+        .split("\n")
+        .filter((r) => !r.trimStart().startsWith("--"))
+        .join("\n");
+      expect(sql, bestand).not.toMatch(/ALTER TABLE public\.ledger_postings/);
+      expect(sql, bestand).not.toMatch(/DROP TABLE[^;]*ledger_postings/);
+      // Een migratie mag haar EIGEN toevoeging aan ledger_postings idempotent
+      // weggooien, maar nooit een object uit de fundering zelf.
+      const fundering = readFileSync(
+        "supabase/migrations/20260914120000_add_ledger_postings_foundation.sql",
+        "utf8",
+      );
+      for (const drop of sql.match(/DROP (?:TABLE|FUNCTION|TRIGGER|POLICY|INDEX)[^;]*/g) ?? []) {
+        if (!/ledger_postings/.test(drop)) continue;
+        const naam = drop.match(/DROP \w+(?: IF EXISTS)? ([\w.]+)/)?.[1] ?? "";
+        expect(fundering, `${bestand}: ${drop}`).not.toContain(`CREATE TRIGGER ${naam}`);
+        expect(fundering, `${bestand}: ${drop}`).not.toContain(`CREATE CONSTRAINT TRIGGER ${naam}`);
+        expect(fundering, `${bestand}: ${drop}`).not.toContain(`INDEX IF NOT EXISTS ${naam}`);
+      }
+    }
     expect(gewijzigd).not.toMatch(/integrations\/supabase\/types\.ts/);
     expect(gewijzigd).not.toMatch(/components\/layout\/nav\.ts/);
-    expect(gewijzigd).not.toMatch(/\.sql$/m);
+    // Ook dit was een scope-uitspraak over deze ene UI-PR. Wat blijft gelden:
+    // SQL hoort in supabase/, nooit in src/ — en elke migratie in de branch is
+    // hierboven al tegen de fundering gehouden.
+    for (const bestand of gewijzigd.split("\n").filter((f) => f.endsWith(".sql"))) {
+      expect(bestand).toMatch(/^supabase\//);
+    }
   });
 });
