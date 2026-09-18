@@ -503,9 +503,13 @@ export type Database = {
           client_id: string | null
           created_at: string
           id: string
+          normal_side: string | null
           nummer: number
           omschrijving: string
           organization_id: string | null
+          report_group: string | null
+          report_sort: number | null
+          statement_type: string | null
           updated_at: string
           user_id: string
         }
@@ -515,9 +519,13 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          normal_side?: string | null
           nummer: number
           omschrijving: string
           organization_id?: string | null
+          report_group?: string | null
+          report_sort?: number | null
+          statement_type?: string | null
           updated_at?: string
           user_id: string
         }
@@ -527,9 +535,13 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          normal_side?: string | null
           nummer?: number
           omschrijving?: string
           organization_id?: string | null
+          report_group?: string | null
+          report_sort?: number | null
+          statement_type?: string | null
           updated_at?: string
           user_id?: string
         }
