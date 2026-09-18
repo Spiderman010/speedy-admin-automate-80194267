@@ -4,6 +4,7 @@ import { useAuth } from "./useAuth";
 import { usePostPurchaseInvoice } from "./usePurchaseInvoicePosting";
 import { usePostSalesInvoice } from "./useSalesInvoicePosting";
 import {
+  aggregateInvoiceLines,
   catchupRunOrder,
   evaluatePurchaseInvoice,
   evaluateSalesInvoice,
@@ -91,7 +92,7 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
  * som af te leiden.
  */
 async function fetchLineAggregates(invoiceIds: readonly string[]): Promise<Map<string, CatchupLineAggregate>> {
-  const perInvoice = new Map<string, CatchupLineAggregate>();
+  const perFactuur = new Map<string, { amount_excl: number | null; grootboekrekening_id: string | null }[]>();
   for (const ids of chunk(invoiceIds, ID_CHUNK)) {
     const rows = await fetchAll<{ purchase_invoice_id: string; amount_excl: number; grootboekrekening_id: string | null; id: string }>(
       (offset) =>
@@ -103,18 +104,16 @@ async function fetchLineAggregates(invoiceIds: readonly string[]): Promise<Map<s
           .range(offset, offset + BATCH - 1),
       (r) => r.id,
     );
+    // Groeperen per factuur; het tellen zelf doet `aggregateInvoiceLines`, zodat
+    // de werkbank en dit scherm gegarandeerd dezelfde drempels hanteren.
     for (const row of rows) {
-      const current = perInvoice.get(row.purchase_invoice_id)
-        ?? { count: 0, sumExcl: 0, withoutAccount: 0, nonPositiveAmountCount: 0 };
-      const amount = row.amount_excl ?? 0;
-      current.count += 1;
-      current.sumExcl += amount;
-      if (!row.grootboekrekening_id) current.withoutAccount += 1;
-      // Exact de drempel van de writer: nul telt mee, niet alleen negatief.
-      if (amount <= 0) current.nonPositiveAmountCount += 1;
-      perInvoice.set(row.purchase_invoice_id, current);
+      const bucket = perFactuur.get(row.purchase_invoice_id) ?? [];
+      bucket.push(row);
+      perFactuur.set(row.purchase_invoice_id, bucket);
     }
   }
+  const perInvoice = new Map<string, CatchupLineAggregate>();
+  for (const [invoiceId, rows] of perFactuur) perInvoice.set(invoiceId, aggregateInvoiceLines(rows));
   return perInvoice;
 }
 

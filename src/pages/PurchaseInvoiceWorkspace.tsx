@@ -28,10 +28,12 @@ import { useToast } from "@/hooks/use-toast";
 import {
   computeLineTotals,
   computeLineDiffs,
+  countLinesMissingLedgerAccount,
   derivePrefillLine,
   isBlankLine,
   isPartiallyFilledLine,
 } from "@/lib/purchase-line-validation";
+import { aggregateInvoiceLines, evaluatePurchaseInvoice } from "@/lib/ledger-catchup";
 import { deriveHeaderFromLines } from "@/lib/purchase-header-derivation";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import { round2 } from "@/lib/btw-calc";
@@ -49,6 +51,7 @@ import {
   type LineRow,
 } from "@/components/purchase/PurchaseInvoiceLinesTable";
 import { PurchaseInvoiceActionBar } from "@/components/purchase/PurchaseInvoiceActionBar";
+import { PurchaseInvoicePostingReadiness } from "@/components/purchase/PurchaseInvoicePostingReadiness";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 
@@ -340,6 +343,18 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   }));
 
   const hasPartialLine = partialLines.length > 0;
+  // Regels met inhoud maar zonder grootboekrekening. Opslaan mag nog — de
+  // rekening opzoeken kost tijd — maar goedkeuren niet: de boekingsfunctie
+  // weigert elke regel zonder rekening, dus een goedgekeurde factuur zou nooit
+  // geboekt kunnen worden.
+  const linesZonderRekening = useMemo(
+    () => countLinesMissingLedgerAccount(lines.map((l) => ({
+      omschrijving: l.omschrijving,
+      amount_input: l.amount_input,
+      grootboekrekening_id: l.grootboekrekening_id,
+    }))),
+    [lines],
+  );
   const linesMatch = diffs.allOk;
   const headerComplete =
     !!header.client_id &&
@@ -353,11 +368,52 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   // databasegrendel is leidend; dit voorkomt alleen een onvermijdelijke fout.
   const isPosted = !!posting;
   const canSave = initialized && !hasPartialLine && !saving && !isPosted;
-  const canApprove = canSave && headerComplete && linesMatch && meaningfulLines.length > 0;
+  const canApprove =
+    canSave && headerComplete && linesMatch && meaningfulLines.length > 0 && linesZonderRekening === 0;
 
   // De database boekt alleen een gecontroleerde factuur; de knop volgt die regel
   // zodat een nog te controleren factuur geen onvermijdelijke foutmelding geeft.
   const isPostableStatus = ["gecontroleerd", "betaald", "geexporteerd"].includes(header.status);
+
+  /**
+   * Boekbaarheid, met exact dezelfde beoordeling als de historische
+   * grootboekvulling — `evaluatePurchaseInvoice()` volgt één-op-één de guards
+   * van `post_purchase_invoice()`. Geen tweede regelset, geen eigen aannames.
+   *
+   * Bewust op de OPGESLAGEN factuur en de OPGESLAGEN regels: de writer leest de
+   * database, dus dit is de enige toestand waarover een voorspelling iets waard
+   * is. Onopgeslagen wijzigingen in het formulier tellen hier dus niet mee — de
+   * kop van het paneel zegt dat er ook bij. De correctheid van wat er NU in het
+   * formulier staat wordt bewaakt door `approveBlockers` hierboven.
+   */
+  const postingReadiness = useMemo(() => {
+    if (!invoice || !client) return undefined;
+    return evaluatePurchaseInvoice({
+      invoice: {
+        id: invoice.id,
+        client_id: invoice.client_id,
+        status: invoice.status,
+        invoice_date: invoice.invoice_date,
+        invoice_number: invoice.invoice_number,
+        supplier: invoice.supplier,
+        amount_excl: invoice.amount_excl,
+        amount_incl: invoice.amount_incl,
+        btw_amount: invoice.btw_amount,
+      },
+      config: {
+        id: client.id,
+        afgesloten_boekjaar: client.afgesloten_boekjaar ?? null,
+        crediteuren_rekening_id: client.crediteuren_rekening_id ?? null,
+        debiteuren_rekening_id: client.debiteuren_rekening_id ?? null,
+        btw_te_vorderen_rekening_id: client.btw_te_vorderen_rekening_id ?? null,
+        btw_te_betalen_rekening_id: client.btw_te_betalen_rekening_id ?? null,
+      },
+      lines: aggregateInvoiceLines(storedLines ?? []),
+      postingGroupId: posting?.posting_group_id ?? null,
+    });
+  }, [invoice, client, storedLines, posting]);
+
+  const readinessBlocked = !!postingReadiness && postingReadiness.state === "geblokkeerd";
 
   // Totals color state
   const totalsState: "green" | "amber" | "red" =
@@ -386,8 +442,12 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
     if (!headerComplete) reasons.push("De factuurgegevens zijn nog niet compleet.");
     if (meaningfulLines.length === 0) reasons.push("Er is nog geen boekingsregel.");
     else if (!linesMatch) reasons.push("De boekingsregels sluiten niet aan op de factuur.");
+    if (linesZonderRekening > 0) reasons.push("Kies een grootboekrekening voor elke boekingsregel.");
     return reasons;
-  }, [initialized, canApprove, saving, hasPartialLine, headerComplete, meaningfulLines.length, linesMatch]);
+  }, [
+    initialized, canApprove, saving, hasPartialLine, headerComplete,
+    meaningfulLines.length, linesMatch, linesZonderRekening,
+  ]);
 
   // Previous / next invoice navigation (within same client)
   const sortedInvoices = useMemo(() => {
@@ -778,7 +838,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               />
 
               {hasPartialLine && (
-                <p className="text-xs text-amber-700 dark:text-amber-400" role="alert">
+                <p
+                  className="text-xs text-amber-700 dark:text-amber-400"
+                  role="alert"
+                  data-testid="partial-line-warning"
+                >
                   Één of meer regels zijn niet compleet. Vul bedrag en omschrijving in of verwijder de regel.
                 </p>
               )}
@@ -814,6 +878,13 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
             boekingsregels liggen daarmee vast; een correctie vereist een tegenboeking.
           </p>
         ) : (
+          <div className="space-y-3">
+          {/* Eerst het oordeel, dan pas de knop: de gebruiker hoort te weten
+              waaróm er niet geboekt kan worden vóór hij het probeert. */}
+          <PurchaseInvoicePostingReadiness
+            record={postingReadiness}
+            onOpenSettings={() => navigate("/klanten")}
+          />
           <div className="flex flex-wrap items-center gap-2">
           {!isPostableStatus && (
             <p className="text-xs text-muted-foreground" data-testid="purchase-posting-blocker">
@@ -824,7 +895,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
             variant="outline"
             size="sm"
             data-testid="purchase-posting-button"
-            disabled={!canApprove || !isPostableStatus || postInvoice.isPending || !invoiceId}
+            disabled={!canApprove || !isPostableStatus || readinessBlocked || postInvoice.isPending || !invoiceId}
             onClick={async () => {
               if (!invoiceId) return;
               try {
@@ -841,6 +912,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           >
             {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
           </Button>
+          </div>
           </div>
         )}
       </div>

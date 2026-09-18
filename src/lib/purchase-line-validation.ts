@@ -184,4 +184,30 @@ export function isPartiallyFilledLine(l: BlankLineCandidate): boolean {
   return noDesc || noAmount;
 }
 
+/**
+ * Een regel mét boekhoudkundige inhoud maar ZONDER grootboekrekening.
+ *
+ * Dit is bewust een aparte vraag naast `isPartiallyFilledLine`. Die laatste
+ * bewaakt het OPSLAAN: half ingevulde spookregels mogen niet worden
+ * weggeschreven, maar een regel waar de rekening nog bij gezocht moet worden
+ * moet je wel tussentijds kunnen bewaren. Ontbreekt de rekening nog, dan is de
+ * factuur alleen niet GOEDGEKEURD-klaar: `post_purchase_invoice()` weigert elke
+ * regel zonder grootboekrekening, dus goedkeuren zou een factuur opleveren die
+ * er af is maar nooit geboekt kan worden.
+ *
+ * Een volledig lege regel telt niet mee — die wordt nergens opgeslagen en is
+ * gewoon een lege invoerrij.
+ */
+export function isLineMissingLedgerAccount(l: BlankLineCandidate): boolean {
+  if (isBlankLine(l)) return false;
+  return !l.grootboekrekening_id;
+}
+
+/** Hoeveel betekenisvolle regels wachten nog op een grootboekrekening. */
+export function countLinesMissingLedgerAccount(lines: readonly BlankLineCandidate[]): number {
+  let n = 0;
+  for (const l of lines) if (isLineMissingLedgerAccount(l)) n++;
+  return n;
+}
+
 
