@@ -289,24 +289,37 @@ describe("Balans/W&V PR 1 — branch-scope", () => {
     expect(ownMigrations[0]).toMatch(/^\d{14}_add_reporting_classification\.sql$/);
   });
 
-  branchIt("28b. de branch voegt precies één migratie toe en wijzigt geen bestaande", () => {
+  branchIt("28b. geen enkele bestaande migratie wordt gewijzigd; hooguit deze ene komt erbij", () => {
+    // Voorheen: exact [MIGRATION]. Dat gold alleen op de branch die de
+    // migratie zelf meebracht; op elke latere branch (zoals de UI-PR) is de
+    // lijst leeg. De invariant is dat dit spoor nooit een ándere migratie
+    // aanraakt.
     const migrations = changed!.filter((f) => f.startsWith("supabase/migrations/"));
-    expect(migrations).toEqual([MIGRATION]);
+    expect(migrations.filter((f) => f !== MIGRATION)).toEqual([]);
   });
 
-  branchIt("24. seed, Grootboek-UI, rapportagekern en typen zijn onaangeraakt", () => {
+  branchIt("24. de seed, de rapportagekern en de afhankelijkheden zijn onaangeraakt", () => {
+    // Voorheen stonden hier ook "src/pages/Grootboek.tsx" en
+    // "src/hooks/useGrootboekrekeningen.ts", plus "geen enkele src/-wijziging
+    // buiten src/test/". Dat waren scope-uitspraken van PR 1 (schema only),
+    // geen invarianten: PR 2 bouwt juist de classificatie-UI op precies die
+    // twee bestanden. Wat bewaakt moet blijven is dat dit schema-PR-spoor de
+    // seed en het rekenwerk niet aanraakt en geen afhankelijkheid toevoegt.
     for (const f of [
-      "src/hooks/useGrootboekrekeningen.ts",
-      "src/pages/Grootboek.tsx",
       "src/lib/ledger-reporting.ts",
       "src/lib/proef-saldibalans.ts",
       "src/lib/ledger-completeness.ts",
-      "src/integrations/supabase/types.ts",
       "package.json",
     ]) {
       expect(changed, f).not.toContain(f);
     }
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
-    expect(changed!.filter((f) => f.startsWith("src/") && !f.startsWith("src/test/"))).toEqual([]);
+    // De seedlijst (DEFAULT_ACCOUNTS) mag nooit een classificatieveld krijgen:
+    // dat zou classificeren op zaadpositie zijn.
+    const hooks = readFileSync(resolve(process.cwd(), "src/hooks/useGrootboekrekeningen.ts"), "utf-8");
+    const seed = hooks.slice(hooks.indexOf("const DEFAULT_ACCOUNTS"), hooks.indexOf("export interface UseGrootboek"));
+    for (const field of ["statement_type", "report_group", "normal_side", "report_sort"]) {
+      expect(seed, field).not.toContain(field);
+    }
   });
 });

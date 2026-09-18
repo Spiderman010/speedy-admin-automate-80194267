@@ -36,9 +36,29 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   }),
   useDeleteGrootboekrekening: () => ({ mutateAsync: deleteMutateAsync, isPending: state.deletePending }),
   useSeedGrootboekrekeningen: () => ({ mutate: seedMutate, isPending: state.seedPending }),
+  // Balans/W&V PR 2: de pagina vraagt nu ook het classificatierecht op.
+  // Deze mock en de scrollIntoView-stub hieronder zijn testinfrastructuur. De
+  // drie payload-asserties in dit bestand zijn wél gewijzigd, omdat de payload
+  // sinds die PR classificatievelden kán dragen. Ze blijven exacte matches:
+  // bij een nieuwe rekening staan de vier velden er als `null` in (dat pint
+  // vast dat er niets automatisch wordt geclassificeerd), en bij het bewerken
+  // van een rekening waarvan de classificatie niet is aangeraakt ontbreken ze
+  // juist — die mag niet worden overschreven.
+  useCanEditGrootboekClassification: () => ({ data: true }),
 }));
 
 import Grootboek from "@/pages/Grootboek";
+
+// Radix Select (nieuw in de classificatiesectie) gebruikt scrollIntoView en
+// ResizeObserver; jsdom kent die niet. Ook testinfrastructuur.
+Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+  (globalThis as unknown as { ResizeObserver?: typeof ResizeObserverStub }).ResizeObserver ?? ResizeObserverStub;
 
 const makeAccount = (over: Partial<any> = {}) => ({
   id: `gb-${Math.random().toString(36).slice(2)}`,
@@ -264,6 +284,10 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
     // proves the form was seeded from the row (not just nummer/omschrijving).
     fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    // Balans/W&V PR 2: de classificatie is hier niet aangeraakt, dus gaat ze
+    // niet mee — wat opgeslagen staat blijft staan. De exacte match bewijst
+    // tegelijk dat er niets is bíj verzonnen: categorie "omzet" leidt nergens
+    // een W&V-classificatie uit af.
     expect(updateMutateAsync).toHaveBeenCalledWith({
       id: "gb-edit",
       nummer: 8199,
@@ -292,6 +316,8 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
     fireEvent.click(screen.getByRole("button", { name: /oude naam bewerken/i }));
     fireEvent.change(screen.getByLabelText("Omschrijving *"), { target: { value: "Nieuwe naam" } });
     fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
+    // Alleen de omschrijving wijzigt; de onaangeroerde classificatie gaat niet
+    // mee en wordt dus ook niet overschreven.
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledWith({
       id: "gb-save",
       nummer: 4700,
@@ -314,6 +340,11 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
       omschrijving: "Testrekening",
       categorie: "kosten",
       actief: true,
+      // Een nieuwe rekening wordt nooit automatisch geclassificeerd.
+      statement_type: null,
+      report_group: null,
+      normal_side: null,
+      report_sort: null,
     }));
     expect(toastSpy).toHaveBeenCalledWith({ title: "Grootboekrekening toegevoegd" });
   });

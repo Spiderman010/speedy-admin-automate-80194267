@@ -38,9 +38,36 @@ import {
   useUpdateGrootboekrekening,
   useDeleteGrootboekrekening,
   useSeedGrootboekrekeningen,
+  useCanEditGrootboekClassification,
 } from "@/hooks/useGrootboekrekeningen";
 import type { Grootboekrekening } from "@/hooks/useGrootboekrekeningen";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
+import {
+  CLASSIFIED_LABEL,
+  EMPTY_CLASSIFICATION,
+  sameClassification,
+  NONE_VALUE,
+  NORMAL_SIDE_LABELS,
+  REPORT_GROUP_LABELS,
+  STATEMENT_TYPE_LABELS,
+  STATEMENT_TYPE_SHORT_LABELS,
+  UNCLASSIFIED_LABEL,
+  buildClassificationPayload,
+  classificationErrorMessage,
+  classificationFromAccount,
+  classificationLabel,
+  groupsFor,
+  hasClassificationIssues,
+  isClassified,
+  isNormalSide,
+  isReportGroup,
+  isStatementType,
+  matchesClassificationFilter,
+  onReportGroupChange,
+  onStatementTypeChange,
+  validateClassification,
+} from "@/lib/reporting-classification";
+import type { ClassificationFilter, ClassificationForm } from "@/lib/reporting-classification";
 
 // Existing categorie values — leading, unchanged.
 const CATEGORIEEN = ["activa", "passiva", "omzet", "kosten", "privé"];
@@ -63,6 +90,22 @@ const CATEGORIE_BADGE_CLASS: Record<string, string> = {
 
 type StatusFilter = "alle" | "actief" | "inactief";
 type CategorieFilter = "alle" | string;
+
+/** Het formulier = de bestaande stamvelden plus het classificatieblok. */
+type AccountForm = {
+  nummer: string;
+  omschrijving: string;
+  categorie: string;
+  actief: boolean;
+} & ClassificationForm;
+
+const EMPTY_FORM: AccountForm = {
+  nummer: "",
+  omschrijving: "",
+  categorie: "kosten",
+  actief: true,
+  ...EMPTY_CLASSIFICATION,
+};
 
 function GrootboekTableSkeleton() {
   return (
@@ -89,7 +132,10 @@ export default function Grootboek() {
   const [seedConfirmOpen, setSeedConfirmOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Grootboekrekening | null>(null);
   const [editing, setEditing] = useState<Grootboekrekening | null>(null);
-  const [form, setForm] = useState({ nummer: "", omschrijving: "", categorie: "kosten", actief: true });
+  const [form, setForm] = useState<AccountForm>(EMPTY_FORM);
+  /** De classificatie zoals ze bij het openen van het dialoog stond. */
+  const [loadedClassification, setLoadedClassification] = useState<ClassificationForm>(EMPTY_CLASSIFICATION);
+  const [classificatieFilter, setClassificatieFilter] = useState<ClassificationFilter>("alle");
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const { toast } = useToast();
   const { activeOrganizationId, isReady } = useActiveOrganization();
@@ -103,6 +149,10 @@ export default function Grootboek() {
   const updateRek = useUpdateGrootboekrekening();
   const deleteRek = useDeleteGrootboekrekening();
   const seedRek = useSeedGrootboekrekeningen();
+  // Rechten voor de classificatie: de bestaande rollenladder in de database.
+  // Onbekend (undefined) telt als "niet toegestaan": dan alleen-lezen.
+  const { data: canClassify } = useCanEditGrootboekClassification();
+  const mayEditClassification = canClassify === true;
 
   // Auto-seed on first load if no records exist
   useEffect(() => {
@@ -116,6 +166,7 @@ export default function Grootboek() {
   const hasSearch = trimmedSearch !== "";
   const hasStatusFilter = statusFilter !== "alle";
   const hasCategorieFilter = categorieFilter !== "alle";
+  const hasClassificatieFilter = classificatieFilter !== "alle";
 
   const filtered = useMemo(() => {
     const q = trimmedSearch.toLowerCase();
@@ -123,6 +174,7 @@ export default function Grootboek() {
       if (statusFilter === "actief" && !r.actief) return false;
       if (statusFilter === "inactief" && r.actief) return false;
       if (hasCategorieFilter && r.categorie !== categorieFilter) return false;
+      if (!matchesClassificationFilter(r, classificatieFilter)) return false;
       if (!q) return true;
       return (
         r.nummer.toString().includes(q) ||
@@ -130,7 +182,7 @@ export default function Grootboek() {
         r.categorie.toLowerCase().includes(q)
       );
     });
-  }, [rekeningen, trimmedSearch, statusFilter, categorieFilter, hasCategorieFilter]);
+  }, [rekeningen, trimmedSearch, statusFilter, categorieFilter, hasCategorieFilter, classificatieFilter]);
 
   const emptyMessage = (): string => {
     if (totalCount === 0) {
@@ -148,22 +200,50 @@ export default function Grootboek() {
     if (hasCategorieFilter) {
       return `Geen rekeningen gevonden in categorie ${CATEGORIE_LABELS[categorieFilter] ?? categorieFilter}.`;
     }
+    if (hasClassificatieFilter) {
+      return classificatieFilter === "geclassificeerd"
+        ? "Geen geclassificeerde rekeningen gevonden."
+        : "Alle rekeningen zijn geclassificeerd.";
+    }
     return "Geen grootboekrekeningen gevonden.";
   };
 
   const openNew = () => {
     setEditing(null);
-    setForm({ nummer: "", omschrijving: "", categorie: "kosten", actief: true });
+    // Een nieuwe rekening begint ongeclassificeerd. Er wordt niets afgeleid
+    // uit nummer, omschrijving of categorie.
+    setForm({ ...EMPTY_FORM });
+    setLoadedClassification({ ...EMPTY_CLASSIFICATION });
     setSubmitAttempted(false);
     setDialogOpen(true);
   };
 
   const openEdit = (r: Grootboekrekening) => {
     setEditing(r);
-    setForm({ nummer: r.nummer.toString(), omschrijving: r.omschrijving, categorie: r.categorie, actief: r.actief });
+    const loaded = classificationFromAccount(r);
+    setLoadedClassification(loaded);
+    setForm({
+      nummer: r.nummer.toString(),
+      omschrijving: r.omschrijving,
+      categorie: r.categorie,
+      actief: r.actief,
+      ...loaded,
+    });
     setSubmitAttempted(false);
     setDialogOpen(true);
   };
+
+  const classificationIssues = validateClassification(form);
+  /**
+   * Heeft iemand de classificatie in deze sessie werkelijk aangeraakt? Zo
+   * niet, dan wordt ze niet meegestuurd en blokkeert ze het opslaan niet.
+   * Dat houdt twee dingen heel: een `normal_side`/`report_sort` die het
+   * schema zonder overzicht toestaat overleeft een hernoeming, en een
+   * opgeslagen groep die deze versie niet kent maakt de rekening niet
+   * onbewerkbaar (nummer en omschrijving blijven gewoon te wijzigen).
+   */
+  const classificationTouched = !sameClassification(form, loadedClassification);
+  const classificationBlocked = classificationTouched && hasClassificationIssues(classificationIssues);
 
   const handleSave = async () => {
     setSubmitAttempted(true);
@@ -171,6 +251,18 @@ export default function Grootboek() {
       toast({ title: "Vul alle verplichte velden in", variant: "destructive" });
       return;
     }
+    // Een ongeldige classificatie gaat de deur niet uit; de database zou haar
+    // ook weigeren, maar dan pas na een mislukte ronde.
+    if (classificationBlocked) {
+      toast({ title: "Controleer de rapportageclassificatie", variant: "destructive" });
+      return;
+    }
+
+    // De classificatie gaat alleen mee als ze mag én als ze is aangeraakt.
+    // Bij een nieuwe rekening is er niets te behouden, dus daar gaat ze altijd
+    // mee (alle vier null wanneer niemand iets koos).
+    const classification =
+      mayEditClassification && (!editing || classificationTouched) ? buildClassificationPayload(form) : {};
 
     try {
       if (editing) {
@@ -180,6 +272,7 @@ export default function Grootboek() {
           omschrijving: form.omschrijving,
           categorie: form.categorie,
           actief: form.actief,
+          ...classification,
         });
         toast({ title: "Grootboekrekening bijgewerkt" });
       } else {
@@ -188,12 +281,14 @@ export default function Grootboek() {
           omschrijving: form.omschrijving,
           categorie: form.categorie,
           actief: form.actief,
+          ...classification,
         });
         toast({ title: "Grootboekrekening toegevoegd" });
       }
       setDialogOpen(false);
-    } catch (e: any) {
-      toast({ title: "Fout", description: e.message, variant: "destructive" });
+    } catch (e: unknown) {
+      // Nooit de rauwe databasetekst: geen constraintnaam, geen SQLSTATE.
+      toast({ title: "Fout", description: classificationErrorMessage(e), variant: "destructive" });
     }
   };
 
@@ -287,6 +382,32 @@ export default function Grootboek() {
             />
           ))}
         </div>
+        {/* Balans/W&V PR 2 — zichtbaar maken wat nog geen plaats in de
+            jaarrekening heeft. Client-side, net als de andere chips. */}
+        <div data-testid="classificatie-filters" className="flex flex-wrap items-center gap-1.5">
+          <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Rapportage</span>
+          <FilterChip
+            label="Alle"
+            active={classificatieFilter === "alle"}
+            onClick={() => setClassificatieFilter("alle")}
+          />
+          <FilterChip
+            label={CLASSIFIED_LABEL}
+            active={classificatieFilter === "geclassificeerd"}
+            onClick={() =>
+              setClassificatieFilter(classificatieFilter === "geclassificeerd" ? "alle" : "geclassificeerd")
+            }
+          />
+          <FilterChip
+            label={UNCLASSIFIED_LABEL}
+            active={classificatieFilter === "niet_geclassificeerd"}
+            onClick={() =>
+              setClassificatieFilter(
+                classificatieFilter === "niet_geclassificeerd" ? "alle" : "niet_geclassificeerd",
+              )
+            }
+          />
+        </div>
       </div>
 
       <Card>
@@ -304,6 +425,9 @@ export default function Grootboek() {
                     <TableHead>Omschrijving</TableHead>
                     <TableHead className="hidden w-32 md:table-cell" data-testid="categorie-column-header">
                       Categorie
+                    </TableHead>
+                    <TableHead className="hidden w-48 lg:table-cell" data-testid="classificatie-column-header">
+                      Rapportage
                     </TableHead>
                     <TableHead className="w-40">Status</TableHead>
                     <TableHead className="w-20 text-right">Acties</TableHead>
@@ -323,6 +447,34 @@ export default function Grootboek() {
                           >
                             {CATEGORIE_LABELS[r.categorie] ?? r.categorie}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell">
+                          {/* Status als badge (tekst, nooit alleen kleur) en,
+                              als de rekening geclassificeerd is, de groep
+                              erbij: dat is de informatie waar het om gaat. */}
+                          <div className="flex flex-col items-start gap-0.5">
+                            <Badge
+                              variant="outline"
+                              data-testid={`classificatie-badge-${r.id}`}
+                              data-classified={isClassified(r) ? "true" : "false"}
+                              className={cn(
+                                isClassified(r)
+                                  ? "border-teal-500/60 bg-teal-50 text-teal-900 dark:bg-teal-950/40 dark:text-teal-200"
+                                  : "border-border bg-muted text-muted-foreground",
+                              )}
+                            >
+                              {isClassified(r) ? CLASSIFIED_LABEL : UNCLASSIFIED_LABEL}
+                            </Badge>
+                            {isClassified(r) && (
+                              <span
+                                className="text-xs text-muted-foreground"
+                                data-testid={`classificatie-groep-${r.id}`}
+                              >
+                                {STATEMENT_TYPE_SHORT_LABELS[r.statement_type as "balans" | "winst_verlies"]} ·{" "}
+                                {classificationLabel(r)}
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
@@ -487,10 +639,136 @@ export default function Grootboek() {
               <Label htmlFor="gb-actief" className="cursor-pointer">Actief</Label>
               <Switch id="gb-actief" checked={form.actief} onCheckedChange={(v) => setForm((p) => ({ ...p, actief: v }))} />
             </div>
+
+            {/* ── Rapportageclassificatie ─────────────────────────────────
+                De plaats van deze rekening in de Balans of de Winst-en-
+                verliesrekening. Los van `categorie`, die onveranderd blijft,
+                en nooit automatisch afgeleid uit nummer of omschrijving. */}
+            <fieldset
+              className="space-y-4 rounded-md border p-3"
+              data-testid="rapportageclassificatie"
+              disabled={!mayEditClassification}
+            >
+              <legend className="px-1 text-sm font-medium">Rapportageclassificatie</legend>
+              {!mayEditClassification && (
+                <p className="text-xs text-muted-foreground" role="note">
+                  Je kunt de rapportageclassificatie bekijken maar niet wijzigen.
+                </p>
+              )}
+
+              <div className="space-y-1.5">
+                <Label htmlFor="gb-statement-type">Rapport</Label>
+                <Select
+                  value={form.statementType ?? NONE_VALUE}
+                  onValueChange={(v) =>
+                    setForm((p) => ({
+                      ...p,
+                      ...onStatementTypeChange(p, isStatementType(v) ? v : null),
+                    }))
+                  }
+                >
+                  <SelectTrigger id="gb-statement-type"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE_VALUE}>{UNCLASSIFIED_LABEL}</SelectItem>
+                    <SelectItem value="balans">{STATEMENT_TYPE_LABELS.balans}</SelectItem>
+                    <SelectItem value="winst_verlies">{STATEMENT_TYPE_LABELS.winst_verlies}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* De groepkeuze bestaat alleen bij een gekozen rapport, en toont
+                  uitsluitend de groepen van dát rapport. */}
+              {form.statementType !== null && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="gb-report-group">Groep *</Label>
+                  {/* Lege waarde (niet de sentinel): de groepenlijst kent geen
+                      "geen keuze"-item, dus toont Radix dan de placeholder. */}
+                  <Select
+                    value={form.reportGroup ?? ""}
+                    onValueChange={(v) =>
+                      setForm((p) => onReportGroupChange(p, isReportGroup(v) ? v : null) as AccountForm)
+                    }
+                  >
+                    {/* De fout is meteen zichtbaar, niet pas na een poging tot
+                        opslaan: de opslaanknop is juist uitgeschakeld zolang
+                        de classificatie onvolledig is, dus zonder deze melding
+                        zou er niets uitleggen waaróm. Nagen doet het niet — dit
+                        veld bestaat pas zodra iemand een rapport koos. */}
+                    <SelectTrigger
+                      id="gb-report-group"
+                      aria-invalid={!!classificationIssues.reportGroup}
+                      aria-describedby={classificationIssues.reportGroup ? "gb-report-group-error" : undefined}
+                      className={cn(
+                        classificationIssues.reportGroup && "border-destructive focus-visible:ring-destructive",
+                      )}
+                    >
+                      <SelectValue placeholder="Kies een groep" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groupsFor(form.statementType).map((g) => (
+                        <SelectItem key={g} value={g}>{REPORT_GROUP_LABELS[g]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {classificationIssues.reportGroup && (
+                    <p id="gb-report-group-error" className="text-xs text-destructive" role="alert">
+                      {classificationIssues.reportGroup}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {form.statementType !== null && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="gb-normal-side">Normale zijde</Label>
+                    <Select
+                      value={form.normalSide ?? NONE_VALUE}
+                      onValueChange={(v) =>
+                        setForm((p) => ({ ...p, normalSide: isNormalSide(v) ? v : null }))
+                      }
+                    >
+                      <SelectTrigger id="gb-normal-side"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE_VALUE}>Niet ingesteld</SelectItem>
+                        <SelectItem value="debet">{NORMAL_SIDE_LABELS.debet}</SelectItem>
+                        <SelectItem value="credit">{NORMAL_SIDE_LABELS.credit}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="gb-report-sort">Sortering</Label>
+                    <Input
+                      id="gb-report-sort"
+                      type="number"
+                      min={0}
+                      step={1}
+                      inputMode="numeric"
+                      value={form.reportSort}
+                      onChange={(e) => setForm((p) => ({ ...p, reportSort: e.target.value }))}
+                      placeholder="bijv. 10"
+                      aria-invalid={!!classificationIssues.reportSort}
+                      aria-describedby={classificationIssues.reportSort ? "gb-report-sort-error" : undefined}
+                      className={cn(
+                        classificationIssues.reportSort && "border-destructive focus-visible:ring-destructive",
+                      )}
+                    />
+                    {classificationIssues.reportSort && (
+                      <p id="gb-report-sort-error" className="text-xs text-destructive" role="alert">
+                        {classificationIssues.reportSort}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </fieldset>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Annuleren</Button>
-            <Button onClick={handleSave} disabled={addRek.isPending || updateRek.isPending}>
+            <Button
+              onClick={handleSave}
+              disabled={addRek.isPending || updateRek.isPending || classificationBlocked}
+            >
               {addRek.isPending || updateRek.isPending ? "Bezig…" : editing ? "Opslaan" : "Toevoegen"}
             </Button>
           </DialogFooter>

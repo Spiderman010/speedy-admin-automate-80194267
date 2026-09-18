@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 
 export interface Grootboekrekening {
   id: string;
@@ -12,6 +13,28 @@ export interface Grootboekrekening {
   actief: boolean;
   created_at: string;
   updated_at: string;
+  /**
+   * Balans/W&V PR 1 — rapportageclassificatie. Alle vier optioneel en
+   * standaard NULL: een rekening zonder classificatie is de normale toestand
+   * en blijft dat tot iemand haar invult. `categorie` staat hier los van en
+   * verandert niet mee.
+   */
+  statement_type?: string | null;
+  report_group?: string | null;
+  normal_side?: string | null;
+  report_sort?: number | null;
+}
+
+/**
+ * De classificatievelden zoals ze naar de database gaan. Los benoemd zodat de
+ * pagina ze niet stuk voor stuk hoeft door te geven en er nooit een half
+ * ingevulde combinatie ontstaat (zie src/lib/reporting-classification.ts).
+ */
+export interface GrootboekClassificationInput {
+  statement_type?: string | null;
+  report_group?: string | null;
+  normal_side?: string | null;
+  report_sort?: number | null;
 }
 
 const DEFAULT_ACCOUNTS = [
@@ -348,7 +371,14 @@ export function useAddGrootboekrekening() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: { nummer: number; omschrijving: string; categorie: string; actief: boolean }) => {
+    mutationFn: async (
+      data: {
+        nummer: number;
+        omschrijving: string;
+        categorie: string;
+        actief: boolean;
+      } & GrootboekClassificationInput,
+    ) => {
       if (!user) throw new Error("Niet ingelogd");
       const { error } = await supabase.from("grootboekrekeningen").insert({ ...data, user_id: user.id, client_id: null });
       if (error) throw error;
@@ -366,6 +396,35 @@ export function useUpdateGrootboekrekening() {
       if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["grootboekrekeningen"] }),
+  });
+}
+
+/**
+ * Balans/W&V PR 2 — mag de ingelogde gebruiker de rapportageclassificatie
+ * wijzigen? De rollenladder blijft in de database: één aanroep van de
+ * bestaande public.has_min_role(), dezelfde drempel (`accountant`) die de
+ * UPDATE-policy op grootboekrekeningen zelf hanteert. Geen tweede
+ * rechtenmodel, geen client-side rangorde.
+ *
+ * `undefined` = nog onbekend; de velden blijven dan alleen-lezen. RLS is en
+ * blijft de echte poort — dit bepaalt alleen wat we tonen.
+ */
+export function useCanEditGrootboekClassification() {
+  const { user } = useAuth();
+  const { activeOrganizationId, isReady } = useActiveOrganization();
+
+  return useQuery({
+    queryKey: ["grootboek-can-classify", user?.id ?? "", activeOrganizationId ?? ""],
+    enabled: !!user && isReady && !!activeOrganizationId,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("has_min_role", {
+        _user_id: user!.id,
+        _organization_id: activeOrganizationId!,
+        _min: "accountant",
+      });
+      if (error) throw error;
+      return data === true;
+    },
   });
 }
 
