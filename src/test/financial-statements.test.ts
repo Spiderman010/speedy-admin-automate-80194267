@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import {
   ASSET_GROUPS,
   CURRENT_YEAR_RESULT_LABEL,
+  movementOnPeriodStartFromRows,
   EQUITY_LIABILITY_GROUPS,
   GROUPS_REQUIRING_EXPLICIT_SIDE,
   GROUP_DEFAULT_NORMAL_SIDE,
@@ -141,31 +142,59 @@ describe("tekens en presentatie", () => {
     expect(kapitaal.displayedCents).toBe(-20_000);
   });
 
-  it("7. een expliciete normal_side wint van de groepsstandaard", () => {
-    // vlottende_activa is standaard debet; expliciet credit moet winnen. Zo
-    // wordt bijvoorbeeld een cumulatieve afschrijving binnen de activa
-    // credit-normaal gepresenteerd.
+  it("7. een expliciete normal_side markeert een tegenrekening; de kolom bepaalt het teken", () => {
+    // vlottende_activa staat in de debetkolom. Een rekening die daar
+    // credit van aard is, is een aftrekpost — geen omgeklapte kolom.
     const omgekeerd = account({ ...BANK, normal_side: "credit" });
     const r = ok(run([...entry(BANK.id, KAPITAAL.id, "500.00", "2026-03-01")], [omgekeerd, KAPITAAL]));
     const bank = r.balanceSheet.assetGroups.flatMap((g) => g.lines).find((l) => l.accountId === BANK.id)!;
     expect(bank.normalSide).toBe("credit");
     expect(bank.normalSideSource).toBe("explicit");
-    expect(bank.displayedCents).toBe(-50_000);
+    expect(bank.presentationSide).toBe("debet");
+    expect(bank.isContra).toBe(true);
     expect(bank.rawSignedCents).toBe(50_000); // de kern blijft ongemoeid
+    expect(bank.displayedCents).toBe(50_000); // in de kolomrichting
   });
 
-  it("7b. een afwijkende zijde verandert de presentatie, nooit de sluitcontrole", () => {
-    // De echte sluitcontrole staat in de tekenconventie van de kern. Een
-    // afwijkende presentatiezijde mag die nooit raken — ze verschuift alleen
-    // wat een lezer optelt.
-    const omgekeerd = account({ ...BANK, normal_side: "credit" });
-    const r = ok(run([...entry(BANK.id, KAPITAAL.id, "500.00", "2026-03-01")], [omgekeerd, KAPITAAL]));
+  it("7b. een cumulatieve afschrijving gaat ván de activa af en de balans blijft sluiten", () => {
+    // Het klassieke geval: machine 1000, cumulatieve afschrijving 300 (credit
+    // van aard) binnen dezelfde groep. De boekwaarde is 700 — niet 1300.
+    const machine = account({ id: "a-mach", nummer: 31, omschrijving: "Machines", statement_type: "balans", report_group: "vaste_activa" });
+    const cumul = account({ id: "a-cum", nummer: 32, omschrijving: "Machines afschrijving", statement_type: "balans", report_group: "vaste_activa", normal_side: "credit" });
+    const afschrijving = account({ id: "a-afs", nummer: 4103, omschrijving: "Afschrijvingskosten", statement_type: "winst_verlies", report_group: "afschrijvingen" });
+    const rows = [
+      ...entry("a-mach", KAPITAAL.id, "1000.00", "2026-01-01"),
+      ...entry("a-afs", "a-cum", "300.00", "2026-12-01"),
+    ];
+    const r = ok(run(rows, [machine, cumul, afschrijving, KAPITAAL]));
+    const vaste = r.balanceSheet.assetGroups.find((g) => g.key === "vaste_activa")!;
+    const cumulLine = vaste.lines.find((l) => l.accountId === "a-cum")!;
+    expect(cumulLine.isContra).toBe(true);
+    expect(cumulLine.displayedCents).toBe(-30_000); // aftrekpost
+    expect(vaste.totalCents).toBe(70_000); // boekwaarde
+    expect(r.balanceSheet.differenceCents).toBe(0);
     expect(r.balanceSheet.rawReconciliationCents).toBe(0);
-    // Gepresenteerd sluit hij niet meer, en dat wordt eerlijk gemeld.
-    expect(r.balanceSheet.differenceCents).not.toBe(0);
-    expect(r.balanceSheet.ok).toBe(false);
-    // Classificatie is wél compleet: dit is een presentatiekeuze, geen gat.
-    expect(r.completeness).toBe("complete");
+    expect(r.balanceSheet.ok).toBe(true);
+  });
+
+  it("7c. privé gaat ván het eigen vermogen af, niet erbij", () => {
+    // Het geval dat elke eenmanszaak raakt: kapitaal 5000, privé-opname 1000.
+    // Eigen vermogen is 4000 en de balans sluit tegen de bank.
+    const prive = account({ id: "a-prive", nummer: 651, omschrijving: "Privé-opnamen", categorie: "privé", statement_type: "balans", report_group: "prive" });
+    const rows = [
+      ...entry(BANK.id, KAPITAAL.id, "5000.00", "2026-01-01"),
+      ...entry("a-prive", BANK.id, "1000.00", "2026-06-01"),
+    ];
+    const r = ok(run(rows, [BANK, KAPITAAL, prive]));
+    const priveLine = r.balanceSheet.liabilityEquityGroups.flatMap((g) => g.lines).find((l) => l.accountId === "a-prive")!;
+    expect(priveLine.normalSide).toBe("debet"); // van aard debet
+    expect(priveLine.presentationSide).toBe("credit"); // maar in de creditkolom
+    expect(priveLine.isContra).toBe(true);
+    expect(priveLine.displayedCents).toBe(-100_000);
+    expect(r.balanceSheet.totalAssetsCents).toBe(400_000);
+    expect(r.balanceSheet.totalLiabilitiesEquityCents).toBe(400_000);
+    expect(r.balanceSheet.differenceCents).toBe(0);
+    expect(r.balanceSheet.ok).toBe(true);
   });
 
   it("8. een groep die beide kanten op kan is zonder expliciete zijde niet presenteerbaar", () => {
@@ -325,6 +354,20 @@ describe("winst-en-verliesrekening", () => {
     expect(r.profitLoss.revenueCents).toBe(100_000);
     expect(r.profitLoss.expenseCents).toBe(40_000);
     expect(r.profitLoss.netResultCents).toBe(60_000);
+  });
+
+  it("een creditpost binnen de belastingen verlaagt de last en is geen omzet", () => {
+    // Een belastingteruggaaf staat credit op een kostengroep. Splitsen op de
+    // aard van de rekening zou haar als omzet tellen; splitsen op de kolom
+    // doet wat een accountant verwacht.
+    const belasting = account({ id: "a-bel", nummer: 4757, omschrijving: "Belastingteruggaaf", statement_type: "winst_verlies", report_group: "belastingen", normal_side: "credit" });
+    const r = ok(run([...entry(BANK.id, "a-bel", "500.00", "2026-06-01")], [BANK, KAPITAAL, belasting]));
+    expect(r.profitLoss.revenueCents).toBe(0);
+    expect(r.profitLoss.expenseCents).toBe(-50_000);
+    expect(r.profitLoss.netResultCents).toBe(50_000);
+    const line = r.profitLoss.groups.flatMap((g) => g.lines).find((l) => l.accountId === "a-bel")!;
+    expect(line.presentationSide).toBe("debet");
+    expect(line.isContra).toBe(true);
   });
 
   it("22. een verlies levert een negatief nettoresultaat", () => {
@@ -489,6 +532,35 @@ describe("beginbalans", () => {
     expect(bijdrage.get(BANK.id)).toBe(70_000);
   });
 
+  it("een meegegeven bijdragekaart die niet bij dit rapport hoort, wordt zichtbaar gemaakt", () => {
+    // De kaart is diagnose, geen waarheid. Een sleutel die geen rekening in dit
+    // rapport is, telt nergens in mee maar wordt wél geteld — zodat een kaart
+    // uit andere rijen niet stilzwijgend als feit verschijnt.
+    const rows = [...entry(BANK.id, OMZET.id, "100.00", "2026-06-01", OB)];
+    const ledgerAccounts = [BANK, KAPITAAL, OMZET].map((a) => ({
+      id: a.id, nummer: a.nummer ?? 0, omschrijving: a.omschrijving ?? "", categorie: a.categorie, actief: true,
+    }));
+    const report = buildAccountReport({ rows, clientId: CLIENT, period: PERIOD_2026, accounts: ledgerAccounts });
+    const r = ok(buildFinancialStatements({
+      report,
+      period: PERIOD_2026,
+      accounts: [BANK, KAPITAAL, OMZET],
+      openingBalanceContribution: new Map([[OMZET.id, -10_000], ["spookrekening", 12_345]]),
+    }));
+    expect(r.diagnostics.strayContributionKeys).toBe(1);
+    // De echte cijfers zijn onaangeraakt door de vreemde sleutel.
+    expect(r.profitLoss.netResultCents).toBe(10_000);
+    expect(r.balanceSheet.differenceCents).toBe(0);
+  });
+
+  it("beginbalansbijdrage op een niet-geclassificeerde rekening verdwijnt niet uit de diagnose", () => {
+    const vreemd = account({ id: "a-vreemd", nummer: 3000 });
+    const rows = [...entry("a-vreemd", KAPITAAL.id, "80.00", "2026-02-01", OB)];
+    const r = ok(run(rows, [KAPITAAL, vreemd], PERIOD_2026, true));
+    expect(r.diagnostics.openingBalanceOnUnclassifiedCents).toBe(8_000);
+    expect(r.diagnostics.openingBalanceOnProfitLossCents).toBe(0);
+  });
+
   it("een beginbalans van vóór de periode komt als beginsaldo binnen, niet als mutatie", () => {
     const rows = [...entry(BANK.id, KAPITAAL.id, "2500.00", "2025-01-01", OB)];
     const r = ok(run(rows, [BANK, KAPITAAL, OMZET, KOSTEN], PERIOD_2026, true));
@@ -614,6 +686,76 @@ describe("volledigheid en falen", () => {
     expect(r.balanceSheet.differenceCents).toBe(0);
   });
 
+  it("37b. een deel van een jaar is óók ambigu: eerdere maanden zijn geen 'voorgaande jaren'", () => {
+    // Kwartaalrapport: de omzet van maart zit in de openingsstand van de W&V.
+    // Die "resultaat voorgaande jaren" noemen zou misleiden, en het rapport
+    // volledig noemen al helemaal.
+    const kwartaal: LedgerPeriod = { from: "2026-07-01", toExclusive: "2026-10-01" };
+    const rows = [
+      ...entry(BANK.id, OMZET.id, "1000.00", "2026-03-01"),
+      ...entry(BANK.id, OMZET.id, "500.00", "2026-08-01"),
+    ];
+    const r = ok(run(rows, [BANK, KAPITAAL, OMZET, KOSTEN], kwartaal));
+    expect(r.diagnostics.yearAmbiguous).toBe(true);
+    expect(r.completeness).toBe("ambiguous");
+    const vorig = r.balanceSheet.systemLines.find((l) => l.kind === "prior_years_result")!;
+    const lopend = r.balanceSheet.systemLines.find((l) => l.kind === "current_year_result")!;
+    expect(vorig.label).toBe("Resultaat vóór deze periode");
+    expect(lopend.label).toBe("Resultaat over deze periode");
+    expect(vorig.displayedCents).toBe(100_000);
+    expect(lopend.displayedCents).toBe(50_000);
+    // De cijfers blijven exact; alleen de duiding als boekjaar vervalt.
+    expect(r.balanceSheet.differenceCents).toBe(0);
+  });
+
+  it("37c. alleen een volledig kalenderjaar krijgt de boekjaar-labels", () => {
+    const r = ok(run([...entry(BANK.id, OMZET.id, "100.00", "2026-06-01")], [BANK, KAPITAAL, OMZET, KOSTEN]));
+    expect(r.diagnostics.yearAmbiguous).toBe(false);
+    expect(r.balanceSheet.systemLines.map((l) => l.label)).toEqual([
+      PRIOR_YEARS_RESULT_LABEL,
+      CURRENT_YEAR_RESULT_LABEL,
+    ]);
+  });
+
+  it("een afsluitboeking op de eerste dag van de periode wordt als diagnose gemeld", () => {
+    // Zonder jaarafsluitmotor boekt iemand die handmatig: omzet debet naar
+    // kapitaal, gedateerd 1 januari. Dan zit vorig jaar zowel in de
+    // openingsstand als in de mutatie, en is de splitsing niet te vertrouwen.
+    const rows = [
+      ...entry(BANK.id, OMZET.id, "1000.00", "2025-06-01"),
+      ...entry(OMZET.id, KAPITAAL.id, "1000.00", "2026-01-01"),
+      ...entry(BANK.id, OMZET.id, "200.00", "2026-06-01"),
+    ];
+    const ledgerAccounts = [BANK, KAPITAAL, OMZET, KOSTEN].map((a) => ({
+      id: a.id, nummer: a.nummer ?? 0, omschrijving: a.omschrijving ?? "", categorie: a.categorie, actief: true,
+    }));
+    const report = buildAccountReport({ rows, clientId: CLIENT, period: PERIOD_2026, accounts: ledgerAccounts });
+    const r = buildFinancialStatements({
+      report,
+      period: PERIOD_2026,
+      accounts: [BANK, KAPITAAL, OMZET, KOSTEN],
+      movementOnPeriodStart: movementOnPeriodStartFromRows(rows, PERIOD_2026),
+    });
+    const res = ok(r);
+    // De totalen blijven kloppen…
+    expect(res.balanceSheet.differenceCents).toBe(0);
+    // …maar de splitsing is verdacht, en dat is zichtbaar.
+    expect(res.diagnostics.profitLossOnPeriodStartCents).toBe(100_000);
+  });
+
+  it("zonder afsluitboeking is die diagnose gewoon nul", () => {
+    const rows = [...entry(BANK.id, OMZET.id, "200.00", "2026-06-01")];
+    const ledgerAccounts = [BANK, KAPITAAL, OMZET].map((a) => ({
+      id: a.id, nummer: a.nummer ?? 0, omschrijving: a.omschrijving ?? "", categorie: a.categorie, actief: true,
+    }));
+    const report = buildAccountReport({ rows, clientId: CLIENT, period: PERIOD_2026, accounts: ledgerAccounts });
+    const r = ok(buildFinancialStatements({
+      report, period: PERIOD_2026, accounts: [BANK, KAPITAAL, OMZET],
+      movementOnPeriodStart: movementOnPeriodStartFromRows(rows, PERIOD_2026),
+    }));
+    expect(r.diagnostics.profitLossOnPeriodStartCents).toBe(0);
+  });
+
   it("8. de invariant van de kern wordt opnieuw gecontroleerd", () => {
     const r = ok(run([...entry(BANK.id, KAPITAAL.id, "100.00", "2026-03-01")], [BANK, KAPITAAL]));
     expect(r.diagnostics.ledgerClosingSumCents).toBe(0);
@@ -737,7 +879,9 @@ describe("statische grenzen", () => {
     // De enige plek waar een ledgerrij wordt aangeraakt is de diagnose-helper,
     // en die gebruikt de kernfunctie signedAmountCents().
     expect(code).not.toMatch(/toCents\(/);
-    expect(code.match(/signedAmountCents\(/g) ?? []).toHaveLength(1);
+    // Alleen de twee diagnose-helpers raken een ledgerrij aan, en beide doen
+    // dat via de kernfunctie — nooit via een eigen som over debit/credit.
+    expect(code.match(/signedAmountCents\(/g) ?? []).toHaveLength(2);
     expect(code).not.toMatch(/debit_amount|credit_amount/);
   });
 });

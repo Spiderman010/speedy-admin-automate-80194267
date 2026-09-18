@@ -90,8 +90,22 @@ export interface FinancialStatementsInput {
    * openingBalanceContributionFromRows() om hem uit dezelfde ledgerrijen te
    * halen die de kern al gebruikte. Ontbreekt hij, dan rapporteren de
    * diagnostics dat als "onbekend" in plaats van als nul.
+   *
+   * De engine controleert de sleutels tegen de rollups: een sleutel die geen
+   * rekening in dit rapport is, wordt niet meegeteld maar wél geteld in
+   * `diagnostics.strayContributionKeys`. Een kaart die uit andere rijen, een
+   * andere periode of een andere administratie komt, is daarmee zichtbaar in
+   * plaats van stilzwijgend gezaghebbend.
    */
   openingBalanceContribution?: ReadonlyMap<string, number>;
+  /**
+   * Optioneel: per rekening de signed centen die geboekt zijn op de éérste dag
+   * van de periode. Een afsluitboeking die het resultaat van vorig jaar naar
+   * het eigen vermogen brengt, wordt vaak op 1 januari gedateerd; die valt dan
+   * in de periodemutatie en maakt de splitsing lopend/voorgaand misleidend.
+   * Puur diagnose — het verandert geen enkel totaal.
+   */
+  movementOnPeriodStart?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -108,6 +122,26 @@ export function openingBalanceContributionFromRows(
   for (const row of rows) {
     if (row.source_type !== OPENING_BALANCE_SOURCE_TYPE) continue;
     if (!isInPeriod(row.posting_date, period)) continue;
+    const current = byAccount.get(row.grootboekrekening_id) ?? 0;
+    byAccount.set(row.grootboekrekening_id, current + signedAmountCents(row));
+  }
+  return byAccount;
+}
+
+/**
+ * Per rekening de signed centen geboekt op de eerste dag van de periode, uit
+ * dezelfde rijen. Een jaarafsluiting bestaat nog niet, maar wie er handmatig
+ * één boekt dateert die doorgaans op 1 januari; dan zit het resultaat van vorig
+ * jaar zowel in de openingsstand van de W&V-rekeningen als in de mutatie van
+ * dit jaar, en klopt de splitsing niet meer. Diagnose, geen correctie.
+ */
+export function movementOnPeriodStartFromRows(
+  rows: readonly LedgerPostingLike[],
+  period: LedgerPeriod,
+): Map<string, number> {
+  const byAccount = new Map<string, number>();
+  for (const row of rows) {
+    if (row.posting_date !== period.from) continue;
     const current = byAccount.get(row.grootboekrekening_id) ?? 0;
     byAccount.set(row.grootboekrekening_id, current + signedAmountCents(row));
   }
@@ -150,9 +184,42 @@ export const GROUPS_REQUIRING_EXPLICIT_SIDE: readonly ReportGroup[] = [
   "overig_resultaat",
 ];
 
-/** debet-normaal toont het tekenconventiegetal; credit-normaal klapt het om. */
+/** debet-oriëntatie toont het tekenconventiegetal; credit-oriëntatie klapt het om. */
 export function displayedCents(rawSignedCents: number, side: NormalSide): number {
   return side === "credit" ? -rawSignedCents + 0 : rawSignedCents;
+}
+
+/**
+ * De oriëntatie van de KOLOM waarin een regel staat — niet die van de rekening
+ * zelf. Dit onderscheid is wezenlijk: een kolomtotaal is pas op te tellen als
+ * elke regel in dezelfde richting wijst.
+ *
+ * Zou je per regel op de eigen `normal_side` normaliseren, dan klapt een regel
+ * die tegen zijn kolom in staat twee keer om en telt hij op in plaats van af.
+ * Dat gaat mis bij precies de twee gevallen die in een Nederlandse balans
+ * doodgewoon zijn:
+ *   • privé — debet van aard, maar het staat aan de creditzijde en hoort
+ *     ván het kapitaal af te gaan;
+ *   • een cumulatieve afschrijving binnen de vaste activa — credit van aard,
+ *     maar het hoort ván de boekwaarde af te gaan.
+ * Met de kolomoriëntatie verschijnen die als negatieve (aftrek)regels, precies
+ * zoals een balans wordt gelezen, en klopt elk kolomtotaal.
+ *
+ * `normal_side` blijft bewaard als de AARD van de rekening; wijkt die af van de
+ * kolom, dan is het een tegenrekening (`isContra`).
+ *
+ * Voor de W&V bepaalt de groep de richting (omzet credit, kosten debet). Voor
+ * de twee groepen die beide kanten op kunnen bestaat geen groepsrichting; daar
+ * geeft de verplichte expliciete `normal_side` de doorslag — een rentebaat
+ * hoort aan de opbrengstenkant, een rentelast aan de kostenkant.
+ */
+export function presentationSideFor(
+  reportGroup: ReportGroup,
+  accountNormalSide: NormalSide,
+): NormalSide {
+  if ((ASSET_GROUPS as readonly string[]).includes(reportGroup)) return "debet";
+  if ((EQUITY_LIABILITY_GROUPS as readonly string[]).includes(reportGroup)) return "credit";
+  return GROUP_DEFAULT_NORMAL_SIDE[reportGroup] ?? accountNormalSide;
 }
 
 // ── Groepsindeling ──────────────────────────────────────────────────────────
@@ -174,7 +241,10 @@ export type UnclassifiedReason =
   | "missing_report_group"
   | "invalid_group_for_statement"
   | "missing_normal_side"
-  | "unresolved_account";
+  /** De rekening bestaat niet in het schema (de kern kon haar niet herleiden). */
+  | "unresolved_account"
+  /** De rekening bestaat wel, maar zat niet in de meegegeven `accounts`. */
+  | "account_not_supplied";
 
 export interface FinancialStatementAccountLine {
   synthetic: false;
@@ -182,12 +252,17 @@ export interface FinancialStatementAccountLine {
   accountNumber: number | null;
   accountName: string;
   reportGroup: ReportGroup;
+  /** De aard van de rekening zelf. */
   normalSide: NormalSide;
-  /** Bron van de zijde: expliciet op de rekening, of de vaste groepskaart. */
+  /** Bron van die aard: expliciet op de rekening, of de vaste groepskaart. */
   normalSideSource: "explicit" | "group_default";
+  /** De richting van de kolom waarin deze regel staat. */
+  presentationSide: NormalSide;
+  /** De aard wijkt af van de kolom: een aftrekpost (tegenrekening). */
+  isContra: boolean;
   /** Tekenconventie van de kern, ongewijzigd. */
   rawSignedCents: number;
-  /** Na normalisatie op de normale zijde. */
+  /** Genormaliseerd op de KOLOM, zodat kolomtotalen optelbaar zijn. */
   displayedCents: number;
   reportSort: number | null;
   /** Alleen voor de W&V: het deel van de mutatie dat uit beginbalansrijen komt. */
@@ -255,8 +330,18 @@ export interface FinancialStatementsDiagnostics {
   ledgerClosingSumCents: number;
   openingBalanceContributionKnown: boolean;
   openingBalanceOnProfitLossCents: number | null;
+  /** Hetzelfde, maar voor rekeningen die niet geclassificeerd konden worden. */
+  openingBalanceOnUnclassifiedCents: number | null;
   /** De beginbalans valt binnen de rapportageperiode. */
   openingBalanceInsidePeriod: boolean;
+  /** Sleutels in de meegegeven kaart die geen rekening in dit rapport zijn. */
+  strayContributionKeys: number;
+  /**
+   * W&V-mutatie geboekt op de eerste dag van de periode. Is dit niet 0, dan
+   * kan er een afsluitboeking in de periode liggen en is de splitsing tussen
+   * lopend en voorgaand resultaat niet te vertrouwen. null = niet opgegeven.
+   */
+  profitLossOnPeriodStartCents: number | null;
   failures: string[];
 }
 
@@ -327,7 +412,11 @@ export function classifyAccount(
   account: ClassifiedAccountLike | undefined,
   resolved: boolean,
 ): AccountClassification {
-  if (!resolved || !account) return { kind: "unclassified", reason: "unresolved_account" };
+  // Twee verschillende gebreken, twee verschillende redenen: een rekening die
+  // niet bestaat vraagt om een boeking nakijken, een rekening die alleen niet
+  // is meegegeven vraagt om een volledigere query.
+  if (!resolved) return { kind: "unclassified", reason: "unresolved_account" };
+  if (!account) return { kind: "unclassified", reason: "account_not_supplied" };
 
   const statementType = account.statement_type;
   if (!isStatementType(statementType)) return { kind: "unclassified", reason: "missing_statement_type" };
@@ -388,6 +477,7 @@ function emptyByReason(): Record<UnclassifiedReason, number> {
     invalid_group_for_statement: 0,
     missing_normal_side: 0,
     unresolved_account: 0,
+    account_not_supplied: 0,
   };
 }
 
@@ -422,6 +512,16 @@ function buildGroups(
 
 export const CURRENT_YEAR_RESULT_LABEL = "Resultaat lopend boekjaar";
 export const PRIOR_YEARS_RESULT_LABEL = "Onverdeeld resultaat voorgaande jaren";
+/** Labels voor een periode die geen volledig kalenderjaar is. */
+export const CURRENT_PERIOD_RESULT_LABEL = "Resultaat over deze periode";
+export const PRIOR_PERIOD_RESULT_LABEL = "Resultaat vóór deze periode";
+
+/** Precies één heel kalenderjaar, half-open: [Y-01-01, Y+1-01-01). */
+export function isFullCalendarYear(period: LedgerPeriod): boolean {
+  const year = Number(period.from.slice(0, 4));
+  if (!Number.isFinite(year)) return false;
+  return period.from === `${year}-01-01` && period.toExclusive === `${year + 1}-01-01`;
+}
 
 /**
  * Bouwt de balans en de winst-en-verliesrekening uit één rapport.
@@ -430,10 +530,15 @@ export const PRIOR_YEARS_RESULT_LABEL = "Onverdeeld resultaat voorgaande jaren";
  * rapport gepresenteerd.
  */
 export function buildFinancialStatements(input: FinancialStatementsInput): FinancialStatementsResult {
-  const { report, period, accounts, openingBalanceContribution } = input;
+  const { report, period, accounts, openingBalanceContribution, movementOnPeriodStart } = input;
 
   const reportYear = reportYearForPeriod(period);
-  const yearAmbiguous = reportYear === null;
+  // Een boekjaarsplitsing mag alleen "lopend boekjaar" heten als de periode
+  // werkelijk dat hele kalenderjaar is. Bij een kwartaal of een maand ligt het
+  // resultaat van eerdere maanden in `openingCents` — dat is géén resultaat van
+  // voorgaande JAREN, en die duiding zou stilzwijgend misleiden.
+  const fullCalendarYear = isFullCalendarYear(period);
+  const yearAmbiguous = !fullCalendarYear;
   const contributionKnown = openingBalanceContribution !== undefined;
 
   const baseDiagnostics: FinancialStatementsDiagnostics = {
@@ -444,12 +549,16 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
       balanceAccounts: 0,
       profitLossAccounts: 0,
       unclassifiedAccounts: 0,
-      ok: true,
+      // Er is niets geteld, dus er valt ook niets te bevestigen.
+      ok: false,
     },
     ledgerClosingSumCents: 0,
     openingBalanceContributionKnown: contributionKnown,
     openingBalanceOnProfitLossCents: null,
+    openingBalanceOnUnclassifiedCents: null,
     openingBalanceInsidePeriod: false,
+    strayContributionKeys: 0,
+    profitLossOnPeriodStartCents: null,
     failures: [],
   };
 
@@ -478,6 +587,8 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
   let unclassifiedClosingCents = 0;
   let unclassifiedMovementCents = 0;
   let unclassifiedWithActivity = 0;
+  let openingBalanceOnUnclassifiedCents = 0;
+  let profitLossOnPeriodStartCents = 0;
 
   for (const rollup of report.rollups) {
     ledgerClosingSumCents += rollup.closingCents;
@@ -489,6 +600,9 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
       byReason[classification.reason]++;
       unclassifiedClosingCents += rollup.closingCents;
       unclassifiedMovementCents += movementOf(rollup);
+      // Ook een niet-geclassificeerde rekening kan beginbalansbijdrage dragen;
+      // die mag niet stilzwijgend uit de diagnose verdwijnen.
+      if (contributionKnown) openingBalanceOnUnclassifiedCents += openingBalanceContribution!.get(rollup.account.id) ?? 0;
       if (hasActivity) unclassifiedWithActivity++;
       unclassifiedAccounts.push({
         accountId: rollup.account.id,
@@ -510,6 +624,7 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
     // Balans = standsgrootheid (eindsaldo). W&V = stroomgrootheid (mutatie).
     const rawSignedCents = isBalance ? rollup.closingCents : movementOf(rollup);
     const contribution = openingBalanceContribution?.get(rollup.account.id) ?? null;
+    const presentationSide = presentationSideFor(classification.reportGroup, classification.normalSide);
 
     const line: FinancialStatementAccountLine = {
       synthetic: false,
@@ -519,8 +634,10 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
       reportGroup: classification.reportGroup,
       normalSide: classification.normalSide,
       normalSideSource: classification.normalSideSource,
+      presentationSide,
+      isContra: classification.normalSide !== presentationSide,
       rawSignedCents,
-      displayedCents: displayedCents(rawSignedCents, classification.normalSide),
+      displayedCents: displayedCents(rawSignedCents, presentationSide),
       reportSort: classification.reportSort,
       openingBalanceContributionCents: isBalance ? null : contributionKnown ? contribution ?? 0 : null,
       hasActivity,
@@ -533,6 +650,7 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
       pnlOpeningCents += rollup.openingCents;
       pnlMovementCents += movementOf(rollup);
       if (contributionKnown) openingBalanceOnProfitLossCents += contribution ?? 0;
+      if (movementOnPeriodStart) profitLossOnPeriodStartCents += movementOnPeriodStart.get(rollup.account.id) ?? 0;
     }
   }
 
@@ -545,12 +663,24 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
     ok: balanceLines.length + profitLossLines.length + unclassifiedAccounts.length === report.rollups.length,
   };
 
+  // Sleutels die geen rekening in dit rapport zijn, tellen nergens in mee maar
+  // worden wel geteld: een kaart uit andere rijen of een andere periode is
+  // daarmee zichtbaar in plaats van stilzwijgend gezaghebbend.
+  let strayContributionKeys = 0;
+  if (contributionKnown) {
+    const rollupIds = new Set(report.rollups.map((r) => r.account.id));
+    for (const key of openingBalanceContribution!.keys()) if (!rollupIds.has(key)) strayContributionKeys++;
+  }
+
   const diagnostics: FinancialStatementsDiagnostics = {
     ...baseDiagnostics,
     coverage,
     ledgerClosingSumCents,
     openingBalanceOnProfitLossCents: contributionKnown ? openingBalanceOnProfitLossCents : null,
+    openingBalanceOnUnclassifiedCents: contributionKnown ? openingBalanceOnUnclassifiedCents : null,
     openingBalanceInsidePeriod: contributionKnown && openingBalanceContribution!.size > 0,
+    strayContributionKeys,
+    profitLossOnPeriodStartCents: movementOnPeriodStart ? profitLossOnPeriodStartCents : null,
     failures: [],
   };
 
@@ -564,7 +694,10 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
   let revenueCents = 0;
   let expenseCents = 0;
   for (const line of profitLossLines) {
-    if (line.normalSide === "credit") revenueCents += line.displayedCents;
+    // Op de KOLOM splitsen, niet op de aard van de rekening: een
+    // belastingteruggaaf is een creditpost binnen `belastingen` en verlaagt de
+    // belastinglast — het is geen omzet.
+    if (line.presentationSide === "credit") revenueCents += line.displayedCents;
     else expenseCents += line.displayedCents;
   }
   const netResultCents = revenueCents - expenseCents;
@@ -580,7 +713,9 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
     movementCents: pnlMovementCents,
     totalCents: pnlOpeningCents + pnlMovementCents,
     openingBalanceContributionCents: contributionKnown ? openingBalanceOnProfitLossCents : null,
-    ok: true,
+    // Deze cijfers zijn pas een compleet beeld van de periode als er geen
+    // niet-geclassificeerde activiteit buiten staat.
+    ok: unclassifiedWithActivity === 0,
   };
 
   // 4. Balans — standen plus de twee presentatieregels.
@@ -594,14 +729,15 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
     {
       synthetic: true,
       kind: "prior_years_result",
-      label: PRIOR_YEARS_RESULT_LABEL,
+      // Alleen een volledig kalenderjaar mag "voorgaande jaren" heten.
+      label: fullCalendarYear ? PRIOR_YEARS_RESULT_LABEL : PRIOR_PERIOD_RESULT_LABEL,
       rawSignedCents: pnlOpeningCents,
       displayedCents: displayedCents(pnlOpeningCents, "credit"),
     },
     {
       synthetic: true,
       kind: "current_year_result",
-      label: CURRENT_YEAR_RESULT_LABEL,
+      label: fullCalendarYear ? CURRENT_YEAR_RESULT_LABEL : CURRENT_PERIOD_RESULT_LABEL,
       rawSignedCents: pnlMovementCents,
       displayedCents: displayedCents(pnlMovementCents, "credit"),
     },
@@ -613,17 +749,22 @@ export function buildFinancialStatements(input: FinancialStatementsInput): Finan
     systemLines.reduce((sum, l) => sum + l.displayedCents, 0);
   const differenceCents = totalAssetsCents - totalLiabilitiesEquityCents;
 
-  // 5. De echte sluitcontrole staat in de tekenconventie van de kern, niet in
-  //    de presentatie. Een rekening mag een afwijkende `normal_side` dragen
-  //    (een cumulatieve afschrijving binnen de vaste activa is credit-normaal);
-  //    dat verandert hoe ze wordt getoond, niet wat ze in het grootboek is.
-  //    Raw sluit dus altijd — als dat niet zo is, klopt de set niet.
+  // 5. Sluitcontroles. Eerlijk gezegd: zolang de kern `ok` teruggeeft, kunnen
+  //    deze twee niet afgaan — ze volgen wiskundig uit Σ beginsaldo = 0 en
+  //    Σ periodedebet = Σ periodecredit. Ze blijven staan als vangnet voor een
+  //    met de hand samengesteld of elders gemanipuleerd rapport, en omdat een
+  //    toekomstige wijziging in de groepsindeling ze wél kan breken (valt een
+  //    balansgroep buiten beide kolommen, dan slaat de tweede check aan).
   const balanceRawCents =
     assetGroups.reduce((sum, g) => sum + g.rawSignedCents, 0) +
     liabilityEquityGroups.reduce((sum, g) => sum + g.rawSignedCents, 0);
   const rawReconciliationCents =
     balanceRawCents + systemLines.reduce((sum, l) => sum + l.rawSignedCents, 0) + unclassifiedClosingCents;
   if (rawReconciliationCents !== 0) failures.push("balance_identity_broken");
+  // Omdat elke regel op zijn kolom is genormaliseerd, is het gepresenteerde
+  // verschil per constructie precies het niet-geclassificeerde deel. Wijkt dat
+  // af, dan is er een regel buiten beide kolommen gevallen.
+  if (differenceCents !== -unclassifiedClosingCents) failures.push("presented_identity_broken");
 
   // 6. Kruiscontrole: de synthetische resultaatregel is exact het W&V-resultaat.
   const currentYearLine = systemLines.find((l) => l.kind === "current_year_result")!;
