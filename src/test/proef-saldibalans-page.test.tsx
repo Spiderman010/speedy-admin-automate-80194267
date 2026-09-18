@@ -63,6 +63,8 @@ vi.mock("@/hooks/useLedgerCompleteness", () => ({
     isPending: state.completenessPending,
     isError: state.completenessError,
   }),
+  // 6C-b8 PR 3: beginbalansdimensie; standaard niet aanwezig zodat de bestaande verwachtingen gelden.
+  useOpeningBalanceCompleteness: () => ({ data: undefined, isPending: false, isError: false }),
 }));
 
 import ProefSaldibalans from "@/pages/ProefSaldibalans";

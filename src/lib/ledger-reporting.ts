@@ -473,13 +473,40 @@ export const LEDGER_SOURCE_LABELS: Readonly<Record<string, string>> = {
   sales_invoice: "Verkoop",
   bank_allocation: "Bank",
   manual_journal: "Memoriaal",
+  opening_balance: "Beginbalans",
 };
+
+/** Basisroute van de beginbalans; het doel-id gaat als queryparameter mee. */
+export const OPENING_BALANCE_ROUTE = "/grootboek/beginbalans";
+export const OPENING_BALANCE_TARGET_PARAM = "openingBalanceId";
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isUuid(value: string | null | undefined): value is string {
+  return typeof value === "string" && UUID_RE.test(value);
+}
+
+/**
+ * Route naar de beginbalans van de administratie. Voor een
+ * source_type = 'opening_balance'-rij is source_id de id van de kop
+ * (public.opening_balances.id — zo schrijft post_opening_balance() hem, en de
+ * claimtrigger dwingt dat af). Alleen een goedgevormde uuid gaat mee als
+ * doel; anders landt de link op de pagina zelf, die onder RLS de
+ * gezaghebbende toestand van de gekozen administratie toont.
+ */
+export function openingBalanceRoute(openingBalanceId: string | null | undefined): string {
+  return isUuid(openingBalanceId)
+    ? `${OPENING_BALANCE_ROUTE}?${OPENING_BALANCE_TARGET_PARAM}=${openingBalanceId}`
+    : OPENING_BALANCE_ROUTE;
+}
 
 export function resolveLedgerSource(
   sourceType: string,
   sourceId: string | null | undefined,
 ): LedgerSourceLink {
   switch (sourceType) {
+    case "opening_balance":
+      return { kind: "resolved", sourceType, label: "Beginbalans", path: openingBalanceRoute(sourceId) };
     case "purchase_invoice":
       if (!sourceId) {
         return { kind: "unresolved", sourceType, label: "Inkoop", reason: "Inkoopfactuur zonder source_id" };

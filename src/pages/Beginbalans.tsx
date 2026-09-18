@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,6 +66,7 @@ import {
   type OpeningBalanceLineRow,
   type OpeningBalanceRow,
 } from "@/lib/opening-balance-utils";
+import { isUuid, OPENING_BALANCE_TARGET_PARAM } from "@/lib/ledger-reporting";
 
 /**
  * Fase 6C-b8 (PR 2) — beginbalans (/grootboek/beginbalans).
@@ -157,6 +158,18 @@ export default function Beginbalans() {
   const chosenId = chosen && chosen.clientId === clientId ? chosen.id : null;
 
   const overview = useOpeningBalanceOverview(clientId);
+
+  // 6C-b8 PR 3 — direct doel vanuit een grootboekregel (?openingBalanceId=).
+  // Alleen een goedgevormde uuid telt; het doel wordt uitsluitend gezocht in
+  // de koppen van de GEKOZEN administratie (onder RLS opgehaald). Een id van
+  // een andere administratie of organisatie, of een onbekende id, wordt
+  // geweigerd en verandert niets aan de getoonde toestand.
+  const [searchParams] = useSearchParams();
+  const rawTarget = searchParams.get(OPENING_BALANCE_TARGET_PARAM);
+  const targetId = isUuid(rawTarget) ? rawTarget.toLowerCase() : null;
+  const targetMalformed = rawTarget !== null && targetId === null;
+  const targetHeader = targetId && overview.data ? overview.data.headers.find((h) => h.id.toLowerCase() === targetId) ?? null : null;
+  const targetRejected = !!targetId && !!overview.data && !targetHeader;
   const state = useMemo(
     () =>
       overview.data
@@ -256,6 +269,23 @@ export default function Beginbalans() {
     setPersistedLines(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorId]);
+
+  // Het doel wordt NA de reset-effecten toegepast: op de eerste render zou de
+  // administratie-reset een zojuist toegepast doel anders meteen weer wissen.
+  const appliedTarget = useRef<string | null>(null);
+  useEffect(() => {
+    if (!clientId || !targetHeader) return;
+    const key = `${clientId}:${targetHeader.id}`;
+    if (appliedTarget.current === key) return;
+    appliedTarget.current = key;
+    // Een expliciet, geverifieerd doel: dezelfde keuze als "Openen" in de
+    // conceptenlijst. Geboekt of nihil blijft alleen-lezen; bij meerdere
+    // concepten blijft de lijst zichtbaar.
+    syncedKey.current = null;
+    holdUntil.current = null;
+    setChosen({ clientId, id: targetHeader.id });
+    setSelectedYear(targetHeader.boekjaar);
+  }, [clientId, targetHeader]);
 
   // Formulier synchroniseren met de database. De sleutel bevat de inhoud, dus
   // een achtergrondrefetch met identieke data overschrijft niets waar je in
@@ -512,6 +542,31 @@ export default function Beginbalans() {
         </Alert>
       ) : (
         <div className="space-y-6">
+          {targetRejected && (
+            <Alert variant="destructive" data-testid="beginbalans-target-rejected">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Beginbalans niet gevonden voor deze administratie</AlertTitle>
+              <AlertDescription>
+                De opgevraagde beginbalans bestaat niet of hoort niet bij de gekozen administratie. Hieronder staat
+                de werkelijke toestand van deze administratie.
+              </AlertDescription>
+            </Alert>
+          )}
+          {targetMalformed && (
+            <p className="text-sm text-muted-foreground" role="status" data-testid="beginbalans-target-ignored">
+              De verwijzing in de link is ongeldig en is genegeerd.
+            </p>
+          )}
+          {targetHeader && state?.kind === "posted" && targetHeader.id !== state.marker.opening_balance_id && (
+            <Alert data-testid="beginbalans-target-leftover">
+              <Info className="h-4 w-4" />
+              <AlertTitle>De opgevraagde beginbalans is een achtergebleven concept</AlertTitle>
+              <AlertDescription>
+                De geboekte beginbalans van deze administratie wordt hieronder getoond; het concept doet niets meer.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {overview.isError && (
             <Alert variant="destructive" data-testid="beginbalans-refresh-error">
               <AlertTriangle className="h-4 w-4" />
