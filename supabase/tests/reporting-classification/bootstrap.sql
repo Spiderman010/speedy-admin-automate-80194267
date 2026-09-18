@@ -3,7 +3,7 @@
 -- Recreates only what the REAL chart-of-accounts migration (20260412222343)
 -- and the REAL role-policy block for this table (20260613001452 §3A.11,
 -- replayed verbatim in shape.sql) reference, so both and the migration under
--- test (20260918143850_add_reporting_classification.sql) can be applied
+-- test (20260920120000_add_reporting_classification.sql) can be applied
 -- verbatim to a throwaway local cluster and their behaviour proved against a
 -- real PostgreSQL.
 --

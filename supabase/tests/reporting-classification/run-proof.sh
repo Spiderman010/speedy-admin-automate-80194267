@@ -13,9 +13,9 @@
 # It applies, in order:
 #   bootstrap.sql                                   test double of the prerequisites
 #   supabase/migrations/20260412222343_...sql       the REAL chart-of-accounts migration
-#   shape.sql                                       the two later production shape changes, verbatim
+#   shape.sql                                       every later production change on the table, verbatim
 #   pre.sql                                         "existing" rows + snapshot
-#   supabase/migrations/20260918143850_...sql       the REAL migration under test — applied TWICE
+#   supabase/migrations/20260920120000_...sql       the REAL migration under test — applied TWICE
 #   proof.sql                                       the proofs
 # and prints one line per numbered proof plus a summary.
 
@@ -36,9 +36,9 @@ run -f "$REPO/supabase/migrations/20260412222343_b9d16193-0605-43a9-9fbf-ba324ff
 run -f "$HERE/shape.sql"                                                                     > /dev/null
 run -f "$HERE/pre.sql"                                                                       > /dev/null
 
-run -f "$REPO/supabase/migrations/20260918143850_add_reporting_classification.sql"           > /dev/null
+run -f "$REPO/supabase/migrations/20260920120000_add_reporting_classification.sql"           > /dev/null
 # Idempotency: the migration must survive a second application unchanged.
-run -f "$REPO/supabase/migrations/20260918143850_add_reporting_classification.sql"           > /dev/null
+run -f "$REPO/supabase/migrations/20260920120000_add_reporting_classification.sql"           > /dev/null
 
 run -f "$HERE/proof.sql"                                                                     > /dev/null
 
