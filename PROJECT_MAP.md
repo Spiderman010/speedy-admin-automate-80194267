@@ -714,6 +714,25 @@ select to_regclass('public.ledger_postings') as postings_table,
 
 Expected result: all four names, none NULL.
 
+
+### Fix — rapportage zonder beginbalans (Balans, W&V, proef- en saldibalans)
+
+Melding: "de rapporten tonen geen cijfers zolang er geen beginbalans is". **Diagnose eerst**, met probes door de échte keten (kern → proef- en saldibalans → statement-engine) vóór er één regel werd aangeraakt.
+
+**Wat NIET de oorzaak was.** De beginbalans blokkeert nergens iets:
+- Met boekingen in de periode en **zonder één beginbalansrij** geeft `buildAccountReport()` `ok`, levert `buildTrialBalance()` gewoon rijen (begin 0, debet/credit/saldo gevuld) en geeft `buildFinancialStatements()` een kloppende balans en W&V met `completeness: "complete"`.
+- Ook het **schrijfpad** eist geen beginbalans: geen van de vier documentschrijvers noemt `opening_balance`, en de trigger `enforce_no_posting_before_opening_balance()` keert meteen terug zodra er geen beginbalans is (`v_opening IS NULL`). Er is dus ook geen indirecte keten "geen beginbalans → niets te boeken → leeg rapport".
+- De pagina's kennen geen beginbalans-gate: die status is er uitsluitend als *melding*.
+
+**Wat de oorzaak wél is: de classificatie.** De migratie `20260920120000_add_reporting_classification.sql` voegde `statement_type`/`report_group` toe **zonder backfill** — bewust, want niets mag uit `categorie` of een rekeningnummer worden geraden. Gevolg: in elke bestaande administratie zijn die velden NULL, plaatst de engine élke rekening in `unclassified`, en tonen Balans en W&V **nul groepsregels en totalen van € 0,00**. Dat is correct gedrag (de engine weigert te raden) dat er als een kapot rapport uitziet. De proef- en saldibalans hangt níet van classificatie af en toonde altijd al gewoon cijfers; is díe leeg, dan zijn er werkelijk geen `ledger_postings` in de gekozen periode.
+
+**De fix — uitsluitend presentatie, geen boekhoudlogica:**
+- `NothingClassifiedNotice` bovenaan Balans en W&V zodra er activiteit is maar géén enkele geclassificeerde regel: legt uit dát dit de reden is, noemt het aantal rekeningen en het bedrag, en linkt naar het rekeningschema. De bedragen stonden er al onder "Niet geclassificeerd", maar ónder twee lege tabellen en dus onvindbaar.
+- `OpeningBalanceCarryForwardNotice` op de Balans, gevoed door de bestaande `useOpeningBalanceCompleteness`: de beginbalansstatus als **volledigheidsmelding, nooit als blokkade**. Ontbreekt de beginbalans, dan is de overloop uit eerdere jaren onbekend — de geboekte mutaties blijven onverkort zichtbaar.
+- `financial-statements.ts`, `ledger-reporting.ts`, `proef-saldibalans.ts`, `financial-statements-presentation.ts` en `useFinancialStatements.ts` zijn **byte-voor-byte ongewijzigd**; er is geen migratie, SQL, schema-, types- of dependencywijziging.
+
+**Tests:** `src/test/reporting-without-opening-balance.test.tsx` (18, door de échte kern/PSB/engine): W&V-mutaties, balans-eindsaldi en PSB-debet/credit/saldo zonder beginbalans; geldige lege staat zonder activiteit; een ontbrekende beginbalans is nooit een enginefout en raakt alleen de volledigheid; geclassificeerde balans- en W&V-rekeningen verschijnen; ongeclassificeerde activiteit blijft zichtbaar mét bedrag en krijgt de uitleg; de synthetische resultaatregel klopt; er wordt geen beginbalansbedrag verzonnen (`openingBalanceContributionCents` blijft `null` = niet vastgesteld, nooit een geverifieerde nul); administratiescheiding; werking mét een geboekte beginbalans; geen dubbeltelling; periodefiltering.
+
 ---
 
 ## Emergency rule
