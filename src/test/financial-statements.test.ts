@@ -187,6 +187,13 @@ describe("tekens en presentatie", () => {
     expect(r.unclassified.accounts).toHaveLength(0);
   });
 
+  it("activa en passiva dekken samen precies alle balansgroepen — geen groep valt buiten de balans", () => {
+    const opDeBalans = [...ASSET_GROUPS, ...EQUITY_LIABILITY_GROUPS].sort();
+    expect(opDeBalans).toEqual([...BALANS_GROUPS].sort());
+    // En ze overlappen niet: geen groep telt twee keer mee.
+    expect(ASSET_GROUPS.filter((g) => EQUITY_LIABILITY_GROUPS.includes(g))).toEqual([]);
+  });
+
   it("de groepskaart dekt precies de groepen die één vaste zijde hebben", () => {
     const mapped = Object.keys(GROUP_DEFAULT_NORMAL_SIDE).sort();
     const verwacht = [...BALANS_GROUPS, ...WINST_VERLIES_GROUPS]
