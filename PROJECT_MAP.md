@@ -741,6 +741,28 @@ Melding: "de rapporten tonen geen cijfers zolang er geen beginbalans is". **Diag
 
 ---
 
+### Historische grootboekvulling — PR 1 (inkoop en verkoop)
+
+**Aanleiding, met productiebewijs.** In productie is `public.ledger_postings` volledig leeg (`totaal_regels = 0`, `klanten = 0`, `groepen = 0`). De proef- en saldibalans, de balans en de W&V zijn daarmee **correct** leeg: er is niets te rapporteren. De rapportagecode is dan ook niet aangeraakt. De oorzaak is dat de grootboekfundering pas sinds migratie `20260914120000` bestaat en bestaande facturen en banktransacties **bewust nooit historisch zijn gebackfilled**. Cijfers verschijnen pas wanneer de ledger via de bestaande writers wordt gevuld — niet door een rapportage een andere bron te laten lezen.
+
+**Wat dit is, en wat het niet is.** Geen datamigratie en geen backfill-script, maar een gecontroleerde applicatieworkflow op `/grootboek/historisch` ("Historische boekingen", onder Grootboek, zonder eigen nav-item). De kernregel: **`ledger_postings` wordt nooit rechtstreeks gevuld**; elke boeking loopt via de bestaande RPC's `post_purchase_invoice()` en `post_sales_invoice()`, aangeroepen via de bestaande mutatiehooks `usePostPurchaseInvoice()` / `usePostSalesInvoice()`.
+
+- **`src/lib/ledger-catchup.ts`** — puur. Beoordeelt per bronrecord: `geboekt` (er is een marker), `klaar` of `geblokkeerd` met concrete redenen. De controles volgen één-op-één de guards in de writermigraties `20260915140000` en `20260915160000`: postbare status, factuurdatum, afgesloten boekjaar (`clients.afgesloten_boekjaar`), aanwezige en positieve bedragen, `excl + btw = incl`, crediteuren-/debiteuren-/BTW-rekening, omzetrekening op de verkoopfactuur, en voor inkoop de regelaggregatie (minstens één regel, elke regel een grootboekrekening, som gelijk aan het bedrag exclusief BTW). Bedragen worden in hele centen vergeleken, omdat de writer in NUMERIC rekent en géén tolerantie hanteert — een vergelijking in doubles zou een geldige factuur afkeuren.
+- **Readiness is uitsluitend UX.** De server-writer valideert bij elke aanroep opnieuw en blijft de autoriteit. Zegt deze laag "klaar" en weigert de writer alsnog, dan blijft het record ongeboekt en wordt de weigering per record getoond.
+- **`te_controleren` wordt nooit automatisch gewijzigd.** Die facturen verschijnen als geblokkeerd met de status letterlijk in de reden; goedkeuren blijft een menselijke handeling in de inkoopwerkplek. Er is geen bulk-statuswijziging en geen "goedkeuren en boeken".
+- **Geen rekeningnummer-heuristiek.** Er wordt nooit een nummerreeks voor bank, debiteuren, crediteuren of BTW verondersteld; er wordt alleen gekeken óf de expliciet ingestelde account-id bestaat. Ontbreekt die, dan is de reden een configuratiereden met een link naar de instellingen.
+- **`src/hooks/useLedgerCatchup.ts`** — datalaag en bulkactie. Leest brondocumenten en de **marker**-tabellen (`purchase_invoice_postings`, `sales_invoice_postings`); nooit `ledger_postings` om te bepalen of iets geboekt is. De bulkactie biedt records één voor één aan in de volgorde inkoop → verkoop (zodat de factuurmarkers bestaan vóór de bankafletteringen van PR 2), zonder retrylus: elke writeraanroep is server-side atomair, een halve boekingsgroep bestaat niet, en een weigering op het ene record raakt het volgende niet. Na afloop worden `["ledger-catchup"]`, `["ledger-postings"]` en `["ledger-completeness"]` geïnvalideerd, ook na een gedeeltelijk mislukte ronde.
+- **Idempotentie** komt uit de markers plus de writers zelf (beide weigeren een tweede boeking met 23505). Een reeds geboekt record is `geboekt`, ook als het verder gebreken heeft, en wordt nooit opnieuw aangeboden.
+- **Periode:** filter op boekjaar of "Alle jaren", altijd op de **echte brondatum**. Er wordt nooit een datum herschreven; de writer bepaalt `posting_date` volgens het bestaande contract.
+
+**Bewust buiten deze PR:** bankafletteringen (PR 2 — die eisen een reeds geboekte bronfactuur en een eigen richtingscontrole) en memoriaalboekingen. Memoriaal kent wél een "opgeslagen maar niet geboekt"-toestand (concept-kop + regels, marker `manual_journal_postings`), maar de tabellen bestaan pas sinds `20260918120000` en worden in dezelfde sessie opgesteld én geboekt: er is geen historische achterstand om in te lopen, dus een catch-up daarvoor zou kunstmatig zijn.
+
+**Tests:** `ledger-catchup.test.ts` (25, puur: elke writerguard afzonderlijk, beide soorten, centenvergelijking, volgorde, en dat geen enkele blokkadereden een rekeningnummer noemt), `ledger-catchup-run.test.tsx` (10, tabelgestuurde nep-Supabase die de echte filters toepast: administratiescheiding inclusief een marker van een andere administratie, tellingen, boekjaarfilter, alleen `klaar` naar de writer, één weigering beschadigt de rest niet, volgorde, geen enkele insert, en idempotentie over twee rondes) en `ledger-catchup-page.test.tsx` (14: samenvatting, per-recordweergave, blokkadereden, bevestigingsdialoog met echte aantallen, resultaatmelding, plus statische grenzen — geen `ledger_postings`-schrijfpad, geen eigen `supabase.rpc`, geen rekeningnummers, geen statuswijziging).
+
+**Geen migratie.** De bestaande bron-, marker- en writerstructuren zijn toereikend; er is geen schemawijziging nodig en er is geen productie-SQL uitgevoerd.
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**

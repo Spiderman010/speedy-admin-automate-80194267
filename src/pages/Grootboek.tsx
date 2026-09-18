@@ -340,6 +340,13 @@ export default function Grootboek() {
               <ArrowUpRight className="mr-2 h-4 w-4" />Beginbalans
             </Link>
           </Button>
+          {/* Historische grootboekvulling: bestaande facturen die nog niet
+              geboekt zijn, alsnog via de bestaande writers boeken. */}
+          <Button variant="outline" asChild>
+            <Link to="/grootboek/historisch">
+              <ArrowUpRight className="mr-2 h-4 w-4" />Historische boekingen
+            </Link>
+          </Button>
           {/* Balans/W&V PR 4: de jaarrekeningrapporten, ook onder Grootboek. */}
           <Button variant="outline" asChild>
             <Link to="/grootboek/balans">
