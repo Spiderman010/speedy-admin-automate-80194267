@@ -70,10 +70,10 @@ describe("Rapportages pagina", () => {
       "Grootboek",
       "BTW-overzicht",
     ].forEach((title) => expect(screen.getByRole("heading", { level: 3, name: title })).toBeInTheDocument());
-    // 6C-b7 PR 3: de proef- en saldibalans is beschikbaar; Balans en W&V
-    // wachten op een openingsbalans.
-    expect(screen.getAllByText("Beschikbaar")).toHaveLength(1);
-    expect(screen.getAllByText("Beschikbaar na openingsbalans")).toHaveLength(2);
+    // Balans/W&V PR 4: de proef- en saldibalans, de balans en de W&V zijn
+    // beschikbaar; Grootboek en BTW-overzicht nog niet.
+    expect(screen.getAllByText("Beschikbaar")).toHaveLength(3);
+    expect(screen.queryByText("Beschikbaar na openingsbalans")).toBeNull();
     expect(screen.getAllByText("Nog niet beschikbaar")).toHaveLength(2);
   });
 
