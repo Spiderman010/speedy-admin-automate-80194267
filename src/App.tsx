@@ -18,6 +18,8 @@ import GrootboekMutaties from "./pages/GrootboekMutaties";
 import Memoriaal from "./pages/Memoriaal";
 import Beginbalans from "./pages/Beginbalans";
 import GrootboekSaldi from "./pages/GrootboekSaldi";
+import Balans from "./pages/Balans";
+import WinstVerlies from "./pages/WinstVerlies";
 import ProefSaldibalans from "./pages/ProefSaldibalans";
 import Vraagposten from "./pages/Vraagposten";
 import Leveranciers from "./pages/Leveranciers";
@@ -86,6 +88,11 @@ const App = () => (
               <Route path="/grootboek/beginbalans" element={<Beginbalans />} />
               <Route path="/grootboek/saldi" element={<GrootboekSaldi />} />
               <Route path="/grootboek/saldi/:accountId" element={<GrootboekSaldi />} />
+              {/* Balans/W&V PR 4: de jaarrekeningrapporten hangen onder
+                  Grootboek, zonder eigen nav-item (prefix-matching houdt
+                  "Grootboek" actief). */}
+              <Route path="/grootboek/balans" element={<Balans />} />
+              <Route path="/grootboek/winst-verlies" element={<WinstVerlies />} />
               <Route path="/vraagposten" element={<Vraagposten />} />
               <Route path="/ai-chat" element={<AIChat />} />
               <Route path="/instellingen" element={<Instellingen />} />

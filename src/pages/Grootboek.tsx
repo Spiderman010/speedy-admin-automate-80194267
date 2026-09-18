@@ -340,6 +340,17 @@ export default function Grootboek() {
               <ArrowUpRight className="mr-2 h-4 w-4" />Beginbalans
             </Link>
           </Button>
+          {/* Balans/W&V PR 4: de jaarrekeningrapporten, ook onder Grootboek. */}
+          <Button variant="outline" asChild>
+            <Link to="/grootboek/balans">
+              <ArrowUpRight className="mr-2 h-4 w-4" />Balans
+            </Link>
+          </Button>
+          <Button variant="outline" asChild>
+            <Link to="/grootboek/winst-verlies">
+              <ArrowUpRight className="mr-2 h-4 w-4" />Winst &amp; verlies
+            </Link>
+          </Button>
           <Button
             variant="outline"
             onClick={() => setSeedConfirmOpen(true)}

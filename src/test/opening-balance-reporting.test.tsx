@@ -524,7 +524,12 @@ describe("statische bewaking", () => {
     }
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
-    expect(changed.filter((f) => /nav\.ts$|package-lock|bun\.lockb|App\.tsx$/.test(f))).toEqual([]);
+    expect(changed.filter((f) => /nav\.ts$|package-lock|bun\.lockb/.test(f))).toEqual([]);
+    // Voorheen stond App.tsx hier ook in: een scope-uitspraak van deze PR, geen
+    // invariant — een latere fase mag routes toevoegen. Bewaakt blijft dat de
+    // beginbalansroute zelf ongewijzigd is.
+    const appDiff = execFileSync("git", ["diff", "origin/main...HEAD", "--", "src/App.tsx"], { encoding: "utf8" });
+    expect(appDiff.split("\n").filter((l) => /^[-+]/.test(l) && !/^[-+]{3}/.test(l) && /beginbalans/i.test(l))).toEqual([]);
     expect(changed.filter((f) => /useOpeningBalancePosting|useManualJournal|usePurchaseInvoicePosting|useSalesInvoicePosting|useBankAllocationPosting/.test(f))).toEqual([]);
     // De beginbalanspagina krijgt alleen doelselectie: geen nieuwe RPC- of mutatie-aanroep.
     const diff = execFileSync("git", ["diff", "origin/main...HEAD", "--", "src/pages/Beginbalans.tsx"], { encoding: "utf8" });

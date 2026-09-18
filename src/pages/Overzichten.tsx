@@ -53,11 +53,21 @@ const reportTypes = [
     status: "Beschikbaar",
     href: "/overzichten/proef-saldibalans",
   },
-  // Balans en W&V blijven dicht: zonder openingsbalans zou een balans elke
-  // post missen die dateert van vóór het eerste geboekte document, en zonder
-  // resultaatbestemming sluit hij per definitie niet. Zie PROJECT_MAP 6C-b7.
-  { title: "Balans", icon: Landmark, status: "Beschikbaar na openingsbalans" },
-  { title: "Winst-en-verliesrekening", icon: BarChart3, status: "Beschikbaar na openingsbalans" },
+  // Balans/W&V PR 4: beide zijn nu beschikbaar. De beginbalans (6C-b8) vult de
+  // stand van vóór het eerste document, en de resultaatbestemming wordt als
+  // presentatieregel afgeleid — er wordt geen boeking voor verzonnen.
+  {
+    title: "Balans",
+    icon: Landmark,
+    status: "Beschikbaar",
+    href: "/grootboek/balans",
+  },
+  {
+    title: "Winst-en-verliesrekening",
+    icon: BarChart3,
+    status: "Beschikbaar",
+    href: "/grootboek/winst-verlies",
+  },
   { title: "Grootboek", icon: BookOpen, status: "Nog niet beschikbaar" },
   { title: "BTW-overzicht", icon: ReceiptText, status: "Nog niet beschikbaar" },
 ] as const;

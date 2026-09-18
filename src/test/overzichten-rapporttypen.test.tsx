@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { readFileSync } from "node:fs";
@@ -38,17 +38,34 @@ describe("Overzichten — rapporttypen", () => {
     expect(link).toHaveTextContent("Beschikbaar");
   });
 
-  it("40/41. Balans en W&V blijven dicht, met een waarheidsgetrouwe reden", () => {
+  it("40/41. Balans en W&V zijn beschikbaar en linken naar hun rapport", () => {
+    // Voorheen: "blijven dicht, met een waarheidsgetrouwe reden". Dat was waar
+    // zolang de rapporten niet bestonden; Balans/W&V PR 4 bouwt ze. De
+    // invariant die blijft: een kaart is aanklikbaar precies dan wanneer het
+    // rapport er werkelijk is, en de status is tekst, nooit alleen kleur.
     renderPage();
-    for (const titel of ["Balans", "Winst-en-verliesrekening"]) {
+    const verwacht: Record<string, string> = {
+      Balans: "/grootboek/balans",
+      "Winst-en-verliesrekening": "/grootboek/winst-verlies",
+    };
+    for (const [titel, href] of Object.entries(verwacht)) {
       const kop = screen.getByRole("heading", { name: titel, level: 3 });
       const kaart = kop.closest("div[class*='min-h-32']")!;
-      expect(kaart).toHaveTextContent("Beschikbaar na openingsbalans");
-      // Geen enkele van de twee is aanklikbaar.
+      // Exacte tekst op de badge zelf: "Beschikbaar na openingsbalans"
+      // zou een substring-match op de kaart ten onrechte laten slagen.
+      expect(within(kaart as HTMLElement).getByText("Beschikbaar")).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: `Open ${titel}` })).toHaveAttribute("href", href);
+    }
+  });
+
+  it("40b. een rapport dat nog niet bestaat blijft een inerte kaart", () => {
+    renderPage();
+    for (const titel of ["Grootboek", "BTW-overzicht"]) {
+      const kop = screen.getByRole("heading", { name: titel, level: 3 });
+      const kaart = kop.closest("div[class*='min-h-32']")!;
+      expect(kaart).toHaveTextContent("Nog niet beschikbaar");
       expect(kaart.querySelector("a")).toBeNull();
     }
-    expect(screen.queryByRole("link", { name: /Open Balans/ })).toBeNull();
-    expect(screen.queryByRole("link", { name: /Open Winst-en-verliesrekening/ })).toBeNull();
   });
 
   it("de KPI-tegels heten nu onmiskenbaar brondocumenten, en de berekening is niet aangeraakt", () => {
