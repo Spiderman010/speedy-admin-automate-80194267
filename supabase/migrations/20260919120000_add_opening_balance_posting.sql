@@ -14,12 +14,13 @@
 --   3. public.opening_balance_postings  — the atomic source-claim marker
 --   4. RLS + grants (including the column-level grants that make the nil
 --      columns unwritable outside the RPC)
---   5. opening_balance_client_lock_key(uuid)        — the shared per-administratie lock key
+--   5. ledger_client_lock_key / lock_ledger_client  — the per-administratie ledger lock
 --   6. public.save_opening_balance_lines(uuid, jsonb) — atomic replace of a draft's lines
 --   7. public.post_opening_balance(uuid)             — the only supported ledger write path
 --   8. public.declare_opening_balance_nil(uuid)      — the audited "no opening balance" assertion
 --   9. enforce_opening_balance_source_claim()        — ledger_postings guard for this source
---  10. enforce_no_posting_before_opening_balance()   — nothing may be posted before it
+--  10. lock_ledger_client_for_posting() + enforce_no_posting_before_opening_balance()
+--      — every ledger write serialises per administratie; nothing may be posted before it
 --  11. freeze — posted OR nil-declared header and lines become immutable
 --
 -- NO BACKFILL. Nothing existing is posted, converted or read for figures by
@@ -119,8 +120,10 @@
 -- while the figures are wrong. The mirror image — a back-dated purchase, sales,
 -- bank or memoriaal row posted AFTER the beginbalans, into the period it
 -- already summarises — is the same double count from the other side, and is
--- refused by the trigger in section 10. Section 10 also states the one race
--- the pair does not close.
+-- refused by the trigger in section 10. Neither direction relies on a snapshot
+-- read: section 10 makes every ledger write take one per-administratie advisory
+-- lock first, so the two sides are genuinely serialised rather than merely
+-- checked.
 --
 -- source_type = 'opening_balance' (the value the foundation's COMMENT already
 -- reserved), source_id = opening_balances.id, source_line_id =
@@ -230,17 +233,24 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- LOCK ORDER — documented once here, followed exactly in all three RPC bodies
 --
---   advisory lock on client_id                                   -- LOCK 0 (posting and nil only)
+--   advisory lock on client_id (public.lock_ledger_client)       -- LOCK 0
 --     → opening_balances row (FOR UPDATE)                        -- LOCK 1
 --       → opening_balance_lines rows, ORDER BY sort_order, id (FOR UPDATE)  -- LOCK 2 (poster only)
 --         → reads: client, accounts, aggregates, earlier postings
 --           → claim INSERT (marker)
---             → ledger INSERTs
+--             → ledger INSERTs  → LOCK 0 again (no-op, already held)
+--                               → 6C-b2 posting-group advisory lock
+--
+-- LOCK 0 is NOT limited to these two RPCs. Every INSERT into ledger_postings
+-- takes it first, through a trigger on the table (section 10) — that is what
+-- makes the "earliest fact" invariant enforceable at all, and it fixes the
+-- global order at: client lock → posting-group lock → row locks.
 --
 -- LOCK 0 before LOCK 1, always and in both directions, so the two RPCs can
 -- never build a cycle between an administratie and a header. LOCK 0 is a
 -- transaction-scoped advisory lock and is released at COMMIT or ROLLBACK, so it
--- cannot leak into a pooled Supabase connection.
+-- cannot leak into a pooled Supabase connection, and a rolled-back transaction
+-- hands it straight to whoever was waiting.
 --
 -- save_opening_balance_lines() does NOT take LOCK 0: it neither reads nor
 -- writes an assertion, it only rewrites draft lines, and taking a
@@ -324,6 +334,7 @@
 --
 -- rollback:
 --   DROP TRIGGER IF EXISTS validate_no_posting_before_opening_balance_trigger ON public.ledger_postings;
+--   DROP TRIGGER IF EXISTS lock_ledger_client_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS validate_opening_balance_source_claim_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS prevent_settled_opening_balance_line_mutation_trigger ON public.opening_balance_lines;
 --   DROP TRIGGER IF EXISTS set_opening_balance_line_scope_trigger ON public.opening_balance_lines;
@@ -336,6 +347,7 @@
 --   DROP TRIGGER IF EXISTS set_organization_id_trigger ON public.opening_balances;
 --   DROP TRIGGER IF EXISTS validate_opening_balance_marker_exclusivity_trigger ON public.opening_balance_postings;
 --   DROP FUNCTION IF EXISTS public.enforce_no_posting_before_opening_balance();
+--   DROP FUNCTION IF EXISTS public.lock_ledger_client_for_posting();
 --   DROP FUNCTION IF EXISTS public.enforce_opening_balance_source_claim();
 --   DROP FUNCTION IF EXISTS public.prevent_settled_opening_balance_line_mutation();
 --   DROP FUNCTION IF EXISTS public.prevent_settled_opening_balance_mutation();
@@ -345,7 +357,8 @@
 --   DROP FUNCTION IF EXISTS public.save_opening_balance_lines(uuid, jsonb);
 --   DROP FUNCTION IF EXISTS public.set_opening_balance_line_scope();
 --   DROP FUNCTION IF EXISTS public.enforce_opening_balance_client_org();
---   DROP FUNCTION IF EXISTS public.opening_balance_client_lock_key(uuid);
+--   DROP FUNCTION IF EXISTS public.lock_ledger_client(uuid);
+--   DROP FUNCTION IF EXISTS public.ledger_client_lock_key(uuid);
 --   DROP POLICY IF EXISTS role_opening_balance_postings_select ON public.opening_balance_postings;
 --   DROP POLICY IF EXISTS role_opening_balance_lines_delete ON public.opening_balance_lines;
 --   DROP POLICY IF EXISTS role_opening_balance_lines_update ON public.opening_balance_lines;
@@ -1114,42 +1127,83 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.opening_balance_lines TO authenti
 GRANT SELECT ON public.opening_balances, public.opening_balance_lines TO service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 5) The per-administratie lock key
+-- 5) The per-administratie LEDGER LOCK — one serialisation point, one definition
 --
---    Shared by post_opening_balance() and declare_opening_balance_nil() so both
---    provably take the SAME lock. Derivation follows 6C-b2 section 8a: the
---    first 32 bits of the uuid read straight out of its hex text — a pure,
---    deterministic mapping that depends only on documented cast behaviour, not
---    on a hash function whose implementation may differ between PostgreSQL
---    versions. Values above 2^31 wrap to negative integers, which advisory
---    locks accept.
+--    This is the phase's serialisation primitive, and it is deliberately named
+--    for the ledger rather than for the beginbalans: it orders EVERY write into
+--    public.ledger_postings for one administratie, not only the two assertion
+--    RPCs. Section 10 explains why that scope is required — without it the
+--    "a beginbalans is the earliest fact" invariant cannot be enforced at all
+--    under READ COMMITTED, because two transactions can each miss the other's
+--    uncommitted work.
 --
---    The two-argument advisory lock form is used with a fixed namespace
---    constant, and PostgreSQL keeps the two-integer lock space separate from
---    the single-bigint space that 6C-b2 uses for posting groups — so a
---    beginbalans lock can never collide with a posting-group lock.
+--    ONE FUNCTION, not a constant repeated in three bodies: every path calls
+--    public.lock_ledger_client(), so the namespace and the key derivation
+--    cannot drift apart between callers. Divergence here would not fail loudly;
+--    it would silently stop ordering anything.
 --
---    A collision between two different client uuids sharing their first 32 bits
---    costs a little serialisation between two unrelated administraties and can
---    never admit an invalid state: the lock only orders writers, and every rule
---    is still checked on the real rows.
+--    KEY DERIVATION follows 6C-b2 section 8a in spirit — read straight out of
+--    the uuid's hex text, so it depends only on documented cast and operator
+--    behaviour and not on a hash function whose implementation may differ
+--    between PostgreSQL versions — but XORs all FOUR 32-bit words instead of
+--    taking the first one. Taking only the leading word would make every pair of
+--    ids sharing a 4-byte prefix share a lock, which is not hypothetical: it is
+--    exactly what happens to sequential, seeded or hand-written uuids, and it
+--    silently turns "these two administraties are independent" into "these two
+--    administraties serialise". Folding uses all 128 bits of whatever entropy
+--    the id actually has. Values above 2^31 wrap to negative integers, which
+--    advisory locks accept.
+--
+--    NAMESPACE 6118, two-argument form. PostgreSQL keeps the two-integer
+--    advisory lock space separate from the single-bigint space that 6C-b2 uses
+--    for posting groups, so a client lock can never collide with a posting-group
+--    lock — which matters, because a transaction holds both (see LOCK ORDER).
+--
+--    COLLISIONS: the key space is 32 bits, so two different administraties can
+--    still map to one lock. The cost is that they serialise for a moment; it can
+--    never admit an invalid state, because the lock only orders writers and
+--    every rule is still checked against the real rows afterwards. A wider key
+--    is not available without giving up the namespace separation from 6C-b2's
+--    posting-group locks, and that separation is worth more: a transaction holds
+--    both locks, so the two spaces must not be able to alias.
+--
+--    COST, stated plainly: all ledger writes for ONE administratie now
+--    serialise. Two administraties never block each other (different keys), and
+--    within one administratie a posting is a single user action of a few rows,
+--    so the contention window is a few milliseconds. That is the price of the
+--    invariant, and it is paid deliberately rather than traded away.
 -- ─────────────────────────────────────────────────────────────────────────────
 
-CREATE OR REPLACE FUNCTION public.opening_balance_client_lock_key(_client_id uuid)
+CREATE OR REPLACE FUNCTION public.ledger_client_lock_key(_client_id uuid)
 RETURNS integer
 LANGUAGE sql
 IMMUTABLE
 SET search_path = public
 AS $$
-  SELECT ('x' || substr(replace(_client_id::text, '-', ''), 1, 8))::bit(32)::integer;
+  SELECT ('x' || substr(h, 1, 8))::bit(32)::integer
+       # ('x' || substr(h, 9, 8))::bit(32)::integer
+       # ('x' || substr(h, 17, 8))::bit(32)::integer
+       # ('x' || substr(h, 25, 8))::bit(32)::integer
+  FROM (SELECT replace(_client_id::text, '-', '')) AS t(h);
 $$;
 
-REVOKE ALL ON FUNCTION public.opening_balance_client_lock_key(uuid) FROM PUBLIC;
+CREATE OR REPLACE FUNCTION public.lock_ledger_client(_client_id uuid)
+RETURNS void
+LANGUAGE sql
+SET search_path = public
+AS $$
+  SELECT pg_advisory_xact_lock(6118, public.ledger_client_lock_key(_client_id));
+$$;
 
-COMMENT ON FUNCTION public.opening_balance_client_lock_key(uuid) IS
-'Leidt de advisory-lock sleutel van een administratie af uit de eerste 32 bits van haar uuid. Gebruikt door post_opening_balance() en declare_opening_balance_nil(), zodat beide dezelfde grendel nemen en geboekt/nihil elkaar nooit kunnen kruisen.';
+REVOKE ALL ON FUNCTION public.ledger_client_lock_key(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.lock_ledger_client(uuid) FROM PUBLIC;
 
--- ─────────────────────────────────────────────────────────────────────────────
+COMMENT ON FUNCTION public.ledger_client_lock_key(uuid) IS
+'Leidt de advisory-lock sleutel van een administratie af door alle vier de 32-bits woorden van haar uuid te XOR-en. Vouwen in plaats van het eerste woord nemen: anders delen twee ids met dezelfde eerste vier bytes stilzwijgend één grendel.';
+
+COMMENT ON FUNCTION public.lock_ledger_client(uuid) IS
+'Neemt de transactiegebonden advisory lock die alle grootboekschrijfacties van één administratie serialiseert (namespace 6118). Genomen door de trigger op ledger_postings, door post_opening_balance() en door declare_opening_balance_nil(), zodat alle drie aantoonbaar dezelfde grendel nemen. Verschillende administraties blokkeren elkaar niet.';
+
 -- 6) Atomic replace of a draft's lines
 --
 --    Clone of the save_manual_journal_lines shape (6C-b6): validate every
@@ -1384,7 +1438,7 @@ BEGIN
   -- (4) LOCK 0 — the administratie. Serialises this posting against every other
   -- opening-balance assertion of the same administratie, including a nil
   -- declaration of a DIFFERENT header, which no index could cover.
-  PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_locked_client));
+  PERFORM public.lock_ledger_client(v_locked_client);
 
   -- (5) LOCK 1 — the header, FOR UPDATE, re-read under the advisory lock.
   SELECT * INTO v_header
@@ -1717,7 +1771,7 @@ BEGIN
   v_locked_client := v_header.client_id;
 
   -- (4) LOCK 0 — the administratie, the same lock post_opening_balance() takes.
-  PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_locked_client));
+  PERFORM public.lock_ledger_client(v_locked_client);
 
   -- (5) LOCK 1 — the header, FOR UPDATE, re-read under the advisory lock.
   SELECT * INTO v_header
@@ -1943,36 +1997,123 @@ COMMENT ON FUNCTION public.enforce_opening_balance_source_claim() IS
 'Bewaakt dat elke grootboekregel met source_type=opening_balance exact overeenkomt met de claim in opening_balance_postings én met de bevroren beginbalansregel (source_line_id: rekening en bedragen). Sluit een tweede boekingsgroep, een extra of afwijkende regel, een afwijkende datum of boekjaar en een tegenboeking onder deze bronsoort uit.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 10) Nothing may be posted BEFORE a posted beginbalans
+-- 10) Nothing may be posted BEFORE a posted beginbalans — and the ledger lock
+--     that makes that enforceable at all
 --
 --     post_opening_balance() refuses a beginbalans that is not the earliest
---     fact of its administratie. That check runs once, in one direction. The
---     other direction stayed wide open: after a beginbalans is posted, any of
---     the four existing writers could still post a back-dated purchase, sales,
---     bank or memoriaal row into the period the beginbalans already summarises
---     — the exact silent double count the earlier check exists to prevent, and
---     one an accountant can cause with an ordinary typo rather than an attack.
+--     fact of its administratie. On its own that check runs once, in one
+--     direction, against a snapshot — which under READ COMMITTED closes
+--     nothing:
 --
---     So the rule is enforced from both sides. This trigger is scoped to
---     administraties that HAVE a posted beginbalans: for every other
---     administratie — which today is all of them — it changes nothing, and it
---     never refuses a row for an administratie that has only a draft or a nil
---     declaration. Rows of this source type are skipped, so the poster's own
---     rows (dated exactly opening_date) are never judged by it.
+--       A: post_opening_balance(client X, opening_date D)   -- sees no earlier row
+--       B: INSERT ledger_postings(client X, posting_date < D) -- sees no marker
+--       both commit -> the exact double count the invariant forbids.
+--
+--     A second SELECT anywhere would not help: both transactions are reading
+--     committed state and neither's work is committed yet. The only fix is a
+--     real serialisation point, so this section provides one.
+--
+--     THE LOCK. Every INSERT into public.ledger_postings takes the
+--     per-administratie ledger lock (section 5) in a BEFORE INSERT trigger,
+--     BEFORE anything is checked. post_opening_balance() and
+--     declare_opening_balance_nil() take the SAME lock at their very first step,
+--     through the same function. After acquiring it, every path re-reads the
+--     state it depends on under a fresh READ COMMITTED snapshot. That gives the
+--     required property in both directions:
+--
+--       • beginbalans first: B blocks at the lock BEFORE writing any row, so it
+--         has nothing for A to miss. A commits, B wakes, re-reads, sees the
+--         marker and is refused.
+--       • back-dated row first: A blocks at the lock. B commits, A wakes,
+--         re-reads ledger_postings and finds the earlier row, and is refused.
+--       • neither can pass on stale state, because neither runs until the other
+--         has committed or rolled back.
+--
+--     WHY A TRIGGER AND NOT THE FOUR EXISTING WRITERS. The guarantee must hold
+--     for every path into the table, including the direct INSERT that RLS grants
+--     to `authenticated`. Editing purchase, sales, bank and manual-journal
+--     writers would cover four of the paths and miss that one, and would edit
+--     four already-applied migrations for a rule that is not theirs. The table
+--     boundary is the only place where "every write" is expressible.
+--
+--     TRIGGER ORDER, and why the name matters. PostgreSQL fires BEFORE ROW
+--     triggers in alphabetical order of trigger name. On public.ledger_postings
+--     that order is now:
+--
+--       lock_ledger_client_trigger                       <- this section, FIRST
+--       lock_ledger_posting_group_trigger                <- 6C-b2 group lock
+--       set_organization_id_trigger
+--       validate_ledger_posting_org_trigger
+--       validate_manual_journal_source_claim_trigger
+--       validate_no_posting_before_opening_balance_trigger
+--       validate_opening_balance_source_claim_trigger
+--
+--     "lock_ledger_c..." sorts before "lock_ledger_p...", so the CLIENT lock is
+--     always taken before the GROUP lock, on every path, with no exception. The
+--     lock trigger reads only NEW.client_id, which is NOT NULL and comes
+--     straight from the caller, so it depends on no earlier trigger.
+--
+--     GLOBAL LOCK ORDER, and why there is no deadlock:
+--
+--       client advisory lock  ->  posting-group advisory lock  ->  row locks
+--
+--     Every transaction that touches the ledger acquires them in that order:
+--       • an ordinary writer (purchase/sales/bank/memoriaal) locks its own
+--         document rows first, then hits the ledger and takes client, then
+--         group. Its document rows are in ITS OWN tables, which no other
+--         writer and no assertion RPC ever locks, so those locks cannot be the
+--         second edge of a cycle;
+--       • post_opening_balance() and declare_opening_balance_nil() take the
+--         client lock FIRST, before the header and line locks, and their ledger
+--         inserts then re-take the same client lock (a no-op for a lock the
+--         transaction already holds) before the group lock — the same order;
+--       • save_opening_balance_lines() takes no client lock at all. It locks
+--         only the header it is editing and that header's lines, and waits for
+--         nothing else, so it can never be part of a cycle: it is always able
+--         to finish.
+--     Had the client lock been taken AFTER the group lock, an ordinary writer
+--     (group then client) and a poster (client then group) would have formed a
+--     textbook inversion. The trigger name is what prevents it, so it is
+--     asserted in the test suite rather than left to reading.
+--
+--     SCOPE. The trigger skips source_type = 'opening_balance' for the CHECK
+--     (a beginbalans is dated ON its opening date, never before it) but NOT for
+--     the LOCK: the poster must hold the lock too, or it would not be ordered
+--     against anyone. Administraties without a posted beginbalans are unaffected
+--     by the check — which today is all of them — and the lock is per
+--     administratie, so unrelated administraties keep running concurrently.
 --
 --     Integrity, not authorization: no auth.uid(), no role check. It must hold
 --     for every DML path, including service-role and maintenance paths.
---
---     HONEST LIMIT, stated rather than papered over: this trigger and the
---     poster's own earliest-fact check both read committed state. Two
---     transactions that commit at the same instant — one posting the
---     beginbalans, one posting a back-dated document — can still interleave so
---     that neither sees the other. Closing that would mean making every writer
---     take the beginbalans advisory lock of its administratie, which would
---     serialise all posting per administratie for a race that requires the two
---     events to land in the same instant. That trade-off is an owner decision
---     and is deliberately NOT made here.
 -- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.lock_ledger_client_for_posting()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Pure ordering, no business logic: this is the serialisation point every
+  -- ledger write shares. It must run before any check reads state that another
+  -- transaction could still be about to change, and before the posting-group
+  -- lock, so the global lock order is client -> group everywhere.
+  PERFORM public.lock_ledger_client(NEW.client_id);
+  RETURN NEW;
+END
+$$;
+
+REVOKE ALL ON FUNCTION public.lock_ledger_client_for_posting() FROM PUBLIC;
+
+-- The name is load-bearing: "lock_ledger_c" sorts before "lock_ledger_p", so
+-- this fires before 6C-b2's lock_ledger_posting_group_trigger.
+DROP TRIGGER IF EXISTS lock_ledger_client_trigger ON public.ledger_postings;
+CREATE TRIGGER lock_ledger_client_trigger
+  BEFORE INSERT ON public.ledger_postings
+  FOR EACH ROW EXECUTE FUNCTION public.lock_ledger_client_for_posting();
+
+COMMENT ON FUNCTION public.lock_ledger_client_for_posting() IS
+'Neemt bij elke grootboekregel eerst de per-administratie grendel, vóór de boekingsgroep-grendel van 6C-b2 en vóór elke controle. Dit is het serialisatiepunt waarop de beginbalans-invariant ("de beginbalans is het eerste feit") berust: zonder deze grendel kunnen twee gelijktijdige transacties elkaars ongecommitte werk missen en allebei slagen.';
 
 CREATE OR REPLACE FUNCTION public.enforce_no_posting_before_opening_balance()
 RETURNS trigger
@@ -1983,11 +2124,16 @@ AS $$
 DECLARE
   v_opening date;
 BEGIN
-  -- The beginbalans itself is dated ON its opening date, never before it.
+  -- The beginbalans itself is dated ON its opening date, never before it. (It
+  -- still took the lock above; only this check is skipped.)
   IF NEW.source_type = 'opening_balance' THEN
     RETURN NEW;
   END IF;
 
+  -- Runs with the client lock already held (lock_ledger_client_trigger fired
+  -- first), so this statement's fresh READ COMMITTED snapshot sees the marker
+  -- of any beginbalans that committed while we waited, and no beginbalans can
+  -- be committing right now.
   -- At most one row: uniq_opening_balance_postings_client.
   SELECT obp.opening_date INTO v_opening
   FROM public.opening_balance_postings obp
@@ -2012,7 +2158,7 @@ CREATE TRIGGER validate_no_posting_before_opening_balance_trigger
   FOR EACH ROW EXECUTE FUNCTION public.enforce_no_posting_before_opening_balance();
 
 COMMENT ON FUNCTION public.enforce_no_posting_before_opening_balance() IS
-'Weigert een grootboekregel met een boekingsdatum vóór de geboekte beginbalans van dezelfde administratie: die periode is al in de beginbalans samengevat, dus zo''n regel telt dubbel. Raakt alleen administraties met een geboekte beginbalans en nooit de beginbalans zelf.';
+'Weigert een grootboekregel met een boekingsdatum vóór de geboekte beginbalans van dezelfde administratie: die periode is al in de beginbalans samengevat, dus zo''n regel telt dubbel. Draait onder de per-administratie grendel, zodat een gelijktijdige beginbalans niet gemist kan worden. Raakt alleen administraties met een geboekte beginbalans en nooit de beginbalans zelf.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 11) A settled beginbalans is frozen — header and lines

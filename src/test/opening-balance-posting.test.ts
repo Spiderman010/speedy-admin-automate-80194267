@@ -25,7 +25,9 @@ const OWN_FUNCTIONS = [
   "enforce_opening_balance_client_org",
   "set_opening_balance_line_scope",
   "enforce_opening_balance_marker_exclusivity",
-  "opening_balance_client_lock_key",
+  "ledger_client_lock_key",
+  "lock_ledger_client",
+  "lock_ledger_client_for_posting",
   "save_opening_balance_lines",
   "post_opening_balance",
   "declare_opening_balance_nil",
@@ -56,6 +58,8 @@ const headerGuard = body("prevent_settled_opening_balance_mutation");
 const lineGuard = body("prevent_settled_opening_balance_line_mutation");
 const lineScopeFn = body("set_opening_balance_line_scope");
 const periodFn = body("enforce_no_posting_before_opening_balance");
+const clientLockFn = body("lock_ledger_client_for_posting");
+const lockKeyFn = body("ledger_client_lock_key");
 const markerExclusivityFn = body("enforce_opening_balance_marker_exclusivity");
 
 const headerTable = table("opening_balances");
@@ -93,7 +97,7 @@ describe("6C-b8 PR 1 — migratiebestand", () => {
     // Elke DROP in dit bestand is een idempotente DROP van een eigen object.
     const drops = sql.match(/DROP (TABLE|FUNCTION|POLICY|TRIGGER|INDEX)[^\n;]*/g) ?? [];
     expect(drops.length).toBeGreaterThan(0);
-    expect(drops.filter((d) => !/opening_balance/.test(d))).toEqual([]);
+    expect(drops.filter((d) => !/opening_balance|lock_ledger_client/.test(d))).toEqual([]);
     // Eén INSERT INTO ledger_postings, en die staat in de schrijver.
     const inserts = sql.match(/INSERT INTO public\.ledger_postings/g) ?? [];
     expect(inserts).toHaveLength(1);
@@ -193,11 +197,9 @@ describe("6C-b8 PR 1 — domeinuniciteit: draft / geboekt / nihil", () => {
 
   it("15. beide beweringen nemen dezelfde advisory lock op de administratie", () => {
     for (const [name, fn] of [["post", postFn], ["nil", nilFn]] as const) {
-      expect(fn, name).toContain(
-        "PERFORM pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key(v_locked_client));",
-      );
+      expect(fn, name).toContain("PERFORM public.lock_ledger_client(v_locked_client);");
       // De grendel wordt genomen vóór de kop wordt gegrendeld (LOCK 0 → LOCK 1).
-      expect(fn.indexOf("pg_advisory_xact_lock"), name).toBeLessThan(fn.indexOf("FOR UPDATE"));
+      expect(fn.indexOf("lock_ledger_client"), name).toBeLessThan(fn.indexOf("FOR UPDATE"));
       // En de grendel moet de rij dekken die daarna wordt geschreven: de
       // id → administratie koppeling is niet stabiel (een concept kan onder
       // dezelfde id opnieuw worden aangemaakt voor een andere administratie),
@@ -205,15 +207,15 @@ describe("6C-b8 PR 1 — domeinuniciteit: draft / geboekt / nihil", () => {
       expect(fn, name).toContain("v_locked_client := v_header.client_id;");
       expect(fn, name).toContain("IF v_header.client_id IS DISTINCT FROM v_locked_client THEN");
       expect(fn, name).toContain("USING ERRCODE = '40001'");
-      expect(fn.indexOf("v_locked_client :="), name).toBeLessThan(fn.indexOf("pg_advisory_xact_lock"));
-      expect(fn, name).toContain("opening_balance_client_lock_key(v_locked_client)");
+      expect(fn.indexOf("v_locked_client :="), name).toBeLessThan(fn.indexOf("lock_ledger_client("));
+      expect(fn, name).toContain("lock_ledger_client(v_locked_client)");
     }
   });
 
   it("16. beide beweringen eisen READ COMMITTED", () => {
     for (const [name, fn] of [["post", postFn], ["nil", nilFn]] as const) {
       expect(fn, name).toContain("current_setting('transaction_isolation') <> 'read committed'");
-      expect(fn.indexOf("transaction_isolation"), name).toBeLessThan(fn.indexOf("pg_advisory_xact_lock"));
+      expect(fn.indexOf("transaction_isolation"), name).toBeLessThan(fn.indexOf("lock_ledger_client"));
     }
   });
 });
@@ -408,10 +410,40 @@ describe("6C-b8 PR 1 — niets vóór de beginbalans", () => {
     );
   });
 
-  it("49. en de migratie zegt eerlijk welke race dat paar NIET sluit", () => {
-    expect(raw).toContain("HONEST LIMIT");
-    expect(raw).toContain("can still interleave so");
-    expect(raw).toContain("is deliberately NOT made here");
+  it("49. elke grootboekregel neemt de administratiegrendel, niet alleen de twee RPC-en", () => {
+    // Het serialisatiepunt zit op de TABEL, niet in vier schrijvers: anders zou
+    // de rechtstreekse INSERT die RLS toestaat er buiten vallen.
+    expect(sql).toContain(
+      "CREATE TRIGGER lock_ledger_client_trigger\n  BEFORE INSERT ON public.ledger_postings",
+    );
+    expect(clientLockFn).toContain("PERFORM public.lock_ledger_client(NEW.client_id);");
+    // Pure ordening: geen bedrijfsregel, geen lees-actie, geen autorisatie.
+    expect(clientLockFn).not.toMatch(/opening_balance_postings|posting_date|auth\.uid\(\)|has_min_role/);
+    // Eén definitie van de grendel, door alle drie de paden gebruikt.
+    expect(sql).toContain("SELECT pg_advisory_xact_lock(6118, public.ledger_client_lock_key(_client_id));");
+    expect((sql.match(/pg_advisory_xact_lock/g) ?? [])).toHaveLength(1);
+    expect((sql.match(/PERFORM public\.lock_ledger_client\(/g) ?? []).length).toBe(3);
+  });
+
+  it("50. de grendelvolgorde is globaal deterministisch: client vóór boekingsgroep", () => {
+    // PostgreSQL vuurt BEFORE ROW triggers in alfabetische naamvolgorde. Dit is
+    // de hele deadlockverdediging, dus hij wordt getoetst en niet gelezen.
+    const client = "lock_ledger_client_trigger";
+    const group = "lock_ledger_posting_group_trigger";
+    expect(client < group).toBe(true);
+    expect(sql).toMatch(new RegExp(`CREATE TRIGGER ${client}\\n  BEFORE INSERT ON public\\.ledger_postings`));
+    // En de twee RPC-en nemen dezelfde grendel als allereerste stap.
+    for (const fn of [postFn, nilFn]) {
+      expect(fn.indexOf("lock_ledger_client")).toBeLessThan(fn.indexOf("FOR UPDATE"));
+    }
+    expect(raw).toContain("client advisory lock  ->  posting-group advisory lock  ->  row locks");
+  });
+
+  it("51. de sleutel vouwt de hele uuid, niet alleen het eerste woord", () => {
+    for (const offset of ["1, 8", "9, 8", "17, 8", "25, 8"]) {
+      expect(lockKeyFn, offset).toContain(`substr(h, ${offset})`);
+    }
+    expect(lockKeyFn).toMatch(/#/);
   });
 });
 

@@ -19,6 +19,11 @@ SET client_min_messages = warning;
 
 CREATE EXTENSION IF NOT EXISTS dblink;
 
+-- Proof F baseline: PostgreSQL counts every deadlock it breaks. If ANY of the
+-- scenarios below formed a cycle, this counter would move.
+CREATE TABLE IF NOT EXISTS proof.deadlock_baseline AS
+  SELECT deadlocks FROM pg_stat_database WHERE datname = current_database();
+
 -- Remote helper: run one statement on connection B and record the outcome.
 CREATE OR REPLACE FUNCTION proof.remote_result(_n text, _name text, _conn text, _needle text)
 RETURNS void LANGUAGE plpgsql AS $$
@@ -48,6 +53,18 @@ BEGIN
   EXCEPTION WHEN others THEN
     NULL;
   END;
+END
+$$;
+
+-- A recorder that survives a ROLLBACK of the session it is called from: some
+-- scenarios must assert something WHILE holding a transaction they then roll
+-- back, and an ordinary INSERT into proof.result would be rolled back with it.
+-- dblink_exec on a connection without an open transaction commits on its own.
+CREATE OR REPLACE FUNCTION proof.record_out_of_band(_conn text, _n text, _name text, _ok boolean, _detail text)
+RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM dblink_exec(_conn, format(
+    'INSERT INTO proof.result VALUES (%L, %L, %L, %L)', _n, _name, _ok, _detail));
 END
 $$;
 
@@ -224,7 +241,7 @@ $$);
 SELECT dblink_connect('c', :'conn');
 SELECT * FROM dblink('c', $$SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)$$) AS t(x text);
 SELECT dblink_exec('c', 'BEGIN');
-SELECT * FROM dblink('c', $$SELECT pg_advisory_xact_lock(6118, public.opening_balance_client_lock_key('00000000-0000-0000-0000-0000000000d7'))::text$$) AS t(x text);
+SELECT * FROM dblink('c', $$SELECT pg_advisory_xact_lock(6118, public.ledger_client_lock_key('00000000-0000-0000-0000-0000000000d7'))::text$$) AS t(x text);
 
 SELECT dblink_exec('b', 'BEGIN');
 SELECT dblink_send_query('b', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-000000000aba')::text$$);
@@ -291,6 +308,263 @@ SELECT dblink_exec('b', 'COMMIT');
 SELECT proof.expect_true('45r2', 'en het geboekte bedrag is de NIEUWE regelset, niet de oude', $$
   SELECT count(*) = 2 AND SUM(debit_amount) = 90.00 AND SUM(credit_amount) = 90.00
   FROM public.ledger_postings WHERE source_id = '00000000-0000-0000-0000-000000000abc'
+$$);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- De kern van 6C-b8: "de beginbalans is het eerste feit" is een invariant, geen
+-- momentopname. Elke grootboekschrijfactie neemt de per-administratie grendel,
+-- dus de twee kanten worden echt geserialiseerd in plaats van alleen gelezen.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+INSERT INTO public.clients (id, organization_id, name) VALUES
+  ('00000000-0000-0000-0000-00000000cc01', '00000000-0000-0000-0000-0000000000a1', 'Eerste feit A'),
+  ('00000000-0000-0000-0000-00000000cc02', '00000000-0000-0000-0000-0000000000a1', 'Eerste feit B'),
+  ('00000000-0000-0000-0000-00000000cc03', '00000000-0000-0000-0000-0000000000a1', 'Eerste feit C'),
+  ('00000000-0000-0000-0000-00000000cc04', '00000000-0000-0000-0000-0000000000a1', 'Eerste feit D'),
+  ('00000000-0000-0000-0000-00000000cc05', '00000000-0000-0000-0000-0000000000a1', 'Eerste feit E'),
+  ('00000000-0000-0000-0000-00000000cc06', '00000000-0000-0000-0000-0000000000a1', 'Los 1'),
+  ('00000000-0000-0000-0000-00000000cc07', '00000000-0000-0000-0000-0000000000a1', 'Los 2'),
+  ('00000000-0000-0000-0000-00000000cc08', '00000000-0000-0000-0000-0000000000a1', 'Rollback'),
+  ('00000000-0000-0000-0000-00000000cc09', '00000000-0000-0000-0000-0000000000a1', 'Kruising');
+
+-- Eén hulpfunctie zodat elke "gewone schrijver" in deze proeven er identiek
+-- uitziet: twee sluitende regels, rechtstreeks in ledger_postings, met een
+-- bronsoort van een bestaande schrijver.
+CREATE OR REPLACE FUNCTION proof.ordinary_write(_client uuid, _date date, _amount numeric, _group uuid)
+RETURNS void LANGUAGE sql AS $$
+  INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
+    line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
+  SELECT '00000000-0000-0000-0000-0000000000a1', _client, g, _group, n,
+         _date, EXTRACT(YEAR FROM _date)::integer, d, c, 'EUR', 'purchase_invoice',
+         '00000000-0000-0000-0000-0000000000e1'
+  FROM (VALUES
+    ('00000000-0000-0000-0000-00000000f001'::uuid, 1, _amount, 0::numeric),
+    ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, _amount)
+  ) AS v(g, n, d, c);
+$$;
+GRANT EXECUTE ON FUNCTION proof.ordinary_write(uuid, date, numeric, uuid) TO public;
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb01', '00000000-0000-0000-0000-00000000cc01', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb01', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb01', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb02', '00000000-0000-0000-0000-00000000cc02', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb02', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb02', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb03', '00000000-0000-0000-0000-00000000cc03', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb03', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb03', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb04', '00000000-0000-0000-0000-00000000cc04', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb04', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb04', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb05', '00000000-0000-0000-0000-00000000cc05', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb05', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb05', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb06', '00000000-0000-0000-0000-00000000cc06', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb06', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb06', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb07', '00000000-0000-0000-0000-00000000cc07', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb07', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb07', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb08', '00000000-0000-0000-0000-00000000cc08', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb08', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb08', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+SELECT proof.draft('00000000-0000-0000-0000-00000000bb09', '00000000-0000-0000-0000-00000000cc09', DATE '2027-01-01');
+SELECT proof.line('00000000-0000-0000-0000-00000000bb09', '00000000-0000-0000-0000-00000000f001', 100.00, 0, 1);
+SELECT proof.line('00000000-0000-0000-0000-00000000bb09', '00000000-0000-0000-0000-00000000f002', 0, 100.00, 2);
+
+-- ── A: de beginbalans begint eerst; een terugwerkende gewone boeking wacht op
+--      de grendel en wordt daarna geweigerd. ───────────────────────────────
+
+SELECT dblink_exec('b', 'BEGIN');
+BEGIN;
+SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb01');
+SELECT dblink_send_query('b', $$SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000cc01',
+  DATE '2026-12-31', 50.00, '9a010000-0000-4000-8000-000000000001')::text$$);
+SELECT pg_sleep(0.4);
+-- De tweede sessie hangt hier aan de administratiegrendel, nog vóór haar
+-- eerste rij: er is dus niets dat de beginbalans had kunnen missen.
+SELECT proof.expect_true('A1', 'de terugwerkende schrijver wacht op de grendel en heeft nog niets geschreven', $$
+  SELECT dblink_is_busy('b') = 1
+$$);
+COMMIT;
+
+SELECT proof.remote_result('A2', 'na het committen van de beginbalans wordt de terugwerkende boeking geweigerd',
+  'b', 'zou dubbel tellen');
+SELECT dblink_exec('b', 'COMMIT');
+SELECT proof.expect_true('A3', 'het grootboek bevat alleen de beginbalans', $$
+  SELECT count(*) = 2 AND bool_and(source_type = 'opening_balance')
+  FROM public.ledger_postings WHERE client_id = '00000000-0000-0000-0000-00000000cc01'
+$$);
+
+-- ── B: de terugwerkende gewone boeking begint eerst; de beginbalans wacht en
+--      wordt daarna geweigerd. ───────────────────────────────────────────────
+
+SELECT dblink_exec('b', 'BEGIN');
+SELECT * FROM dblink('b', $$SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000cc02',
+  DATE '2026-12-31', 50.00, '9a020000-0000-4000-8000-000000000002')::text$$) AS t(x text);
+
+-- De boeking van B is geschreven maar NIET gecommit; A ziet hem dus niet in
+-- haar snapshot en moet toch geweigerd worden.
+SELECT dblink_connect('c', :'conn');
+SELECT * FROM dblink('c', $$SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)$$) AS t(x text);
+SELECT dblink_exec('c', 'BEGIN');
+SELECT dblink_send_query('c', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb02')::text$$);
+SELECT pg_sleep(0.4);
+SELECT proof.expect_true('B1', 'de beginbalans wacht op de grendel van de nog niet gecommitte boeking', $$
+  SELECT dblink_is_busy('c') = 1
+$$);
+SELECT dblink_exec('b', 'COMMIT');
+
+SELECT proof.remote_result('B2', 'na het committen van de terugwerkende boeking wordt de beginbalans geweigerd',
+  'c', 'moet het eerste feit zijn');
+SELECT dblink_exec('c', 'ROLLBACK');
+SELECT proof.expect_true('B3', 'er is geen beginbalans geboekt voor deze administratie', $$
+  SELECT count(*) = 0 FROM public.opening_balance_postings WHERE client_id = '00000000-0000-0000-0000-00000000cc02'
+$$);
+SELECT dblink_disconnect('c');
+
+-- ── C: dezelfde twee races, maar de gewone schrijver is een RECHTSTREEKSE
+--      INSERT als de rol authenticated — het pad dat RLS toestaat en dat geen
+--      enkele schrijverfunctie passeert. ─────────────────────────────────────
+
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_exec('b', 'SET ROLE authenticated');
+BEGIN;
+SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb03');
+SELECT dblink_send_query('b', $$INSERT INTO public.ledger_postings (organization_id, client_id,
+  grootboekrekening_id, posting_group_id, line_no, posting_date, boekjaar, debit_amount, credit_amount,
+  currency, source_type, user_id)
+  SELECT '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-00000000cc03', g,
+         '9a030000-0000-4000-8000-000000000003', n, DATE '2026-12-31', 2026, d, c, 'EUR',
+         'purchase_invoice', '00000000-0000-0000-0000-0000000000e1'
+  FROM (VALUES ('00000000-0000-0000-0000-00000000f001'::uuid, 1, 9.00::numeric, 0::numeric),
+               ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 9.00::numeric)) AS v(g, n, d, c)$$);
+SELECT pg_sleep(0.4);
+SELECT proof.expect_true('C1', 'ook een rechtstreekse INSERT als authenticated wacht op de grendel', $$
+  SELECT dblink_is_busy('b') = 1
+$$);
+COMMIT;
+SELECT proof.remote_result('C2', 'en wordt daarna geweigerd', 'b', 'zou dubbel tellen');
+SELECT dblink_exec('b', 'ROLLBACK');
+SELECT dblink_exec('b', 'RESET ROLE');
+SELECT proof.expect_true('C3', 'het grootboek bevat alleen de beginbalans', $$
+  SELECT count(*) = 2 AND bool_and(source_type = 'opening_balance')
+  FROM public.ledger_postings WHERE client_id = '00000000-0000-0000-0000-00000000cc03'
+$$);
+
+-- C omgekeerd: rechtstreekse INSERT eerst, beginbalans wacht.
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_exec('b', 'SET ROLE authenticated');
+SELECT * FROM dblink('b', $$INSERT INTO public.ledger_postings (organization_id, client_id,
+  grootboekrekening_id, posting_group_id, line_no, posting_date, boekjaar, debit_amount, credit_amount,
+  currency, source_type, user_id)
+  SELECT '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-00000000cc04', g,
+         '9a040000-0000-4000-8000-000000000004', n, DATE '2026-12-31', 2026, d, c, 'EUR',
+         'purchase_invoice', '00000000-0000-0000-0000-0000000000e1'
+  FROM (VALUES ('00000000-0000-0000-0000-00000000f001'::uuid, 1, 9.00::numeric, 0::numeric),
+               ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 9.00::numeric)) AS v(g, n, d, c)
+  RETURNING id::text$$) AS t(x text);
+SELECT dblink_connect('c', :'conn');
+SELECT * FROM dblink('c', $$SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)$$) AS t(x text);
+SELECT dblink_exec('c', 'BEGIN');
+SELECT dblink_send_query('c', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb04')::text$$);
+SELECT pg_sleep(0.4);
+SELECT proof.expect_true('C4', 'de beginbalans wacht op de rechtstreekse INSERT', $$SELECT dblink_is_busy('c') = 1$$);
+SELECT dblink_exec('b', 'COMMIT');
+SELECT proof.remote_result('C5', 'en wordt daarna geweigerd', 'c', 'moet het eerste feit zijn');
+SELECT dblink_exec('c', 'ROLLBACK');
+SELECT dblink_exec('b', 'RESET ROLE');
+SELECT dblink_disconnect('c');
+
+-- ── D: een gewone boeting NÁ de beginbalansdatum blijft gewoon werken. ──────
+
+SELECT proof.expect_ok('D1', 'de beginbalans van deze administratie wordt geboekt',
+  $$SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb05')$$);
+SELECT proof.expect_ok('D2', 'een gewone boeking ná de openingsdatum slaagt', $$
+  SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000cc05', DATE '2027-06-01', 25.00,
+    '9a050000-0000-4000-8000-000000000005')
+$$);
+SELECT proof.expect_ok('D3', 'en een boeking op de openingsdatum zelf ook', $$
+  SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000cc05', DATE '2027-01-01', 25.00,
+    '9a060000-0000-4000-8000-000000000006')
+$$);
+SELECT proof.expect_true('D4', 'alles staat in het grootboek', $$
+  SELECT count(*) = 6 FROM public.ledger_postings WHERE client_id = '00000000-0000-0000-0000-00000000cc05'
+$$);
+
+-- ── E: twee losse administraties blokkeren elkaar niet, en binnen één
+--      administratie blokkeren ze wél (anders zou de grendel niets doen). ────
+
+SELECT dblink_exec('b', 'BEGIN');
+BEGIN;
+-- A houdt de grendel van administratie "Los 1".
+SELECT public.lock_ledger_client('00000000-0000-0000-0000-00000000cc06');
+SELECT dblink_send_query('b', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb07')::text$$);
+SELECT pg_sleep(0.5);
+SELECT proof.expect_true('E1', 'een andere administratie loopt gewoon door terwijl deze grendel vastzit', $$
+  SELECT dblink_is_busy('b') = 0
+$$);
+SELECT proof.remote_result('E2', 'en die boeking slaagt', 'b', '');
+SELECT dblink_exec('b', 'COMMIT');
+
+-- Positieve controle: dezelfde administratie blokkeert wél.
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_send_query('b', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb06')::text$$);
+SELECT pg_sleep(0.4);
+SELECT proof.expect_true('E3', 'dezelfde administratie wacht wél — de grendel doet echt iets', $$
+  SELECT dblink_is_busy('b') = 1
+$$);
+COMMIT;
+SELECT proof.remote_result('E4', 'en loopt door zodra de grendel vrijkomt', 'b', '');
+SELECT dblink_exec('b', 'COMMIT');
+
+-- ── G: een teruggedraaide eerste transactie geeft de grendel vrij en de
+--      tweede herbeoordeelt correct — en slaagt, want er is niets gecommit. ──
+
+SELECT dblink_exec('b', 'BEGIN');
+BEGIN;
+SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000cc08', DATE '2026-12-31', 5.00,
+  '9a070000-0000-4000-8000-000000000007');
+SELECT dblink_send_query('b', $$SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb08')::text$$);
+SELECT pg_sleep(0.4);
+-- Buiten de transactie om vastgelegd: deze transactie wordt zo teruggedraaid.
+SELECT dblink_connect('d', :'conn');
+SELECT proof.record_out_of_band('d', 'G1', 'de beginbalans wacht op de terugwerkende boeking',
+  dblink_is_busy('b') = 1, format('dblink_is_busy=%s', dblink_is_busy('b')));
+ROLLBACK;
+SELECT dblink_disconnect('d');
+SELECT proof.remote_result('G2', 'na een rollback komt de grendel vrij en slaagt de beginbalans alsnog', 'b', '');
+SELECT dblink_exec('b', 'COMMIT');
+SELECT proof.expect_true('G3', 'de teruggedraaide boeking bestaat niet en de beginbalans wel', $$
+  SELECT (SELECT count(*) FROM public.ledger_postings WHERE client_id = '00000000-0000-0000-0000-00000000cc08') = 2
+     AND (SELECT count(*) FROM public.opening_balance_postings WHERE client_id = '00000000-0000-0000-0000-00000000cc08') = 1
+$$);
+
+-- ── F: de kruising die onder een omgekeerde grendelvolgorde een deadlock zou
+--      zijn — beginbalans (client → kop → groep) tegen gewone schrijver
+--      (client → groep) — en daarna de globale deadlockteller. ───────────────
+
+SELECT dblink_exec('b', 'BEGIN');
+BEGIN;
+SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb09');
+SELECT dblink_send_query('b', $$SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000cc09',
+  DATE '2027-03-01', 7.00, '9a080000-0000-4000-8000-000000000008')::text$$);
+SELECT pg_sleep(0.4);
+COMMIT;
+SELECT proof.remote_result('F1', 'de kruising client-grendel x groep-grendel loopt zonder deadlock af', 'b', '');
+SELECT dblink_exec('b', 'COMMIT');
+
+SELECT proof.expect_true('F2', 'geen enkele deadlock tijdens alle gelijktijdigheidsproeven', $$
+  SELECT (SELECT deadlocks FROM pg_stat_database WHERE datname = current_database())
+       = (SELECT deadlocks FROM proof.deadlock_baseline)
 $$);
 
 SELECT dblink_disconnect('b');
