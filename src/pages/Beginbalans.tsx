@@ -169,7 +169,18 @@ export default function Beginbalans() {
   const targetId = isUuid(rawTarget) ? rawTarget.toLowerCase() : null;
   const targetMalformed = rawTarget !== null && targetId === null;
   const targetHeader = targetId && overview.data ? overview.data.headers.find((h) => h.id.toLowerCase() === targetId) ?? null : null;
-  const targetRejected = !!targetId && !!overview.data && !targetHeader;
+  // De afwijzing wordt één keer vastgesteld, bij de eerste lezing van het
+  // overzicht voor deze administratie + dit doel. Anders zou het verwijderen
+  // van het (terecht geopende) doelconcept de melding "niet gevonden" oproepen.
+  const [targetRejected, setTargetRejected] = useState(false);
+  const resolvedTarget = useRef<string | null>(null);
+  useEffect(() => {
+    if (!clientId || !targetId || !overview.data) return;
+    const key = `${clientId}:${targetId}`;
+    if (resolvedTarget.current === key) return;
+    resolvedTarget.current = key;
+    setTargetRejected(!targetHeader);
+  }, [clientId, targetId, overview.data, targetHeader]);
   const state = useMemo(
     () =>
       overview.data
@@ -557,15 +568,18 @@ export default function Beginbalans() {
               De verwijzing in de link is ongeldig en is genegeerd.
             </p>
           )}
-          {targetHeader && state?.kind === "posted" && targetHeader.id !== state.marker.opening_balance_id && (
-            <Alert data-testid="beginbalans-target-leftover">
-              <Info className="h-4 w-4" />
-              <AlertTitle>De opgevraagde beginbalans is een achtergebleven concept</AlertTitle>
-              <AlertDescription>
-                De geboekte beginbalans van deze administratie wordt hieronder getoond; het concept doet niets meer.
-              </AlertDescription>
-            </Alert>
-          )}
+          {targetHeader &&
+            ((state?.kind === "posted" && targetHeader.id !== state.marker.opening_balance_id) ||
+              (state?.kind === "nil" && targetHeader.id !== state.header.id)) && (
+              <Alert data-testid="beginbalans-target-leftover">
+                <Info className="h-4 w-4" />
+                <AlertTitle>De opgevraagde beginbalans is een achtergebleven concept</AlertTitle>
+                <AlertDescription>
+                  De {state.kind === "posted" ? "geboekte" : "op nihil gezette"} beginbalans van deze administratie
+                  wordt hieronder getoond; het concept doet niets meer.
+                </AlertDescription>
+              </Alert>
+            )}
 
           {overview.isError && (
             <Alert variant="destructive" data-testid="beginbalans-refresh-error">

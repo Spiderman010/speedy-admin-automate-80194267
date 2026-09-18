@@ -189,7 +189,11 @@ export type OpeningBalanceCompletenessState =
   | "draft"
   | "posted"
   | "nil"
-  /** Er is wél een bewering, maar voor een ander boekjaar dan het rapportjaar. */
+  /** Geboekt voor een eerder boekjaar: de beginpositie loopt via het grootboek door. */
+  | "posted_prior"
+  /** Nihil verklaard voor een eerder boekjaar. */
+  | "nil_prior"
+  /** Er is wél een bewering, maar voor een LATER boekjaar dan het rapportjaar. */
   | "other_year"
   | "conflict"
   /** Rapportperiode beslaat meer dan één kalenderjaar: niet te bepalen. */
@@ -215,7 +219,9 @@ export const OPENING_BALANCE_STATE_LABELS: Readonly<Record<OpeningBalanceComplet
   draft: "Concept",
   posted: "Geboekt",
   nil: "Nihil",
-  other_year: "Ander boekjaar",
+  posted_prior: "Geboekt (eerder boekjaar)",
+  nil_prior: "Nihil (eerder boekjaar)",
+  other_year: "Later boekjaar",
   conflict: "Conflict",
   ambiguous: "Niet te bepalen voor meerdere boekjaren",
   unknown: "Onbekend",
@@ -263,22 +269,39 @@ export function computeOpeningBalanceCompleteness(input: {
   switch (derived.kind) {
     case "conflict":
       return make("conflict", "unknown", { note: derived.message });
+    // Per administratie bestaat hoogstens één bewering, ooit. Een bewering voor
+    // een EERDER boekjaar is daarmee de beginpositie van elk later jaar: het
+    // grootboek voert haar via de gewone rekenkunde door (beginsaldo = alles
+    // vóór de periode). Een bewering voor een LATER boekjaar zegt niets over
+    // dit rapportjaar en telt niet als passend.
     case "posted": {
       const assertionYear = derived.marker.boekjaar;
-      if (assertionYear !== year) {
+      if (assertionYear > year) {
         return make("other_year", "incomplete", {
           assertionYear,
-          note: `De beginbalans van deze administratie is geboekt voor boekjaar ${assertionYear}, niet voor rapportjaar ${year}.`,
+          note: `De beginbalans van deze administratie is geboekt voor boekjaar ${assertionYear}, na rapportjaar ${year}.`,
+        });
+      }
+      if (assertionYear < year) {
+        return make("posted_prior", "complete", {
+          assertionYear,
+          note: `Geboekt voor boekjaar ${assertionYear}; de beginpositie van ${year} volgt via het grootboek uit de jaren ervoor.`,
         });
       }
       return make("posted", "complete", { assertionYear });
     }
     case "nil": {
       const assertionYear = derived.header.boekjaar;
-      if (assertionYear !== year) {
+      if (assertionYear > year) {
         return make("other_year", "incomplete", {
           assertionYear,
-          note: `De nihil-verklaring van deze administratie geldt voor boekjaar ${assertionYear}, niet voor rapportjaar ${year}.`,
+          note: `De nihil-verklaring van deze administratie geldt voor boekjaar ${assertionYear}, na rapportjaar ${year}.`,
+        });
+      }
+      if (assertionYear < year) {
+        return make("nil_prior", "complete", {
+          assertionYear,
+          note: `Bewust op nihil gezet voor boekjaar ${assertionYear}; de beginpositie van ${year} volgt via het grootboek uit de jaren ervoor.`,
         });
       }
       return make("nil", "complete", {

@@ -28,7 +28,7 @@ const state = {
 };
 
 const {
-  createSpy, updateSpy, saveLinesSpy, deleteSpy, postSpy, nilSpy, toastSpy, overviewRefetchSpy, comboboxProps, store,
+  createSpy, updateSpy, saveLinesSpy, deleteSpy, postSpy, nilSpy, toastSpy, overviewRefetchSpy, comboboxProps, store, headerQuerySpy,
 } = vi.hoisted(() => {
   // De gemockte hooks lezen `state` bij het renderen. Een refetch in de echte
   // app zou een nieuwe render uitlokken; hier doet `store.bump()` dat, zodat
@@ -44,6 +44,7 @@ const {
     nilSpy: vi.fn(),
     toastSpy: vi.fn(),
     overviewRefetchSpy: vi.fn(),
+    headerQuerySpy: vi.fn(),
     comboboxProps: [] as Array<Record<string, unknown>>,
     store: {
       subscribe: (l: () => void) => {
@@ -132,6 +133,7 @@ vi.mock("@/hooks/useOpeningBalances", async () => {
     },
     useOpeningBalance: (id?: string) => {
       useVersion();
+      headerQuerySpy(id);
       return {
         data: id ? headerFor(id) : undefined,
         isPending: false,
@@ -1037,6 +1039,34 @@ describe("Beginbalans — direct doel (?openingBalanceId=, 6C-b8 PR 3)", () => {
     await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept"));
     expect((screen.getByLabelText("Omschrijving") as HTMLInputElement).value).toBe(`Beginbalans ${YEAR}`);
     expect(document.body.textContent).not.toContain(OTHER_UUID);
+    // Er is nooit een by-id-query met het vreemde id gedaan: het doel wordt alleen in de eigen koppen gezocht.
+    expect(headerQuerySpy.mock.calls.some((c) => c[0] === OTHER_UUID)).toBe(false);
+  });
+
+  it("de afwijzing verschijnt niet alsnog wanneer het geopende doelconcept daarna wordt verwijderd", async () => {
+    state.headers = [headerRow({ id: OB_UUID })];
+    state.header = headerRow({ id: OB_UUID });
+    renderPage(target(OB_UUID));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept"));
+    deleteSpy.mockImplementation(async () => {
+      state.headers = [];
+      state.header = null;
+      store.bump();
+      return OB_UUID;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Concept verwijderen" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Verwijderen" }));
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ title: "Concept verwijderd" }));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nog geen beginbalans"));
+    expect(screen.queryByTestId("beginbalans-target-rejected")).toBeNull();
+  });
+
+  it("een achtergebleven concept als doel naast een nihil-verklaring → nihil-weergave met uitleg", async () => {
+    state.headers = [nilRow({ id: OB_UUID }), headerRow({ id: OTHER_UUID, opening_date: `${YEAR}-01-02`, description: "Restant" })];
+    state.header = nilRow({ id: OB_UUID });
+    renderPage(target(OTHER_UUID));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nihil"));
+    expect(screen.getByTestId("beginbalans-target-leftover")).toHaveTextContent("op nihil gezette");
   });
 
   it("5. een misvormd doel wordt genegeerd en gemeld; niets breekt", async () => {

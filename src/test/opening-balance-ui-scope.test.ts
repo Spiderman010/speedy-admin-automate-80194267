@@ -131,11 +131,18 @@ describe("Beginbalans-UI — branch-scope", () => {
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
   });
 
-  branchIt("raakt de boekhoudkern niet aan (schrijvers, rapportage, nav)", () => {
+  branchIt("raakt de schrijvers, de export en de navigatie niet aan; de rapportagekern rekent onveranderd", () => {
     for (const f of changed!) {
-      expect(f).not.toMatch(/ledger-reporting\.ts|proef-saldibalans\.ts|ledger-completeness\.ts|snelstart-export\.ts|nav\.ts$/);
+      expect(f).not.toMatch(/proef-saldibalans\.ts|snelstart-export\.ts|nav\.ts$/);
       expect(f).not.toMatch(/useManualJournal|usePurchaseInvoicePosting|useSalesInvoicePosting|useBankAllocationPosting/);
     }
+    // Voorheen: "ledger-reporting.ts en ledger-completeness.ts zijn niet
+    // aangeraakt" — een scope-uitspraak van PR 2, geen invariant: PR 3 voegt
+    // daar het bronlabel en de beginbalansdimensie toe. Wat bewaakt moet
+    // blijven is dat het REKENWERK (alles vóór het bronblok) onveranderd is.
+    const base = execFileSync("git", ["show", "origin/main:src/lib/ledger-reporting.ts"], { encoding: "utf8" });
+    const cut = (t: string) => t.slice(0, t.indexOf("// ── Bron-drilldown"));
+    expect(cut(readFileSync("src/lib/ledger-reporting.ts", "utf8"))).toBe(cut(base));
   });
 
   it("57/58. route genest onder /grootboek, ingang vanuit Grootboek, geen nieuw nav-item", () => {

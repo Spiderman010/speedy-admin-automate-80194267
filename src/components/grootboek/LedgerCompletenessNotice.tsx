@@ -94,13 +94,13 @@ function OpeningBalanceRow({
       <Badge variant={OB_BADGE_VARIANT[shown.severity]} className="font-normal">
         {shown.label}
       </Badge>
-      {shown.state === "nil" && (
+      {(shown.state === "nil" || shown.state === "nil_prior") && (
         <span className="text-xs text-muted-foreground">(bewust op nihil gezet)</span>
       )}
       <Link
         to={OPENING_BALANCE_ROUTE}
         className="text-xs underline underline-offset-2"
-        aria-label="Open de beginbalans van deze administratie"
+        aria-label="Naar beginbalans van deze administratie"
       >
         Naar beginbalans
       </Link>
@@ -156,26 +156,35 @@ export function LedgerCompletenessNotice({
       ? "unknown"
       : openingBalance.severity
     : "complete";
-  const incomplete = completeness.mayBeIncomplete || obSeverity === "incomplete" || obSeverity === "unknown";
+  const docsIncomplete = completeness.mayBeIncomplete;
   // Kon geen enkele bron worden geteld, dan is "onvolledig" al te stellig:
   // we weten het simpelweg niet. `unknownLedgerCompleteness()` levert precies
-  // die toestand, en die hoort ook zo in beeld te komen.
+  // die toestand, en die hoort ook zo in beeld te komen. Een niet te bepalen
+  // beginbalansstatus blijft óók "onbekend" in de kop — niet "onvolledig".
   const allesOnbekend = completeness.sources.every((s) => s.status === "unknown");
+  const verdict: "unknown" | "incomplete" | "complete" =
+    allesOnbekend ? "unknown"
+      : docsIncomplete || obSeverity === "incomplete" ? "incomplete"
+        : obSeverity === "unknown" ? "unknown"
+          : "complete";
+  const incomplete = verdict !== "complete";
   return (
     <Alert
       data-testid="ledger-completeness"
-      data-status={allesOnbekend ? "unknown" : incomplete ? "incomplete" : "complete"}
+      data-status={verdict}
       className={incomplete ? "border-amber-500/50" : undefined}
     >
       {incomplete ? <Info className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
       <AlertTitle>
         {allesOnbekend
           ? "Volledigheid onbekend"
-          : incomplete
+          : verdict === "incomplete"
             ? "Let op: dit grootboek is mogelijk onvolledig (alle jaren)"
-            : showOb
-              ? "Alle postbare documenten zijn geboekt (alle jaren) en de beginbalans is vastgelegd"
-              : "Alle postbare documenten zijn geboekt (alle jaren)"}
+            : verdict === "unknown"
+              ? "Volledigheid onbekend: de beginbalansstatus is niet te bepalen"
+              : showOb
+                ? "Alle postbare documenten zijn geboekt (alle jaren) en de beginbalans is vastgelegd"
+                : "Alle postbare documenten zijn geboekt (alle jaren)"}
       </AlertTitle>
       <AlertDescription>
         <p className="mb-2">

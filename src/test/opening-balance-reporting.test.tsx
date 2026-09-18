@@ -232,14 +232,19 @@ describe("volledigheid — beginbalansdimensie", () => {
     expect(compute([headerRow({ nil_declaration: true })], null).state).toBe("conflict");
   });
 
-  it("17/18. het rapportjaar kiest de passende bewering; een ander boekjaar telt niet als passend", () => {
+  it("17/18. het rapportjaar kiest de passende bewering; een ander boekjaar telt nooit als 'posted'/'nil' van dit jaar", () => {
     expect(compute([headerRow()], markerRow(), 2027).state).toBe("posted");
-    const other = compute([headerRow({ boekjaar: 2026, opening_date: "2026-01-01" })], markerRow({ boekjaar: 2026, opening_date: "2026-01-01" }), 2027);
-    expect(other).toMatchObject({ state: "other_year", severity: "incomplete", assertionYear: 2026, year: 2027 });
-    expect(other.note).toMatch(/boekjaar 2026, niet voor rapportjaar 2027/);
+    // Eerder boekjaar: de beginpositie loopt via het grootboek door → volledig, maar met eigen label (review P2-1).
+    const prior = compute([headerRow({ boekjaar: 2026, opening_date: "2026-01-01" })], markerRow({ boekjaar: 2026, opening_date: "2026-01-01" }), 2027);
+    expect(prior).toMatchObject({ state: "posted_prior", severity: "complete", assertionYear: 2026, year: 2027 });
+    expect(prior.state).not.toBe("posted");
+    expect(prior.note).toMatch(/boekjaar 2026/);
+    expect(compute([nilRow({ boekjaar: 2026, opening_date: "2026-01-01" })], null, 2027)).toMatchObject({ state: "nil_prior", severity: "complete" });
+    // Later boekjaar: zegt niets over dit rapportjaar → onvolledig.
+    const later = compute([headerRow({ boekjaar: 2028, opening_date: "2028-01-01" })], markerRow({ boekjaar: 2028, opening_date: "2028-01-01" }), 2027);
+    expect(later).toMatchObject({ state: "other_year", severity: "incomplete", assertionYear: 2028 });
     // Concepten van een ander jaar maken het rapportjaar niet 'draft'.
     expect(compute([headerRow({ boekjaar: 2026, opening_date: "2026-01-01" })], null, 2027)).toMatchObject({ state: "not_set" });
-    expect(compute([nilRow({ boekjaar: 2026, opening_date: "2026-01-01" })], null, 2027).state).toBe("other_year");
   });
 
   it("19. het rapportjaar volgt de periode; meerdere kalenderjaren zijn niet te bepalen en nooit volledig", () => {
@@ -267,7 +272,9 @@ describe("LedgerCompletenessNotice — beginbalansrij", () => {
       draft: () => computeOpeningBalanceCompleteness({ headers: [headerRow()], marker: null, year: 2027 }),
       posted: () => computeOpeningBalanceCompleteness({ headers: [headerRow()], marker: markerRow(), year: 2027 }),
       nil: () => computeOpeningBalanceCompleteness({ headers: [nilRow()], marker: null, year: 2027 }),
-      other_year: () => computeOpeningBalanceCompleteness({ headers: [], marker: markerRow({ boekjaar: 2026 }), year: 2027 }),
+      posted_prior: () => computeOpeningBalanceCompleteness({ headers: [], marker: markerRow({ boekjaar: 2026 }), year: 2027 }),
+      nil_prior: () => computeOpeningBalanceCompleteness({ headers: [nilRow({ boekjaar: 2026 })], marker: null, year: 2027 }),
+      other_year: () => computeOpeningBalanceCompleteness({ headers: [], marker: markerRow({ boekjaar: 2028 }), year: 2027 }),
       conflict: () => computeOpeningBalanceCompleteness({ headers: [nilRow()], marker: markerRow({ opening_balance_id: "x" }), year: 2027 }),
       ambiguous: () => computeOpeningBalanceCompleteness({ headers: [], marker: null, year: null }),
     };
@@ -282,7 +289,7 @@ describe("LedgerCompletenessNotice — beginbalansrij", () => {
 
   it("29/30/31. alle toestanden hebben een eigen, expliciete tekst; geboekt ≠ nihil en niet ingesteld ≠ concept", () => {
     const seen = new Map<string, string>();
-    for (const state of ["not_set", "draft", "posted", "nil", "other_year", "conflict", "ambiguous", "unknown"] as const) {
+    for (const state of ["not_set", "draft", "posted", "nil", "posted_prior", "nil_prior", "other_year", "conflict", "ambiguous", "unknown"] as const) {
       const { unmount } = renderWith(state);
       const row = screen.getByTestId("completeness-opening_balance");
       expect(row).toHaveAttribute("data-ob-state", state);
@@ -293,18 +300,21 @@ describe("LedgerCompletenessNotice — beginbalansrij", () => {
     expect(new Set(seen.values()).size).toBe(seen.size);
     expect(seen.get("posted")).not.toBe(seen.get("nil"));
     expect(seen.get("not_set")).not.toBe(seen.get("draft"));
+    expect(seen.get("posted_prior")).not.toBe(seen.get("posted"));
   });
 
-  it("geboekt of nihil → melding volledig; niet ingesteld, concept of ander jaar → onvolledig; onbekend → onbekend", () => {
+  it("geboekt/nihil (ook eerder boekjaar) → volledig; niet ingesteld, concept, later jaar → onvolledig; conflict/meerjarig/onbekend → onbekend in de kop", () => {
     for (const [state, expected] of [
       ["posted", "complete"],
       ["nil", "complete"],
+      ["posted_prior", "complete"],
+      ["nil_prior", "complete"],
       ["not_set", "incomplete"],
       ["draft", "incomplete"],
       ["other_year", "incomplete"],
-      ["conflict", "incomplete"],
-      ["ambiguous", "incomplete"],
-      ["unknown", "incomplete"],
+      ["conflict", "unknown"],
+      ["ambiguous", "unknown"],
+      ["unknown", "unknown"],
     ] as const) {
       const { unmount } = renderWith(state);
       expect(screen.getByTestId("ledger-completeness"), state).toHaveAttribute("data-status", expected);
@@ -329,12 +339,14 @@ describe("LedgerCompletenessNotice — beginbalansrij", () => {
     const row = screen.getByTestId("completeness-opening_balance");
     expect(row).toHaveAttribute("data-ob-state", "unknown");
     expect(row).toHaveTextContent("Kon beginbalansstatus niet controleren");
-    expect(screen.getByTestId("ledger-completeness")).toHaveAttribute("data-status", "incomplete");
+    expect(screen.getByTestId("ledger-completeness")).toHaveAttribute("data-status", "unknown");
+    expect(screen.getByTestId("ledger-completeness")).toHaveTextContent("beginbalansstatus is niet te bepalen");
   });
 
   it("de rij linkt naar de beginbalans met een betekenisvolle naam; zonder de prop verandert de melding niet", () => {
     renderWith("posted");
-    expect(screen.getByRole("link", { name: "Open de beginbalans van deze administratie" })).toHaveAttribute("href", "/grootboek/beginbalans");
+    // Toegankelijke naam begint met de zichtbare tekst (WCAG 2.5.3).
+    expect(screen.getByRole("link", { name: "Naar beginbalans van deze administratie" })).toHaveAttribute("href", "/grootboek/beginbalans");
     expect(screen.getByTestId("ledger-completeness")).toHaveTextContent("de beginbalans is vastgelegd");
   });
 
