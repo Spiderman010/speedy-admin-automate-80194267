@@ -239,6 +239,12 @@ export default function Grootboek() {
               <ArrowUpRight className="mr-2 h-4 w-4" />Memoriaalboekingen
             </Link>
           </Button>
+          {/* Fase 6C-b8: beginbalans hangt onder Grootboek, zonder eigen nav-item. */}
+          <Button variant="outline" asChild>
+            <Link to="/grootboek/beginbalans">
+              <ArrowUpRight className="mr-2 h-4 w-4" />Beginbalans
+            </Link>
+          </Button>
           <Button
             variant="outline"
             onClick={() => setSeedConfirmOpen(true)}
