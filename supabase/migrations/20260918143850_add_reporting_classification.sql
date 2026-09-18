@@ -72,16 +72,27 @@
 -- the chart of accounts is small. Proved on a throwaway cluster: the table's
 -- relfilenode is identical before and after (supabase/tests/reporting-classification/).
 --
--- Idempotent: ADD COLUMN IF NOT EXISTS, and each constraint is added only when
--- a constraint of that name does not yet exist on the table. Re-running the
--- file is a no-op.
+-- Idempotent by NAME: ADD COLUMN IF NOT EXISTS, and each constraint is added
+-- only when a constraint of that name does not yet exist on the table.
+-- Re-running the file adds nothing when the names exist; it does NOT verify
+-- that an existing constraint of the same name has this definition.
+--
+-- OWNER DECISION, recorded: the pair check reads rules C/D strictly — a
+-- statement_type without a report_group is refused (the requirement relaxes
+-- normal_side explicitly and report_group not at all). If a half-classified
+-- intermediate state is wanted later, the lenient form is a one-line change
+-- per branch: `THEN report_group IS NULL OR report_group IN (...)` (still
+-- three-valued-safe: it yields TRUE, not NULL, for a NULL group).
 --
 -- ─────────────────────────────────────────────────────────────────────────────
 -- rollback (manual, documented only — NOT executed by this file):
 --   Drops the five constraints first, then the four columns. This LOSES every
 --   classification value that has been entered since the migration was
 --   applied; there is no UI yet and the columns start empty, so at the time of
---   this PR the loss is nil and the rollback risk is low.
+--   this PR the loss is nil and the rollback risk is low. DROP COLUMN alone
+--   would already drop the CHECKs; the two-step form is deliberate. After a
+--   rollback that follows a type regeneration, regenerate
+--   src/integrations/supabase/types.ts again from the production schema.
 --
 --   ALTER TABLE public.grootboekrekeningen
 --     DROP CONSTRAINT IF EXISTS grootboekrekeningen_reporting_pair_check,

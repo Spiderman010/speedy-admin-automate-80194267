@@ -21,7 +21,7 @@ const raw = readFileSync(resolve(process.cwd(), MIGRATION), "utf-8");
 /** Commentaar weggestript: een bewering over de CODE mag nooit op proza slagen. */
 const sql = raw
   .split("\n")
-  .filter((line) => !line.trimStart().startsWith("--"))
+  .map((line) => line.replace(/--.*$/, ""))
   .join("\n");
 const flat = sql.replace(/\s+/g, " ");
 
@@ -246,11 +246,13 @@ describe("Balans/W&V PR 1 — wat de migratie NIET doet", () => {
     expect(numbers).toEqual(["1", "1", "1", "1", "1", "0"]); // vijf keer `SELECT 1`, één keer `>= 0`
   });
 
-  it("geen verwijzing naar een projectref: niet productie, niet de geblokkeerde refs", () => {
-    for (const ref of ["alxlbdhpbwlehbdbfejw", "olumcwneiejjefhkzgmz", "ycuofllsdssoezwwpqmv"]) {
-      expect(sql).not.toContain(ref);
-    }
-    expect(raw).not.toMatch(/olumcwneiejjefhkzgmz|ycuofllsdssoezwwpqmv/);
+  it("geen projectref en geen Supabase-URL in het bestand: de migratie is niet aan een database gebonden", () => {
+    // Geen productie-ref, en geen enkele ref-vormige token (20 kleine letters,
+    // zoals elke Supabase-projectref) — de geblokkeerde refs staan bewust niet
+    // letterlijk in src/; zie docs/CLAUDE_WORKFLOW.md voor de lijst.
+    expect(raw).not.toContain("alxlbdhpbwlehbdbfejw");
+    expect(raw).not.toMatch(/supabase\.co|project_ref|--project-ref/i);
+    expect(sql).not.toMatch(/\b[a-z]{20}\b/);
   });
 });
 

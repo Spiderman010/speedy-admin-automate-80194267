@@ -90,21 +90,31 @@ GRANT EXECUTE ON FUNCTION proof.expect_true(text, text, text) TO public;
 -- ── "existing" data, as production carries it ───────────────────────────────
 
 INSERT INTO auth.users (id, email) VALUES
-  ('00000000-0000-0000-0000-00000000aaaa', 'u1@test.local'),
-  ('00000000-0000-0000-0000-00000000bbbb', 'u2@test.local');
+  ('00000000-0000-0000-0000-00000000aaaa', 'accountant@test.local'),
+  ('00000000-0000-0000-0000-00000000bbbb', 'readonly@test.local');
+
+-- One organisation; u1 is its accountant, u2 read_only (the production role
+-- ladder decides what each may do with the classification columns).
+INSERT INTO public.organizations (id, name) VALUES ('00000000-0000-0000-0000-0000000000a1', 'Kantoor');
+INSERT INTO public.organization_members (user_id, organization_id) VALUES
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1'),
+  ('00000000-0000-0000-0000-00000000bbbb', '00000000-0000-0000-0000-0000000000a1');
+INSERT INTO public.user_roles (user_id, organization_id, role) VALUES
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', 'accountant'),
+  ('00000000-0000-0000-0000-00000000bbbb', '00000000-0000-0000-0000-0000000000a1', 'read_only');
 
 -- The seed's five values, a free-text value, the "Resultaat" account, an
 -- organisation-wide row (client_id NULL) and client-specific rows. No
 -- classification column exists yet at this point.
-INSERT INTO public.grootboekrekeningen (user_id, client_id, nummer, omschrijving, categorie, actief) VALUES
-  ('00000000-0000-0000-0000-00000000aaaa', NULL,                                   1000, 'Kas',                    'activa',  true),
-  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000c0001', 1600, 'Crediteuren',            'passiva', true),
-  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000c0001', 8000, 'Omzet',                  'omzet',   true),
-  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000c0002', 4000, 'Huur',                   'kosten',  true),
-  ('00000000-0000-0000-0000-00000000aaaa', NULL,                                    651, 'Privé-stortingen',       'privé',   true),
-  ('00000000-0000-0000-0000-00000000aaaa', NULL,                                   4711, 'Vrije tekst categorie',  'Kostem',  false),
-  ('00000000-0000-0000-0000-00000000bbbb', NULL,                                   9998, 'Resultaat',              'passiva', true),
-  ('00000000-0000-0000-0000-00000000bbbb', NULL,                                   4712, 'Zonder categorie (default)', DEFAULT, true);
+INSERT INTO public.grootboekrekeningen (user_id, organization_id, client_id, nummer, omschrijving, categorie, actief) VALUES
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', NULL,                                   1000, 'Kas',                    'activa',  true),
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000c0001', 1600, 'Crediteuren',            'passiva', true),
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000c0001', 8000, 'Omzet',                  'omzet',   true),
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000c0002', 4000, 'Huur',                   'kosten',  true),
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', NULL,                                    651, 'Privé-stortingen',       'privé',   true),
+  ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', NULL,                                   4711, 'Vrije tekst categorie',  'Kostem',  false),
+  ('00000000-0000-0000-0000-00000000bbbb', '00000000-0000-0000-0000-0000000000a1', NULL,                                   9998, 'Resultaat',              'passiva', true),
+  ('00000000-0000-0000-0000-00000000bbbb', NULL,                                   NULL,                                   4712, 'Zonder categorie en organisatie (default)', DEFAULT, true);
 
 -- Snapshot of every existing column of every existing row.
 CREATE TABLE proof.rows_before AS

@@ -209,24 +209,53 @@ SELECT proof.expect_true('D13', 'geen enkele geweigerde rij is blijven hangen',
   $$ (SELECT count(*) FROM public.grootboekrekeningen WHERE nummer BETWEEN 30001 AND 30012) = 0
      AND (SELECT report_group FROM public.grootboekrekeningen WHERE nummer = 20001) = 'vaste_activa' $$);
 
--- ── E. the API role under RLS ────────────────────────────────────────────────
+-- ── E. the API role under the PRODUCTION role policies (20260613001452) ─────
+-- The migration adds no policy or grant: the existing row policies decide who
+-- may write the new columns. Proved here with the real policy block replayed
+-- verbatim (shape.sql): accountant may insert/update them, read_only may only
+-- read them, the rebind trigger does not interfere, and the CHECKs fire for
+-- the API role exactly as for the owner.
 
 SET ROLE authenticated;
-SET test.user_id = '00000000-0000-0000-0000-00000000aaaa';
+SET test.user_id = '00000000-0000-0000-0000-00000000aaaa';   -- accountant
 
-SELECT proof.expect_ok('E1', 'authenticated: eigen rij inserten mét classificatie',
-  $$ INSERT INTO public.grootboekrekeningen (user_id, nummer, omschrijving, categorie, statement_type, report_group, normal_side)
-     VALUES ('00000000-0000-0000-0000-00000000aaaa', 40001, 'E1', 'activa', 'balans', 'vlottende_activa', 'debet') $$);
-SELECT proof.expect_ok('E2', 'authenticated: eigen bestaande rij classificeren via UPDATE',
+SELECT proof.expect_ok('E1', 'accountant: rij van de eigen organisatie inserten mét classificatie (INSERT-policy: accountant)',
+  $$ INSERT INTO public.grootboekrekeningen (user_id, organization_id, nummer, omschrijving, categorie, statement_type, report_group, normal_side)
+     VALUES ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a1', 40001, 'E1', 'activa', 'balans', 'vlottende_activa', 'debet') $$);
+SELECT proof.expect_ok('E2', 'accountant: classificatie wijzigen via UPDATE (UPDATE-policy: accountant) — de rebind-trigger laat dit door',
   $$ UPDATE public.grootboekrekeningen SET statement_type = 'balans', report_group = 'vlottende_activa', normal_side = 'debet', report_sort = 1 WHERE nummer = 40001 $$);
-SELECT proof.expect_error('E3', 'authenticated: ongeldige combinatie wordt óók voor de API-rol door de constraint geweigerd',
+SELECT proof.expect_error('E3', 'accountant: ongeldige combinatie wordt óók voor de API-rol door de constraint geweigerd',
   $$ UPDATE public.grootboekrekeningen SET report_group = 'netto_omzet' WHERE nummer = 40001 $$,
   'grootboekrekeningen_reporting_pair_check');
-SELECT proof.expect_true('E4', 'authenticated: de nieuwe kolommen zijn leesbaar via SELECT',
+SELECT proof.expect_true('E4', 'accountant: de nieuwe kolommen zijn leesbaar via SELECT',
   $$ (SELECT statement_type || '/' || report_group || '/' || normal_side FROM public.grootboekrekeningen WHERE nummer = 40001) = 'balans/vlottende_activa/debet' $$);
+SELECT proof.expect_error('E5', 'accountant: rij van een ANDERE organisatie inserten wordt door de INSERT-policy geweigerd (classificatie geeft geen extra rechten)',
+  $$ INSERT INTO public.grootboekrekeningen (user_id, organization_id, nummer, omschrijving, statement_type, report_group)
+     VALUES ('00000000-0000-0000-0000-00000000aaaa', '00000000-0000-0000-0000-0000000000a2', 40005, 'E5', 'balans', 'vaste_activa') $$,
+  'row-level security');
+
+SET test.user_id = '00000000-0000-0000-0000-00000000bbbb';   -- read_only
+
+SELECT proof.expect_true('E6', 'read_only: mag de classificatiekolommen lezen (SELECT-policy: read_only)',
+  $$ (SELECT report_group FROM public.grootboekrekeningen WHERE nummer = 40001) = 'vlottende_activa' $$);
+SELECT proof.expect_ok('E7a', 'read_only: UPDATE van de classificatie geeft geen fout (RLS filtert de rij weg: UPDATE-policy is accountant)',
+  $$ UPDATE public.grootboekrekeningen SET report_group = 'vaste_activa' WHERE nummer = 40001 $$);
+SELECT proof.expect_true('E7b', 'read_only: … en de rij is ongewijzigd gebleven',
+  $$ (SELECT report_group FROM public.grootboekrekeningen WHERE nummer = 40001) = 'vlottende_activa' $$);
+SELECT proof.expect_error('E8', 'read_only: INSERT met classificatie wordt door de INSERT-policy geweigerd',
+  $$ INSERT INTO public.grootboekrekeningen (user_id, organization_id, nummer, omschrijving, statement_type, report_group)
+     VALUES ('00000000-0000-0000-0000-00000000bbbb', '00000000-0000-0000-0000-0000000000a1', 40008, 'E8', 'balans', 'vaste_activa') $$,
+  'row-level security');
 
 RESET test.user_id;
 RESET ROLE;
+
+SELECT proof.expect_true('E9', 'de productie-policies en de rebind-trigger staan werkelijk op de tabel onder test',
+  $$ (SELECT count(*) FROM pg_policy WHERE polrelid = 'public.grootboekrekeningen'::regclass AND polname LIKE 'role_grootboekrekeningen_%') = 4
+     AND NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = 'public.grootboekrekeningen'::regclass AND polname = 'Users manage own grootboekrekeningen')
+     AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'public.grootboekrekeningen'::regclass AND tgname = 'prevent_org_user_rebind_trg')
+     AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.grootboekrekeningen'::regclass AND conname = 'grootboekrekeningen_nummer_key')
+     AND EXISTS (SELECT 1 FROM pg_class WHERE relname = 'idx_grootboekrekeningen_org_id') $$);
 
 -- ── F. the pre-existing rows survived every probe untouched ──────────────────
 
