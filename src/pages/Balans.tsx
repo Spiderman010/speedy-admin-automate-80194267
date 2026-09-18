@@ -18,6 +18,7 @@ import {
   StatementFailureNotice,
   UnclassifiedSection,
 } from "@/components/overzichten/FinancialReportNotices";
+import { unclassifiedRelevanceFor } from "@/lib/unclassified-attribution";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
@@ -80,22 +81,34 @@ export default function Balans() {
   // NOOIT of er cijfers verschijnen, alleen of de overloop uit eerdere jaren
   // is vastgesteld.
   const openingBalance = useOpeningBalanceCompleteness(clientId, period);
-  // Alleen nodig om een LEEG rapport te kunnen duiden: zijn er documenten die
-  // nog niet in het grootboek staan? Raakt geen enkel bedrag.
-  const documents = useLedgerCompleteness(clientId);
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
   // Is er activiteit maar geen enkele geclassificeerde balansregel, dan zegt de
   // specifieke melding het al; de generieke volledigheidsmelding zou hetzelfde
   // nog eens herhalen.
+  //
+  // De telling is per overzicht. Een globale telling over álle
+  // niet-geclassificeerde rekeningen zou de balans laten beweren dat zíj leeg
+  // is door ontbrekende classificatie, terwijl die activiteit aantoonbaar aan
+  // de W&V-kant hoort.
+  const relevance = ready
+    ? unclassifiedRelevanceFor(ready.unclassified.accounts, "balans")
+    : { relevantCount: 0, undeterminedCount: 0, any: false };
   const nothingClassified =
     ready !== null &&
-    ready.unclassified.withActivityCount > 0 &&
+    relevance.any &&
     ![...ready.balanceSheet.assetGroups, ...ready.balanceSheet.liabilityEquityGroups].some(
       (g) => g.lines.length > 0,
     );
   const exportable = ready !== null;
+
+  // Alleen nodig om een LEEG rapport te kunnen duiden: zijn er documenten die
+  // nog niet in het grootboek staan? Raakt geen enkel bedrag — en draait dus
+  // pas zodra ná het laden vaststaat dát het rapport leeg is. Op een gevuld
+  // scherm blijft die (zware) telquery uit.
+  const reportIsEmpty = ready !== null && isEmpty && ready.unclassified.accounts.length === 0;
+  const documents = useLedgerCompleteness(clientId, { enabled: reportIsEmpty });
 
   const exporteer = () => {
     if (!ready) return;
@@ -146,7 +159,7 @@ export default function Balans() {
     if (state.result.ok !== true) return <StatementFailureNotice failures={state.result.failures} />;
 
     const { balanceSheet, unclassified } = state.result;
-    if (isEmpty && unclassified.accounts.length === 0) {
+    if (reportIsEmpty) {
       return (
         <div className="space-y-4">
           <EmptyState icon={Landmark} message={BALANS_EMPTY_MESSAGE} />
@@ -166,12 +179,7 @@ export default function Balans() {
     // het overzicht leeg om één reden, en die hoort bovenaan te staan.
     return (
       <div className="space-y-6">
-        {nothingClassified && (
-          <NothingClassifiedNotice
-            activityCount={unclassified.withActivityCount}
-            what="balans"
-          />
-        )}
+        {nothingClassified && <NothingClassifiedNotice accounts={unclassified.accounts} what="balans" />}
         {/* Twee kolommen naast elkaar op een breed scherm, onder elkaar op een
             smal — elk met een eigen omkadering zodat Activa en Passiva ook
             gestapeld duidelijk twee kanten van dezelfde balans blijven. */}

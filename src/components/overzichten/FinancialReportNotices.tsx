@@ -14,6 +14,7 @@ import {
   formatCents,
 } from "@/lib/financial-statements-presentation";
 import type { StatementCompleteness, UnclassifiedAccount } from "@/lib/financial-statements";
+import { unclassifiedRelevanceFor } from "@/lib/unclassified-attribution";
 import type { OpeningBalanceCompleteness } from "@/lib/ledger-completeness";
 
 /**
@@ -51,24 +52,41 @@ export function OpeningBalanceContributionNotice({ notice }: { notice: string | 
   );
 }
 
+const STATEMENT_WORD: Record<"balans" | "winst_verlies", string> = {
+  balans: "balans",
+  winst_verlies: "winst-en-verliesrekening",
+};
+
+function rekeningen(n: number) {
+  return n === 1 ? "één rekening" : `${n} rekeningen`;
+}
+
 /**
- * Het overzicht is leeg terwijl er wél grootboekactiviteit is: geen enkele
- * rekening met beweging heeft een rapportageclassificatie. Dat is precies de
- * toestand van elke administratie vlak na de classificatiemigratie — die deed
- * bewust geen backfill — en zonder deze melding lijkt het rapport kapot in
- * plaats van onvolledig.
+ * Het overzicht is leeg terwijl er wél grootboekactiviteit is die er thuis
+ * hoort of kán horen. Dat is precies de toestand van elke administratie vlak
+ * na de classificatiemigratie — die deed bewust geen backfill — en zonder deze
+ * melding lijkt het rapport kapot in plaats van onvolledig.
+ *
+ * De melding is nooit stelliger dan de metadata toestaat: kan de code bewijzen
+ * dat de betrokken rekeningen voor dít overzicht bedoeld zijn, dan zegt zij
+ * dat; kan zij dat niet, dan noemt zij de activiteit zonder een oorzaak te
+ * claimen. Staat álle niet-geclassificeerde activiteit aantoonbaar bij het
+ * ándere overzicht, dan verschijnt hier niets.
  *
  * De bedragen zijn niet verdwenen: ze staan verderop onder "Niet
  * geclassificeerd". Deze melding zegt dat, en wijst de weg.
  */
 export function NothingClassifiedNotice({
-  activityCount,
+  accounts,
   what,
 }: {
-  activityCount: number;
-  what: "balans" | "winst-en-verliesrekening";
+  accounts: readonly UnclassifiedAccount[];
+  what: "balans" | "winst_verlies";
 }) {
-  if (activityCount === 0) return null;
+  const { relevantCount, undeterminedCount, any } = unclassifiedRelevanceFor(accounts, what);
+  if (!any) return null;
+  const zeker = relevantCount > 0;
+  const woord = STATEMENT_WORD[what];
   // Bewust GEEN bedrag in deze tekst. Het enige totaal dat hier beschikbaar is,
   // is de getekende nettosom van de niet-geclassificeerde rekeningen — en juist
   // in het geval waarvoor deze melding bestaat (niets geclassificeerd) is die
@@ -77,16 +95,37 @@ export function NothingClassifiedNotice({
   // tegenovergestelde van wat hier gezegd moet worden. Het aantal is eerlijk,
   // de bedragen staan per rekening in de tabel hieronder.
   return (
-    <Alert variant="destructive" data-testid="statement-nothing-classified">
+    <Alert
+      variant="destructive"
+      data-testid="statement-nothing-classified"
+      data-statement={what}
+      data-relevant={relevantCount}
+      data-undetermined={undeterminedCount}
+      data-certainty={zeker ? "specifiek" : "onbepaald"}
+    >
       <AlertTriangle className="h-4 w-4" />
-      <AlertTitle>Nog geen rekeningen geclassificeerd</AlertTitle>
+      <AlertTitle>{zeker ? "Nog geen rekeningen geclassificeerd" : "Activiteit zonder classificatie"}</AlertTitle>
       <AlertDescription>
-        <p>
-          Geen enkele grootboekrekening met beweging heeft een plaats in deze {what} gekregen; daarom is dit
-          overzicht leeg. {activityCount === 1 ? "Eén rekening" : `${activityCount} rekeningen`} met activiteit
-          {activityCount === 1 ? " staat" : " staan"} hieronder onder “Niet geclassificeerd”, mét bedrag — de cijfers
-          zijn dus niet verdwenen, ze hebben alleen nog geen groep.
-        </p>
+        {zeker ? (
+          <p>
+            Geen enkele grootboekrekening met beweging heeft een plaats in deze {woord} gekregen; daarom is dit
+            overzicht leeg. {rekeningen(relevantCount)} met beweging {relevantCount === 1 ? "is" : "zijn"} voor
+            deze {woord} bedoeld maar nog niet volledig geclassificeerd
+            {undeterminedCount > 0
+              ? `, en bij ${rekeningen(undeterminedCount)} is nog niet vast te stellen bij welk overzicht ${undeterminedCount === 1 ? "zij" : "ze"} hoort`
+              : ""}
+            . Alles staat hieronder onder “Niet geclassificeerd”, mét bedrag — de cijfers zijn dus niet verdwenen,
+            ze hebben alleen nog geen groep.
+          </p>
+        ) : (
+          <p>
+            Dit overzicht is leeg. Er is wel beweging op {rekeningen(undeterminedCount)} zonder
+            rapportageclassificatie; zonder ingevuld overzicht of groep is niet vast te stellen of{" "}
+            {undeterminedCount === 1 ? "die rekening in deze" : "die rekeningen in deze"} {woord}{" "}
+            {undeterminedCount === 1 ? "thuishoort" : "thuishoren"}. De bedragen staan hieronder onder
+            “Niet geclassificeerd”.
+          </p>
+        )}
         <p className="mt-2">
           Ken in het rekeningschema per rekening een rapport en een groep toe; daarna vult dit overzicht zichzelf.
         </p>

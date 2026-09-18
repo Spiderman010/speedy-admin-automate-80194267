@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
@@ -21,6 +21,8 @@ const state = {
   clientId: "client-1" as string,
   obState: "not_set" as string,
   obSeverity: "incomplete" as "complete" | "incomplete" | "unknown",
+  /** Elke aanroep van useLedgerCompleteness, om de `enabled`-schakelaar te zien. */
+  completenessCalls: [] as { clientId: string | undefined; enabled: boolean | undefined }[],
 };
 
 vi.mock("@/hooks/useClientContext", () => ({
@@ -38,7 +40,10 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   }),
 }));
 vi.mock("@/hooks/useLedgerCompleteness", () => ({
-  useLedgerCompleteness: () => ({ data: undefined, isPending: false, isError: false }),
+  useLedgerCompleteness: (clientId: string | undefined, options?: { enabled?: boolean }) => {
+    state.completenessCalls.push({ clientId, enabled: options?.enabled });
+    return { data: undefined, isPending: false, isError: false };
+  },
   useOpeningBalanceCompleteness: () => ({
     data: {
       state: state.obState, year: 2026, assertionYear: null, draftCount: 0,
@@ -58,8 +63,12 @@ vi.mock("@/hooks/useLedgerPostings", () => ({
   }),
 }));
 
-import Balans from "@/pages/Balans";
+import Balans, { BALANS_EMPTY_MESSAGE } from "@/pages/Balans";
 import WinstVerlies from "@/pages/WinstVerlies";
+import {
+  attributeUnclassifiedAccount,
+  unclassifiedRelevanceFor,
+} from "@/lib/unclassified-attribution";
 import { buildAccountReport, yearPeriod, type LedgerPostingLike } from "@/lib/ledger-reporting";
 import { buildTrialBalance } from "@/lib/proef-saldibalans";
 import {
@@ -146,7 +155,11 @@ beforeEach(() => {
   state.clientId = CLIENT;
   state.obState = "not_set";
   state.obSeverity = "incomplete";
+  state.completenessCalls = [];
 });
+
+/** De laatste `enabled` waarmee de pagina de documentvolledigheid opvroeg. */
+const laatsteCompletenessEnabled = () => state.completenessCalls[state.completenessCalls.length - 1]?.enabled;
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("zonder beginbalans blijven de cijfers zichtbaar", () => {
@@ -337,7 +350,13 @@ describe("classificatie wist nooit activiteit", () => {
     nietsGeclassificeerd();
     renderBalans();
     const melding = screen.getByTestId("statement-nothing-classified");
-    expect(melding).toHaveTextContent(/geen enkele grootboekrekening met beweging/i);
+    // statement_type én report_group zijn leeg, dus er is niets waaruit blijkt
+    // dat deze rekeningen voor de BALANS bedoeld waren. De melding noemt de
+    // activiteit en houdt zich bij de oorzaak op de vlakte — geen stellige
+    // bewering die de metadata niet draagt.
+    expect(melding).toHaveAttribute("data-certainty", "onbepaald");
+    expect(melding).toHaveAttribute("data-relevant", "0");
+    expect(melding).toHaveTextContent(/niet vast te stellen/i);
     expect(melding).toHaveTextContent(/3 rekeningen/);
     expect(within(melding).getByRole("link", { name: /classificeren/i })).toHaveAttribute("href", "/grootboek");
     // De cijfers staan er nog steeds, onderaan.
@@ -406,5 +425,270 @@ describe("administratiescheiding", () => {
     expect(screen.queryByText(/9\.999,00/)).toBeNull();
     const activa = screen.getByTestId("balans-activa-table");
     expect(within(activa).getByTestId("statement-total")).toHaveTextContent(bedrag(100_000));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Review P2-1 — de classificatiemelding is per overzicht.
+ *
+ * Een globale telling over álle niet-geclassificeerde rekeningen deugt niet:
+ * staat de activiteit aantoonbaar aan de balanskant, dan mag de W&V nooit
+ * beweren dat zíj leeg is doordat W&V-rekeningen niet zijn geclassificeerd —
+ * en omgekeerd. De toewijzing komt uitsluitend uit de twee expliciete velden
+ * (`statement_type`, `report_group`); nooit uit een rekeningnummer, een naam
+ * of `categorie`.
+ */
+describe("de classificatiemelding is statement-specifiek", () => {
+  /** Alleen balansverkeer; beide balansrekeningen missen nog hun groep. */
+  function alleenBalansOngeclassificeerd() {
+    state.accounts = [
+      { ...BANK, report_group: null },
+      { ...KAPITAAL, report_group: null },
+    ];
+    state.rows = [...entry(BANK.id, KAPITAAL.id, "1000.00", d("04-01"))];
+  }
+
+  /** Alleen resultaatverkeer; de omzetrekening mist nog haar groep. */
+  function alleenWvOngeclassificeerd() {
+    state.accounts = [BANK, { ...OMZET, report_group: null }];
+    state.rows = [...entry(BANK.id, OMZET.id, "1000.00", d("04-01"))];
+  }
+
+  it("13. alleen balansactiviteit: de balans meldt het, de W&V zwijgt erover", () => {
+    alleenBalansOngeclassificeerd();
+
+    renderBalans();
+    const melding = screen.getByTestId("statement-nothing-classified");
+    // `statement_type = 'balans'` staat er met zoveel woorden; alleen de groep
+    // ontbreekt. De metadata draagt dus wél een stellige uitspraak.
+    expect(melding).toHaveAttribute("data-statement", "balans");
+    expect(melding).toHaveAttribute("data-certainty", "specifiek");
+    expect(melding).toHaveAttribute("data-relevant", "2");
+    expect(melding).toHaveAttribute("data-undetermined", "0");
+    cleanup();
+
+    renderWv();
+    // De W&V is leeg omdat er geen resultaatverkeer is — niet door
+    // ongeclassificeerde W&V-rekeningen. Dus geen melding die dat beweert.
+    expect(screen.queryByTestId("statement-nothing-classified")).toBeNull();
+  });
+
+  it("14. alleen W&V-activiteit: de W&V meldt het, de balans claimt dezelfde oorzaak niet", () => {
+    alleenWvOngeclassificeerd();
+
+    renderWv();
+    const melding = screen.getByTestId("statement-nothing-classified");
+    expect(melding).toHaveAttribute("data-statement", "winst_verlies");
+    expect(melding).toHaveAttribute("data-certainty", "specifiek");
+    expect(melding).toHaveAttribute("data-relevant", "1");
+    cleanup();
+
+    renderBalans();
+    expect(screen.queryByTestId("statement-nothing-classified")).toBeNull();
+    // En voor de balans telt die W&V-rekening ook niet mee als oorzaak.
+    const { fs } = engine();
+    if (!fs.ok) throw new Error("engine faalde");
+    expect(unclassifiedRelevanceFor(fs.unclassified.accounts, "balans")).toEqual({
+      relevantCount: 0,
+      undeterminedCount: 0,
+      any: false,
+    });
+    expect(unclassifiedRelevanceFor(fs.unclassified.accounts, "winst_verlies").relevantCount).toBe(1);
+  });
+
+  it("15. gemengd: elke pagina meldt alleen haar eigen ongeclassificeerde activiteit", () => {
+    state.accounts = [
+      { ...BANK, report_group: null },
+      { ...KAPITAAL, report_group: null },
+      { ...OMZET, report_group: null },
+      { ...KOSTEN, report_group: null },
+    ];
+    state.rows = [
+      ...entry(BANK.id, OMZET.id, "1000.00", d("04-01")),
+      ...entry(KOSTEN.id, BANK.id, "400.00", d("05-01")),
+    ];
+    const { fs } = engine();
+    if (!fs.ok) throw new Error("engine faalde");
+    // Drie rekeningen met activiteit (kapitaal beweegt niet), verdeeld over
+    // twee overzichten: één balansrekening en twee W&V-rekeningen. Geen enkele
+    // pagina mag de globale drie noemen.
+    expect(fs.unclassified.withActivityCount).toBe(3);
+
+    renderBalans();
+    const balansMelding = screen.getByTestId("statement-nothing-classified");
+    expect(balansMelding).toHaveAttribute("data-relevant", "1");
+    expect(balansMelding).toHaveAttribute("data-undetermined", "0");
+    cleanup();
+
+    renderWv();
+    const wvMelding = screen.getByTestId("statement-nothing-classified");
+    expect(wvMelding).toHaveAttribute("data-relevant", "2");
+    expect(wvMelding).toHaveAttribute("data-undetermined", "0");
+  });
+
+  it("16. volledig onbekende classificatie: geen stellige oorzaak, bedragen blijven zichtbaar", () => {
+    state.accounts = [BANK, KAPITAAL, OMZET, KOSTEN].map((a) => ({
+      ...a, statement_type: null, report_group: null, normal_side: null, report_sort: null,
+    }));
+    state.rows = [
+      ...entry(BANK.id, OMZET.id, "1000.00", d("04-01")),
+      ...entry(KOSTEN.id, BANK.id, "400.00", d("05-01")),
+    ];
+
+    for (const [render_, testId] of [[renderBalans, "balans-unclassified"], [renderWv, "wv-unclassified"]] as const) {
+      render_();
+      const melding = screen.getByTestId("statement-nothing-classified");
+      expect(melding).toHaveAttribute("data-certainty", "onbepaald");
+      expect(melding).toHaveAttribute("data-relevant", "0");
+      // Geen bewering over wat er "voor dit overzicht" bedoeld was.
+      expect(melding).not.toHaveTextContent(/bedoeld/i);
+      expect(melding).toHaveTextContent(/niet vast te stellen/i);
+      // En de bedragen staan er gewoon, per rekening.
+      const rijen = within(screen.getByTestId(testId)).getAllByTestId("statement-unclassified-row");
+      expect(rijen).toHaveLength(3);
+      cleanup();
+    }
+  });
+
+  it("17. de toewijzing komt uit de expliciete velden, nooit uit het rekeningnummer", () => {
+    // Twee keer exact hetzelfde nummer en dezelfde categorie; alleen de
+    // expliciete rapportagevelden verschillen. Een toewijzing op nummer of
+    // categorie zou hier tweemaal hetzelfde antwoord geven.
+    const gemeenschappelijk = { accountId: "x", accountNumber: 4700, accountName: "Advieskosten", categorie: "kosten" };
+    expect(
+      attributeUnclassifiedAccount({
+        ...gemeenschappelijk, statementType: "balans", reportGroup: null, reason: "missing_report_group",
+      } as never),
+    ).toBe("balans");
+    expect(
+      attributeUnclassifiedAccount({
+        ...gemeenschappelijk, statementType: "winst_verlies", reportGroup: null, reason: "missing_report_group",
+      } as never),
+    ).toBe("winst_verlies");
+    // Geen overzicht ingevuld, wél een geldige groep: de groepsverzamelingen
+    // zijn disjunct, dus de groep wijst het overzicht aan — nog steeds
+    // expliciete metadata, geen gok.
+    expect(
+      attributeUnclassifiedAccount({
+        ...gemeenschappelijk, statementType: null, reportGroup: "netto_omzet", reason: "missing_statement_type",
+      } as never),
+    ).toBe("winst_verlies");
+    expect(
+      attributeUnclassifiedAccount({
+        ...gemeenschappelijk, statementType: null, reportGroup: "vaste_activa", reason: "missing_statement_type",
+      } as never),
+    ).toBe("balans");
+    // Niets ingevuld → onbepaald.
+    expect(
+      attributeUnclassifiedAccount({
+        ...gemeenschappelijk, statementType: null, reportGroup: null, reason: "missing_statement_type",
+      } as never),
+    ).toBe("onbepaald");
+    // Twee expliciete velden die elkaar tegenspreken: niet vast te stellen
+    // welk van beide de vergissing is, dus geen keuze.
+    expect(
+      attributeUnclassifiedAccount({
+        ...gemeenschappelijk, statementType: "balans", reportGroup: "netto_omzet", reason: "invalid_group_for_statement",
+      } as never),
+    ).toBe("onbepaald");
+    // Een rekening die de kern niet kon herleiden heeft geen metadata.
+    expect(
+      attributeUnclassifiedAccount({
+        ...gemeenschappelijk, statementType: null, reportGroup: null, reason: "unresolved_account",
+      } as never),
+    ).toBe("onbepaald");
+  });
+
+  it("18. een rekening zonder beweging telt voor geen enkel overzicht mee", () => {
+    // Zonder beweging is het rapport niet onvolledig: de rekening wacht op
+    // classificatie, maar er ontbreekt geen cijfer. Zij mag dus geen melding
+    // aanzetten — ook niet op het overzicht waar ze aantoonbaar voor bedoeld is.
+    const zonderBeweging = {
+      accountId: "stil", accountNumber: 1200, accountName: "Slapende rekening", categorie: "activa",
+      statementType: "balans", reportGroup: null, reason: "missing_report_group",
+      rawSignedClosingCents: 0, rawSignedMovementCents: 0, hasActivity: false,
+    } as never;
+    expect(attributeUnclassifiedAccount(zonderBeweging)).toBe("balans");
+    expect(unclassifiedRelevanceFor([zonderBeweging], "balans")).toEqual({
+      relevantCount: 0,
+      undeterminedCount: 0,
+      any: false,
+    });
+    expect(unclassifiedRelevanceFor([zonderBeweging], "winst_verlies").any).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Review P2-2 — de documentvolledigheid is een diagnose bij een LEEG rapport,
+ * geen achtergrondscan bij elk bezoek. `fetchLedgerCompletenessCounts` doet
+ * negen parallelle tellingen met gepagineerde id-lijsten; dat hoort niet te
+ * draaien op een gevulde balans die er niets mee doet.
+ */
+describe("documentvolledigheid draait alleen bij een werkelijk leeg rapport", () => {
+  it("19. gevulde balans: de volledigheidsquery staat uit", () => {
+    lopendJaarZonderBeginbalans();
+    renderBalans();
+    expect(screen.getByTestId("balans-activa-table")).toBeInTheDocument();
+    expect(laatsteCompletenessEnabled()).toBe(false);
+  });
+
+  it("20. gevulde W&V: de volledigheidsquery staat uit", () => {
+    lopendJaarZonderBeginbalans();
+    renderWv();
+    expect(screen.getByTestId("wv-table")).toBeInTheDocument();
+    expect(laatsteCompletenessEnabled()).toBe(false);
+  });
+
+  it("21. een rapport met alleen ongeclassificeerde activiteit is niet leeg: query blijft uit", () => {
+    state.accounts = [BANK, KAPITAAL, OMZET, KOSTEN].map((a) => ({
+      ...a, statement_type: null, report_group: null,
+    }));
+    state.rows = [...entry(BANK.id, OMZET.id, "1000.00", d("04-01"))];
+    renderBalans();
+    // De bedragen staan onder "Niet geclassificeerd"; er valt niets te duiden
+    // met een documenttelling.
+    expect(screen.getByTestId("balans-unclassified")).toBeInTheDocument();
+    expect(laatsteCompletenessEnabled()).toBe(false);
+  });
+
+  it("22. werkelijk leeg rapport: dán pas wordt de volledigheidsquery aangezet", () => {
+    state.accounts = [BANK, KAPITAAL, OMZET, KOSTEN];
+    state.rows = [];
+    renderBalans();
+    expect(screen.getByText(BALANS_EMPTY_MESSAGE)).toBeInTheDocument();
+    expect(laatsteCompletenessEnabled()).toBe(true);
+    cleanup();
+
+    state.completenessCalls = [];
+    renderWv();
+    expect(laatsteCompletenessEnabled()).toBe(true);
+  });
+
+  it("23. zonder gekozen administratie blijft de query uit", () => {
+    state.clientId = "all";
+    state.accounts = [BANK, KAPITAAL];
+    state.rows = [];
+    renderBalans();
+    expect(laatsteCompletenessEnabled()).toBe(false);
+    // En er gaat sowieso geen administratie mee.
+    expect(state.completenessCalls.every((c) => c.clientId === undefined)).toBe(true);
+  });
+
+  it("24. bij een fout in het rapport wordt er niets zwaars gescand", () => {
+    // Niet-sluitende boekingsgroep: de engine faalt, het rapport is NIET leeg,
+    // en een documenttelling zou hier geen enkele vraag beantwoorden.
+    state.accounts = [BANK, KAPITAAL];
+    state.rows = [
+      {
+        client_id: CLIENT, posting_group_id: "kapot", posting_date: d("04-01"), boekjaar: YEAR,
+        currency: "EUR", source_type: "manual_journal", id: "kapot-1", line_no: 1,
+        grootboekrekening_id: BANK.id, debit_amount: "100.00", credit_amount: "0.00",
+      },
+    ];
+    renderBalans();
+    expect(screen.getByTestId("statement-failed")).toBeInTheDocument();
+    expect(laatsteCompletenessEnabled()).toBe(false);
   });
 });

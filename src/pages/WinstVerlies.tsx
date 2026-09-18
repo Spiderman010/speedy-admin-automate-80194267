@@ -17,6 +17,7 @@ import {
   StatementFailureNotice,
   UnclassifiedSection,
 } from "@/components/overzichten/FinancialReportNotices";
+import { unclassifiedRelevanceFor } from "@/lib/unclassified-attribution";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
@@ -67,8 +68,6 @@ export default function WinstVerlies() {
   const period = useMemo(() => periodFromSelection(selection), [selection]);
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
-  // Alleen om een LEEG rapport te kunnen duiden; raakt geen enkel bedrag.
-  const documents = useLedgerCompleteness(clientId);
   const { state, refetchPostings, refetchAccounts, isEmpty } = useFinancialStatements({
     clientId,
     period,
@@ -77,11 +76,19 @@ export default function WinstVerlies() {
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
+  // Per overzicht geteld: niet-geclassificeerde activiteit die aantoonbaar aan
+  // de balanskant hoort mag hier nooit als oorzaak van een lege W&V gelden.
+  const relevance = ready
+    ? unclassifiedRelevanceFor(ready.unclassified.accounts, "winst_verlies")
+    : { relevantCount: 0, undeterminedCount: 0, any: false };
   const nothingClassified =
-    ready !== null &&
-    ready.unclassified.withActivityCount > 0 &&
-    !ready.profitLoss.groups.some((g) => g.lines.length > 0);
+    ready !== null && relevance.any && !ready.profitLoss.groups.some((g) => g.lines.length > 0);
   const exportable = ready !== null;
+
+  // Alleen om een LEEG rapport te kunnen duiden; raakt geen enkel bedrag en
+  // draait pas zodra vaststaat dát het rapport leeg is.
+  const reportIsEmpty = ready !== null && isEmpty && ready.unclassified.accounts.length === 0;
+  const documents = useLedgerCompleteness(clientId, { enabled: reportIsEmpty });
 
   const exporteer = () => {
     if (!ready) return;
@@ -131,7 +138,7 @@ export default function WinstVerlies() {
     if (state.result.ok !== true) return <StatementFailureNotice failures={state.result.failures} />;
 
     const { profitLoss, unclassified } = state.result;
-    if (isEmpty && unclassified.accounts.length === 0) {
+    if (reportIsEmpty) {
       return (
         <div className="space-y-4">
           <EmptyState icon={BarChart3} message={WV_EMPTY_MESSAGE} />
@@ -149,12 +156,7 @@ export default function WinstVerlies() {
 
     return (
       <div className="space-y-6">
-        {nothingClassified && (
-          <NothingClassifiedNotice
-            activityCount={unclassified.withActivityCount}
-            what="winst-en-verliesrekening"
-          />
-        )}
+        {nothingClassified && <NothingClassifiedNotice accounts={unclassified.accounts} what="winst_verlies" />}
         <FinancialStatementTable
           caption="Winst-en-verliesrekening"
           groups={profitLoss.groups}
