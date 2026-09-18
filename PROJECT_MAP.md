@@ -714,6 +714,31 @@ select to_regclass('public.ledger_postings') as postings_table,
 
 Expected result: all four names, none NULL.
 
+
+### Fix — rapportage zonder beginbalans (Balans, W&V, proef- en saldibalans)
+
+Melding: "de rapporten tonen geen cijfers zolang er geen beginbalans is". **Diagnose eerst**, met probes door de échte keten (kern → proef- en saldibalans → statement-engine) vóór er één regel werd aangeraakt.
+
+**Wat NIET de oorzaak was.** De beginbalans blokkeert nergens iets:
+- Met boekingen in de periode en **zonder één beginbalansrij** geeft `buildAccountReport()` `ok`, levert `buildTrialBalance()` gewoon rijen (begin 0, debet/credit/saldo gevuld) en geeft `buildFinancialStatements()` een kloppende balans en W&V met `completeness: "complete"`.
+- Ook het **schrijfpad** eist geen beginbalans: geen van de vier documentschrijvers noemt `opening_balance`, en de trigger `enforce_no_posting_before_opening_balance()` keert meteen terug zodra er geen beginbalans is (`v_opening IS NULL`). Er is dus ook geen indirecte keten "geen beginbalans → niets te boeken → leeg rapport".
+- De pagina's kennen geen beginbalans-gate: die status is er uitsluitend als *melding*.
+
+**Wat een lege Balans/W&V wél verklaart: de ontbrekende classificatie.** De migratie `20260920120000_add_reporting_classification.sql` voegde `statement_type`/`report_group` toe **zonder backfill** — bewust, want niets mag uit `categorie` of een rekeningnummer worden geraden. Gevolg: in elke bestaande administratie zijn die velden NULL, plaatst de engine élke rekening in `unclassified`, en tonen Balans en W&V **nul groepsregels en totalen van € 0,00** terwijl er wél grootboekactiviteit is. Dat is correct gedrag (de engine weigert te raden) dat er als een kapot rapport uitziet.
+
+**Geen universele oorzaak.** Dit verklaart uitsluitend een lege **Balans of W&V bij bestaande ledger-activiteit**. De proef- en saldibalans hangt níet van classificatie af; is díe óók leeg, dan zegt de classificatie daar niets over en is aparte vaststelling nodig of er überhaupt `ledger_postings` in de gekozen periode bestaan (documenten kunnen opgeslagen zijn zonder ooit geboekt te zijn). Daarom verschijnt bij een werkelijk leeg rapport de bestaande documentvolledigheidsmeter en niet de classificatiemelding.
+
+**De fix — uitsluitend presentatie, geen boekhoudlogica:**
+- `NothingClassifiedNotice` bovenaan Balans en W&V zodra er activiteit is die op dít overzicht thuishoort of kán horen, maar er géén enkele geclassificeerde regel staat: legt uit dát dit de reden is, noemt het **aantal rekeningen** (bewust **géén bedrag**: bij "niets geclassificeerd" is de getekende nettosom per definitie € 0,00 en zou "3 rekeningen (€ 0,00)" lezen als "er is niets") en linkt naar het rekeningschema. De bedragen stonden er al onder "Niet geclassificeerd", maar ónder twee lege tabellen en dus onvindbaar.
+- **Per overzicht, nooit globaal.** `attributeUnclassifiedAccount()` leidt uitsluitend uit de twee expliciete velden af voor welk overzicht een niet-geclassificeerde rekening bedoeld was: een geldig `statement_type` is bepalend; ontbreekt dat maar staat er een geldige `report_group`, dan wijst die groep het overzicht aan (de groepsverzamelingen van balans en W&V zijn disjunct); spreken beide velden elkaar tegen (`invalid_group_for_statement`) of zijn ze allebei leeg, dan is het antwoord **onbepaald**. Nooit een afleiding uit rekeningnummer, naam of `categorie`. `unclassifiedRelevanceFor()` telt dat per overzicht, zodat balansactiviteit de W&V nooit laat beweren dat zíj leeg is door ongeclassificeerde W&V-rekeningen (en omgekeerd), en zodat een onbepaalde toestand een voorzichtige formulering krijgt in plaats van een onjuiste oorzaak.
+- **Documentvolledigheid alleen bij een leeg rapport.** `useLedgerCompleteness(clientId, { enabled })` — de optie is nieuw, de default (`true`) houdt elke bestaande aanroeper ongewijzigd. `fetchLedgerCompletenessCounts()` doet negen parallelle tellingen met gepagineerde id-lijsten; Balans en W&V zetten de query pas aan zodra ná het laden vaststaat dát het rapport leeg is. De hook wordt altijd aangeroepen (React-regel), de query niet.
+- `OpeningBalanceCarryForwardNotice` op de Balans, gevoed door de bestaande `useOpeningBalanceCompleteness`: de beginbalansstatus als **volledigheidsmelding, nooit als blokkade**. Ontbreekt de beginbalans, dan is de overloop uit eerdere jaren onbekend — de geboekte mutaties blijven onverkort zichtbaar.
+- `financial-statements.ts`, `ledger-reporting.ts`, `proef-saldibalans.ts`, `financial-statements-presentation.ts` en `useFinancialStatements.ts` zijn **byte-voor-byte ongewijzigd**; er is geen migratie, SQL, schema-, types- of dependencywijziging.
+
+**Tests:** `src/test/reporting-without-opening-balance.test.tsx` (31, door de échte kern/PSB/engine): W&V-mutaties, balans-eindsaldi en PSB-debet/credit/saldo zonder beginbalans; geldige lege staat zonder activiteit; een ontbrekende beginbalans is nooit een enginefout en raakt alleen de volledigheid; geclassificeerde balans- en W&V-rekeningen verschijnen; ongeclassificeerde activiteit blijft zichtbaar mét bedrag en krijgt de uitleg; de melding noemt géén bedrag; de synthetische resultaatregel klopt; er wordt geen beginbalansbedrag verzonnen (`openingBalanceContributionCents` blijft `null` = niet vastgesteld, nooit een geverifieerde nul); administratiescheiding; werking mét een geboekte beginbalans; geen dubbeltelling; periodefiltering. Plus de statement-specifieke regressies: alleen-balansactiviteit → de balans meldt het en de W&V zwijgt; alleen-W&V-activiteit → spiegelbeeld; gemengd → elke pagina noemt alleen haar eigen aantal; volledig onbekende classificatie → geen stellige oorzaak, bedragen blijven zichtbaar; toewijzing uit de expliciete velden en nooit uit het rekeningnummer; een rekening zónder beweging zet geen melding aan; en de `enabled`-schakelaar (gevuld rapport → uit, ongeclassificeerde activiteit → uit, werkelijk leeg → aan, geen administratie → uit, enginefout → uit).
+
+`src/test/ledger-completeness-enabled.test.tsx` (4, echte QueryClient + gemockte Supabase-client die elke tabelaanroep telt): zonder optie draait de query (backwards compatible), `enabled: true` draait, `enabled: false` raakt de database niet aan (`fetchStatus: "idle"`), en zonder administratie blijft hij uit.
+
 ---
 
 ## Emergency rule

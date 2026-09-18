@@ -12,14 +12,19 @@ import { FinancialReportHeader } from "@/components/overzichten/FinancialReportH
 import { FinancialStatementTable } from "@/components/overzichten/FinancialStatementTable";
 import { FinancialCompletenessBadge } from "@/components/overzichten/FinancialCompletenessBadge";
 import {
+  NothingClassifiedNotice,
+  OpeningBalanceCarryForwardNotice,
   StatementCompletenessNotice,
   StatementFailureNotice,
   UnclassifiedSection,
 } from "@/components/overzichten/FinancialReportNotices";
+import { unclassifiedRelevanceFor } from "@/lib/unclassified-attribution";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
+import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
+import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
 import {
   balanceSheetToCsv,
@@ -72,10 +77,38 @@ export default function Balans() {
     period,
     enabled: orgEnabled,
   });
+  // De beginbalans is hier uitsluitend volledigheidsinformatie: hij bepaalt
+  // NOOIT of er cijfers verschijnen, alleen of de overloop uit eerdere jaren
+  // is vastgesteld.
+  const openingBalance = useOpeningBalanceCompleteness(clientId, period);
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
+  // Is er activiteit maar geen enkele geclassificeerde balansregel, dan zegt de
+  // specifieke melding het al; de generieke volledigheidsmelding zou hetzelfde
+  // nog eens herhalen.
+  //
+  // De telling is per overzicht. Een globale telling over álle
+  // niet-geclassificeerde rekeningen zou de balans laten beweren dat zíj leeg
+  // is door ontbrekende classificatie, terwijl die activiteit aantoonbaar aan
+  // de W&V-kant hoort.
+  const relevance = ready
+    ? unclassifiedRelevanceFor(ready.unclassified.accounts, "balans")
+    : { relevantCount: 0, undeterminedCount: 0, any: false };
+  const nothingClassified =
+    ready !== null &&
+    relevance.any &&
+    ![...ready.balanceSheet.assetGroups, ...ready.balanceSheet.liabilityEquityGroups].some(
+      (g) => g.lines.length > 0,
+    );
   const exportable = ready !== null;
+
+  // Alleen nodig om een LEEG rapport te kunnen duiden: zijn er documenten die
+  // nog niet in het grootboek staan? Raakt geen enkel bedrag — en draait dus
+  // pas zodra ná het laden vaststaat dát het rapport leeg is. Op een gevuld
+  // scherm blijft die (zware) telquery uit.
+  const reportIsEmpty = ready !== null && isEmpty && ready.unclassified.accounts.length === 0;
+  const documents = useLedgerCompleteness(clientId, { enabled: reportIsEmpty });
 
   const exporteer = () => {
     if (!ready) return;
@@ -126,12 +159,27 @@ export default function Balans() {
     if (state.result.ok !== true) return <StatementFailureNotice failures={state.result.failures} />;
 
     const { balanceSheet, unclassified } = state.result;
-    if (isEmpty && unclassified.accounts.length === 0) {
-      return <EmptyState icon={Landmark} message={BALANS_EMPTY_MESSAGE} />;
+    if (reportIsEmpty) {
+      return (
+        <div className="space-y-4">
+          <EmptyState icon={Landmark} message={BALANS_EMPTY_MESSAGE} />
+          {/* Leeg kan óók betekenen: documenten bestaan wel, maar zijn nog niet
+              in het grootboek geboekt. Dat is hier de enige overgebleven
+              oorzaak, dus tonen we de bestaande volledigheidsmeter. */}
+          <LedgerCompletenessNotice
+            completeness={documents.data}
+            isLoading={documents.isPending}
+            isError={documents.isError}
+          />
+        </div>
+      );
     }
 
+    // Geen enkele geclassificeerde regel terwijl er wél activiteit is: dan is
+    // het overzicht leeg om één reden, en die hoort bovenaan te staan.
     return (
       <div className="space-y-6">
+        {nothingClassified && <NothingClassifiedNotice accounts={unclassified.accounts} what="balans" />}
         {/* Twee kolommen naast elkaar op een breed scherm, onder elkaar op een
             smal — elk met een eigen omkadering zodat Activa en Passiva ook
             gestapeld duidelijk twee kanten van dezelfde balans blijven. */}
@@ -268,7 +316,8 @@ export default function Balans() {
         <NoClientBanner message="Kies eerst een specifieke administratie om de balans te bekijken." />
       ) : (
         <div className="space-y-4">
-          {ready && <StatementCompletenessNotice completeness={ready.completeness} />}
+          {ready && !nothingClassified && <StatementCompletenessNotice completeness={ready.completeness} />}
+          {ready && <OpeningBalanceCarryForwardNotice completeness={openingBalance.data} />}
           <Card>
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
           </Card>

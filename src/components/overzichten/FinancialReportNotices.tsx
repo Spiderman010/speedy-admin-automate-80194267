@@ -14,6 +14,8 @@ import {
   formatCents,
 } from "@/lib/financial-statements-presentation";
 import type { StatementCompleteness, UnclassifiedAccount } from "@/lib/financial-statements";
+import { unclassifiedRelevanceFor } from "@/lib/unclassified-attribution";
+import type { OpeningBalanceCompleteness } from "@/lib/ledger-completeness";
 
 /**
  * Balans/W&V PR 4 — de waarschuwingen die bij een jaarrekeningrapport horen.
@@ -46,6 +48,123 @@ export function OpeningBalanceContributionNotice({ notice }: { notice: string | 
       <Info className="h-4 w-4" />
       <AlertTitle>Beginbalans in deze periode</AlertTitle>
       <AlertDescription>{notice}</AlertDescription>
+    </Alert>
+  );
+}
+
+const STATEMENT_WORD: Record<"balans" | "winst_verlies", string> = {
+  balans: "balans",
+  winst_verlies: "winst-en-verliesrekening",
+};
+
+function rekeningen(n: number) {
+  return n === 1 ? "één rekening" : `${n} rekeningen`;
+}
+
+/**
+ * Het overzicht is leeg terwijl er wél grootboekactiviteit is die er thuis
+ * hoort of kán horen. Dat is precies de toestand van elke administratie vlak
+ * na de classificatiemigratie — die deed bewust geen backfill — en zonder deze
+ * melding lijkt het rapport kapot in plaats van onvolledig.
+ *
+ * De melding is nooit stelliger dan de metadata toestaat: kan de code bewijzen
+ * dat de betrokken rekeningen voor dít overzicht bedoeld zijn, dan zegt zij
+ * dat; kan zij dat niet, dan noemt zij de activiteit zonder een oorzaak te
+ * claimen. Staat álle niet-geclassificeerde activiteit aantoonbaar bij het
+ * ándere overzicht, dan verschijnt hier niets.
+ *
+ * De bedragen zijn niet verdwenen: ze staan verderop onder "Niet
+ * geclassificeerd". Deze melding zegt dat, en wijst de weg.
+ */
+export function NothingClassifiedNotice({
+  accounts,
+  what,
+}: {
+  accounts: readonly UnclassifiedAccount[];
+  what: "balans" | "winst_verlies";
+}) {
+  const { relevantCount, undeterminedCount, any } = unclassifiedRelevanceFor(accounts, what);
+  if (!any) return null;
+  const zeker = relevantCount > 0;
+  const woord = STATEMENT_WORD[what];
+  // Bewust GEEN bedrag in deze tekst. Het enige totaal dat hier beschikbaar is,
+  // is de getekende nettosom van de niet-geclassificeerde rekeningen — en juist
+  // in het geval waarvoor deze melding bestaat (niets geclassificeerd) is die
+  // per definitie € 0,00: de kern garandeert dat alle eindsaldi optellen tot
+  // nul. "3 rekeningen met activiteit (€ 0,00)" leest als "er is niets", het
+  // tegenovergestelde van wat hier gezegd moet worden. Het aantal is eerlijk,
+  // de bedragen staan per rekening in de tabel hieronder.
+  return (
+    <Alert
+      variant="destructive"
+      data-testid="statement-nothing-classified"
+      data-statement={what}
+      data-relevant={relevantCount}
+      data-undetermined={undeterminedCount}
+      data-certainty={zeker ? "specifiek" : "onbepaald"}
+    >
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>{zeker ? "Nog geen rekeningen geclassificeerd" : "Activiteit zonder classificatie"}</AlertTitle>
+      <AlertDescription>
+        {zeker ? (
+          <p>
+            Geen enkele grootboekrekening met beweging heeft een plaats in deze {woord} gekregen; daarom is dit
+            overzicht leeg. {rekeningen(relevantCount)} met beweging {relevantCount === 1 ? "is" : "zijn"} voor
+            deze {woord} bedoeld maar nog niet volledig geclassificeerd
+            {undeterminedCount > 0
+              ? `, en bij ${rekeningen(undeterminedCount)} is nog niet vast te stellen bij welk overzicht ${undeterminedCount === 1 ? "zij" : "ze"} hoort`
+              : ""}
+            . Alles staat hieronder onder “Niet geclassificeerd”, mét bedrag — de cijfers zijn dus niet verdwenen,
+            ze hebben alleen nog geen groep.
+          </p>
+        ) : (
+          <p>
+            Dit overzicht is leeg. Er is wel beweging op {rekeningen(undeterminedCount)} zonder
+            rapportageclassificatie; zonder ingevuld overzicht of groep is niet vast te stellen of{" "}
+            {undeterminedCount === 1 ? "die rekening in deze" : "die rekeningen in deze"} {woord}{" "}
+            {undeterminedCount === 1 ? "thuishoort" : "thuishoren"}. De bedragen staan hieronder onder
+            “Niet geclassificeerd”.
+          </p>
+        )}
+        <p className="mt-2">
+          Ken in het rekeningschema per rekening een rapport en een groep toe; daarna vult dit overzicht zichzelf.
+        </p>
+        <Button variant="outline" size="sm" className="mt-3" asChild>
+          <Link to="/grootboek">Rekeningen classificeren</Link>
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/**
+ * De beginbalans is een volledigheidsgegeven, geen zichtbaarheidsvoorwaarde.
+ * Ontbreekt hij, dan zijn de getoonde bedragen gewoon de geboekte mutaties —
+ * alleen de overloop uit eerdere jaren is dan niet vastgesteld. Dat zeggen we,
+ * en we verbergen niets.
+ */
+export function OpeningBalanceCarryForwardNotice({
+  completeness,
+}: {
+  completeness: OpeningBalanceCompleteness | undefined;
+}) {
+  if (!completeness) return null;
+  if (completeness.severity === "complete") return null;
+  return (
+    <Alert data-testid="statement-carry-forward" data-ob-state={completeness.state}>
+      <Info className="h-4 w-4" />
+      <AlertTitle>Beginbalans: {completeness.label}</AlertTitle>
+      <AlertDescription>
+        {/* De geruststelling staat er ALTIJD. `note` is voor elke niet-complete
+            toestand gevuld, dus als fallback zou deze zin nooit verschijnen —
+            en juist die zin is de kern: een ontbrekende beginbalans raakt de
+            volledigheid, niet de zichtbaarheid. */}
+        <p>
+          De bedragen in dit overzicht komen uit de geboekte grootboekmutaties en blijven gewoon zichtbaar;
+          alleen de overloop uit eerdere jaren is nog niet vastgesteld.
+        </p>
+        {completeness.note && <p className="mt-1">{completeness.note}</p>}
+      </AlertDescription>
     </Alert>
   );
 }

@@ -138,11 +138,28 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
   };
 }
 
-export function useLedgerCompleteness(clientId: string | undefined) {
+export interface UseLedgerCompletenessOptions {
+  /**
+   * Standaard `true`, zodat elke bestaande aanroeper (de saldischermen en de
+   * proef- en saldibalans, waar deze meter altijd zichtbaar is) ongewijzigd
+   * blijft werken.
+   *
+   * De jaarrekeningrapporten hebben hem alleen nodig zodra vaststaat dát het
+   * rapport leeg is — en dat is pas na het laden bekend. `fetchLedgerCompleteness
+   * Counts` is geen goedkope query: negen parallelle tellingen en id-lijsten
+   * met paginering per administratie. Die hoort niet mee te draaien op een
+   * gevulde balans die er niets mee doet. Vandaar een schakelaar en géén
+   * voorwaardelijke hook-aanroep: de hook draait altijd, de query niet.
+   */
+  enabled?: boolean;
+}
+
+export function useLedgerCompleteness(clientId: string | undefined, options?: UseLedgerCompletenessOptions) {
   const { user } = useAuth();
+  const wanted = options?.enabled ?? true;
   return useQuery<LedgerCompleteness>({
     queryKey: ["ledger-completeness", clientId ?? ""],
-    enabled: !!user && !!clientId,
+    enabled: !!user && !!clientId && wanted,
     queryFn: async () => computeLedgerCompleteness(await fetchLedgerCompletenessCounts(clientId!)),
   });
 }

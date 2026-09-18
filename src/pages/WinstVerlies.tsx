@@ -11,15 +11,19 @@ import { FinancialReportHeader } from "@/components/overzichten/FinancialReportH
 import { FinancialStatementTable } from "@/components/overzichten/FinancialStatementTable";
 import { FinancialCompletenessBadge } from "@/components/overzichten/FinancialCompletenessBadge";
 import {
+  NothingClassifiedNotice,
   OpeningBalanceContributionNotice,
   StatementCompletenessNotice,
   StatementFailureNotice,
   UnclassifiedSection,
 } from "@/components/overzichten/FinancialReportNotices";
+import { unclassifiedRelevanceFor } from "@/lib/unclassified-attribution";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
+import { useLedgerCompleteness } from "@/hooks/useLedgerCompleteness";
+import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
 import {
   formatCents,
@@ -72,7 +76,19 @@ export default function WinstVerlies() {
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
+  // Per overzicht geteld: niet-geclassificeerde activiteit die aantoonbaar aan
+  // de balanskant hoort mag hier nooit als oorzaak van een lege W&V gelden.
+  const relevance = ready
+    ? unclassifiedRelevanceFor(ready.unclassified.accounts, "winst_verlies")
+    : { relevantCount: 0, undeterminedCount: 0, any: false };
+  const nothingClassified =
+    ready !== null && relevance.any && !ready.profitLoss.groups.some((g) => g.lines.length > 0);
   const exportable = ready !== null;
+
+  // Alleen om een LEEG rapport te kunnen duiden; raakt geen enkel bedrag en
+  // draait pas zodra vaststaat dát het rapport leeg is.
+  const reportIsEmpty = ready !== null && isEmpty && ready.unclassified.accounts.length === 0;
+  const documents = useLedgerCompleteness(clientId, { enabled: reportIsEmpty });
 
   const exporteer = () => {
     if (!ready) return;
@@ -122,12 +138,25 @@ export default function WinstVerlies() {
     if (state.result.ok !== true) return <StatementFailureNotice failures={state.result.failures} />;
 
     const { profitLoss, unclassified } = state.result;
-    if (isEmpty && unclassified.accounts.length === 0) {
-      return <EmptyState icon={BarChart3} message={WV_EMPTY_MESSAGE} />;
+    if (reportIsEmpty) {
+      return (
+        <div className="space-y-4">
+          <EmptyState icon={BarChart3} message={WV_EMPTY_MESSAGE} />
+          {/* Leeg kan óók betekenen: documenten bestaan wel, maar zijn nog niet
+              in het grootboek geboekt. Dat is hier de enige overgebleven
+              oorzaak, dus tonen we de bestaande volledigheidsmeter. */}
+          <LedgerCompletenessNotice
+            completeness={documents.data}
+            isLoading={documents.isPending}
+            isError={documents.isError}
+          />
+        </div>
+      );
     }
 
     return (
       <div className="space-y-6">
+        {nothingClassified && <NothingClassifiedNotice accounts={unclassified.accounts} what="winst_verlies" />}
         <FinancialStatementTable
           caption="Winst-en-verliesrekening"
           groups={profitLoss.groups}
@@ -223,7 +252,7 @@ export default function WinstVerlies() {
         <NoClientBanner message="Kies eerst een specifieke administratie om de winst-en-verliesrekening te bekijken." />
       ) : (
         <div className="space-y-4">
-          {ready && <StatementCompletenessNotice completeness={ready.completeness} />}
+          {ready && !nothingClassified && <StatementCompletenessNotice completeness={ready.completeness} />}
           {ready && (
             <OpeningBalanceContributionNotice
               notice={openingContributionNotice(
