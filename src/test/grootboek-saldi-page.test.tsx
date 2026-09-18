@@ -48,6 +48,8 @@ vi.mock("@/hooks/useLedgerPostings", () => ({
 }));
 vi.mock("@/hooks/useLedgerCompleteness", () => ({
   useLedgerCompleteness: () => ({ data: state.completeness, isPending: false, isError: false }),
+  // 6C-b8 PR 3: beginbalansdimensie; standaard niet aanwezig zodat de bestaande verwachtingen gelden.
+  useOpeningBalanceCompleteness: () => ({ data: undefined, isPending: false, isError: false }),
 }));
 
 import GrootboekSaldi from "@/pages/GrootboekSaldi";

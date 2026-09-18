@@ -1,3 +1,10 @@
+import {
+  deriveOpeningBalanceState,
+  type OpeningBalanceMarker,
+  type OpeningBalanceRow,
+} from "@/lib/opening-balance-utils";
+import type { LedgerPeriod } from "@/lib/ledger-reporting";
+
 // Fase 6C-b7 PR 2 — volledigheid van het grootboek (metadata, geen geld).
 //
 // Het grootboek bevat uitsluitend wat expliciet is geboekt. Deze module telt
@@ -165,5 +172,169 @@ export function unknownLedgerCompleteness(): LedgerCompleteness {
     ],
     mayBeIncomplete: true,
     totalOutstanding: 0,
+  };
+}
+
+// ── Beginbalans (6C-b8 PR 3) ────────────────────────────────────────────────
+//
+// Een eigen dimensie naast de documenttellingen: heeft deze administratie
+// voor het rapportjaar een beginbalans-bewering? Uitsluitend afgeleid uit de
+// domeintabellen (opening_balances + opening_balance_postings), nooit uit
+// source_type-rijen in het grootboek en nooit uit bedragen. "Niet ingesteld"
+// en "nihil" zijn verschillende boekhoudkundige uitspraken en worden nooit
+// samengevoegd; wat niet te controleren is, heet "onbekend".
+
+export type OpeningBalanceCompletenessState =
+  | "not_set"
+  | "draft"
+  | "posted"
+  | "nil"
+  /** Geboekt voor een eerder boekjaar: de beginpositie loopt via het grootboek door. */
+  | "posted_prior"
+  /** Nihil verklaard voor een eerder boekjaar. */
+  | "nil_prior"
+  /** Er is wél een bewering, maar voor een LATER boekjaar dan het rapportjaar. */
+  | "other_year"
+  | "conflict"
+  /** Rapportperiode beslaat meer dan één kalenderjaar: niet te bepalen. */
+  | "ambiguous"
+  | "unknown";
+
+export interface OpeningBalanceCompleteness {
+  state: OpeningBalanceCompletenessState;
+  /** Rapportjaar waarvoor de bewering is gezocht; null wanneer niet eenduidig. */
+  year: number | null;
+  /** Boekjaar van de gevonden bewering (geboekt/nihil), ook als dat een ander jaar is. */
+  assertionYear: number | null;
+  /** Aantal concepten voor het rapportjaar. */
+  draftCount: number;
+  label: string;
+  /** Rapportvolledigheid: geboekt en nihil zijn 'complete', de rest niet. */
+  severity: "complete" | "incomplete" | "unknown";
+  note: string | null;
+}
+
+export const OPENING_BALANCE_STATE_LABELS: Readonly<Record<OpeningBalanceCompletenessState, string>> = {
+  not_set: "Niet ingesteld",
+  draft: "Concept",
+  posted: "Geboekt",
+  nil: "Nihil",
+  posted_prior: "Geboekt (eerder boekjaar)",
+  nil_prior: "Nihil (eerder boekjaar)",
+  other_year: "Later boekjaar",
+  conflict: "Conflict",
+  ambiguous: "Niet te bepalen voor meerdere boekjaren",
+  unknown: "Onbekend",
+};
+
+/**
+ * Het kalenderjaar van een half-open periode [from, toExclusive), of null als
+ * de periode meer dan één kalenderjaar raakt. Rekent op ISO-datums (JJJJ-MM-DD)
+ * en verzint geen gebroken boekjaar.
+ */
+export function reportYearForPeriod(period: LedgerPeriod): number | null {
+  const fromYear = Number(period.from.slice(0, 4));
+  const end = new Date(`${period.toExclusive}T00:00:00Z`);
+  if (!Number.isFinite(fromYear) || Number.isNaN(end.getTime())) return null;
+  end.setUTCDate(end.getUTCDate() - 1);
+  const toYear = end.getUTCFullYear();
+  return fromYear === toYear ? fromYear : null;
+}
+
+export function computeOpeningBalanceCompleteness(input: {
+  headers: readonly OpeningBalanceRow[];
+  marker: OpeningBalanceMarker | null;
+  year: number | null;
+}): OpeningBalanceCompleteness {
+  const { headers, marker, year } = input;
+  const base = { year, assertionYear: null as number | null, draftCount: 0, note: null as string | null };
+  const make = (
+    state: OpeningBalanceCompletenessState,
+    severity: OpeningBalanceCompleteness["severity"],
+    extra: Partial<OpeningBalanceCompleteness> = {},
+  ): OpeningBalanceCompleteness => ({
+    ...base,
+    state,
+    severity,
+    label: OPENING_BALANCE_STATE_LABELS[state],
+    ...extra,
+  });
+
+  if (year === null) {
+    return make("ambiguous", "unknown", {
+      note: "De rapportperiode beslaat meer dan één kalenderjaar; kies één boekjaar om de beginbalansstatus te zien.",
+    });
+  }
+  const derived = deriveOpeningBalanceState({ headers, marker, boekjaar: year });
+  switch (derived.kind) {
+    case "conflict":
+      return make("conflict", "unknown", { note: derived.message });
+    // Per administratie bestaat hoogstens één bewering, ooit. Een bewering voor
+    // een EERDER boekjaar is daarmee de beginpositie van elk later jaar: het
+    // grootboek voert haar via de gewone rekenkunde door (beginsaldo = alles
+    // vóór de periode). Een bewering voor een LATER boekjaar zegt niets over
+    // dit rapportjaar en telt niet als passend.
+    case "posted": {
+      const assertionYear = derived.marker.boekjaar;
+      if (assertionYear > year) {
+        return make("other_year", "incomplete", {
+          assertionYear,
+          note: `De beginbalans van deze administratie is geboekt voor boekjaar ${assertionYear}, na rapportjaar ${year}.`,
+        });
+      }
+      if (assertionYear < year) {
+        return make("posted_prior", "complete", {
+          assertionYear,
+          note: `Geboekt voor boekjaar ${assertionYear}; de beginpositie van ${year} volgt via het grootboek uit de jaren ervoor.`,
+        });
+      }
+      return make("posted", "complete", { assertionYear });
+    }
+    case "nil": {
+      const assertionYear = derived.header.boekjaar;
+      if (assertionYear > year) {
+        return make("other_year", "incomplete", {
+          assertionYear,
+          note: `De nihil-verklaring van deze administratie geldt voor boekjaar ${assertionYear}, na rapportjaar ${year}.`,
+        });
+      }
+      if (assertionYear < year) {
+        return make("nil_prior", "complete", {
+          assertionYear,
+          note: `Bewust op nihil gezet voor boekjaar ${assertionYear}; de beginpositie van ${year} volgt via het grootboek uit de jaren ervoor.`,
+        });
+      }
+      return make("nil", "complete", {
+        assertionYear,
+        note: "Bewust vastgelegd: geen beginbalans nodig; er is niets in het grootboek geboekt.",
+      });
+    }
+    case "draft":
+      return make("draft", "incomplete", { draftCount: 1, note: "Er is een concept dat nog niet is geboekt." });
+    case "multiple-drafts":
+      return make("draft", "incomplete", {
+        draftCount: derived.drafts.length,
+        note: `Er zijn ${derived.drafts.length} concepten voor dit boekjaar; geen ervan is geboekt.`,
+      });
+    case "none":
+      return make("not_set", "incomplete", {
+        note:
+          derived.otherDrafts.length > 0
+            ? "Geen beginbalans voor dit boekjaar; er bestaan wel concepten voor een ander boekjaar."
+            : "Geen beginbalans-bewering voor dit boekjaar: niet geboekt en niet op nihil verklaard.",
+      });
+  }
+}
+
+/** Wanneer de domeintabellen niet gelezen konden worden: eerlijk 'onbekend', nooit 'niet ingesteld'. */
+export function unknownOpeningBalanceCompleteness(year: number | null): OpeningBalanceCompleteness {
+  return {
+    state: "unknown",
+    year,
+    assertionYear: null,
+    draftCount: 0,
+    label: OPENING_BALANCE_STATE_LABELS.unknown,
+    severity: "unknown",
+    note: "Kon beginbalansstatus niet controleren.",
   };
 }

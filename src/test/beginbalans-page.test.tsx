@@ -28,7 +28,7 @@ const state = {
 };
 
 const {
-  createSpy, updateSpy, saveLinesSpy, deleteSpy, postSpy, nilSpy, toastSpy, overviewRefetchSpy, comboboxProps, store,
+  createSpy, updateSpy, saveLinesSpy, deleteSpy, postSpy, nilSpy, toastSpy, overviewRefetchSpy, comboboxProps, store, headerQuerySpy,
 } = vi.hoisted(() => {
   // De gemockte hooks lezen `state` bij het renderen. Een refetch in de echte
   // app zou een nieuwe render uitlokken; hier doet `store.bump()` dat, zodat
@@ -44,6 +44,7 @@ const {
     nilSpy: vi.fn(),
     toastSpy: vi.fn(),
     overviewRefetchSpy: vi.fn(),
+    headerQuerySpy: vi.fn(),
     comboboxProps: [] as Array<Record<string, unknown>>,
     store: {
       subscribe: (l: () => void) => {
@@ -132,6 +133,7 @@ vi.mock("@/hooks/useOpeningBalances", async () => {
     },
     useOpeningBalance: (id?: string) => {
       useVersion();
+      headerQuerySpy(id);
       return {
         data: id ? headerFor(id) : undefined,
         isPending: false,
@@ -268,9 +270,9 @@ function loadBalancedDraft() {
   ];
 }
 
-function renderPage() {
+function renderPage(path = "/grootboek/beginbalans") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <Beginbalans />
     </MemoryRouter>,
   );
@@ -988,5 +990,100 @@ describe("Beginbalans — nihil-verklaring", () => {
     renderPage();
     await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nihil"));
     expect(screen.queryByText("Nog geen beginbalans")).toBeNull();
+  });
+});
+
+describe("Beginbalans — direct doel (?openingBalanceId=, 6C-b8 PR 3)", () => {
+  const OB_UUID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+  const OTHER_UUID = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const target = (id: string) => `/grootboek/beginbalans?openingBalanceId=${id}`;
+
+  it("7. een geboekte beginbalans als doel → de alleen-lezen geboekte weergave", async () => {
+    state.headers = [headerRow({ id: OB_UUID })];
+    state.header = headerRow({ id: OB_UUID });
+    state.lines = [lineRow({ opening_balance_id: OB_UUID }), lineRow({ id: "l-2", opening_balance_id: OB_UUID, sort_order: 1, grootboekrekening_id: "gb-1600", debit_amount: 0, credit_amount: 1000 })];
+    state.clientMarker = markerRow({ opening_balance_id: OB_UUID });
+    state.marker = markerRow({ opening_balance_id: OB_UUID });
+    renderPage(target(OB_UUID));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Geboekt"));
+    expect(screen.queryByTestId("beginbalans-target-rejected")).toBeNull();
+    expect(screen.queryByTestId("beginbalans-save")).toBeNull();
+    expect(debit(1).disabled).toBe(true);
+  });
+
+  it("8. een nihil-verklaring als doel → de alleen-lezen nihil-weergave", async () => {
+    state.headers = [nilRow({ id: OB_UUID })];
+    state.header = nilRow({ id: OB_UUID });
+    renderPage(target(OB_UUID));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nihil"));
+    expect(screen.queryByTestId("beginbalans-save")).toBeNull();
+  });
+
+  it("een concept van een ander boekjaar als doel wordt geopend (expliciete keuze), ook tussen meerdere concepten", async () => {
+    const draft = headerRow({ id: OB_UUID, boekjaar: YEAR - 1, opening_date: `${YEAR - 1}-01-01`, description: "Vorig jaar" });
+    state.headers = [draft, headerRow({ id: OTHER_UUID, boekjaar: YEAR - 1, opening_date: `${YEAR - 1}-01-02`, description: "Ander concept" })];
+    state.header = draft;
+    renderPage(target(OB_UUID));
+    await waitFor(() => expect((screen.getByLabelText("Omschrijving") as HTMLInputElement).value).toBe("Vorig jaar"));
+    expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept");
+    // De meerdere-conceptenmelding blijft zichtbaar: er is niets stilzwijgend gekozen.
+    expect(screen.getByTestId("beginbalans-multiple-drafts")).toBeInTheDocument();
+  });
+
+  it("6. een id dat niet bij deze administratie hoort → geweigerd, de echte toestand wordt getoond", async () => {
+    // De koppen van c-1 bevatten OTHER_UUID niet (RLS/klantfilter): geen enkele rij van een andere administratie komt in beeld.
+    state.headers = [headerRow({ id: OB_UUID })];
+    state.header = headerRow({ id: OB_UUID });
+    renderPage(target(OTHER_UUID));
+    expect(await screen.findByTestId("beginbalans-target-rejected")).toHaveTextContent("hoort niet bij de gekozen administratie");
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept"));
+    expect((screen.getByLabelText("Omschrijving") as HTMLInputElement).value).toBe(`Beginbalans ${YEAR}`);
+    expect(document.body.textContent).not.toContain(OTHER_UUID);
+    // Er is nooit een by-id-query met het vreemde id gedaan: het doel wordt alleen in de eigen koppen gezocht.
+    expect(headerQuerySpy.mock.calls.some((c) => c[0] === OTHER_UUID)).toBe(false);
+  });
+
+  it("de afwijzing verschijnt niet alsnog wanneer het geopende doelconcept daarna wordt verwijderd", async () => {
+    state.headers = [headerRow({ id: OB_UUID })];
+    state.header = headerRow({ id: OB_UUID });
+    renderPage(target(OB_UUID));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Concept"));
+    deleteSpy.mockImplementation(async () => {
+      state.headers = [];
+      state.header = null;
+      store.bump();
+      return OB_UUID;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Concept verwijderen" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Verwijderen" }));
+    await waitFor(() => expect(toastSpy).toHaveBeenCalledWith({ title: "Concept verwijderd" }));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nog geen beginbalans"));
+    expect(screen.queryByTestId("beginbalans-target-rejected")).toBeNull();
+  });
+
+  it("een achtergebleven concept als doel naast een nihil-verklaring → nihil-weergave met uitleg", async () => {
+    state.headers = [nilRow({ id: OB_UUID }), headerRow({ id: OTHER_UUID, opening_date: `${YEAR}-01-02`, description: "Restant" })];
+    state.header = nilRow({ id: OB_UUID });
+    renderPage(target(OTHER_UUID));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nihil"));
+    expect(screen.getByTestId("beginbalans-target-leftover")).toHaveTextContent("op nihil gezette");
+  });
+
+  it("5. een misvormd doel wordt genegeerd en gemeld; niets breekt", async () => {
+    renderPage(target("not-a-uuid'><script>"));
+    expect(await screen.findByTestId("beginbalans-target-ignored")).toHaveTextContent("ongeldig en is genegeerd");
+    expect(screen.queryByTestId("beginbalans-target-rejected")).toBeNull();
+    expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Nog geen beginbalans");
+  });
+
+  it("een achtergebleven concept als doel naast een geboekte beginbalans → geboekte weergave met uitleg", async () => {
+    state.headers = [headerRow({ id: OB_UUID }), headerRow({ id: OTHER_UUID, opening_date: `${YEAR}-01-02`, description: "Restant" })];
+    state.header = headerRow({ id: OB_UUID });
+    state.clientMarker = markerRow({ opening_balance_id: OB_UUID });
+    state.marker = markerRow({ opening_balance_id: OB_UUID });
+    renderPage(target(OTHER_UUID));
+    await waitFor(() => expect(screen.getByTestId("beginbalans-status")).toHaveTextContent("Geboekt"));
+    expect(screen.getByTestId("beginbalans-target-leftover")).toBeInTheDocument();
+    expect(screen.queryByTestId("beginbalans-save")).toBeNull();
   });
 });

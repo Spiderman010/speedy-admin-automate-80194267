@@ -22,7 +22,7 @@ import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useLedgerPostings } from "@/hooks/useLedgerPostings";
-import { useLedgerCompleteness } from "@/hooks/useLedgerCompleteness";
+import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import {
   buildAccountReport,
   buildRunningBalance,
@@ -85,6 +85,8 @@ export default function GrootboekSaldi() {
   const { data: accounts } = useGrootboekrekeningen({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
   const postingsQuery = useLedgerPostings({ clientId, period, enabled: orgEnabled });
   const completenessQuery = useLedgerCompleteness(clientId);
+  // 6C-b8 PR 3: beginbalansstatus voor het rapportjaar — metadata, geen cijfers.
+  const openingBalanceCompleteness = useOpeningBalanceCompleteness(clientId, period);
 
   // Rapport bouwen: een LedgerReportingError (valuta/administratie) wordt als
   // blokkerende fout getoond, nooit als lege of halve cijfers.
@@ -241,6 +243,9 @@ export default function GrootboekSaldi() {
             completeness={completenessQuery.data}
             isLoading={completenessQuery.isPending}
             isError={completenessQuery.isError}
+            openingBalance={openingBalanceCompleteness.data}
+            openingBalanceLoading={openingBalanceCompleteness.isPending}
+            openingBalanceError={openingBalanceCompleteness.isError}
           />
           <Card>
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>

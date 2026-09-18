@@ -21,7 +21,7 @@ import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useLedgerPostings } from "@/hooks/useLedgerPostings";
-import { useLedgerCompleteness } from "@/hooks/useLedgerCompleteness";
+import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import {
   buildAccountReport,
   LedgerReportingError,
@@ -94,6 +94,8 @@ export default function ProefSaldibalans() {
   const accounts = accountsQuery.data;
   const postingsQuery = useLedgerPostings({ clientId, period, enabled: orgEnabled });
   const completenessQuery = useLedgerCompleteness(clientId);
+  // 6C-b8 PR 3: beginbalansstatus voor het rapportjaar — metadata, geen cijfers.
+  const openingBalanceCompleteness = useOpeningBalanceCompleteness(clientId, period);
 
   const built = useMemo<
     { kind: "ok"; report: LedgerAccountReport } | { kind: "error"; message: string } | null
@@ -319,6 +321,9 @@ export default function ProefSaldibalans() {
             completeness={completenessQuery.data}
             isLoading={completenessQuery.isPending}
             isError={completenessQuery.isError}
+            openingBalance={openingBalanceCompleteness.data}
+            openingBalanceLoading={openingBalanceCompleteness.isPending}
+            openingBalanceError={openingBalanceCompleteness.isError}
           />
           <Card>
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>

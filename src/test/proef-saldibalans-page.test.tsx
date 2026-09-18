@@ -21,6 +21,7 @@ const state = {
   completeness: undefined as unknown,
   completenessPending: false,
   completenessError: false,
+  openingBalance: undefined as unknown,
 };
 
 const { ledgerSpy } = vi.hoisted(() => ({ ledgerSpy: vi.fn() }));
@@ -63,10 +64,12 @@ vi.mock("@/hooks/useLedgerCompleteness", () => ({
     isPending: state.completenessPending,
     isError: state.completenessError,
   }),
+  // 6C-b8 PR 3: beginbalansdimensie; standaard niet aanwezig zodat de bestaande verwachtingen gelden.
+  useOpeningBalanceCompleteness: () => ({ data: state.openingBalance, isPending: false, isError: false }),
 }));
 
 import ProefSaldibalans from "@/pages/ProefSaldibalans";
-import { computeLedgerCompleteness, unknownLedgerCompleteness } from "@/lib/ledger-completeness";
+import { computeLedgerCompleteness, computeOpeningBalanceCompleteness, unknownLedgerCompleteness } from "@/lib/ledger-completeness";
 
 // Byte order mark als code point: een letterlijk teken in de bron is
 // onzichtbaar en sneuvelt bij de eerste bewerking.
@@ -144,6 +147,7 @@ beforeEach(() => {
   state.completeness = undefined;
   state.completenessPending = false;
   state.completenessError = false;
+  state.openingBalance = undefined;
   blobDelen = [];
   laatsteNaam = "";
   vi.stubGlobal("Blob", class {
@@ -285,6 +289,28 @@ describe("ProefSaldibalans — pagina", () => {
     // De cijfers zijn precies gelijk aan het geval zonder volledigheidsdata.
     const totaalMet = screen.getByTestId("psb-totals").textContent;
     state.completeness = undefined;
+    renderPage();
+    expect(screen.getAllByTestId("psb-totals").at(-1)!.textContent).toBe(totaalMet);
+  });
+
+  it("6C-b8 PR 3. de beginbalansrij staat in de melding en verandert geen enkel cijfer", () => {
+    state.postings = grp("g-1", `${YEAR}-02-01`, [["gb-4000", 100, 0], ["gb-1600", 0, 100]]);
+    state.completeness = computeLedgerCompleteness({
+      purchase: { eligible: 1, posted: 1 },
+      sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
+      bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+      manual: { total: 0, posted: 0 },
+    });
+    state.openingBalance = computeOpeningBalanceCompleteness({ headers: [], marker: null, year: YEAR });
+    renderPage();
+    const rij = screen.getByTestId("completeness-opening_balance");
+    expect(rij).toHaveAttribute("data-ob-state", "not_set");
+    expect(rij).toHaveTextContent("Niet ingesteld");
+    expect(screen.getByRole("link", { name: "Naar beginbalans van deze administratie" })).toHaveAttribute("href", "/grootboek/beginbalans");
+    // Zonder beginbalans is het rapport niet 'volledig', ook al zijn alle documenten geboekt.
+    expect(screen.getByTestId("ledger-completeness")).toHaveAttribute("data-status", "incomplete");
+    const totaalMet = screen.getByTestId("psb-totals").textContent;
+    state.openingBalance = undefined;
     renderPage();
     expect(screen.getAllByTestId("psb-totals").at(-1)!.textContent).toBe(totaalMet);
   });

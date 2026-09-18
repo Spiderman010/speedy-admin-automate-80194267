@@ -1,13 +1,20 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
+import { useOpeningBalanceOverview } from "./useOpeningBalances";
 import {
   computeLedgerCompleteness,
+  computeOpeningBalanceCompleteness,
   PURCHASE_POSTABLE_STATUSES,
+  reportYearForPeriod,
   SALES_POSTABLE_STATUSES,
+  unknownOpeningBalanceCompleteness,
   type LedgerCompleteness,
   type LedgerCompletenessCounts,
+  type OpeningBalanceCompleteness,
 } from "@/lib/ledger-completeness";
+import type { LedgerPeriod } from "@/lib/ledger-reporting";
 
 /**
  * Fase 6C-b7 PR 2 — tellingen voor de volledigheidsmelding.
@@ -138,4 +145,25 @@ export function useLedgerCompleteness(clientId: string | undefined) {
     enabled: !!user && !!clientId,
     queryFn: async () => computeLedgerCompleteness(await fetchLedgerCompletenessCounts(clientId!)),
   });
+}
+
+/**
+ * Fase 6C-b8 PR 3 — beginbalans-dimensie van de volledigheid. Eén query per
+ * administratie (dezelfde als de beginbalanspagina: koppen + claim, dus na
+ * elke mutatie daar ook hier vers), zuiver afgeleid per rapportjaar. Geen
+ * bedragen, geen ledger_postings.
+ */
+export function useOpeningBalanceCompleteness(clientId: string | undefined, period: LedgerPeriod) {
+  const overview = useOpeningBalanceOverview(clientId);
+  const year = reportYearForPeriod(period);
+  const data = useMemo<OpeningBalanceCompleteness | undefined>(() => {
+    if (overview.isError) return unknownOpeningBalanceCompleteness(year);
+    if (!overview.data) return undefined;
+    return computeOpeningBalanceCompleteness({
+      headers: overview.data.headers,
+      marker: overview.data.marker,
+      year,
+    });
+  }, [overview.data, overview.isError, year]);
+  return { data, isPending: overview.isPending, isError: overview.isError };
 }
