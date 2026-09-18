@@ -115,8 +115,29 @@ function FieldGroup({ title, children }: { title: string; children: React.ReactN
   );
 }
 
-export default function PurchaseInvoiceWorkspace() {
+/**
+ * Routewrapper — de enige plek die de factuur-id uit de route leest.
+ *
+ * De route `/facturen/inkoop/:invoiceId` wisselt bij "Vorige"/"Volgende"
+ * alleen de parameter; React Router houdt hetzelfde element gemonteerd. Zonder
+ * ingreep blijft alle component-state van de vórige factuur staan terwijl de
+ * query (en dus de documentviewer) al de nieuwe factuur toont.
+ *
+ * De `key` dwingt een verse montage per factuur, zodat er geen enkele
+ * toestand — kop, regels, initialisatievlag, opslagvlag — kan overleven. De
+ * id gaat als PROP naar binnen: de werkbank leest hem niet zelf nog eens uit
+ * de route, zodat key en identiteit per constructie dezelfde waarde zijn en
+ * niet uit elkaar kunnen lopen.
+ *
+ * Remounten alleen is geen afdoende bescherming — `handleSave` heeft daarom
+ * óók een eigen identiteitscontrole. Zie daar.
+ */
+export default function PurchaseInvoiceWorkspaceRoute() {
   const { invoiceId } = useParams<{ invoiceId: string }>();
+  return <PurchaseInvoiceWorkspace key={invoiceId ?? "geen-factuur"} invoiceId={invoiceId} />;
+}
+
+export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | undefined }) {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { activeOrganizationId, isReady } = useActiveOrganization();
@@ -150,16 +171,29 @@ export default function PurchaseInvoiceWorkspace() {
 
   const [header, setHeader] = useState<HeaderForm>(() => emptyHeader(invoice ?? null));
   const [lines, setLines] = useState<LineRow[]>([]);
-  const [initialized, setInitialized] = useState(false);
+  /**
+   * VOOR WELKE factuur de kop en regels hieronder zijn ingevuld — geen kale
+   * boolean. Een boolean kan alleen zeggen "er is ooit geïnitialiseerd" en
+   * blijft `true` wanneer de route naar een andere factuur wijst; dan toont de
+   * viewer factuur N+1 terwijl het formulier nog N bevat. Met de id erbij is
+   * de vraag beantwoordbaar: hoort deze state bij DEZE factuur?
+   */
+  const [initializedFor, setInitializedFor] = useState<string | null>(null);
+  const initialized = !!invoiceId && initializedFor === invoiceId;
   const [saving, setSaving] = useState(false);
   const { data: posting } = usePurchaseInvoicePosting(invoiceId);
   const postInvoice = usePostPurchaseInvoice();
 
-  // Deterministic initialization once invoice + lines are loaded.
+  // Deterministic initialization once invoice + lines are loaded, gebonden aan
+  // de factuur-id: wisselt die, dan wordt er opnieuw geïnitialiseerd uit de
+  // gegevens van díe factuur voordat er iets te bewerken of op te slaan valt.
   useEffect(() => {
-    if (initialized) return;
+    if (initializedFor === invoiceId) return;
     if (invoiceLoading || linesLoading) return;
     if (!invoice) return;
+    // De query kan nog het antwoord van de vórige factuur vasthouden; dan is
+    // dit niet de data waarop we mogen initialiseren.
+    if (invoice.id !== invoiceId) return;
 
     const nextHeader = emptyHeader(invoice);
     // BTW-vrijgesteld coherence: force pct=0 and incl=excl.
@@ -242,8 +276,8 @@ export default function PurchaseInvoiceWorkspace() {
 
     setHeader(nextHeader);
     setLines(nextLines);
-    setInitialized(true);
-  }, [invoice, storedLines, ledgers, invoiceLoading, linesLoading, initialized, isBtwVrijgesteld]);
+    setInitializedFor(invoiceId ?? null);
+  }, [invoice, storedLines, ledgers, invoiceLoading, linesLoading, initializedFor, invoiceId, isBtwVrijgesteld]);
 
   // Header field mutators
   const patchHeader = (patch: Partial<HeaderForm>) => setHeader((h) => ({ ...h, ...patch }));
@@ -398,6 +432,22 @@ export default function PurchaseInvoiceWorkspace() {
 
   const handleSave = async (approve = false) => {
     if (!invoiceId || !invoice) return;
+    // Fail-closed identiteitscontrole. De remount hoort dit al onmogelijk te
+    // maken, maar opslaan is het punt waarop een vergissing onherstelbaar
+    // wordt: `save_purchase_invoice_with_lines` VERVANGT de regels van de
+    // factuur waarnaar `invoiceId` wijst. Zou de kop- en regelstate ooit bij
+    // een andere factuur horen, dan zouden de gegevens van factuur N stil over
+    // factuur N+1 heen worden geschreven. Dus liever weigeren dan gokken.
+    if (invoice.id !== invoiceId || initializedFor !== invoiceId) {
+      toast({
+        title: "Opslaan geweigerd",
+        description:
+          "De geopende factuur is gewisseld terwijl dit scherm nog de vorige factuur toonde. " +
+          "Er is niets opgeslagen; open de factuur opnieuw.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (hasPartialLine) {
       toast({
         title: "Regel is niet compleet",
@@ -450,7 +500,10 @@ export default function PurchaseInvoiceWorkspace() {
   //  2. query done, no record          → not found (the init effect never runs
   //                                      for a missing invoice, so `initialized`
   //                                      stays false and must NOT gate this)
-  //  3. record present, not initialised → loading skeleton
+  //  3. record present, not initialised → loading skeleton. `initialized` geldt
+  //     alleen voor DEZE factuur-id, dus zolang de kop en regels nog van een
+  //     andere factuur zouden zijn, verschijnt hier het skelet en geen enkel
+  //     bewerkbaar veld.
   const loadingState = (
     <div className="space-y-4" role="status" aria-live="polite" aria-busy="true">
       <span className="sr-only">Laden…</span>
