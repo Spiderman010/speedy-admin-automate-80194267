@@ -628,6 +628,36 @@ $$);
 -- En de beginbalans zelf wordt nooit door zijn eigen bewaker geweigerd: proef
 -- 1, 2, 21, 37 en 39b boekten allemaal op of ná hun openingsdatum.
 
+-- 46/47/48 elk gewoon DML-pad valt onder de bewaking ───────────────────────
+-- Klant 1 heeft een geboekte beginbalans op 2027-01-01 (proef 1).
+SELECT proof.expect_error('46', 'een meerrijige INSERT ... SELECT met terugwerkende datum wordt geweigerd', $$
+  INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
+    line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
+  SELECT '00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-0000000000c1', g,
+         '00000000-0000-0000-0000-0000000099f4'::uuid, n, DATE '2026-12-31', 2026, d, c, 'EUR',
+         'purchase_invoice', '00000000-0000-0000-0000-0000000000e1'
+  FROM (VALUES
+    ('00000000-0000-0000-0000-00000000f001'::uuid, 1, 3.00::numeric, 0::numeric),
+    ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 3.00::numeric)
+  ) AS v(g, n, d, c)
+$$, 'zou dubbel tellen');
+
+-- COPY vuurt rijtriggers, dus ook daar geldt de bewaking. Als eigenaar, want
+-- PostgreSQL staat COPY FROM sowieso niet toe onder RLS.
+RESET ROLE;
+SELECT proof.expect_error('47', 'ook COPY met terugwerkende datum wordt geweigerd', $$
+  COPY public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
+    line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
+  FROM PROGRAM 'echo 00000000-0000-0000-0000-0000000000a1,00000000-0000-0000-0000-0000000000c1,00000000-0000-0000-0000-00000000f001,00000000-0000-0000-0000-0000000099f5,1,2026-12-31,2026,3.00,0,EUR,purchase_invoice,00000000-0000-0000-0000-0000000000e1'
+  WITH (FORMAT csv)
+$$, 'zou dubbel tellen');
+SET ROLE authenticated;
+
+-- De enige manier om deze triggers te omzeilen is session_replication_role,
+-- en dat is superuser-only. Dit bewijst dat de applicatierol er niet bij kan.
+SELECT proof.expect_error('48', 'de applicatierol kan de triggers niet uitschakelen via session_replication_role',
+  $$SET session_replication_role = replica$$, 'permission denied');
+
 -- read_only may not write ───────────────────────────────────────────────────
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e3', false);
 SELECT proof.expect_error('R1', 'een read_only-gebruiker kan geen concept aanmaken', $$

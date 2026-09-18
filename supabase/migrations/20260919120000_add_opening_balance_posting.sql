@@ -2083,8 +2083,24 @@ COMMENT ON FUNCTION public.enforce_opening_balance_source_claim() IS
 --     by the check — which today is all of them — and the lock is per
 --     administratie, so unrelated administraties keep running concurrently.
 --
---     Integrity, not authorization: no auth.uid(), no role check. It must hold
---     for every DML path, including service-role and maintenance paths.
+--     Integrity, not authorization: no auth.uid(), no role check. Both triggers
+--     are row-level, so they fire for every ordinary DML path — single-row
+--     INSERT, multi-row INSERT, INSERT ... SELECT and COPY alike (all four are
+--     proved), and for service_role as much as for authenticated.
+--
+--     ONE PATH THEY DO NOT COVER, and why that is the right trade: both are
+--     ORIGIN triggers, so `SET session_replication_role = replica` disables
+--     them. Setting that GUC is superuser-only — authenticated and service_role
+--     are both refused (proved) — so no application path can reach it. Making
+--     them ENABLE ALWAYS would be worse, for exactly the reason 6C-b2 gives for
+--     leaving its own INSERT-path triggers ORIGIN: a pg_restore or a logical
+--     replication apply runs in replica mode and replays history in an order
+--     nobody controls, so an ALWAYS check would reject a perfectly valid
+--     back-dated row whose beginbalans marker happened to be restored first,
+--     and the restore would fail. A restore must be able to carry the past back
+--     in; a live writer must not be able to invent one. Only the two
+--     mutation-prevention triggers of 6C-b2 are ENABLE ALWAYS, and they stay
+--     that way.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.lock_ledger_client_for_posting()
