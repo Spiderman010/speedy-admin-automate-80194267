@@ -36,9 +36,23 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   }),
   useDeleteGrootboekrekening: () => ({ mutateAsync: deleteMutateAsync, isPending: state.deletePending }),
   useSeedGrootboekrekeningen: () => ({ mutate: seedMutate, isPending: state.seedPending }),
+  // Balans/W&V PR 2: de pagina vraagt nu ook het classificatierecht op.
+  // Testinfrastructuur — geen enkele assertie in dit bestand is gewijzigd.
+  useCanEditGrootboekClassification: () => ({ data: true }),
 }));
 
 import Grootboek from "@/pages/Grootboek";
+
+// Radix Select (nieuw in de classificatiesectie) gebruikt scrollIntoView en
+// ResizeObserver; jsdom kent die niet. Ook testinfrastructuur.
+Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+  (globalThis as unknown as { ResizeObserver?: typeof ResizeObserverStub }).ResizeObserver ?? ResizeObserverStub;
 
 const makeAccount = (over: Partial<any> = {}) => ({
   id: `gb-${Math.random().toString(36).slice(2)}`,
@@ -270,6 +284,13 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
       omschrijving: "Vrijgestelde omzet",
       categorie: "omzet",
       actief: false,
+      // Balans/W&V PR 2: de payload draagt nu ook de rapportageclassificatie.
+      // Deze rekening is niet geclassificeerd en blijft dat: categorie "omzet"
+      // leidt nergens toe een W&V-classificatie af.
+      statement_type: null,
+      report_group: null,
+      normal_side: null,
+      report_sort: null,
     });
   });
 
@@ -298,6 +319,10 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
       omschrijving: "Nieuwe naam",
       categorie: "kosten",
       actief: true,
+      statement_type: null,
+      report_group: null,
+      normal_side: null,
+      report_sort: null,
     }));
     expect(toastSpy).toHaveBeenCalledWith({ title: "Grootboekrekening bijgewerkt" });
   });
@@ -314,6 +339,11 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
       omschrijving: "Testrekening",
       categorie: "kosten",
       actief: true,
+      // Een nieuwe rekening wordt nooit automatisch geclassificeerd.
+      statement_type: null,
+      report_group: null,
+      normal_side: null,
+      report_sort: null,
     }));
     expect(toastSpy).toHaveBeenCalledWith({ title: "Grootboekrekening toegevoegd" });
   });
