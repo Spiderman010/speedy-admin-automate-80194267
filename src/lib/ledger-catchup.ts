@@ -123,6 +123,32 @@ export interface CatchupLineAggregate {
   nonPositiveAmountCount: number;
 }
 
+/**
+ * De regelaggregatie uit een lijst opgeslagen boekingsregels.
+ *
+ * Eén implementatie voor beide lezers — de historische catch-up en de
+ * inkoopwerkbank — zodat er nooit twee licht verschillende tellingen kunnen
+ * ontstaan die een factuur de ene kant op "klaar" en de andere kant op
+ * "geblokkeerd" noemen. De drempels zijn exact die van de writer: een
+ * ontbrekende rekening telt, en `amount_excl <= 0` telt (nul dus ook).
+ */
+export function aggregateInvoiceLines(
+  lines: readonly { amount_excl: number | null; grootboekrekening_id: string | null }[],
+): CatchupLineAggregate {
+  let count = 0;
+  let sumExcl = 0;
+  let withoutAccount = 0;
+  let nonPositiveAmountCount = 0;
+  for (const line of lines) {
+    const amount = line.amount_excl ?? 0;
+    count += 1;
+    sumExcl += amount;
+    if (!line.grootboekrekening_id) withoutAccount += 1;
+    if (amount <= 0) nonPositiveAmountCount += 1;
+  }
+  return { count, sumExcl, withoutAccount, nonPositiveAmountCount };
+}
+
 export interface CatchupSalesInvoice {
   id: string;
   client_id: string;

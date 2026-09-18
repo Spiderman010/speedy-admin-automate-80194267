@@ -309,7 +309,9 @@ describe("PurchaseInvoiceWorkspace — factuurgegevens & boekingsregels", () => 
     await renderReady();
     fireEvent.click(screen.getByRole("button", { name: /regel toevoegen/i }));
     fireEvent.change(descInputs()[1], { target: { value: "Alleen omschrijving" } });
-    expect(screen.getByRole("alert")).toHaveTextContent(/niet compleet/i);
+    // Gericht op de waarschuwing bij de regels: sinds het boekbaarheidspaneel
+    // erbij staat is `getByRole("alert")` niet meer eenduidig.
+    expect(screen.getByTestId("partial-line-warning")).toHaveTextContent(/niet compleet/i);
   });
 
   it("14. partial row krijgt de visuele waarschuwingsstaat", async () => {
