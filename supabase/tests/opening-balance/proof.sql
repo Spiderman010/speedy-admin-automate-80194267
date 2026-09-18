@@ -643,7 +643,9 @@ SELECT proof.expect_error('46', 'een meerrijige INSERT ... SELECT met terugwerke
 $$, 'zou dubbel tellen');
 
 -- COPY vuurt rijtriggers, dus ook daar geldt de bewaking. Als eigenaar, want
--- PostgreSQL staat COPY FROM sowieso niet toe onder RLS.
+-- PostgreSQL staat COPY FROM sowieso niet toe onder RLS. FROM PROGRAM vereist
+-- superuser of pg_execute_server_program; dat mag hier, omdat dit harnas per
+-- definitie op een wegwerpcluster als eigenaar draait.
 RESET ROLE;
 SELECT proof.expect_error('47', 'ook COPY met terugwerkende datum wordt geweigerd', $$
   COPY public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,

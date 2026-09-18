@@ -334,6 +334,10 @@
 --
 -- rollback:
 --   DROP TRIGGER IF EXISTS validate_no_posting_before_opening_balance_trigger ON public.ledger_postings;
+--   -- LET OP: lock_ledger_client_trigger is niet alleen van de beginbalans.
+--   -- Hij serialiseert ALLE grootboekschrijvers van een administratie; hem
+--   -- droppen haalt die ordening ook weg voor inkoop, verkoop, bank en
+--   -- memoriaal, niet alleen voor deze fase.
 --   DROP TRIGGER IF EXISTS lock_ledger_client_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS validate_opening_balance_source_claim_trigger ON public.ledger_postings;
 --   DROP TRIGGER IF EXISTS prevent_settled_opening_balance_line_mutation_trigger ON public.opening_balance_lines;
@@ -1168,10 +1172,14 @@ GRANT SELECT ON public.opening_balances, public.opening_balance_lines TO service
 --    both locks, so the two spaces must not be able to alias.
 --
 --    COST, stated plainly: all ledger writes for ONE administratie now
---    serialise. Two administraties never block each other (different keys), and
---    within one administratie a posting is a single user action of a few rows,
---    so the contention window is a few milliseconds. That is the price of the
---    invariant, and it is paid deliberately rather than traded away.
+--    serialise. Two administraties never block each other (different keys). The
+--    lock is held to COMMIT, so the contention window is the length of the
+--    whole transaction: a few milliseconds for the single posting a user
+--    action produces, but the entire run for a bulk import that posts many
+--    groups for one administratie in one transaction — which is the same
+--    reason the writer contract in section 10 asks for one administratie per
+--    transaction. That is the price of the invariant, and it is paid
+--    deliberately rather than traded away.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.ledger_client_lock_key(_client_id uuid)
@@ -2049,32 +2057,70 @@ COMMENT ON FUNCTION public.enforce_opening_balance_source_claim() IS
 --       validate_opening_balance_source_claim_trigger
 --
 --     "lock_ledger_c..." sorts before "lock_ledger_p...", so the CLIENT lock is
---     always taken before the GROUP lock, on every path, with no exception. The
---     lock trigger reads only NEW.client_id, which is NOT NULL and comes
---     straight from the caller, so it depends on no earlier trigger.
+--     always taken before the GROUP lock, on every path, with no exception.
+--     The lock trigger reads only NEW.client_id. The column is NOT NULL, but a
+--     BEFORE trigger runs before that constraint is checked, so inside the
+--     trigger the value can still be NULL — and pg_advisory_xact_lock is
+--     strict, so a NULL key would silently take NO lock. That is not a hole,
+--     but not for the reason "it is NOT NULL": such a row is refused a moment
+--     later by validate_ledger_posting_org_trigger, because a NULL client
+--     satisfies no organisation. Nothing is ordered, and nothing is written.
 --
---     GLOBAL LOCK ORDER, and why there is no deadlock:
+--     LOCK ORDER WITHIN ONE ADMINISTRATIE:
 --
 --       client advisory lock  ->  posting-group advisory lock  ->  row locks
 --
---     Every transaction that touches the ledger acquires them in that order:
---       • an ordinary writer (purchase/sales/bank/memoriaal) locks its own
---         document rows first, then hits the ledger and takes client, then
---         group. Its document rows are in ITS OWN tables, which no other
---         writer and no assertion RPC ever locks, so those locks cannot be the
---         second edge of a cycle;
+--     Every path that writes ledger rows for ONE administratie acquires them in
+--     that order:
+--       • an ordinary writer (purchase/sales/bank/memoriaal) takes every
+--         document row lock it needs BEFORE its first ledger insert — its own
+--         header and lines, and in the bank writer's case a FOR SHARE on the
+--         invoices the purchase and sales writers lock FOR UPDATE. Those four
+--         writers therefore do contend with each other on document rows, but
+--         always strictly before the client lock, never after it;
 --       • post_opening_balance() and declare_opening_balance_nil() take the
 --         client lock FIRST, before the header and line locks, and their ledger
 --         inserts then re-take the same client lock (a no-op for a lock the
---         transaction already holds) before the group lock — the same order;
---       • save_opening_balance_lines() takes no client lock at all. It locks
---         only the header it is editing and that header's lines, and waits for
---         nothing else, so it can never be part of a cycle: it is always able
---         to finish.
+--         transaction already holds) before the group lock;
+--       • save_opening_balance_lines() takes no client lock and writes no
+--         ledger row, so it is not part of this order at all.
 --     Had the client lock been taken AFTER the group lock, an ordinary writer
 --     (group then client) and a poster (client then group) would have formed a
---     textbook inversion. The trigger name is what prevents it, so it is
---     asserted in the test suite rather than left to reading.
+--     textbook inversion. The trigger NAME is what prevents that, so the
+--     ordering is asserted against pg_trigger in the proof harness and against
+--     this file in the test suite, rather than left to reading.
+--
+--     DEADLOCK — the contract, because "there is no deadlock" would be false.
+--     A per-administratie lock held to COMMIT introduces a cycle wherever one
+--     transaction touches TWO administraties, and 6C-b2's own group lock states
+--     the equivalent contract for the same reason. Both of these are real and
+--     were reproduced on PostgreSQL 16 against this exact schema:
+--
+--       (a) two administraties, opposite order, two transactions:
+--             T1: INSERT ledger row (client X)   -- holds key(X)
+--             T2: INSERT ledger row (client Y)   -- holds key(Y)
+--             T1: INSERT ledger row (client Y)   -- waits
+--             T2: INSERT ledger row (client X)   -- waits -> 40P01
+--           Reachable from any multi-statement caller, and from a single bulk
+--           INSERT whose rows span two administraties in different orders,
+--           because RLS grants authenticated a direct INSERT.
+--
+--       (b) a raw opening_balance_lines INSERT and a ledger INSERT in ONE
+--           transaction, against a concurrent poster: the line insert takes
+--           FOR KEY SHARE on the header (section 11) BEFORE any client lock,
+--           which is the reverse of the order above. Not an application path —
+--           save_opening_balance_lines() never writes ledger rows — but a
+--           manual SQL path.
+--
+--     WRITER CONTRACT, therefore: write ONE administratie per transaction. A
+--     batch that must cover several inserts them ORDERED BY client_id, which
+--     makes a cycle impossible, or retries on 40P01. Never take a lock on
+--     opening_balances before the client lock.
+--
+--     This is an availability contract, not a correctness one: PostgreSQL
+--     detects the cycle and aborts one side, so nothing partial is ever
+--     committed and the earliest-fact invariant holds either way. The proof
+--     harness reproduces (a) and asserts exactly that.
 --
 --     SCOPE. The trigger skips source_type = 'opening_balance' for the CHECK
 --     (a beginbalans is dated ON its opening date, never before it) but NOT for
@@ -2090,8 +2136,11 @@ COMMENT ON FUNCTION public.enforce_opening_balance_source_claim() IS
 --
 --     ONE PATH THEY DO NOT COVER, and why that is the right trade: both are
 --     ORIGIN triggers, so `SET session_replication_role = replica` disables
---     them. Setting that GUC is superuser-only — authenticated and service_role
---     are both refused (proved) — so no application path can reach it. Making
+--     them. That GUC is PGC_SUSET: superusers hold it, and since PostgreSQL 15
+--     it can also be delegated with GRANT SET ON PARAMETER. What is proved here
+--     is the narrower and relevant thing — the APPLICATION role is refused — and
+--     any role that does hold it also owns or can ALTER the table, so it could
+--     disable the triggers outright anyway. Making
 --     them ENABLE ALWAYS would be worse, for exactly the reason 6C-b2 gives for
 --     leaving its own INSERT-path triggers ORIGIN: a pg_restore or a logical
 --     replication apply runs in replica mode and replays history in an order

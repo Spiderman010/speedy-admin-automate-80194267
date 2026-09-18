@@ -425,18 +425,33 @@ describe("6C-b8 PR 1 — niets vóór de beginbalans", () => {
     expect((sql.match(/PERFORM public\.lock_ledger_client\(/g) ?? []).length).toBe(3);
   });
 
-  it("50. de grendelvolgorde is globaal deterministisch: client vóór boekingsgroep", () => {
-    // PostgreSQL vuurt BEFORE ROW triggers in alfabetische naamvolgorde. Dit is
-    // de hele deadlockverdediging, dus hij wordt getoetst en niet gelezen.
-    const client = "lock_ledger_client_trigger";
-    const group = "lock_ledger_posting_group_trigger";
-    expect(client < group).toBe(true);
-    expect(sql).toMatch(new RegExp(`CREATE TRIGGER ${client}\\n  BEFORE INSERT ON public\\.ledger_postings`));
+  it("50. geen enkele trigger die dit bestand op ledger_postings zet, vuurt vóór de clientgrendel", () => {
+    // PostgreSQL vuurt BEFORE ROW triggers in alfabetische naamvolgorde, en die
+    // volgorde IS de deadlockverdediging. Een vergelijking van twee letterlijke
+    // strings zou hier niets toetsen: dit leest de namen uit de migratie zelf.
+    // (Dat de clientgrendel ook werkelijk als eerste staat in een echte
+    // database, bewijst het PostgreSQL-harnas — hier kan alleen dit bestand
+    // worden getoetst.)
+    const names = [...sql.matchAll(/CREATE TRIGGER (\w+)\n {2}BEFORE INSERT ON public\.ledger_postings/g)]
+      .map((m) => m[1]);
+    expect(names).toContain("lock_ledger_client_trigger");
+    for (const n of names) {
+      expect(n >= "lock_ledger_client_trigger", `${n} vuurt vóór de clientgrendel`).toBe(true);
+    }
+    // 6C-b2's groepsgrendel heet lock_ledger_posting_group_trigger; de naam van
+    // onze grendel moet daar vóór sorteren, anders keert de volgorde om.
+    expect("lock_ledger_client_trigger" < "lock_ledger_posting_group_trigger").toBe(true);
     // En de twee RPC-en nemen dezelfde grendel als allereerste stap.
     for (const fn of [postFn, nilFn]) {
       expect(fn.indexOf("lock_ledger_client")).toBeLessThan(fn.indexOf("FOR UPDATE"));
     }
-    expect(raw).toContain("client advisory lock  ->  posting-group advisory lock  ->  row locks");
+  });
+
+  it("52. de migratie belooft geen deadlockvrijheid maar een schrijverscontract", () => {
+    expect(raw).toContain("WRITER CONTRACT");
+    expect(raw).toContain("ONE administratie per transaction");
+    expect(raw).toContain("ORDERED BY client_id");
+    expect(raw).not.toContain("why there is no deadlock");
   });
 
   it("51. de sleutel vouwt de hele uuid, niet alleen het eerste woord", () => {

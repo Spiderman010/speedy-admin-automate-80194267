@@ -559,12 +559,103 @@ SELECT dblink_send_query('b', $$SELECT proof.ordinary_write('00000000-0000-0000-
   DATE '2027-03-01', 7.00, '9a080000-0000-4000-8000-000000000008')::text$$);
 SELECT pg_sleep(0.4);
 COMMIT;
-SELECT proof.remote_result('F1', 'de kruising client-grendel x groep-grendel loopt zonder deadlock af', 'b', '');
+-- Eerlijke naam: dit toont dat een gewone boeking op de beginbalansgrendel
+-- wacht en daarna gewoon slaagt. Het is GEEN discriminerend bewijs van de
+-- grendelvolgorde: tegen de juiste volgorde is de omkering niet te construeren,
+-- want geen enkel pad neemt de groepsgrendel vóór de clientgrendel. Wat de
+-- volgorde wél toetst, is F0 hieronder — rechtstreeks uit pg_trigger.
+SELECT proof.remote_result('F1', 'een gewone boeking wacht op de beginbalansgrendel en slaagt daarna', 'b', '');
 SELECT dblink_exec('b', 'COMMIT');
 
-SELECT proof.expect_true('F2', 'geen enkele deadlock tijdens alle gelijktijdigheidsproeven', $$
+-- F0 toetst de oorzaak in plaats van een gevolg: de clientgrendel moet de
+-- EERSTE BEFORE INSERT rijtrigger op ledger_postings zijn, want PostgreSQL
+-- vuurt ze in naamvolgorde en daar hangt de hele grendelvolgorde aan.
+SELECT proof.expect_true('F0', 'de clientgrendel is de eerste BEFORE INSERT trigger op ledger_postings', $$
+  SELECT (
+    SELECT t.tgname FROM pg_trigger t
+    WHERE t.tgrelid = 'public.ledger_postings'::regclass
+      AND NOT t.tgisinternal
+      AND (t.tgtype & 2) = 2      -- BEFORE
+      AND (t.tgtype & 4) = 4      -- INSERT
+      AND (t.tgtype & 1) = 1      -- FOR EACH ROW
+    ORDER BY t.tgname LIMIT 1
+  ) = 'lock_ledger_client_trigger'
+$$);
+
+SELECT proof.expect_true('F2', 'geen enkele deadlock tijdens de scenario-s hierboven (A t/m G)', $$
   SELECT (SELECT deadlocks FROM pg_stat_database WHERE datname = current_database())
        = (SELECT deadlocks FROM proof.deadlock_baseline)
 $$);
 
+-- ── H: het schrijverscontract, bewezen in plaats van beloofd. Twee
+--      administraties in omgekeerde volgorde binnen twee transacties is een
+--      echte cyclus. PostgreSQL breekt hem af; niets halfs wordt vastgelegd.
+
+INSERT INTO public.clients (id, organization_id, name) VALUES
+  ('00000000-0000-0000-0000-00000000dd01', '00000000-0000-0000-0000-0000000000a1', 'Deadlock X'),
+  ('00000000-0000-0000-0000-00000000dd02', '00000000-0000-0000-0000-0000000000a1', 'Deadlock Y');
+
+CREATE TABLE proof.deadlock_before AS
+  SELECT deadlocks FROM pg_stat_database WHERE datname = current_database();
+
+SELECT dblink_connect('d', :'conn');
+SELECT * FROM dblink('d', $$SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)$$) AS t(x text);
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_exec('d', 'BEGIN');
+
+-- b pakt X, d pakt Y.
+SELECT * FROM dblink('b', $$SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000dd01',
+  DATE '2027-06-01', 11.00, 'dd010000-0000-4000-8000-000000000001')::text$$) AS t(x text);
+SELECT * FROM dblink('d', $$SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000dd02',
+  DATE '2027-06-01', 22.00, 'dd020000-0000-4000-8000-000000000002')::text$$) AS t(x text);
+
+-- en nu kruislings: b wil Y, d wil X.
+SELECT dblink_send_query('b', $$SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000dd02',
+  DATE '2027-06-01', 33.00, 'dd030000-0000-4000-8000-000000000003')::text$$);
+SELECT dblink_send_query('d', $$SELECT proof.ordinary_write('00000000-0000-0000-0000-00000000dd01',
+  DATE '2027-06-01', 44.00, 'dd040000-0000-4000-8000-000000000004')::text$$);
+SELECT pg_sleep(2.0);   -- deadlock_timeout is standaard 1s
+
+-- Precies één van de twee moet zijn afgebroken met 40P01.
+CREATE OR REPLACE FUNCTION proof.collect_deadlock(_conn text)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE v_msg text;
+BEGIN
+  PERFORM * FROM dblink_get_result(_conn) AS t(x text);
+  PERFORM * FROM dblink_get_result(_conn) AS t(x text);
+  RETURN 'ok';
+EXCEPTION WHEN others THEN
+  v_msg := SQLERRM;
+  BEGIN
+    PERFORM * FROM dblink_get_result(_conn) AS t(x text);
+  EXCEPTION WHEN others THEN NULL;
+  END;
+  RETURN v_msg;
+END
+$$;
+
+CREATE TABLE proof.h_outcome AS
+  SELECT proof.collect_deadlock('b') AS b_result, proof.collect_deadlock('d') AS d_result;
+
+SELECT proof.expect_true('H1', 'precies één van de twee transacties is afgebroken met een deadlock', $$
+  SELECT (CASE WHEN b_result ILIKE '%deadlock%' THEN 1 ELSE 0 END
+        + CASE WHEN d_result ILIKE '%deadlock%' THEN 1 ELSE 0 END) = 1
+  FROM proof.h_outcome
+$$);
+SELECT dblink_exec('b', 'ROLLBACK');
+SELECT dblink_exec('d', 'ROLLBACK');
+
+-- Een backend spoelt zijn statistieken pas aan het eind van zijn transactie
+-- door, dus de teller wordt pas ná die rollbacks gelezen.
+SELECT pg_sleep(1.0);
+SELECT proof.expect_true('H2', 'en PostgreSQL heeft die deadlock ook echt geteld', $$
+  SELECT (SELECT deadlocks FROM pg_stat_database WHERE datname = current_database())
+       >= (SELECT deadlocks FROM proof.deadlock_before) + 1
+$$);
+SELECT proof.expect_true('H3', 'niets halfs vastgelegd: beide administraties zijn leeg gebleven', $$
+  SELECT count(*) = 0 FROM public.ledger_postings
+  WHERE client_id IN ('00000000-0000-0000-0000-00000000dd01', '00000000-0000-0000-0000-00000000dd02')
+$$);
+
+SELECT dblink_disconnect('d');
 SELECT dblink_disconnect('b');
