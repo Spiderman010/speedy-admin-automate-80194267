@@ -85,37 +85,48 @@ export function UnclassifiedSection({ accounts, amountOf, testId = "statement-un
         </AlertDescription>
       </Alert>
 
+      {/* Altijd uitgeklapt: deze rijen mogen niet weg te klikken zijn. */}
       <div className="-mx-1 overflow-x-auto px-1">
-        <Table className="min-w-[640px]">
+        <Table className="min-w-[620px]">
           <caption className="sr-only">
             Grootboekrekeningen met activiteit die geen plaats in dit rapport hebben, met reden.
           </caption>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead scope="col" className="w-24">Rekening</TableHead>
-              <TableHead scope="col" className="min-w-[200px]">Omschrijving</TableHead>
-              <TableHead scope="col" className="w-32 text-right">Bedrag</TableHead>
-              <TableHead scope="col" className="min-w-[220px]">Reden</TableHead>
+              <TableHead scope="col" className="px-3 py-1.5 w-20">Rekening</TableHead>
+              <TableHead scope="col" className="px-3 py-1.5 min-w-[180px]">Omschrijving</TableHead>
+              <TableHead scope="col" className="px-3 py-1.5 w-36 text-right">Bedrag</TableHead>
+              <TableHead scope="col" className="px-3 py-1.5 min-w-[200px]">Reden</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {accounts.map((a) => (
-              <TableRow key={a.accountId} data-testid="statement-unclassified-row" data-account-id={a.accountId}>
-                <TableCell className="font-mono tabular-nums">{a.accountNumber ?? "—"}</TableCell>
-                <TableCell>
+              <TableRow
+                key={a.accountId}
+                data-testid="statement-unclassified-row"
+                data-account-id={a.accountId}
+                className="focus-within:bg-muted/40 hover:bg-muted/40"
+              >
+                <TableCell className="px-3 py-1.5 font-mono text-xs tabular-nums text-muted-foreground">
+                  {a.accountNumber ?? "—"}
+                </TableCell>
+                {/* Bewust géén truncate: dit is de tabel die zegt wat er nog
+                    moet gebeuren, dus de omschrijving moet leesbaar zijn — ook
+                    op een touchscreen, waar een title-tooltip niet bestaat. */}
+                <TableCell className="px-3 py-1.5">
                   <Link
                     to={`/grootboek/saldi/${a.accountId}`}
-                    className="underline-offset-4 hover:underline focus-visible:underline"
+                    className="rounded-sm break-words underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label={`Open mutaties van ${accountLabel(a.accountNumber, a.accountName)}`}
                   >
                     {a.accountName}
                   </Link>
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-right font-mono tabular-nums">
+                <TableCell className="whitespace-nowrap px-3 py-1.5 text-right font-mono text-sm tabular-nums">
                   {formatCents(amountOf(a))}
                 </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="font-normal" data-reason={a.reason}>
+                <TableCell className="px-3 py-1.5">
+                  <Badge variant="outline" className="whitespace-normal text-left text-xs font-normal" data-reason={a.reason}>
                     {UNCLASSIFIED_REASON_LABELS[a.reason]}
                   </Badge>
                 </TableCell>
