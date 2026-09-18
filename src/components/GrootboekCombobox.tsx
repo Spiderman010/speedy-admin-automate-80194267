@@ -18,9 +18,16 @@ interface Props {
   className?: string;
   noneOption?: boolean;
   placeholder?: string;
+  /**
+   * Fase 6C-b8: beperk de keuze tot rekeningen die voor deze administratie
+   * boekbaar zijn — organisatiebreed (client_id null) of van deze administratie
+   * zelf. Dat is hetzelfde bereik dat ledger_postings per rij afdwingt. Zonder
+   * deze prop verandert er niets aan het bestaande gedrag.
+   */
+  clientId?: string;
 }
 
-export function GrootboekCombobox({ value, onValueChange, onIdChange, className, noneOption, placeholder = "Selecteer rekening..." }: Props) {
+export function GrootboekCombobox({ value, onValueChange, onIdChange, className, noneOption, placeholder = "Selecteer rekening...", clientId }: Props) {
   const [open, setOpen] = useState(false);
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const { data: accounts } = useActiveGrootboekrekeningen({
@@ -28,7 +35,9 @@ export function GrootboekCombobox({ value, onValueChange, onIdChange, className,
     enabled: isReady && activeOrganizationId !== null,
   });
 
-  const items = accounts ?? [];
+  const items = clientId
+    ? (accounts ?? []).filter((a) => a.client_id === null || a.client_id === clientId)
+    : (accounts ?? []);
   const selectedItem = items.find(a => formatAccount(a.nummer, a.omschrijving) === value);
   const displayLabel = selectedItem ? formatAccount(selectedItem.nummer, selectedItem.omschrijving) : value || placeholder;
 
