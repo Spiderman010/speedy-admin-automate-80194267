@@ -1028,6 +1028,204 @@ export type Database = {
           },
         ]
       }
+      opening_balance_lines: {
+        Row: {
+          client_id: string
+          created_at: string
+          credit_amount: number
+          debit_amount: number
+          description: string | null
+          grootboekrekening_id: string | null
+          id: string
+          opening_balance_id: string
+          organization_id: string
+          sort_order: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          description?: string | null
+          grootboekrekening_id?: string | null
+          id?: string
+          opening_balance_id: string
+          organization_id: string
+          sort_order?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          credit_amount?: number
+          debit_amount?: number
+          description?: string | null
+          grootboekrekening_id?: string | null
+          id?: string
+          opening_balance_id?: string
+          organization_id?: string
+          sort_order?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opening_balance_lines_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opening_balance_lines_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opening_balance_lines_opening_balance_id_fkey"
+            columns: ["opening_balance_id"]
+            isOneToOne: false
+            referencedRelation: "opening_balances"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opening_balance_lines_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      opening_balance_postings: {
+        Row: {
+          boekjaar: number
+          client_id: string
+          created_at: string
+          line_count: number
+          opening_balance_id: string
+          opening_date: string
+          organization_id: string
+          posting_group_id: string
+          total_amount: number
+          user_id: string
+        }
+        Insert: {
+          boekjaar: number
+          client_id: string
+          created_at?: string
+          line_count: number
+          opening_balance_id: string
+          opening_date: string
+          organization_id: string
+          posting_group_id: string
+          total_amount: number
+          user_id: string
+        }
+        Update: {
+          boekjaar?: number
+          client_id?: string
+          created_at?: string
+          line_count?: number
+          opening_balance_id?: string
+          opening_date?: string
+          organization_id?: string
+          posting_group_id?: string
+          total_amount?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opening_balance_postings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opening_balance_postings_opening_balance_id_fkey"
+            columns: ["opening_balance_id"]
+            isOneToOne: true
+            referencedRelation: "opening_balances"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opening_balance_postings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      opening_balances: {
+        Row: {
+          boekjaar: number
+          client_id: string
+          created_at: string
+          description: string | null
+          id: string
+          nil_declaration: boolean
+          nil_declared_at: string | null
+          nil_declared_by: string | null
+          opening_date: string
+          organization_id: string
+          reference: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          boekjaar: number
+          client_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          nil_declaration?: boolean
+          nil_declared_at?: string | null
+          nil_declared_by?: string | null
+          opening_date: string
+          organization_id: string
+          reference?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          boekjaar?: number
+          client_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          nil_declaration?: boolean
+          nil_declared_at?: string | null
+          nil_declared_by?: string | null
+          opening_date?: string
+          organization_id?: string
+          reference?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "opening_balances_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "opening_balances_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_members: {
         Row: {
           created_at: string
@@ -1549,6 +1747,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      declare_opening_balance_nil: {
+        Args: { _opening_balance_id: string }
+        Returns: undefined
+      }
       has_min_role: {
         Args: {
           _min: Database["public"]["Enums"]["app_role"]
@@ -1569,15 +1771,21 @@ export type Database = {
         Args: { _organization_id: string; _user_id: string }
         Returns: boolean
       }
+      ledger_client_lock_key: { Args: { _client_id: string }; Returns: number }
       ledger_link_org_ok: {
         Args: { _account_id: string; _organization_id: string }
         Returns: boolean
       }
+      lock_ledger_client: { Args: { _client_id: string }; Returns: undefined }
       post_bank_allocation: {
         Args: { _allocation_id: string }
         Returns: string
       }
       post_manual_journal: { Args: { _journal_id: string }; Returns: string }
+      post_opening_balance: {
+        Args: { _opening_balance_id: string }
+        Returns: string
+      }
       post_purchase_invoice: { Args: { _invoice_id: string }; Returns: string }
       post_sales_invoice: { Args: { _invoice_id: string }; Returns: string }
       posting_account_ok: {
@@ -1619,6 +1827,10 @@ export type Database = {
       }
       save_manual_journal_lines: {
         Args: { _journal_id: string; _lines: Json }
+        Returns: undefined
+      }
+      save_opening_balance_lines: {
+        Args: { _lines: Json; _opening_balance_id: string }
         Returns: undefined
       }
       save_purchase_invoice_with_lines: {
