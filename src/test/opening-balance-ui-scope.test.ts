@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 /**
@@ -117,9 +117,17 @@ describe("Beginbalans-UI — branch-scope", () => {
     }
   });
 
-  branchIt("54. geen migratie en geen SQL in deze branch", () => {
-    expect(changed!.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed!.filter((f) => f.endsWith(".sql"))).toEqual([]);
+  branchIt("54. geen wijziging aan het beginbalans- of grootboekschema en geen toegevoegde SQL die die objecten raakt", () => {
+    // Voorheen: "geen migratie en geen SQL in deze branch" — een scope-uitspraak
+    // van PR 2, geen invariant: een latere branch (Balans/W&V PR 1) voegt een
+    // eigen, losstaande migratie toe. Wat bewaakt moet blijven is dat de
+    // beginbalans-UI nooit meerijdt op een wijziging van het beginbalans- of
+    // ledgerschema en dat toegevoegde SQL die objecten niet aanraakt.
+    expect(changed!.filter((f) => /add_opening_balance_posting|add_ledger_postings_foundation|supabase\/tests\/opening-balance\//.test(f))).toEqual([]);
+    for (const f of changed!.filter((f) => f.endsWith(".sql") && existsSync(f))) {
+      const code = readFileSync(f, "utf8").split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+      expect(code, f).not.toMatch(/opening_balance|ledger_postings|journal_entries/);
+    }
   });
 
   branchIt("55. gegenereerde Supabase-types ongewijzigd", () => {
