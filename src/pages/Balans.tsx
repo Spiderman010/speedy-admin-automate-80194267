@@ -22,7 +22,8 @@ import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
-import { useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
+import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
+import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
 import {
   balanceSheetToCsv,
@@ -79,9 +80,21 @@ export default function Balans() {
   // NOOIT of er cijfers verschijnen, alleen of de overloop uit eerdere jaren
   // is vastgesteld.
   const openingBalance = useOpeningBalanceCompleteness(clientId, period);
+  // Alleen nodig om een LEEG rapport te kunnen duiden: zijn er documenten die
+  // nog niet in het grootboek staan? Raakt geen enkel bedrag.
+  const documents = useLedgerCompleteness(clientId);
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
+  // Is er activiteit maar geen enkele geclassificeerde balansregel, dan zegt de
+  // specifieke melding het al; de generieke volledigheidsmelding zou hetzelfde
+  // nog eens herhalen.
+  const nothingClassified =
+    ready !== null &&
+    ready.unclassified.withActivityCount > 0 &&
+    ![...ready.balanceSheet.assetGroups, ...ready.balanceSheet.liabilityEquityGroups].some(
+      (g) => g.lines.length > 0,
+    );
   const exportable = ready !== null;
 
   const exporteer = () => {
@@ -134,20 +147,28 @@ export default function Balans() {
 
     const { balanceSheet, unclassified } = state.result;
     if (isEmpty && unclassified.accounts.length === 0) {
-      return <EmptyState icon={Landmark} message={BALANS_EMPTY_MESSAGE} />;
+      return (
+        <div className="space-y-4">
+          <EmptyState icon={Landmark} message={BALANS_EMPTY_MESSAGE} />
+          {/* Leeg kan óók betekenen: documenten bestaan wel, maar zijn nog niet
+              in het grootboek geboekt. Dat is hier de enige overgebleven
+              oorzaak, dus tonen we de bestaande volledigheidsmeter. */}
+          <LedgerCompletenessNotice
+            completeness={documents.data}
+            isLoading={documents.isPending}
+            isError={documents.isError}
+          />
+        </div>
+      );
     }
 
     // Geen enkele geclassificeerde regel terwijl er wél activiteit is: dan is
     // het overzicht leeg om één reden, en die hoort bovenaan te staan.
-    const heeftGeclassificeerdeRegels = [...balanceSheet.assetGroups, ...balanceSheet.liabilityEquityGroups]
-      .some((g) => g.lines.length > 0);
-
     return (
       <div className="space-y-6">
-        {!heeftGeclassificeerdeRegels && (
+        {nothingClassified && (
           <NothingClassifiedNotice
             activityCount={unclassified.withActivityCount}
-            amountCents={unclassified.closingCents}
             what="balans"
           />
         )}
@@ -287,7 +308,7 @@ export default function Balans() {
         <NoClientBanner message="Kies eerst een specifieke administratie om de balans te bekijken." />
       ) : (
         <div className="space-y-4">
-          {ready && <StatementCompletenessNotice completeness={ready.completeness} />}
+          {ready && !nothingClassified && <StatementCompletenessNotice completeness={ready.completeness} />}
           {ready && <OpeningBalanceCarryForwardNotice completeness={openingBalance.data} />}
           <Card>
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>

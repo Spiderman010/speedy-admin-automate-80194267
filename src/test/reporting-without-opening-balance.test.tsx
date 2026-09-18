@@ -38,6 +38,7 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   }),
 }));
 vi.mock("@/hooks/useLedgerCompleteness", () => ({
+  useLedgerCompleteness: () => ({ data: undefined, isPending: false, isError: false }),
   useOpeningBalanceCompleteness: () => ({
     data: {
       state: state.obState, year: 2026, assertionYear: null, draftCount: 0,
@@ -61,7 +62,11 @@ import Balans from "@/pages/Balans";
 import WinstVerlies from "@/pages/WinstVerlies";
 import { buildAccountReport, yearPeriod, type LedgerPostingLike } from "@/lib/ledger-reporting";
 import { buildTrialBalance } from "@/lib/proef-saldibalans";
-import { buildFinancialStatements } from "@/lib/financial-statements";
+import {
+  buildFinancialStatements,
+  movementOnPeriodStartFromRows,
+  openingBalanceContributionFromRows,
+} from "@/lib/financial-statements";
 import { formatCents } from "@/lib/financial-statements-presentation";
 
 const bedrag = (cents: number) => formatCents(cents).replace(/\u00a0/g, " ");
@@ -112,10 +117,24 @@ function lopendJaarZonderBeginbalans() {
   ];
 }
 
+/**
+ * Exact dezelfde aanroep als useFinancialStatements(), inclusief de twee
+ * diagnosekaarten. Zonder die kaarten zou deze helper een ánder pad meten dan
+ * de pagina en zouden de asserties niets over de productie zeggen.
+ */
 const engine = (period = PERIOD) => {
   const rows = state.rows.filter((r) => r.client_id === state.clientId && r.posting_date < period.toExclusive);
   const report = buildAccountReport({ rows, clientId: state.clientId, period, accounts: state.accounts });
-  return { report, fs: buildFinancialStatements({ report, period, accounts: state.accounts as any }) };
+  return {
+    report,
+    fs: buildFinancialStatements({
+      report,
+      period,
+      accounts: state.accounts as any,
+      openingBalanceContribution: openingBalanceContributionFromRows(rows, period),
+      movementOnPeriodStart: movementOnPeriodStartFromRows(rows, period),
+    }),
+  };
 };
 
 const renderBalans = () => render(<MemoryRouter><Balans /></MemoryRouter>);
@@ -212,9 +231,13 @@ describe("zonder beginbalans blijven de cijfers zichtbaar", () => {
     const { fs } = engine();
     if (!fs.ok) throw new Error("engine faalde");
     expect(fs.profitLoss.openingCents).toBe(0);
-    // En de bijdragediagnose is "niet vastgesteld", geen geverifieerde nul.
-    expect(fs.diagnostics.openingBalanceContributionKnown).toBe(false);
-    expect(fs.profitLoss.openingBalanceContributionCents).toBeNull();
+    // De app geeft de bijdragekaart altijd mee, dus dit is een BEREKENDE nul:
+    // er is werkelijk geen beginbalansrij in de periode. Dat is iets anders dan
+    // een verzonnen nul — en de melding leunt daarom op `insidePeriod`, niet op
+    // het saldo (zie openingContributionNotice).
+    expect(fs.diagnostics.openingBalanceContributionKnown).toBe(true);
+    expect(fs.profitLoss.openingBalanceContributionCents).toBe(0);
+    expect(fs.diagnostics.openingBalanceInsidePeriod).toBe(false);
   });
 });
 
@@ -319,6 +342,24 @@ describe("classificatie wist nooit activiteit", () => {
     expect(within(melding).getByRole("link", { name: /classificeren/i })).toHaveAttribute("href", "/grootboek");
     // De cijfers staan er nog steeds, onderaan.
     expect(within(screen.getByTestId("balans-unclassified")).getAllByTestId("statement-unclassified-row")).toHaveLength(3);
+  });
+
+  it("9b-bis. de melding noemt géén bedrag — de nettosom is hier per definitie nul", () => {
+    nietsGeclassificeerd();
+    const { fs } = engine();
+    if (!fs.ok) throw new Error("engine faalde");
+    // Dit is de valkuil: met niets geclassificeerd tellen alle eindsaldi op tot
+    // nul (invariant van de kern). "€ 0,00" in de melding zou lezen als "er is
+    // niets" — precies het tegendeel van de boodschap.
+    expect(fs.unclassified.withActivityCount).toBe(3);
+    expect(fs.unclassified.closingCents).toBe(0);
+    expect(fs.unclassified.movementCents).toBe(0);
+
+    renderBalans();
+    const melding = screen.getByTestId("statement-nothing-classified");
+    expect(melding).not.toHaveTextContent(/€/);
+    // Het aantal is wél eerlijk en staat er.
+    expect(melding).toHaveTextContent(/3 rekeningen/);
   });
 
   it("9c. dezelfde uitleg op de W&V, met de periodemutatie", () => {

@@ -63,24 +63,29 @@ export function OpeningBalanceContributionNotice({ notice }: { notice: string | 
  */
 export function NothingClassifiedNotice({
   activityCount,
-  amountCents,
   what,
 }: {
   activityCount: number;
-  amountCents: number;
   what: "balans" | "winst-en-verliesrekening";
 }) {
   if (activityCount === 0) return null;
+  // Bewust GEEN bedrag in deze tekst. Het enige totaal dat hier beschikbaar is,
+  // is de getekende nettosom van de niet-geclassificeerde rekeningen — en juist
+  // in het geval waarvoor deze melding bestaat (niets geclassificeerd) is die
+  // per definitie € 0,00: de kern garandeert dat alle eindsaldi optellen tot
+  // nul. "3 rekeningen met activiteit (€ 0,00)" leest als "er is niets", het
+  // tegenovergestelde van wat hier gezegd moet worden. Het aantal is eerlijk,
+  // de bedragen staan per rekening in de tabel hieronder.
   return (
     <Alert variant="destructive" data-testid="statement-nothing-classified">
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle>Nog geen rekeningen geclassificeerd</AlertTitle>
       <AlertDescription>
         <p>
-          Deze {what} is leeg omdat geen enkele grootboekrekening met beweging een plaats in de
-          jaarrekening heeft gekregen. Er is {activityCount === 1 ? "één rekening" : `${activityCount} rekeningen`} met
-          activiteit ({formatCents(amountCents)}); die staan hieronder onder “Niet geclassificeerd”. De cijfers zijn
-          dus niet verdwenen — ze hebben alleen nog geen groep.
+          Geen enkele grootboekrekening met beweging heeft een plaats in deze {what} gekregen; daarom is dit
+          overzicht leeg. {activityCount === 1 ? "Eén rekening" : `${activityCount} rekeningen`} met activiteit
+          {activityCount === 1 ? " staat" : " staan"} hieronder onder “Niet geclassificeerd”, mét bedrag — de cijfers
+          zijn dus niet verdwenen, ze hebben alleen nog geen groep.
         </p>
         <p className="mt-2">
           Ken in het rekeningschema per rekening een rapport en een groep toe; daarna vult dit overzicht zichzelf.
@@ -111,9 +116,15 @@ export function OpeningBalanceCarryForwardNotice({
       <Info className="h-4 w-4" />
       <AlertTitle>Beginbalans: {completeness.label}</AlertTitle>
       <AlertDescription>
-        {completeness.note ??
-          "Zolang er geen beginbalans is vastgesteld, is de overloop uit eerdere jaren onbekend. " +
-            "De bedragen hieronder komen uit de geboekte grootboekmutaties en blijven gewoon zichtbaar."}
+        {/* De geruststelling staat er ALTIJD. `note` is voor elke niet-complete
+            toestand gevuld, dus als fallback zou deze zin nooit verschijnen —
+            en juist die zin is de kern: een ontbrekende beginbalans raakt de
+            volledigheid, niet de zichtbaarheid. */}
+        <p>
+          De bedragen in dit overzicht komen uit de geboekte grootboekmutaties en blijven gewoon zichtbaar;
+          alleen de overloop uit eerdere jaren is nog niet vastgesteld.
+        </p>
+        {completeness.note && <p className="mt-1">{completeness.note}</p>}
       </AlertDescription>
     </Alert>
   );

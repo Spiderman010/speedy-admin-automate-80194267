@@ -46,6 +46,7 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   }),
 }));
 vi.mock("@/hooks/useLedgerCompleteness", () => ({
+  useLedgerCompleteness: () => ({ data: undefined, isPending: false, isError: false }),
   // De balans leest hier alleen de beginbalansSTATUS (volledigheid), nooit
   // cijfers. Testinfrastructuur: standaard "niet ingesteld", zodat de tests
   // precies het geval dekken waar deze fix over gaat.
