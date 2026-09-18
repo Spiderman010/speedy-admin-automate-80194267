@@ -506,7 +506,22 @@ describe("statische bewaking", () => {
     } catch {
       return;
     }
-    expect(changed.filter((f) => f.startsWith("supabase/") || f.endsWith(".sql"))).toEqual([]);
+    // Voorheen: "geen migratie en geen SQL in deze branch" — een scope-uitspraak
+    // van PR 3, geen invariant: een latere branch (Balans/W&V PR 1) voegt een
+    // eigen, losstaande migratie toe. Bewaakt blijft: het beginbalans- en
+    // ledgerschema en de beginbalansproof zijn onaangeraakt, en toegevoegde SQL
+    // raakt die objecten niet aan.
+    expect(changed.filter((f) => /add_opening_balance_posting|add_ledger_postings_foundation|supabase\/tests\/opening-balance\//.test(f))).toEqual([]);
+    for (const f of changed.filter((f) => f.endsWith(".sql"))) {
+      let code = "";
+      try {
+        code = readFileSync(f, "utf8");
+      } catch {
+        continue; // verwijderd bestand
+      }
+      code = code.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+      expect(code, f).not.toMatch(/opening_balance|ledger_postings|journal_entries/);
+    }
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     expect(changed.filter((f) => /nav\.ts$|package-lock|bun\.lockb|App\.tsx$/.test(f))).toEqual([]);
