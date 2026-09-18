@@ -45,6 +45,7 @@ import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import {
   CLASSIFIED_LABEL,
   EMPTY_CLASSIFICATION,
+  sameClassification,
   NONE_VALUE,
   NORMAL_SIDE_LABELS,
   REPORT_GROUP_LABELS,
@@ -132,6 +133,8 @@ export default function Grootboek() {
   const [deleteTarget, setDeleteTarget] = useState<Grootboekrekening | null>(null);
   const [editing, setEditing] = useState<Grootboekrekening | null>(null);
   const [form, setForm] = useState<AccountForm>(EMPTY_FORM);
+  /** De classificatie zoals ze bij het openen van het dialoog stond. */
+  const [loadedClassification, setLoadedClassification] = useState<ClassificationForm>(EMPTY_CLASSIFICATION);
   const [classificatieFilter, setClassificatieFilter] = useState<ClassificationFilter>("alle");
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const { toast } = useToast();
@@ -210,25 +213,37 @@ export default function Grootboek() {
     // Een nieuwe rekening begint ongeclassificeerd. Er wordt niets afgeleid
     // uit nummer, omschrijving of categorie.
     setForm({ ...EMPTY_FORM });
+    setLoadedClassification({ ...EMPTY_CLASSIFICATION });
     setSubmitAttempted(false);
     setDialogOpen(true);
   };
 
   const openEdit = (r: Grootboekrekening) => {
     setEditing(r);
+    const loaded = classificationFromAccount(r);
+    setLoadedClassification(loaded);
     setForm({
       nummer: r.nummer.toString(),
       omschrijving: r.omschrijving,
       categorie: r.categorie,
       actief: r.actief,
-      ...classificationFromAccount(r),
+      ...loaded,
     });
     setSubmitAttempted(false);
     setDialogOpen(true);
   };
 
   const classificationIssues = validateClassification(form);
-  const classificationBlocked = hasClassificationIssues(classificationIssues);
+  /**
+   * Heeft iemand de classificatie in deze sessie werkelijk aangeraakt? Zo
+   * niet, dan wordt ze niet meegestuurd en blokkeert ze het opslaan niet.
+   * Dat houdt twee dingen heel: een `normal_side`/`report_sort` die het
+   * schema zonder overzicht toestaat overleeft een hernoeming, en een
+   * opgeslagen groep die deze versie niet kent maakt de rekening niet
+   * onbewerkbaar (nummer en omschrijving blijven gewoon te wijzigen).
+   */
+  const classificationTouched = !sameClassification(form, loadedClassification);
+  const classificationBlocked = classificationTouched && hasClassificationIssues(classificationIssues);
 
   const handleSave = async () => {
     setSubmitAttempted(true);
@@ -243,9 +258,11 @@ export default function Grootboek() {
       return;
     }
 
-    // Bij alleen-leesrechten gaan de classificatievelden niet mee: dan blijft
-    // staan wat er staat, in plaats van dat het formulier het overschrijft.
-    const classification = mayEditClassification ? buildClassificationPayload(form) : {};
+    // De classificatie gaat alleen mee als ze mag én als ze is aangeraakt.
+    // Bij een nieuwe rekening is er niets te behouden, dus daar gaat ze altijd
+    // mee (alle vier null wanneer niemand iets koos).
+    const classification =
+      mayEditClassification && (!editing || classificationTouched) ? buildClassificationPayload(form) : {};
 
     try {
       if (editing) {
@@ -672,13 +689,17 @@ export default function Grootboek() {
                       setForm((p) => onReportGroupChange(p, isReportGroup(v) ? v : null) as AccountForm)
                     }
                   >
+                    {/* De fout is meteen zichtbaar, niet pas na een poging tot
+                        opslaan: de opslaanknop is juist uitgeschakeld zolang
+                        de classificatie onvolledig is, dus zonder deze melding
+                        zou er niets uitleggen waaróm. Nagen doet het niet — dit
+                        veld bestaat pas zodra iemand een rapport koos. */}
                     <SelectTrigger
                       id="gb-report-group"
-                      aria-invalid={submitAttempted && !!classificationIssues.reportGroup}
+                      aria-invalid={!!classificationIssues.reportGroup}
+                      aria-describedby={classificationIssues.reportGroup ? "gb-report-group-error" : undefined}
                       className={cn(
-                        submitAttempted &&
-                          classificationIssues.reportGroup &&
-                          "border-destructive focus-visible:ring-destructive",
+                        classificationIssues.reportGroup && "border-destructive focus-visible:ring-destructive",
                       )}
                     >
                       <SelectValue placeholder="Kies een groep" />
@@ -689,8 +710,10 @@ export default function Grootboek() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {submitAttempted && classificationIssues.reportGroup && (
-                    <p className="text-xs text-destructive" role="alert">{classificationIssues.reportGroup}</p>
+                  {classificationIssues.reportGroup && (
+                    <p id="gb-report-group-error" className="text-xs text-destructive" role="alert">
+                      {classificationIssues.reportGroup}
+                    </p>
                   )}
                 </div>
               )}

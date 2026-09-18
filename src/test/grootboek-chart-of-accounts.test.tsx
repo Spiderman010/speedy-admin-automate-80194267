@@ -37,7 +37,13 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   useDeleteGrootboekrekening: () => ({ mutateAsync: deleteMutateAsync, isPending: state.deletePending }),
   useSeedGrootboekrekeningen: () => ({ mutate: seedMutate, isPending: state.seedPending }),
   // Balans/W&V PR 2: de pagina vraagt nu ook het classificatierecht op.
-  // Testinfrastructuur — geen enkele assertie in dit bestand is gewijzigd.
+  // Deze mock en de scrollIntoView-stub hieronder zijn testinfrastructuur. De
+  // drie payload-asserties in dit bestand zijn wél gewijzigd, omdat de payload
+  // sinds die PR classificatievelden kán dragen. Ze blijven exacte matches:
+  // bij een nieuwe rekening staan de vier velden er als `null` in (dat pint
+  // vast dat er niets automatisch wordt geclassificeerd), en bij het bewerken
+  // van een rekening waarvan de classificatie niet is aangeraakt ontbreken ze
+  // juist — die mag niet worden overschreven.
   useCanEditGrootboekClassification: () => ({ data: true }),
 }));
 
@@ -278,19 +284,16 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
     // proves the form was seeded from the row (not just nummer/omschrijving).
     fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    // Balans/W&V PR 2: de classificatie is hier niet aangeraakt, dus gaat ze
+    // niet mee — wat opgeslagen staat blijft staan. De exacte match bewijst
+    // tegelijk dat er niets is bíj verzonnen: categorie "omzet" leidt nergens
+    // een W&V-classificatie uit af.
     expect(updateMutateAsync).toHaveBeenCalledWith({
       id: "gb-edit",
       nummer: 8199,
       omschrijving: "Vrijgestelde omzet",
       categorie: "omzet",
       actief: false,
-      // Balans/W&V PR 2: de payload draagt nu ook de rapportageclassificatie.
-      // Deze rekening is niet geclassificeerd en blijft dat: categorie "omzet"
-      // leidt nergens toe een W&V-classificatie af.
-      statement_type: null,
-      report_group: null,
-      normal_side: null,
-      report_sort: null,
     });
   });
 
@@ -313,16 +316,14 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
     fireEvent.click(screen.getByRole("button", { name: /oude naam bewerken/i }));
     fireEvent.change(screen.getByLabelText("Omschrijving *"), { target: { value: "Nieuwe naam" } });
     fireEvent.click(screen.getByRole("button", { name: /^opslaan$/i }));
+    // Alleen de omschrijving wijzigt; de onaangeroerde classificatie gaat niet
+    // mee en wordt dus ook niet overschreven.
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledWith({
       id: "gb-save",
       nummer: 4700,
       omschrijving: "Nieuwe naam",
       categorie: "kosten",
       actief: true,
-      statement_type: null,
-      report_group: null,
-      normal_side: null,
-      report_sort: null,
     }));
     expect(toastSpy).toHaveBeenCalledWith({ title: "Grootboekrekening bijgewerkt" });
   });

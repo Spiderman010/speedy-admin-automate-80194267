@@ -74,6 +74,7 @@ import {
   onReportGroupChange,
   onStatementTypeChange,
   parseReportSort,
+  sameClassification,
   validateClassification,
 } from "@/lib/reporting-classification";
 import type { ClassificationForm } from "@/lib/reporting-classification";
@@ -309,6 +310,13 @@ describe("toestandsregels (puur)", () => {
     expect(onbekend).toBe("Opslaan is niet gelukt. Probeer het opnieuw.");
     expect(onbekend).not.toMatch(/42P01|relation/);
   });
+
+  it("28b. meldingen van de applicatie zelf blijven staan — die vertellen wat er te doen valt", () => {
+    // De hooks werpen deze letterlijk op; hij komt niet van de database en
+    // mag niet verdwijnen achter een neutrale tekst.
+    expect(classificationErrorMessage(new Error("Niet ingelogd"))).toBe("Niet ingelogd");
+    expect(readFileSync("src/hooks/useGrootboekrekeningen.ts", "utf8")).toContain('throw new Error("Niet ingelogd")');
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -425,6 +433,22 @@ describe("formulier — opslaan", () => {
     fireEvent.click(screen.getByRole("combobox", { name: /groep/i }));
     expect(await screen.findByRole("option", { name: "Netto-omzet" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Vaste activa" })).toBeNull();
+  });
+
+  it("8b. een onvolledige classificatie zegt meteen waaróm opslaan niet kan", async () => {
+    // Zonder deze melding zou de knop grijs zijn zonder enige uitleg: de
+    // opslaanknop is immers uitgeschakeld, dus een melding die pas ná een
+    // poging verschijnt, verschijnt nooit.
+    state.rekeningen = [makeAccount({ id: "gb-1" })];
+    renderGrootboek();
+    openEditDialog();
+
+    await chooseOption(/rapport/i, "Balans");
+    const melding = await screen.findByRole("alert");
+    expect(melding).toHaveTextContent(/kies een groep binnen balans/i);
+    const groep = screen.getByRole("combobox", { name: /groep/i });
+    expect(groep).toHaveAttribute("aria-invalid", "true");
+    expect(groep).toHaveAttribute("aria-describedby", "gb-report-group-error");
   });
 
   it("8. een onvolledige classificatie kan niet worden opgeslagen", async () => {
@@ -577,6 +601,83 @@ describe("formulier — opslaan", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe("onaangeroerde classificatie blijft met rust", () => {
+  it("een hernoeming van een ongeclassificeerde rekening wist geen verborgen zijde of sortering", async () => {
+    // Het schema staat normal_side/report_sort toe zonder overzicht; die twee
+    // velden zijn dan niet zichtbaar. Ze mogen niet sneuvelen bij een edit die
+    // er niets mee te maken heeft.
+    state.rekeningen = [
+      makeAccount({ id: "gb-1", omschrijving: "Oude naam", normal_side: "debet", report_sort: 42 }),
+    ];
+    renderGrootboek();
+    openEditDialog();
+    fireEvent.change(screen.getByLabelText(/omschrijving/i), { target: { value: "Nieuwe naam" } });
+    fireEvent.click(screen.getByRole("button", { name: /opslaan/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
+
+    const payload = updateMutateAsync.mock.calls[0][0];
+    expect(payload.omschrijving).toBe("Nieuwe naam");
+    // Niets aangeraakt = niets meegestuurd, dus niets overschreven.
+    expect(payload).not.toHaveProperty("normal_side");
+    expect(payload).not.toHaveProperty("report_sort");
+    expect(payload).not.toHaveProperty("statement_type");
+  });
+
+  it("een opgeslagen groep die deze versie niet kent blokkeert het bewerken van de rekening niet", async () => {
+    // De groepenlijst kan server-side groeien. Een oudere client mag zo'n
+    // rekening dan niet onbewerkbaar maken — nummer en omschrijving staan er
+    // los van, en de onbekende waarde blijft onaangeroerd staan.
+    state.rekeningen = [
+      makeAccount({ id: "gb-1", omschrijving: "Onbekend", statement_type: "balans", report_group: "groep_uit_de_toekomst" }),
+    ];
+    renderGrootboek();
+    openEditDialog();
+
+    fireEvent.change(screen.getByLabelText(/omschrijving/i), { target: { value: "Hernoemd" } });
+    const opslaan = screen.getByRole("button", { name: /opslaan/i });
+    expect(opslaan).not.toBeDisabled();
+    fireEvent.click(opslaan);
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
+
+    const payload = updateMutateAsync.mock.calls[0][0];
+    expect(payload.omschrijving).toBe("Hernoemd");
+    expect(payload).not.toHaveProperty("statement_type");
+    expect(payload).not.toHaveProperty("report_group");
+  });
+
+  it("maar zodra de classificatie wél wordt aangeraakt, gelden de regels onverkort", async () => {
+    state.rekeningen = [
+      makeAccount({ id: "gb-1", statement_type: "balans", report_group: "groep_uit_de_toekomst" }),
+    ];
+    renderGrootboek();
+    openEditDialog();
+
+    // Dezelfde rekening, nu mét een ingreep in de classificatie: onvolledig,
+    // dus geblokkeerd.
+    await chooseOption(/rapport/i, "Winst-en-verliesrekening");
+    expect(screen.getByRole("button", { name: /opslaan/i })).toBeDisabled();
+    // En na een geldige keuze gaat ze gewoon mee.
+    await chooseOption(/groep/i, "Belastingen");
+    fireEvent.click(screen.getByRole("button", { name: /opslaan/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
+    expect(updateMutateAsync.mock.calls[0][0]).toMatchObject({
+      statement_type: "winst_verlies",
+      report_group: "belastingen",
+    });
+  });
+
+  it("sameClassification vergelijkt sortering op waarde, niet op tekst", () => {
+    const base = { statementType: "balans" as const, reportGroup: "prive" as const };
+    expect(sameClassification(form({ ...base, reportSort: "7" }), form({ ...base, reportSort: "07" }))).toBe(true);
+    expect(sameClassification(form({ reportSort: "" }), form({ reportSort: "   " }))).toBe(true);
+    expect(sameClassification(form({ ...base, reportSort: "7" }), form({ ...base, reportSort: "8" }))).toBe(false);
+    // 0 is een waarde, leeg is er geen.
+    expect(sameClassification(form({ ...base, reportSort: "0" }), form({ ...base, reportSort: "" }))).toBe(false);
+    // Ongeldige invoer telt altijd als aangeraakt.
+    expect(sameClassification(form({ ...base, reportSort: "-1" }), form({ ...base, reportSort: "-1" }))).toBe(false);
+  });
+});
+
 describe("rechten", () => {
   it("25. read_only kan de classificatie zien maar niet wijzigen", () => {
     state.canClassify = false;

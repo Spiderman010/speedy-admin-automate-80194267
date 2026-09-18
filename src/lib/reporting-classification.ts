@@ -218,6 +218,34 @@ export function parseReportSort(raw: string): ReportSortParse {
   return { kind: "ok", value };
 }
 
+/**
+ * Zijn twee classificaties dezelfde? De sortering wordt op waarde vergeleken,
+ * niet op tekst, zodat "" en "  " gelijk zijn en "07" gelijk is aan "7".
+ *
+ * Hiermee kan de pagina onderscheiden of iemand de classificatie werkelijk
+ * heeft aangeraakt. Dat is belangrijk voor twee dingen die anders stilletjes
+ * misgaan: een onaangeroerde classificatie mag niet worden overschreven (een
+ * `normal_side` of `report_sort` die het schema toestaat zonder overzicht zou
+ * bij een hernoeming verdwijnen), en een opgeslagen waarde die deze versie
+ * niet kent mag het bewerken van nummer of omschrijving niet blokkeren.
+ */
+export function sameClassification(a: ClassificationForm, b: ClassificationForm): boolean {
+  const sortValue = (form: ClassificationForm): number | null => {
+    const parsed = parseReportSort(form.reportSort);
+    return parsed.kind === "ok" ? parsed.value : Number.NaN;
+  };
+  const aSort = sortValue(a);
+  const bSort = sortValue(b);
+  return (
+    a.statementType === b.statementType &&
+    a.reportGroup === b.reportGroup &&
+    a.normalSide === b.normalSide &&
+    // NaN (ongeldige invoer) is nooit gelijk aan wat dan ook: dan is er dus
+    // wél getypt en telt de classificatie als aangeraakt.
+    ((aSort === null && bSort === null) || aSort === bSort)
+  );
+}
+
 export interface ClassificationIssues {
   reportGroup?: string;
   reportSort?: string;
@@ -310,6 +338,13 @@ export function matchesClassificationFilter(
 }
 
 /**
+ * Meldingen die de hooks zelf opwerpen (src/hooks/useGrootboekrekeningen.ts).
+ * Een expliciete lijst, geen heuristiek: alleen wat hier letterlijk in staat
+ * wordt doorgegeven, al het andere krijgt een neutrale tekst.
+ */
+const APP_ERROR_MESSAGES: ReadonlySet<string> = new Set(["Niet ingelogd"]);
+
+/**
  * Een databasefout wordt nooit rauw getoond: een CHECK-naam, een SQLSTATE of
  * een PostgreSQL-zin is geen boodschap voor een gebruiker en lekt de
  * schemastructuur. De bekende weigeringen krijgen hun eigen Nederlandse tekst,
@@ -319,6 +354,11 @@ export function classificationErrorMessage(error: unknown): string {
   const raw = error as { code?: unknown; message?: unknown } | null;
   const code = typeof raw?.code === "string" ? raw.code : "";
   const message = typeof raw?.message === "string" ? raw.message : "";
+
+  // Meldingen die de applicatie zélf opwerpt, staan hier met naam en toenaam.
+  // Ze komen nooit van de database, dus ze kunnen niets lekken — en ze zijn
+  // het enige dat de gebruiker vertelt wat er te doen valt.
+  if (APP_ERROR_MESSAGES.has(message)) return message;
 
   if (code === "42501" || /row-level security|permission denied/i.test(message)) {
     return "Je hebt geen rechten om de rapportageclassificatie te wijzigen.";
