@@ -195,7 +195,11 @@ export default function Balans() {
           <span
             className={cn(
               "font-mono text-base font-bold tabular-nums",
-              balanceSheet.differenceCents !== 0 && "text-destructive",
+              // Massieve chip met de bijbehorende foreground: dat contrast is
+              // per constructie goed, ook in donker thema. `text-destructive`
+              // op een destructive-tint haalde daar de 4,5:1 niet.
+              balanceSheet.differenceCents !== 0 &&
+                "rounded-md bg-destructive px-2 py-0.5 text-destructive-foreground",
             )}
           >
             {formatCents(balanceSheet.differenceCents)}
@@ -237,7 +241,14 @@ export default function Balans() {
         selection={selection}
         onSelectionChange={setSelection}
         idPrefix="balans"
-        status={ready ? <FinancialCompletenessBadge completeness={ready.completeness} /> : null}
+        status={
+          ready ? (
+            <span className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Volledigheid</span>
+              <FinancialCompletenessBadge completeness={ready.completeness} />
+            </span>
+          ) : null
+        }
         actions={
           <Button
             type="button"
@@ -248,7 +259,7 @@ export default function Balans() {
             disabled={!exportable}
             data-testid="balans-export"
           >
-            <Download className="mr-2 h-4 w-4" />CSV
+            <Download className="mr-2 h-4 w-4" />CSV exporteren
           </Button>
         }
       />

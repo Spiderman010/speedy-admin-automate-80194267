@@ -20,8 +20,9 @@ import type {
  * en de groepsvolgorde die van de engine.
  *
  * Hiërarchie, van licht naar zwaar: rekeningregel → subtotaal → eindtotaal.
- * Groepskoppen zijn een `<th scope="colgroup">` in een eigen band, zodat een
- * schermlezer ze als kop van hun blok aankondigt in plaats van als lege cel.
+ * Elke groep is een eigen `<tbody>` met een `<th scope="rowgroup">` als kop,
+ * zodat een schermlezer die kop aan de regels eronder koppelt in plaats van
+ * hem als lege cel voor te lezen.
  *
  * Systeemregels (resultaatregels) zijn geen grootboekrekening: ze krijgen een
  * eigen opmaak, geen rekeningnummer en NOOIT een drilldown-link.
@@ -60,16 +61,16 @@ export function FinancialStatementTable({
         </caption>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead scope="col" className={cn(CELL, "w-20")}>Rek.</TableHead>
+            <TableHead scope="col" className={cn(CELL, "w-20")}>Rekening</TableHead>
             <TableHead scope="col" className={cn(CELL, "min-w-[180px]")}>Omschrijving</TableHead>
             <TableHead scope="col" className={cn(CELL, "w-36 text-right")}>Bedrag</TableHead>
           </TableRow>
         </TableHeader>
-        <TableBody>
-          {groups.map((group) => (
-            <GroupRows key={group.key} group={group} accountPath={accountPath} />
-          ))}
+        {groups.map((group) => (
+          <GroupRows key={group.key} group={group} accountPath={accountPath} />
+        ))}
 
+        <TableBody>
           {systemLines.map((line) => (
             <TableRow
               key={line.kind}
@@ -82,16 +83,16 @@ export function FinancialStatementTable({
               {/* Geen rekeningnummer: dit ís geen grootboekrekening. Zelfde
                   streepje als de kolom elders gebruikt, decoratief voor een
                   schermlezer. */}
-              <TableCell className={cn(CELL, "font-mono text-xs text-muted-foreground")} aria-hidden="true">
-                —
+              <TableCell className={cn(CELL, "font-mono text-xs text-muted-foreground")}>
+                <span aria-hidden="true">—</span>
               </TableCell>
               <TableCell className={CELL}>
                 <span className="italic text-muted-foreground">{line.label}</span>
-                <Badge variant="outline" className="ml-2 align-middle text-[10px] font-normal">
+                <Badge variant="outline" className="ml-2 align-middle text-xs font-normal">
                   Berekend
                 </Badge>
               </TableCell>
-              <Bedrag cents={line.displayedCents} muted />
+              <Bedrag cents={line.displayedCents} />
             </TableRow>
           ))}
         </TableBody>
@@ -119,11 +120,12 @@ function GroupRows({
   accountPath: (accountId: string) => string;
 }) {
   return (
-    <>
-      {/* Eigen band + th: kop van dit blok, ook voor een schermlezer. */}
-      <TableRow className="border-0 bg-muted/50 hover:bg-muted/50" data-testid="statement-group" data-group={group.key}>
+    // Eigen <tbody> per groep: dan is de kop een rowgroup-kop die een
+    // schermlezer werkelijk aan de regels eronder koppelt.
+    <TableBody>
+      <TableRow className="border-0 bg-muted/30 hover:bg-muted/30" data-testid="statement-group" data-group={group.key}>
         <th
-          scope="colgroup"
+          scope="rowgroup"
           colSpan={3}
           className={cn(CELL, "text-left text-xs font-semibold uppercase tracking-wide text-foreground")}
         >
@@ -141,12 +143,11 @@ function GroupRows({
           <TableCell className={cn(CELL, "font-mono text-xs tabular-nums text-muted-foreground")}>
             {line.accountNumber ?? "—"}
           </TableCell>
-          <TableCell className={cn(CELL, "max-w-[260px]")}>
+          <TableCell className={cn(CELL, "max-w-[280px]")}>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <Link
                 to={accountPath(line.accountId)}
-                className="min-w-0 truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                title={accountLabel(line.accountNumber, line.accountName)}
+                className="min-w-0 break-words rounded-sm underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label={`Open mutaties van ${accountLabel(line.accountNumber, line.accountName)}`}
               >
                 {line.accountName}
@@ -154,7 +155,7 @@ function GroupRows({
               {line.isContra && (
                 <Badge
                   variant="outline"
-                  className="text-[10px] font-normal"
+                  className="text-xs font-normal"
                   title="Deze rekening staat tegengesteld aan haar kolom en gaat er dus van af."
                 >
                   Tegenrekening
@@ -183,7 +184,7 @@ function GroupRows({
         <TableCell className={cn(CELL, "text-sm font-medium")}>Subtotaal {group.label}</TableCell>
         <Bedrag cents={group.totalCents} emphasis />
       </TableRow>
-    </>
+    </TableBody>
   );
 }
 
@@ -191,12 +192,10 @@ function Bedrag({
   cents,
   emphasis,
   strong,
-  muted,
 }: {
   cents: number;
   emphasis?: boolean;
   strong?: boolean;
-  muted?: boolean;
 }) {
   return (
     <TableCell
@@ -207,7 +206,6 @@ function Bedrag({
         "whitespace-nowrap text-right font-mono text-sm tabular-nums",
         emphasis && "font-medium",
         strong && "text-base font-bold",
-        muted && "text-muted-foreground",
       )}
     >
       {formatCents(cents)}

@@ -305,20 +305,37 @@ describe("opmaak en responsiviteit", () => {
     expect(tabel.querySelector("thead")).not.toBeNull();
     expect(tabel.querySelector("tbody")).not.toBeNull();
     expect(tabel.querySelector("tfoot")).not.toBeNull();
-    const groepskop = screen.getAllByTestId("statement-group")[0].querySelector("th");
+    // Elke groep is een eigen <tbody> met een rowgroup-kop, zodat een
+    // schermlezer die kop aan de regels eronder koppelt. `colgroup` zou naar
+    // een <colgroup>-element verwijzen dat hier niet bestaat.
+    const groepRij = screen.getAllByTestId("statement-group")[0];
+    const groepskop = groepRij.querySelector("th");
     expect(groepskop).not.toBeNull();
-    expect(groepskop).toHaveAttribute("scope", "colgroup");
+    expect(groepskop).toHaveAttribute("scope", "rowgroup");
+    expect(groepRij.closest("tbody")).not.toBeNull();
+    expect(tabel.querySelectorAll("tbody").length).toBeGreaterThan(1);
     // Geen div-grid als vervanging van een tabel.
     expect(bronnen.tabel).not.toMatch(/role="(grid|table|row|cell)"/);
   });
 
+  /**
+   * Bedragen reizen door deze laag onder twee namen: als engineveld
+   * (`displayedCents`, `totalCents`, …) én als de kale prop `cents` van de
+   * Bedrag-cel. Een bewaking die alleen op `Cents` met hoofdletter let, kijkt
+   * dus langs de enige variabele waar het werkelijk mis zou gaan.
+   */
+  const REKENT = [
+    /\bcents\b\s*[+\-*/]\s/i, //        cents - x   /  totalCents + y
+    /[+\-*/]=\s*[\w.]*cents\b/i, //      t += line.displayedCents
+    /[-+]\s*[\w.]*cents\b/i, //           -cents  (tekenomklap)
+    /\.reduce\(/, //                      eigen som
+    /Math\.(abs|round|floor|ceil|max|min)\(/, //  eigen afronding/absolutie
+    /\.toFixed\(/, //                     eigen opmaak
+    /Intl\.NumberFormat/, //              tweede formatter naast formatCents
+    /\.(filter|slice|sort)\(/, //         regels weglaten of herordenen
+  ];
+
   it("14. er komt geen rekenwerk in de UI bij", () => {
-    const REKENT = [
-      /(?:\.|\b)\w*Cents\b\s*[+\-*/]\s/,
-      /[+\-*/]=\s*[\w.]*Cents\b/,
-      /[-+]\s*[\w.]*Cents\b/,
-      /\.reduce\(/,
-    ];
     const strip = (src: string) =>
       src.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
     for (const [naam, src] of Object.entries(bronnen)) {
@@ -328,16 +345,37 @@ describe("opmaak en responsiviteit", () => {
       expect(strip(src), naam).not.toMatch(/buildAccountReport|buildFinancialStatements\(|toCents\(/);
     }
   });
+  it("14b. die bewaking slaat werkelijk aan op de manieren waarop hier gerekend zóu worden", () => {
+    const overtredingen = [
+      "formatCents(-cents)",
+      "formatCents(cents / 100)",
+      "formatCents(Math.abs(group.totalCents))",
+      "formatCents(Math.round(cents))",
+      "(cents / 100).toFixed(2)",
+      "new Intl.NumberFormat('nl-NL').format(cents)",
+      "group.lines.filter((l) => l.displayedCents !== 0)",
+      "accounts.slice(0, 5)",
+      "[...group.lines].sort(vergelijk)",
+      "t += l.displayedCents",
+      "a.totalCents + b.totalCents",
+      "lines.reduce((s, l) => s + l.displayedCents, 0)",
+    ];
+    for (const regel of overtredingen) {
+      expect(REKENT.some((p) => p.test(regel)), regel).toBe(true);
+    }
+  });
 });
 
 describe("scope", () => {
-  it("15. de rekenlagen zijn byte-voor-byte ongewijzigd", () => {
+  it("15. de rekenlagen zijn byte-voor-byte ongewijzigd", (ctx) => {
     let toon: (p: string) => string;
     try {
       execFileSync("git", ["rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] });
       toon = (p) => execFileSync("git", ["show", `origin/main:${p}`], { encoding: "utf8" });
     } catch {
-      return; // origin/main niet beschikbaar: overslaan, niet vals slagen
+      // Zichtbaar overslaan, niet stilzwijgend groen worden.
+      ctx.skip();
+      return;
     }
     for (const p of [
       "src/lib/financial-statements.ts",
@@ -350,13 +388,14 @@ describe("scope", () => {
     }
   });
 
-  it("16/17. geen dependency-, migratie-, schema- of typewijziging", () => {
+  it("16/17. geen dependency-, migratie-, schema- of typewijziging", (ctx) => {
     let changed: string[];
     try {
       changed = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
         encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
       }).split("\n").filter(Boolean);
     } catch {
+      ctx.skip();
       return;
     }
     expect(changed).not.toContain("package.json");

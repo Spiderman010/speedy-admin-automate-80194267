@@ -87,13 +87,13 @@ export function UnclassifiedSection({ accounts, amountOf, testId = "statement-un
 
       {/* Altijd uitgeklapt: deze rijen mogen niet weg te klikken zijn. */}
       <div className="-mx-1 overflow-x-auto px-1">
-        <Table className="min-w-[560px]">
+        <Table className="min-w-[620px]">
           <caption className="sr-only">
             Grootboekrekeningen met activiteit die geen plaats in dit rapport hebben, met reden.
           </caption>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead scope="col" className="px-3 py-1.5 w-20">Rek.</TableHead>
+              <TableHead scope="col" className="px-3 py-1.5 w-20">Rekening</TableHead>
               <TableHead scope="col" className="px-3 py-1.5 min-w-[180px]">Omschrijving</TableHead>
               <TableHead scope="col" className="px-3 py-1.5 w-36 text-right">Bedrag</TableHead>
               <TableHead scope="col" className="px-3 py-1.5 min-w-[200px]">Reden</TableHead>
@@ -110,11 +110,13 @@ export function UnclassifiedSection({ accounts, amountOf, testId = "statement-un
                 <TableCell className="px-3 py-1.5 font-mono text-xs tabular-nums text-muted-foreground">
                   {a.accountNumber ?? "—"}
                 </TableCell>
-                <TableCell className="max-w-[240px] px-3 py-1.5">
+                {/* Bewust géén truncate: dit is de tabel die zegt wat er nog
+                    moet gebeuren, dus de omschrijving moet leesbaar zijn — ook
+                    op een touchscreen, waar een title-tooltip niet bestaat. */}
+                <TableCell className="px-3 py-1.5">
                   <Link
                     to={`/grootboek/saldi/${a.accountId}`}
-                    className="block min-w-0 truncate rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    title={accountLabel(a.accountNumber, a.accountName)}
+                    className="rounded-sm break-words underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label={`Open mutaties van ${accountLabel(a.accountNumber, a.accountName)}`}
                   >
                     {a.accountName}
@@ -124,7 +126,7 @@ export function UnclassifiedSection({ accounts, amountOf, testId = "statement-un
                   {formatCents(amountOf(a))}
                 </TableCell>
                 <TableCell className="px-3 py-1.5">
-                  <Badge variant="outline" className="whitespace-normal text-left text-[10px] font-normal" data-reason={a.reason}>
+                  <Badge variant="outline" className="whitespace-normal text-left text-xs font-normal" data-reason={a.reason}>
                     {UNCLASSIFIED_REASON_LABELS[a.reason]}
                   </Badge>
                 </TableCell>

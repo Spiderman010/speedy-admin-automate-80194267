@@ -54,7 +54,7 @@ export function FinancialReportHeader({
 
   return (
     <section
-      aria-label="Rapportinstellingen"
+      aria-label="Rapportinstellingen en status"
       className="mb-4 rounded-lg border bg-card shadow-sm"
       data-testid={`${idPrefix}-toolbar`}
     >

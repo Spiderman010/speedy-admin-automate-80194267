@@ -139,22 +139,25 @@ export default function WinstVerlies() {
         {/* Opbrengsten en kosten zijn de opmaat; het resultaat is de conclusie
             en krijgt daarom de meeste nadruk. De duiding staat er als WOORD
             bij — kleur alleen zou niet leesbaar zijn voor iedereen. */}
-        <dl className="overflow-hidden rounded-lg border" data-testid="wv-summary">
-          <div className="grid divide-y sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-            <div className="flex items-center justify-between gap-2 px-4 py-2.5">
-              <dt className="text-sm text-muted-foreground">Opbrengsten</dt>
-              <dd className="font-mono text-sm tabular-nums" data-testid="wv-revenue">
-                {formatCents(profitLoss.revenueCents)}
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-2 px-4 py-2.5">
-              <dt className="text-sm text-muted-foreground">Kosten</dt>
-              <dd className="font-mono text-sm tabular-nums" data-testid="wv-expense">
-                {formatCents(profitLoss.expenseCents)}
-              </dd>
-            </div>
+        {/* `dl > div > (dt, dd)` is het geldige contentmodel; de grid staat
+            daarom op de dl zelf en niet op een tussenliggende div. */}
+        <dl
+          className="grid overflow-hidden rounded-lg border sm:grid-cols-2"
+          data-testid="wv-summary"
+        >
+          <div className="flex items-center justify-between gap-2 border-b px-4 py-2.5 sm:border-r">
+            <dt className="text-sm text-muted-foreground">Opbrengsten</dt>
+            <dd className="font-mono text-sm tabular-nums" data-testid="wv-revenue">
+              {formatCents(profitLoss.revenueCents)}
+            </dd>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-foreground/20 bg-muted/40 px-4 py-3">
+          <div className="flex items-center justify-between gap-2 border-b px-4 py-2.5">
+            <dt className="text-sm text-muted-foreground">Kosten</dt>
+            <dd className="font-mono text-sm tabular-nums" data-testid="wv-expense">
+              {formatCents(profitLoss.expenseCents)}
+            </dd>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-foreground/20 bg-muted/40 px-4 py-3 sm:col-span-2">
             <dt className="text-sm font-semibold uppercase tracking-wide">Resultaat</dt>
             <dd
               className="flex items-baseline gap-2 font-mono text-lg font-bold tabular-nums"
@@ -193,7 +196,14 @@ export default function WinstVerlies() {
         selection={selection}
         onSelectionChange={setSelection}
         idPrefix="wv"
-        status={ready ? <FinancialCompletenessBadge completeness={ready.completeness} /> : null}
+        status={
+          ready ? (
+            <span className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Volledigheid</span>
+              <FinancialCompletenessBadge completeness={ready.completeness} />
+            </span>
+          ) : null
+        }
         actions={
           <Button
             type="button"
@@ -204,7 +214,7 @@ export default function WinstVerlies() {
             disabled={!exportable}
             data-testid="wv-export"
           >
-            <Download className="mr-2 h-4 w-4" />CSV
+            <Download className="mr-2 h-4 w-4" />CSV exporteren
           </Button>
         }
       />
