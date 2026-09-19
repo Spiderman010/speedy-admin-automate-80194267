@@ -113,9 +113,9 @@ vi.mock("@/hooks/useGrootboekrekeningen", () => ({
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
   usePurchaseInvoices: () => ({
     data: [
-      { id: "inv-1", invoice_date: "2026-07-25" },
-      { id: "inv-2", invoice_date: "2026-07-20" },
-      { id: "inv-3", invoice_date: "2026-07-10" },
+      INVOICES["inv-1"],
+      INVOICES["inv-2"],
+      INVOICES["inv-3"],
     ],
   }),
 }));
@@ -177,6 +177,23 @@ beforeEach(() => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("de werkbank volgt de factuur uit de route", () => {
+  it("0. een wachtrijklik wisselt via de route en initialiseert alle panelen voor die factuur", async () => {
+    renderRoute("inv-2");
+    await wachtOpFactuur("Beta Leverancier BV");
+    const queue = within(screen.getByTestId("invoice-queue"));
+    expect(queue.getByRole("button", { name: /Beta Leverancier BV/ })).toHaveAttribute("aria-current", "page");
+
+    fireEvent.click(queue.getByRole("button", { name: /Gamma Leverancier BV/ }));
+
+    await wachtOpFactuur("Gamma Leverancier BV");
+    expect(screen.getByDisplayValue("Gamma-regel")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Beta-regel")).toBeNull();
+    await waitFor(() => expect(docFrame()?.src).toContain("gamma.pdf"));
+    const nextQueue = within(screen.getByTestId("invoice-queue"));
+    expect(nextQueue.getByRole("button", { name: /Gamma Leverancier BV/ })).toHaveAttribute("aria-current", "page");
+    expect(nextQueue.getByRole("button", { name: /Beta Leverancier BV/ })).not.toHaveAttribute("aria-current");
+  });
+
   it("1. bij 'Volgende' wisselen kop, regels én document mee", async () => {
     renderRoute("inv-2");
     await wachtOpFactuur("Beta Leverancier BV");

@@ -74,9 +74,9 @@ const state = {
   // Three invoices for the same client; sorted desc by date the current one
   // (inv-2, 07-20) sits in the middle → both prev (inv-1) and next (inv-3).
   allInvoices: [
-    { id: "inv-1", invoice_date: "2026-07-25" },
-    { id: "inv-2", invoice_date: "2026-07-20" },
-    { id: "inv-3", invoice_date: "2026-07-10" },
+    { ...baseInvoice, id: "inv-1", supplier: "Alfa BV", invoice_number: "A-001", invoice_date: "2026-07-25" },
+    { ...baseInvoice, id: "inv-2" },
+    { ...baseInvoice, id: "inv-3", supplier: "Gamma BV", invoice_number: "G-003", invoice_date: "2026-07-10" },
   ],
   signedUrl: "https://files.example/invoice.pdf" as string | null,
 };
@@ -173,9 +173,9 @@ beforeEach(() => {
   state.storedLines = [{ ...baseLine }];
   state.clients = [{ id: "client-1", name: "Klant Een", btw_vrijgesteld: false }];
   state.allInvoices = [
-    { id: "inv-1", invoice_date: "2026-07-25" },
-    { id: "inv-2", invoice_date: "2026-07-20" },
-    { id: "inv-3", invoice_date: "2026-07-10" },
+    { ...baseInvoice, id: "inv-1", supplier: "Alfa BV", invoice_number: "A-001", invoice_date: "2026-07-25" },
+    { ...baseInvoice, id: "inv-2" },
+    { ...baseInvoice, id: "inv-3", supplier: "Gamma BV", invoice_number: "G-003", invoice_date: "2026-07-10" },
   ];
   state.signedUrl = "https://files.example/invoice.pdf";
 });
@@ -510,14 +510,33 @@ describe("PurchaseInvoiceWorkspace — save/approve flows", () => {
 
 // ── 31–32: layout ───────────────────────────────────────────────────────────
 describe("PurchaseInvoiceWorkspace — layout", () => {
-  it("31. twee-pane layout is responsive: één kolom, twee kolommen vanaf lg, sticky documentpaneel", async () => {
+  it("31. drieluik-layout toont wachtrij, verwerking en sticky documentpaneel", async () => {
     await renderReady();
     const grid = screen.getByTestId("workspace-grid");
     expect(grid.className).toContain("grid-cols-1");
-    expect(grid.className).toMatch(/lg:grid-cols-\[minmax\(0,3fr\)_minmax\(0,2fr\)\]/);
+    expect(grid.className).toMatch(/min-\[1360px\]:grid-cols-\[13rem_minmax\(30rem,1.25fr\)_minmax\(21rem,1fr\)\]/);
+    expect(screen.getByTestId("invoice-queue")).toBeInTheDocument();
     const doc = screen.getByTestId("document-panel");
     expect(doc.className).toContain("lg:sticky");
     expect(doc.className).toContain("h-[70vh]");
+  });
+
+  it("31b. wachtrij toont bestaande factuurdata en markeert de route-id als actief", async () => {
+    await renderReady();
+    const queue = within(screen.getByTestId("invoice-queue"));
+    expect(queue.getByText("Alfa BV")).toBeInTheDocument();
+    expect(queue.getByText("Test Leverancier BV")).toBeInTheDocument();
+    expect(queue.getByText("F-2026-002")).toBeInTheDocument();
+    expect(queue.getByText(/121,00/)).toBeInTheDocument();
+    expect(queue.getByRole("button", { name: /Test Leverancier BV/ })).toHaveAttribute("aria-current", "page");
+    expect(queue.getByRole("button", { name: /Alfa BV/ })).not.toHaveAttribute("aria-current");
+  });
+
+  it("31c. wachtrij navigeert uitsluitend via de route van de gekozen factuur", async () => {
+    await renderReady();
+    const queue = within(screen.getByTestId("invoice-queue"));
+    fireEvent.click(queue.getByRole("button", { name: /Gamma BV/ }));
+    expect(navigateSpy).toHaveBeenCalledWith("/facturen/inkoop/inv-3");
   });
 
   it("32. sticky action bar bevat alle acties en overlapt de sidebar niet (sticky, niet fixed)", async () => {
