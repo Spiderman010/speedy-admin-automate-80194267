@@ -20,6 +20,7 @@ import Beginbalans from "./pages/Beginbalans";
 import GrootboekSaldi from "./pages/GrootboekSaldi";
 import GrootboekHistorisch from "./pages/GrootboekHistorisch";
 import GrootboekIntegriteit from "./pages/GrootboekIntegriteit";
+import DiagnosticsAccounting from "./pages/DiagnosticsAccounting";
 import Balans from "./pages/Balans";
 import WinstVerlies from "./pages/WinstVerlies";
 import ProefSaldibalans from "./pages/ProefSaldibalans";
@@ -97,6 +98,8 @@ const App = () => (
                   "Grootboek" actief). */}
               <Route path="/grootboek/balans" element={<Balans />} />
               <Route path="/grootboek/winst-verlies" element={<WinstVerlies />} />
+              {/* Interne diagnostiekconsole; geen klantfunctie, geen nav-item. */}
+              <Route path="/diagnostics/accounting" element={<DiagnosticsAccounting />} />
               <Route path="/vraagposten" element={<Vraagposten />} />
               <Route path="/ai-chat" element={<AIChat />} />
               <Route path="/instellingen" element={<Instellingen />} />
