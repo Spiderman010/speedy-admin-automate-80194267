@@ -234,30 +234,29 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         isBtwVrijgesteld,
       });
       if (prefill) {
-        // Een ECHTE rekening is er alleen wanneer `ledger_account_id` toevallig
-        // naar een bestaande grootboekrekening wijst. Dat is een exacte
-        // id-treffer, geen afleiding.
-        const ledger = ledgers?.find((g) => g.id === invoice.ledger_account_id);
-        // Anders is `ledger_account_text` niet meer dan tekst uit een oude
-        // factuur. Die mag NOOIT als de gekozen rekening in de kiezer staan:
-        // dan lijkt er een rekening geselecteerd terwijl er geen id achter zit,
-        // en de boekingsfunctie weigert de regel later alsnog. De tekst blijft
-        // zichtbaar als verwijzing, en levert hooguit een te bevestigen
-        // suggestie op.
-        const legacyLabel = ledger ? null : invoice.ledger_account_text?.trim() || null;
-        const suggestie = ledger
-          ? null
-          : suggestLedgerAccountFromLegacyText(legacyLabel, ledgers ?? [], invoice.client_id);
+        // `purchase_invoices.ledger_account_id` wordt hier NIET gebruikt, en mag
+        // dat ook nooit: die kolom hoort bij het id-domein van `ledger_accounts`,
+        // terwijl een boekingsregel een id uit `grootboekrekeningen` nodig heeft.
+        // Twee verschillende tabellen, twee verschillende domeinen. Zouden twee
+        // uuid's uit die domeinen ooit gelijk zijn, dan is dat toeval en geen
+        // relatie — en dat toeval als "gekozen rekening" behandelen zou een
+        // boeking op een willekeurige rekening kunnen opleveren.
+        //
+        // Een afgeleide regel begint dus ALTIJD zonder rekening. De enige
+        // toegestane weg loopt via `ledger_account_text`: exact nummer, precies
+        // één boekbare kandidaat, en de gebruiker bevestigt zelf.
+        const legacyLabel = invoice.ledger_account_text?.trim() || null;
+        const suggestie = suggestLedgerAccountFromLegacyText(legacyLabel, ledgers ?? [], invoice.client_id);
         nextLines = [{
           omschrijving: invoice.supplier || "Factuurregel",
           amount_input: formatAmountInput(prefill.amount_excl),
           btw_percentage: String(prefill.btw_percentage),
-          grootboekrekening_id: ledger ? ledger.id : null,
-          grootboek_label: ledger ? `${ledger.nummer} - ${ledger.omschrijving}` : "",
+          grootboekrekening_id: null,
+          grootboek_label: "",
           derived: true,
           legacyLabel,
           suggestedAccount:
-            suggestie?.kind === "uniek" ? { id: suggestie.account.id, label: suggestie.label } : null,
+            suggestie.kind === "uniek" ? { id: suggestie.account.id, label: suggestie.label } : null,
         }];
       } else {
         nextLines = [];

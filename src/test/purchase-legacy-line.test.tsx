@@ -251,6 +251,40 @@ describe("de suggestie", () => {
 
     expect(screen.queryByTestId("legacy-account-hint")).toBeNull();
   });
+
+  it("11b. ledger_account_id telt NOOIT als gekozen rekening — ook niet bij een gelijke uuid", async () => {
+    // `purchase_invoices.ledger_account_id` hoort bij het id-domein van
+    // `ledger_accounts`. Hier is de waarde toevallig gelijk aan de id van een
+    // bestaande grootboekrekening — precies het geval waarin de vorige versie
+    // die rekening als "gekozen" toonde. Toeval is geen relatie: er mag niets
+    // geselecteerd zijn.
+    state.invoice = { ...legacyInvoice, ledger_account_id: KANTOOR.id, ledger_account_text: null };
+    await renderReady();
+
+    expect(ledgerTrigger()).toHaveTextContent(/selecteer rekening/i);
+    expect(ledgerTrigger()).not.toHaveTextContent("4400 - Kantoorkosten");
+    // En het blijft dus geblokkeerd tot iemand zelf een rekening kiest.
+    expect(approveBtn()).toBeDisabled();
+    expect(blockers()).toHaveTextContent("Kies een grootboekrekening voor elke boekingsregel.");
+  });
+
+  it("11c. een gelijke uuid levert ook geen suggestie op; alleen de tekst telt", async () => {
+    // Zelfde botsing, maar nu mét legacy-tekst die naar een ándere rekening
+    // wijst. De suggestie moet uit de TEKST komen (4602), niet uit het id.
+    state.invoice = { ...legacyInvoice, ledger_account_id: KANTOOR.id, ledger_account_text: "4602 - Telefoonkosten" };
+    await renderReady();
+
+    expect(ledgerTrigger()).toHaveTextContent(/selecteer rekening/i);
+    expect(screen.getByTestId("legacy-account-confirm")).toHaveTextContent("Bevestig 4602 - Telefoonkosten");
+    expect(screen.getByTestId("legacy-account-confirm")).not.toHaveTextContent("Kantoorkosten");
+
+    // En bevestigen wijst de rekening uit de TEKST toe, niet die uit het id.
+    fireEvent.click(screen.getByTestId("legacy-account-confirm"));
+    await waitFor(() => expect(approveBtn()).toBeEnabled());
+    fireEvent.click(saveBtn());
+    await waitFor(() => expect(atomicMutateAsync).toHaveBeenCalledTimes(1));
+    expect(atomicMutateAsync.mock.calls[0][0].lines[0].grootboekrekening_id).toBe(TELEFOON.id);
+  });
 });
 
 describe("bevestigen en opslaan", () => {
@@ -340,6 +374,42 @@ describe("statische grenzen", () => {
     // bron van grootboekrekening_id.
     expect(workspace).not.toMatch(/grootboekrekening_id:\s*invoice\.ledger_account_(id|text)/);
     expect(workspace).not.toMatch(/grootboek_label:.*ledger_account_text/);
+  });
+
+  it("17b. ledger_account_id wordt nooit tegen een grootboekrekening-id gelegd", () => {
+    // `purchase_invoices.ledger_account_id` hoort bij het id-domein van
+    // `ledger_accounts`; een boekingsregel heeft een id uit
+    // `grootboekrekeningen` nodig. Gelijkheid tussen die twee domeinen zou
+    // toeval zijn, geen relatie — en dat toeval als gekozen rekening
+    // behandelen kan een boeking op een willekeurige rekening opleveren.
+    // Deze bewaking houdt die vergelijking eruit, ook in de toekomst.
+    const strip = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+        .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+
+    for (const { p, code } of bronnen) {
+      const schoon = strip(code);
+      // g.id === invoice.ledger_account_id, en elke schrijfwijze daarvan.
+      expect(schoon, p).not.toMatch(/\.id\s*===\s*\w+\.ledger_account_id/);
+      expect(schoon, p).not.toMatch(/\w+\.ledger_account_id\s*===\s*\w+\.id/);
+      // Of het omgekeerde: het id als rekening toewijzen.
+      expect(schoon, p).not.toMatch(/grootboekrekening_id[^;\n]*ledger_account_id/);
+      expect(schoon, p).not.toMatch(/ledger_account_id[^;\n]*grootboekrekening_id/);
+      // Geen zoekactie in het rekeningschema op dat id.
+      expect(schoon, p).not.toMatch(/(find|filter|some)\([^)]*ledger_account_id/);
+    }
+  });
+
+  it("17c. de afgeleide regel begint per definitie zonder rekening", () => {
+    const strip = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, "").split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    const workspace = strip(bronnen[0].code);
+    // In het prefill-blok staan letterlijk null en "", geen voorwaardelijke
+    // toewijzing uit een andere bron.
+    const prefillBlok = workspace.slice(workspace.indexOf("if (prefill)"), workspace.indexOf("derived: true"));
+    expect(prefillBlok).toMatch(/grootboekrekening_id:\s*null/);
+    expect(prefillBlok).toMatch(/grootboek_label:\s*""/);
   });
 
   it("18. geen fuzzy matching in de suggestielaag", () => {
