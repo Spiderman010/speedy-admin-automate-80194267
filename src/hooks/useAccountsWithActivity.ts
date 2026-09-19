@@ -22,16 +22,33 @@ import type { Grootboekrekening } from "./useGrootboekrekeningen";
  * is gebruikt, niet wat zij in een boekjaar deed. Een jaarvenster zou een
  * rekening met alleen oudere mutaties ten onrechte als ongebruikt tonen.
  */
+/**
+ * De vier toestanden die de aanroeper uit elkaar moet kunnen houden.
+ *
+ * Eén `undefined` voor alles was niet genoeg: "nog aan het laden" en "de
+ * uitkomst is onbetrouwbaar" vragen om verschillende woorden op het scherm.
+ * Zonder dat onderscheid kon een kernelfout stilzwijgend een ongefilterde
+ * lijst opleveren — een actief boekhoudfilter dat er wél staat maar niets
+ * doet, zonder dat iemand het merkt.
+ */
+export type AccountsWithActivityStatus =
+  /** Filter uit, of geen administratie gekozen. Er is niets beloofd. */
+  | "idle"
+  /** De mutaties worden opgehaald; er is nog geen antwoord. */
+  | "loading"
+  /** `ids` is bruikbaar. */
+  | "ready"
+  /** Query mislukt, of de rapportagekern gaf geen betrouwbaar rapport. */
+  | "error";
+
 export interface AccountsWithActivity {
+  status: AccountsWithActivityStatus;
   /**
-   * `undefined` = geen betrouwbaar antwoord (uit, geen administratie, nog aan
-   * het laden, of de zelfcontrole van de kern sluit niet). De aanroeper hoort
-   * dan NIET te filteren, want een lege verzameling zou "geen enkele rekening
-   * heeft saldo" beweren.
+   * Uitsluitend gevuld bij `status === "ready"`. In elke andere toestand hoort
+   * de aanroeper NIET te filteren: een lege verzameling zou beweren dat geen
+   * enkele rekening saldo heeft.
    */
   ids: Set<string> | undefined;
-  isPending: boolean;
-  isError: boolean;
 }
 
 export function useAccountsWithActivity(options: {
@@ -46,8 +63,13 @@ export function useAccountsWithActivity(options: {
     enabled: enabled && !!clientId,
   });
 
-  const ids = useMemo(() => {
-    if (!enabled || !clientId || query.isError || !query.data) return undefined;
+  return useMemo<AccountsWithActivity>(() => {
+    if (!enabled || !clientId) return { status: "idle", ids: undefined };
+    // Een mislukte query en een mislukte zelfcontrole zijn voor de gebruiker
+    // hetzelfde: het antwoord is niet te vertrouwen.
+    if (query.isError) return { status: "error", ids: undefined };
+    if (!query.data) return { status: "loading", ids: undefined };
+
     try {
       const report = buildAccountReport({
         rows: query.data,
@@ -55,12 +77,14 @@ export function useAccountsWithActivity(options: {
         period: ALL_TIME_PERIOD,
         accounts,
       });
-      // Sluit de zelfcontrole niet, dan zijn de rollups niet betrouwbaar.
-      return report.ok === true ? accountIdsWithActivity(report.rollups) : undefined;
+      // Sluit de zelfcontrole van de kern niet, dan zijn de rollups niet
+      // betrouwbaar en is "geen saldo" geen uitspraak die we mogen doen.
+      if (report.ok !== true) return { status: "error", ids: undefined };
+      return { status: "ready", ids: accountIdsWithActivity(report.rollups) };
     } catch {
-      return undefined;
+      // De kern gooit bij een vreemde administratie, valuta of periode. Ook dan
+      // geen stille terugval op een ongefilterde lijst.
+      return { status: "error", ids: undefined };
     }
   }, [enabled, clientId, query.data, query.isError, accounts]);
-
-  return { ids, isPending: query.isPending, isError: query.isError };
 }

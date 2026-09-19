@@ -37,8 +37,8 @@ vi.mock("@/hooks/useLedgerPostings", () => ({
   useLedgerPostings: (opts: any) => ({
     // Dezelfde administratiescheiding als de echte hook: alleen rijen van de
     // gevraagde administratie komen eruit.
-    // Net als react-query: geen data zolang de query uit staat of faalde.
-    data: opts?.enabled === false || !opts?.clientId || state.postingsError
+    // Net als react-query: geen data zolang de query uit staat, laadt of faalde.
+    data: opts?.enabled === false || !opts?.clientId || state.postingsError || state.postingsPending
       ? undefined
       : state.postings.filter((r: any) => r.client_id === opts.clientId),
     isPending: state.postingsPending,
@@ -219,15 +219,66 @@ describe("Met saldo", () => {
     expect(rijNummers()).toEqual(["4400", "4500"]);
   });
 
-  it("9. laden en fouten worden benoemd, en er wordt dan niet stilletjes gefilterd", () => {
+  it("9. netwerkfout: volledige lijst blijft staan, mét expliciete melding", () => {
     state.rekeningen = [rek({ id: "gb-actief", nummer: 4400 }), rek({ id: "gb-stil", nummer: 4500 })];
     state.postings = [];
     state.postingsError = true;
     renderPagina();
 
     fireEvent.click(saldoChip());
-    expect(screen.getByTestId("saldo-fout")).toBeInTheDocument();
-    // Geen betrouwbare bron → geen filtering, in plaats van een lege lijst.
+    expect(screen.getByTestId("saldo-fout")).toHaveTextContent(
+      "Saldo kon niet betrouwbaar worden bepaald; de lijst wordt niet op saldo gefilterd.",
+    );
+    // Niets verborgen, niets beweerd.
     expect(rijNummers()).toEqual(["4400", "4500"]);
+  });
+
+  it("10. de zelfcontrole van de kern sluit niet: zelfde fail-closed gedrag", () => {
+    // Een boekingsgroep waarin debet en credit niet gelijk zijn: buildAccountReport
+    // geeft dan ok:false. Dat is net zo onbetrouwbaar als een netwerkfout.
+    state.rekeningen = [rek({ id: "gb-a", nummer: 4400 }), rek({ id: "gb-b", nummer: 1600 })];
+    const scheef = boeking("gb-a", "gb-b", "100.00");
+    scheef[1] = { ...scheef[1], credit_amount: "90.00" };
+    state.postings = scheef;
+    renderPagina();
+
+    fireEvent.click(saldoChip());
+    expect(screen.getByTestId("saldo-fout")).toBeInTheDocument();
+    expect(rijNummers()).toEqual(["4400", "1600"]);
+  });
+
+  it("11. de kern gooit een fout: zelfde fail-closed gedrag", () => {
+    // Een niet-EUR-rij laat assertReportingCurrency() gooien.
+    state.rekeningen = [rek({ id: "gb-a", nummer: 4400 }), rek({ id: "gb-b", nummer: 1600 })];
+    state.postings = boeking("gb-a", "gb-b", "100.00").map((r) => ({ ...r, currency: "USD" }));
+    renderPagina();
+
+    fireEvent.click(saldoChip());
+    expect(screen.getByTestId("saldo-fout")).toBeInTheDocument();
+    expect(rijNummers()).toEqual(["4400", "1600"]);
+  });
+
+  it("12. tijdens laden wordt er niets weggefilterd en staat er een laadmelding", () => {
+    state.rekeningen = [rek({ id: "gb-actief", nummer: 4400 }), rek({ id: "gb-stil", nummer: 4500 })];
+    state.postings = boeking("gb-actief", "gb-tegen", "100.00");
+    state.postingsPending = true;
+    renderPagina();
+
+    fireEvent.click(saldoChip());
+    expect(screen.getByTestId("saldo-laden")).toBeInTheDocument();
+    expect(screen.queryByTestId("saldo-fout")).toBeNull();
+    // De lijst mag nog niets beweren.
+    expect(rijNummers()).toEqual(["4400", "4500"]);
+  });
+
+  it("13. geen enkele foutmelding zolang alles in orde is", () => {
+    state.rekeningen = [rek({ id: "gb-actief", nummer: 4400 }), rek({ id: "gb-stil", nummer: 4500 })];
+    state.postings = boeking("gb-actief", "gb-tegen", "100.00");
+    renderPagina();
+
+    fireEvent.click(saldoChip());
+    expect(screen.queryByTestId("saldo-fout")).toBeNull();
+    expect(screen.queryByTestId("saldo-laden")).toBeNull();
+    expect(rijNummers()).toEqual(["4400"]);
   });
 });

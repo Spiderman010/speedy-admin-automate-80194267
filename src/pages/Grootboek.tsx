@@ -169,7 +169,9 @@ export default function Grootboek() {
     accounts: rekeningen,
     enabled: orgEnabled && alleenMetSaldo,
   });
-  const idsMetSaldo = saldoActiviteit.ids;
+  // Alleen bij "ready" is er iets om op te filteren; in elke andere toestand
+  // blijft de lijst volledig en zegt het scherm waarom.
+  const idsMetSaldo = saldoActiviteit.status === "ready" ? saldoActiviteit.ids : undefined;
 
   const addRek = useAddGrootboekrekening();
   const updateRek = useUpdateGrootboekrekening();
@@ -471,14 +473,18 @@ export default function Grootboek() {
                 active={alleenMetSaldo}
                 onClick={() => setAlleenMetSaldo(!alleenMetSaldo)}
               />
-              {alleenMetSaldo && saldoActiviteit.isPending && (
+              {alleenMetSaldo && saldoActiviteit.status === "loading" && (
                 <span className="text-xs text-muted-foreground" data-testid="saldo-laden">
                   Grootboekmutaties laden…
                 </span>
               )}
-              {alleenMetSaldo && saldoActiviteit.isError && (
-                <span className="text-xs text-muted-foreground" data-testid="saldo-fout">
-                  Grootboekmutaties konden niet worden geladen; er wordt niet op saldo gefilterd.
+              {/* Fail-closed: het filter staat aan maar doet niets, en dat mag
+                  niet stil gebeuren. Er wordt niets verborgen — de volledige
+                  lijst blijft staan — maar de gebruiker hoort te weten dat er
+                  niet op saldo gefilterd wordt. */}
+              {alleenMetSaldo && saldoActiviteit.status === "error" && (
+                <span className="text-xs text-destructive" role="alert" data-testid="saldo-fout">
+                  Saldo kon niet betrouwbaar worden bepaald; de lijst wordt niet op saldo gefilterd.
                 </span>
               )}
             </>
