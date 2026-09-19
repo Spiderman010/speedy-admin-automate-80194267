@@ -178,7 +178,7 @@ describe("bronlabel en drilldown", () => {
     const running = buildRunningBalance({ rows, clientId: "c-1", accountId: "gb-1300", period: YEAR_2027, accounts });
     render(
       <MemoryRouter>
-        <GrootboekAccountMutations running={running} periodLabel="2027" />
+        <GrootboekAccountMutations clientId="client-1" accountsById={new Map()} running={running} periodLabel="2027" />
       </MemoryRouter>,
     );
     const obRow = screen.getAllByTestId("mutation-row").find((r) => r.getAttribute("data-source-type") === "opening_balance")!;
