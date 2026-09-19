@@ -32,6 +32,15 @@ vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
 vi.mock("@/hooks/useActiveOrganization", () => ({
   useActiveOrganization: () => ({ activeOrganizationId: "org-1", isReady: true }),
 }));
+// Sinds het "Met saldo"-filter leest de pagina ook de grootboekactiviteit.
+// Deze tests gaan over classificatie; de saldobron staat hier uit en heeft een
+// eigen testbestand.
+vi.mock("@/hooks/useClientContext", () => ({
+  useClientContext: () => ({ selectedClientId: "client-1", setSelectedClientId: vi.fn() }),
+}));
+vi.mock("@/hooks/useAccountsWithActivity", () => ({
+  useAccountsWithActivity: () => ({ ids: undefined, isPending: false, isError: false }),
+}));
 vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   useGrootboekrekeningen: () => ({ data: state.rekeningen, isLoading: state.isLoading }),
   useAddGrootboekrekening: () => ({ mutateAsync: addMutateAsync, isPending: false }),
