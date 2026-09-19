@@ -527,7 +527,7 @@ describe("PurchaseInvoiceWorkspace — layout", () => {
     expect(queue.getByText("Alfa BV")).toBeInTheDocument();
     expect(queue.getByText("Test Leverancier BV")).toBeInTheDocument();
     expect(queue.getByText("F-2026-002")).toBeInTheDocument();
-    expect(queue.getByText(/121,00/)).toBeInTheDocument();
+    expect(queue.getAllByText(/121,00/)).toHaveLength(3);
     expect(queue.getByRole("button", { name: /Test Leverancier BV/ })).toHaveAttribute("aria-current", "page");
     expect(queue.getByRole("button", { name: /Alfa BV/ })).not.toHaveAttribute("aria-current");
   });
