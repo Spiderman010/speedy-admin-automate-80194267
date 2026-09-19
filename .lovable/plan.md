@@ -1,36 +1,35 @@
-# Waarom geboekte facturen niet in de kolommenbalans staan
+# Inkoopwerkbank: compacte drieluik-layout
 
-## Wat ik in de gegevens zie
+## Doel
+De bestaande Inkoopwerkbank wordt een rustige, informatie-dichte werkplek waarin wachtrij, boekingsgegevens en brondocument tegelijk te beoordelen zijn. Alle bestaande data, validaties, statussen en acties blijven ongewijzigd.
 
-De kolommenbalans (proef- en saldibalans) toont uitsluitend regels uit het grootboek. In de administratie staan op dit moment **nul grootboekregels** — voor geen enkele klant, geen enkel jaar.
+## Wijzigingen
+- Voeg links een compacte factuurwachtrij toe op basis van de al geladen inkoopfacturen, met leverancier, nummer, datum, bedrag en bestaande status; de actieve factuur krijgt een duidelijke selectie-indicatie.
+- Herschik de desktopweergave naar drie functionele zones: wachtrij links, boekingsformulier en regels in het midden, documentpreview rechts.
+- Maak factuurgegevens, boekingsregels, totalen en boekbaarheidsmelding compacter door minder verticale tussenruimte en een duidelijkere visuele groepering.
+- Houd de bestaande factuuridentiteit bovenaan zichtbaar met leverancier, nummer, datum, totaal en status.
+- Houd bestaande acties onderaan sticky; voeg geen nieuwe actie toe en wijzig geen bestaande voorwaarden of afhandeling.
+- Behoud een bruikbare responsive weergave: op kleinere schermen verdwijnt de vaste zij-aan-zij-indeling en blijven formulier, regels en document logisch gestapeld en horizontaal bruikbaar.
 
-Tegelijk staan er wel documenten klaar:
-- 49 inkoopfacturen (31 gecontroleerd, 5 geëxporteerd, 13 te controleren)
-- 48 verkoopfacturen (34 betaald, 12 gecontroleerd, 2 concept)
-- 1.817 handmatig geboekte banktransacties
-- 1 beginbalans
+## Bestanden binnen scope
+- `src/pages/PurchaseInvoiceWorkspace.tsx`
+- Inkoop-specifieke presentatiecomponenten onder `src/components/purchase/`
+- Gerichte Inkoopwerkbank UI-tests onder `src/test/`
 
-Geen enkele daarvan is ooit daadwerkelijk in het grootboek gezet: de tellers van alle boekingstabellen (inkoop, verkoop, bank, memoriaal, beginbalans) staan op 0.
-
-Oorzaak: "gecontroleerd", "geëxporteerd" en "betaald" zijn werkstatussen van het document, geen grootboekboeking. De boeking ontstaat pas als per document de actie "Boeken in grootboek" wordt uitgevoerd. Daarom is de kolommenbalans leeg — dat is correct gedrag, niet een fout in het rapport.
-
-## Tweede oorzaak: ontbrekende rekeninginstellingen
-
-Boeken wordt geweigerd zolang de vaste rekeningen van een administratie niet zijn ingesteld. Van de 11 administraties hebben er 10 **geen BTW-rekeningen en geen bankrekening** ingesteld; alleen "agio finance" is volledig ingericht. Debiteuren en crediteuren staan overal wel ingevuld. Zolang die instellingen ontbreken, blijft boeken per factuur geblokkeerd.
-
-## Derde punt: de inhaalpagina is onvindbaar
-
-Er bestaat al een pagina die per klant en jaar laat zien welke facturen geboekt, boekbaar of geblokkeerd zijn, en die ze in één keer kan boeken (`/grootboek/historisch`). Die pagina staat **niet in het menu**, dus in de praktijk gebruikt niemand hem.
-
-## Voorstel
-
-1. Rekeninginstellingen per administratie aanvullen (BTW te vorderen, BTW te betalen, bankrekening) — dit is invoerwerk in de klantinstellingen, geen code.
-2. De inhaalpagina "Historisch boeken" aan het Grootboek-menu toevoegen, zodat de bulkboeking vindbaar is.
-3. De lege staat van de kolommenbalans een duidelijke uitleg en doorverwijzing geven: "Nog geen geboekte grootboekmutaties. Facturen met status gecontroleerd zijn nog niet geboekt — boek ze via Historisch boeken." met knop naar die pagina.
-4. Dezelfde doorverwijzing in de balans- en winst-en-verliesoverzichten, die op dezelfde bron draaien.
+## Buiten scope
+- Geen hooks, bedragen, BTW, accountmapping, readiness, statusovergangen of postinggedrag wijzigen.
+- Geen accounting-, ledger-, reversal- of correctiebestanden wijzigen.
+- Geen database, SQL, migraties, RLS, RPC's, gegenereerde types of dependencies wijzigen.
+- Geen gedeelde shell of andere pagina's herontwerpen.
 
 ## Technische details
+- De wachtrij gebruikt uitsluitend `usePurchaseInvoices` en bestaande navigatie naar `/facturen/inkoop/:id`.
+- Nieuwe code blijft puur presentational; afgeleide labels en sortering volgen de reeds geladen facturen en bestaande statuswaarden.
+- Desktop krijgt stabiele kolombreedtes en onafhankelijke verticale bruikbaarheid voor wachtrij en document; mobiel houdt de bestaande formulierflow.
+- De huidige action handlers en gate-booleans worden ongewijzigd doorgegeven.
 
-- Bron van alle rapportages blijft `ledger_postings`; er wordt niets aan de rapportagelogica of aan bedragen gewijzigd.
-- Wijzigingen beperkt tot: navigatie-item in `src/components/layout/nav.ts`, lege-staat-teksten in `ProefSaldibalans.tsx` (en optioneel `Balans.tsx` / `WinstVerlies.tsx`), plus bijpassende tests.
-- Geen migraties, geen aanpassing van boekingsfuncties of statussen.
+## Validatie
+- Gerichte UI-tests controleren wachtrij-inhoud, actieve rij, navigatie, drieluik-layout en behoud van bestaande acties.
+- Daarna: `npx tsc --noEmit`, `npm run lint`, `npm run test`, `npm run build`, `git diff --check`.
+- Diffcontrole bevestigt dat alleen Inkoop-UI en gerichte tests gewijzigd zijn.
+- Na validatie wordt een PR naar `main` geopend en niet gemerged.
