@@ -40,6 +40,7 @@ run -f "$HERE/../opening-balance/bootstrap.sql"                                 
 run -f "$REPO/supabase/migrations/20260914120000_add_ledger_postings_foundation.sql"  > /dev/null
 run -f "$REPO/supabase/migrations/20260919120000_add_opening_balance_posting.sql"     > /dev/null
 run -f "$REPO/supabase/migrations/20260920130000_revoke_direct_ledger_insert.sql"     > /dev/null
+run -f "$REPO/supabase/migrations/20260921120000_add_ledger_reversal_posting.sql"     > /dev/null
 
 # Idempotency: the migration must survive a second application unchanged.
 run -f "$REPO/supabase/migrations/20260920130000_revoke_direct_ledger_insert.sql"     > /dev/null

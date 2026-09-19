@@ -5,6 +5,7 @@ import {
   type CatchupRecord,
 } from "./ledger-catchup";
 import { INTEGRITY_TITLES, type IntegrityFinding } from "./ledger-integrity";
+import { REVERSAL_FINDING_TITLES, type ReversalFinding } from "./reversal-integrity";
 import { isClassified } from "./reporting-classification";
 import { signedAmountCents, type LedgerPostingLike } from "./ledger-reporting";
 
@@ -344,6 +345,27 @@ export function diagnosticsForLedger(input: LedgerDiagnosticsInput): DiagnosticI
   }
 
   return items;
+}
+
+/**
+ * De tegenboekingslineage, vertaald naar hetzelfde itemmodel.
+ *
+ * Net als bij de vier integriteitsregels wordt hier NIETS opnieuw beoordeeld:
+ * `evaluateReversalIntegrity()` velt het oordeel, deze functie zet het op zijn
+ * plaats in de console. Alle zes de bevindingen zijn `error` — het zijn stuk
+ * voor stuk gebroken invarianten, geen open werk. Er bestaat geen "nog te doen"-
+ * toestand voor een tegenboeking: die is er, of hij is er niet.
+ */
+export function diagnosticsForReversals(findings: readonly ReversalFinding[]): DiagnosticItem[] {
+  return findings.map((finding) => ({
+    code: finding.kind,
+    severity: "error" as const,
+    domain: "ledger" as const,
+    recordId: finding.reference.id,
+    reference: finding.subject,
+    message: `${REVERSAL_FINDING_TITLES[finding.kind]}: ${finding.detail}`,
+    targetUrl: "/grootboek/integriteit",
+  }));
 }
 
 // ── Samenvatting ────────────────────────────────────────────────────────────

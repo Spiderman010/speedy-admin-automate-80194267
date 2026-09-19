@@ -20,6 +20,7 @@ import type { ClassifiedAccountLike } from "@/lib/financial-statements";
 import { buildAccountReport, yearPeriod } from "@/lib/ledger-reporting";
 import type { LedgerPeriod, LedgerPostingLike } from "@/lib/ledger-reporting";
 import { BALANS_GROUPS, WINST_VERLIES_GROUPS } from "@/lib/reporting-classification";
+import { assertBranchSqlKeepsLedgerFoundation, assertBranchTouchesNoExistingWriter } from "@/test/support/branch-sql-scope";
 
 /**
  * Balans/W&V PR 3 — de statement-engine.
@@ -904,8 +905,15 @@ describe("branch-scope", () => {
   const branchIt = changed === null ? it.skip : it;
 
   branchIt("47/48. geen migratie en geen SQL", () => {
-    expect(changed!.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed!.filter((f) => f.endsWith(".sql"))).toEqual([]);
+    const changedList = changed!;
+    // Voorheen: "deze branch bevat geen migratie en geen SQL". Dat was een
+    // uitspraak over de SCOPE van die PR, geen invariant — elke latere fase die
+    // terecht een migratie meebrengt, laat hem omvallen. Bewaakt blijft wat er
+    // werkelijk toe doet: een migratie in deze branch mag de grootboekfundering
+    // niet wijzigen of weggooien, en mag geen bestaande boekingsschrijver
+    // herschrijven.
+    assertBranchSqlKeepsLedgerFoundation(changedList);
+    assertBranchTouchesNoExistingWriter(changedList);
   });
 
   branchIt("49. de gegenereerde types zijn ongewijzigd", () => {
