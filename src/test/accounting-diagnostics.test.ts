@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   diagnosticsForDocument,
   diagnosticsForLedger,
+  diagnosticsForPurchaseIntegrity,
   postingGroupBalances,
   severityForBlock,
   summarizeDiagnostics,
@@ -307,6 +308,90 @@ describe("grootboekdiagnostiek", () => {
   it("28. een rekening zónder activiteit wordt niet gemeld", () => {
     const items = ledger({ postings: [], accounts: [rekening({ statement_type: null, report_group: null })] });
     expect(items).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("documentbevindingen uit de integriteitscontrole", () => {
+  /** De échte integriteitscontrole; hier wordt niets nagebootst. */
+  const integriteit = (over: Partial<Parameters<typeof evaluateLedgerIntegrity>[0]> = {}) =>
+    evaluateLedgerIntegrity({
+      purchaseInvoices: [], purchaseLines: [], markers: [], postings: [], ...over,
+    });
+
+  const legacyFactuur = {
+    id: "pi-legacy", status: "gecontroleerd", invoice_number: "F-9",
+    supplier: "Simyo", ledger_account_text: "4602 - Telefoonkosten",
+  };
+
+  it("32. legacy-tekst zonder echte rekening verschijnt ONDER INKOOP", () => {
+    const report = integriteit({
+      purchaseInvoices: [legacyFactuur],
+      purchaseLines: [{ purchase_invoice_id: "pi-legacy", grootboekrekening_id: null }],
+    });
+    const items = diagnosticsForPurchaseIntegrity(report.findings);
+
+    expect(codes(items)).toEqual(["legacy_tekst_zonder_rekening"]);
+    const item = items[0];
+    expect(item.domain).toBe("purchase");
+    expect(item.severity).toBe("warning");
+    expect(item.recordId).toBe("pi-legacy");
+    expect(item.targetUrl).toBe("/facturen/inkoop/pi-legacy");
+    // De tekst komt uit de bestaande bevinding, niet uit een eigen controle.
+    expect(item.message).toContain("4602 - Telefoonkosten");
+  });
+
+  it("33. diezelfde bevinding komt NIET in het grootboekdomein terecht", () => {
+    const report = integriteit({
+      purchaseInvoices: [legacyFactuur],
+      purchaseLines: [{ purchase_invoice_id: "pi-legacy", grootboekrekening_id: null }],
+    });
+    const ledgerItems = diagnosticsForLedger({
+      integrityFindings: report.findings, postings: [], accounts: [],
+      clientId: CLIENT, markerClaimsPerGroup: new Map(),
+    });
+    expect(codes(ledgerItems)).not.toContain("legacy_tekst_zonder_rekening");
+    expect(ledgerItems).toEqual([]);
+  });
+
+  it("34. groepsbevindingen blijven grootboek, en komen niet onder inkoop", () => {
+    const base = {
+      client_id: CLIENT, posting_group_id: "pg-scheef", posting_date: "2026-04-01",
+      boekjaar: 2026, currency: "EUR", source_type: "manual_journal",
+    };
+    const report = integriteit({
+      markers: [{ soort: "inkoop", posting_group_id: "pg-weg" }],
+      postings: [
+        { ...base, id: "a", line_no: 1, grootboekrekening_id: "gb-1", debit_amount: "100.00", credit_amount: "0.00" },
+        { ...base, id: "b", line_no: 2, grootboekrekening_id: "gb-1", debit_amount: "0.00", credit_amount: "90.00" },
+      ],
+    });
+    // Onder inkoop: niets.
+    expect(diagnosticsForPurchaseIntegrity(report.findings)).toEqual([]);
+    // Onder grootboek: beide.
+    const ledgerItems = diagnosticsForLedger({
+      integrityFindings: report.findings, postings: [], accounts: [],
+      clientId: CLIENT, markerClaimsPerGroup: new Map(),
+    });
+    expect(codes(ledgerItems).sort()).toEqual(["boekingsgroep_niet_in_balans", "marker_zonder_boekingsgroep"]);
+  });
+
+  it("35. 'factuur zonder regels' wordt niet nóg een keer gemeld", () => {
+    // Die toestand komt al uit evaluatePurchaseInvoice() als geen_boekingsregels;
+    // twee items voor hetzelfde gebrek zou de telling laten dubbelen.
+    const report = integriteit({
+      purchaseInvoices: [{ ...legacyFactuur, ledger_account_text: null }],
+    });
+    expect(report.findings.map((f) => f.kind)).toEqual(["factuur_zonder_regels"]);
+    expect(diagnosticsForPurchaseIntegrity(report.findings)).toEqual([]);
+  });
+
+  it("36. zodra één regel een echte rekening heeft, is er geen bevinding meer", () => {
+    const report = integriteit({
+      purchaseInvoices: [legacyFactuur],
+      purchaseLines: [{ purchase_invoice_id: "pi-legacy", grootboekrekening_id: "gb-1" }],
+    });
+    expect(diagnosticsForPurchaseIntegrity(report.findings)).toEqual([]);
   });
 });
 

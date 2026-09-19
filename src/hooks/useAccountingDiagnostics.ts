@@ -15,6 +15,7 @@ import {
 import {
   diagnosticsForDocument,
   diagnosticsForLedger,
+  diagnosticsForPurchaseIntegrity,
   postingGroupBalances,
   summarizeDiagnostics,
   summarizeLedger,
@@ -212,7 +213,13 @@ export async function fetchAccountingDiagnostics(clientId: string): Promise<Acco
   }
 
   const groupContext = { existingPostingGroups, balancedPostingGroups };
-  const purchaseItems = purchaseRecords.flatMap((r) => diagnosticsForDocument(r, groupContext));
+  // De integriteitscontrole levert óók bevindingen over inkoopDOCUMENTEN (de
+  // legacy-rekeningtekst). Die horen onder Inkoop, niet onder Grootboek; de
+  // ledgermapper laat ze daarom staan en deze vertaling zet ze op hun plaats.
+  const purchaseItems = [
+    ...purchaseRecords.flatMap((r) => diagnosticsForDocument(r, groupContext)),
+    ...diagnosticsForPurchaseIntegrity(integrity.findings),
+  ];
   const salesItems = salesRecords.flatMap((r) => diagnosticsForDocument(r, groupContext));
   const ledgerItems = diagnosticsForLedger({
     integrityFindings: integrity.findings,

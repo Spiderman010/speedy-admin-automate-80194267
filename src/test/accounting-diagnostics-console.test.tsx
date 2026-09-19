@@ -200,6 +200,39 @@ describe("datalaag", () => {
     expect(result.current.data!.ledger.summary.unbalancedGroups).toBe(1);
   });
 
+  it("6b. legacy-rekeningtekst verschijnt onder INKOOP, niet onder grootboek", async () => {
+    // De hele keten: opgeslagen factuur met oude tekst en een regel zonder
+    // rekening → de integriteitscontrole vindt hem → de diagnostiek zet hem
+    // in het inkoopdomein.
+    db.purchase_invoices = [pi({ id: "pi-legacy", ledger_account_text: "4602 - Telefoonkosten" })];
+    db.purchase_invoice_lines = [line("pi-legacy", { grootboekrekening_id: null })];
+
+    const { result } = await laad();
+    const inkoop = result.current.data!.purchase.items.find((i) => i.code === "legacy_tekst_zonder_rekening");
+    expect(inkoop).toBeDefined();
+    expect(inkoop!.domain).toBe("purchase");
+    expect(inkoop!.severity).toBe("warning");
+    expect(inkoop!.targetUrl).toBe("/facturen/inkoop/pi-legacy");
+    expect(inkoop!.message).toContain("4602 - Telefoonkosten");
+
+    // En nergens anders.
+    const ledgerCodes = result.current.data!.ledger.items.map((i) => i.code);
+    expect(ledgerCodes).not.toContain("legacy_tekst_zonder_rekening");
+    const salesCodes = result.current.data!.sales.items.map((i) => i.code);
+    expect(salesCodes).not.toContain("legacy_tekst_zonder_rekening");
+  });
+
+  it("6c. de waarschuwing telt mee in de inkoopsamenvatting", async () => {
+    db.purchase_invoices = [pi({ id: "pi-legacy", ledger_account_text: "4602 - Telefoonkosten" })];
+    db.purchase_invoice_lines = [line("pi-legacy", { grootboekrekening_id: null })];
+
+    const { result } = await laad();
+    const s = result.current.data!.purchase.summary;
+    expect(s.byCode.legacy_tekst_zonder_rekening).toBe(1);
+    // De samenvatting blijft afgeleid uit de items.
+    expect(s.warnings).toBe(result.current.data!.purchase.items.filter((i) => i.severity === "warning").length);
+  });
+
   it("7. rekening met activiteit zonder classificatie → waarschuwing", async () => {
     db.grootboekrekeningen = [{ ...GB[0], statement_type: null, report_group: null }, GB[1]];
     db.ledger_postings = groep("pg-1");
@@ -335,6 +368,21 @@ describe("statische grenzen", () => {
     // Geen eigen statuslijsten of eigen bedragparsing naast de bestaande.
     expect(lib).not.toMatch(/\["gecontroleerd",\s*"betaald"/);
     expect(lib).not.toMatch(/parseFloat|Number\(\s*\w+\.(debit|credit)_amount/);
+  });
+
+  it("13b. de legacy-regel wordt niet opnieuw geïmplementeerd", () => {
+    // De voorwaarde (oude tekst + geen echte rekening) hoort uitsluitend in
+    // ledger-integrity.ts te staan. De mapper mag de UITKOMST vertalen, maar
+    // nooit zelf `ledger_account_text` beoordelen.
+    const lib = strip(bronnen.find((b) => b.p.endsWith("accounting-diagnostics.ts"))!.code);
+    // De naam van de bevinding mag hier als ROUTEERSLEUTEL voorkomen; de
+    // VOORWAARDE mag hier niet opnieuw worden beoordeeld. Dat betekent
+    // concreet: nergens het legacy-veld lezen of zijn inhoud onderzoeken.
+    expect(lib).not.toMatch(/ledger_account_text/);
+    expect(lib).not.toMatch(/\.trim\(\)/);
+    // De code en de ernst komen uit de bestaande bevinding.
+    expect(lib).toMatch(/finding\.kind/);
+    expect(lib).toMatch(/severityForIntegrityFinding\(finding\)/);
   });
 
   it("14. geen classificatie uit rekeningnummer of categorie", () => {

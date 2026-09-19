@@ -183,6 +183,46 @@ export function diagnosticsForDocument(
   }));
 }
 
+/**
+ * Integriteitsbevindingen die over een INKOOPDOCUMENT gaan, niet over het
+ * grootboek.
+ *
+ * `evaluateLedgerIntegrity()` levert twee soorten bevindingen: die over een
+ * boekingsgroep (grootboek) en die over een factuur (document). De ledgertab
+ * neemt alleen de eerste; zonder deze vertaling zou de tweede soort nergens
+ * terechtkomen.
+ *
+ * Er wordt hier NIETS opnieuw beoordeeld. De voorwaarde — oude rekeningtekst
+ * terwijl geen enkele opgeslagen regel een echte grootboekrekening draagt — is
+ * al door `evaluateLedgerIntegrity()` vastgesteld; deze functie zet die
+ * uitkomst alleen in het inkoopdomein, met de bestemming erbij.
+ *
+ * `factuur_zonder_regels` wordt hier bewust NIET meegenomen: die toestand komt
+ * al uit `evaluatePurchaseInvoice()` als `geen_boekingsregels`, en twee items
+ * voor hetzelfde gebrek zouden de telling laten dubbelen.
+ */
+const DOCUMENT_FINDINGS_VOOR_INKOOP = new Set<string>(["legacy_tekst_zonder_rekening"]);
+
+export function diagnosticsForPurchaseIntegrity(
+  findings: readonly IntegrityFinding[],
+): DiagnosticItem[] {
+  const items: DiagnosticItem[] = [];
+  for (const finding of findings) {
+    if (finding.reference.soort !== "inkoopfactuur") continue;
+    if (!DOCUMENT_FINDINGS_VOOR_INKOOP.has(finding.kind)) continue;
+    items.push({
+      code: finding.kind,
+      severity: severityForIntegrityFinding(finding),
+      domain: "purchase",
+      recordId: finding.reference.id,
+      reference: finding.subject,
+      message: `${INTEGRITY_TITLES[finding.kind]}: ${finding.detail}`,
+      targetUrl: `/facturen/inkoop/${finding.reference.id}`,
+    });
+  }
+  return items;
+}
+
 export interface LedgerDiagnosticsAccount {
   id: string;
   nummer: number;
