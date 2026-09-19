@@ -1,6 +1,5 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { formatDatumNL, formatEuro } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Tables } from "@/integrations/supabase/types";
@@ -42,7 +41,7 @@ export function PurchaseInvoiceQueue({
         <h2 className="text-sm font-semibold">Wachtrij</h2>
         <span className="font-mono text-xs tabular-nums text-muted-foreground">{invoices.length}</span>
       </div>
-      <ScrollArea className="max-h-56 xl:h-[calc(100%-2.75rem)] xl:max-h-none">
+      <div className="max-h-56 overflow-x-auto xl:h-[calc(100%-2.75rem)] xl:max-h-none xl:overflow-x-hidden xl:overflow-y-auto">
         <nav className="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-1 p-1.5 xl:grid-flow-row xl:auto-cols-auto">
           {invoices.map((item) => {
             const active = item.id === activeInvoiceId;
@@ -84,7 +83,7 @@ export function PurchaseInvoiceQueue({
             );
           })}
         </nav>
-      </ScrollArea>
+      </div>
     </aside>
   );
 }

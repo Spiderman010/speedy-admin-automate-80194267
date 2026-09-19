@@ -514,7 +514,7 @@ describe("PurchaseInvoiceWorkspace — layout", () => {
     await renderReady();
     const grid = screen.getByTestId("workspace-grid");
     expect(grid.className).toContain("grid-cols-1");
-    expect(grid.className).toMatch(/xl:grid-cols-\[13rem_minmax\(30rem,1.25fr\)_minmax\(21rem,1fr\)\]/);
+    expect(grid.className).toMatch(/xl:grid-cols-\[15rem_minmax\(30rem,1.25fr\)_minmax\(21rem,1fr\)\]/);
     expect(screen.getByTestId("invoice-queue")).toBeInTheDocument();
     const doc = screen.getByTestId("document-panel");
     expect(doc.className).toContain("lg:sticky");

@@ -648,7 +648,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
       <div
         data-testid="workspace-grid"
-        className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[13rem_minmax(30rem,1.25fr)_minmax(21rem,1fr)]"
+        className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[15rem_minmax(30rem,1.25fr)_minmax(21rem,1fr)]"
       >
         <PurchaseInvoiceQueue
           invoices={sortedInvoices}
