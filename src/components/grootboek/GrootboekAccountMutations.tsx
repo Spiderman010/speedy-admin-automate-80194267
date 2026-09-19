@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, Layers } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { cn } from "@/lib/utils";
 import {
@@ -13,6 +14,8 @@ import {
   type LedgerRunningBalance,
 } from "@/lib/ledger-reporting";
 import { CATEGORY_LABELS, formatCents, formatDatumNL } from "@/lib/grootboek-saldi-utils";
+import { LedgerPostingGroupSheet } from "./LedgerPostingGroupSheet";
+import { reversalAwareSourceLabel, type ReversalAccountRef } from "@/lib/ledger-reversal-ui";
 
 /**
  * Fase 6C-b7 PR 2 — mutaties van één rekening met lopend saldo.
@@ -20,15 +23,31 @@ import { CATEGORY_LABELS, formatCents, formatDatumNL } from "@/lib/grootboek-sal
  * De volgorde komt uit buildRunningBalance() (posting_date, posting_group_id,
  * line_no, id) en wordt hier NIET opnieuw gesorteerd: een andere volgorde zou
  * het lopend saldo veranderen.
+ *
+ * 6C-b9 PR 2: elke regel hoort bij een boeking, en die boeking is hier aan te
+ * wijzen. De knop "Boeking" opent het detailpaneel met de volledige
+ * boekingsgroep en — voor een accountant, bij een ondersteunde bronsoort — de
+ * correctieactie. Bewust geen nieuwe route: dit is een detail van wat er al
+ * op het scherm staat.
  */
 
 export interface GrootboekAccountMutationsProps {
   running: LedgerRunningBalance;
   periodLabel: string;
+  /** Verplicht voor het boekingspaneel: RLS is organisatiebreed, niet per administratie. */
+  clientId: string;
+  /** Rekeningen om een regel bij naam te kunnen tonen in het paneel. */
+  accountsById: ReadonlyMap<string, ReversalAccountRef>;
 }
 
-export function GrootboekAccountMutations({ running, periodLabel }: GrootboekAccountMutationsProps) {
+export function GrootboekAccountMutations({
+  running,
+  periodLabel,
+  clientId,
+  accountsById,
+}: GrootboekAccountMutationsProps) {
   const a = running.account;
+  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
   const periodDebit = running.lines.reduce((s, l) => s + l.debitCents, 0);
   const periodCredit = running.lines.reduce((s, l) => s + l.creditCents, 0);
 
@@ -68,7 +87,7 @@ export function GrootboekAccountMutations({ running, periodLabel }: GrootboekAcc
                 <TableHead scope="col" className="w-32 text-right">Debet</TableHead>
                 <TableHead scope="col" className="w-32 text-right">Credit</TableHead>
                 <TableHead scope="col" className="w-36 text-right">Lopend saldo</TableHead>
-                <TableHead scope="col" className="w-16 text-right">Actie</TableHead>
+                <TableHead scope="col" className="w-24 text-right">Actie</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -85,7 +104,9 @@ export function GrootboekAccountMutations({ running, periodLabel }: GrootboekAcc
                     <TableCell className="max-w-[320px] truncate">{l.row.description || "—"}</TableCell>
                     <TableCell>
                       {/* Neutrale badge: kleur mag geen debet/credit suggereren. */}
-                      <Badge variant="outline" className="font-normal">{source.label}</Badge>
+                      <Badge variant="outline" className="font-normal">
+                        {source.kind === "resolved" ? source.label : reversalAwareSourceLabel(l.row.source_type)}
+                      </Badge>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right font-mono tabular-nums">
                       {l.debitCents !== 0 ? formatCents(l.debitCents) : ""}
@@ -97,6 +118,20 @@ export function GrootboekAccountMutations({ running, periodLabel }: GrootboekAcc
                       {formatCents(l.balanceCents)}
                     </TableCell>
                     <TableCell className="text-right">
+                      <button
+                        type="button"
+                        onClick={() => setOpenGroupId(l.row.posting_group_id)}
+                        className={cn(
+                          "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground",
+                          "hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        )}
+                        aria-label={`Open boeking van ${l.row.description || formatDatumNL(l.row.posting_date)}`}
+                        title="Open boeking"
+                        data-testid="open-posting-group"
+                        data-posting-group-id={l.row.posting_group_id}
+                      >
+                        <Layers className="h-4 w-4" />
+                      </button>
                       {source.kind === "resolved" ? (
                         <Link
                           to={source.path}
@@ -121,6 +156,21 @@ export function GrootboekAccountMutations({ running, periodLabel }: GrootboekAcc
             </TableBody>
           </Table>
         </div>
+      )}
+
+      {/* Pas gemonteerd zodra er een boeking is aangewezen. Zo doet deze tabel
+          nog steeds geen enkele query zolang niemand erom vraagt — per rij niet
+          en per pagina niet. */}
+      {openGroupId !== null && (
+        <LedgerPostingGroupSheet
+          open
+          onOpenChange={(next) => {
+            if (!next) setOpenGroupId(null);
+          }}
+          clientId={clientId}
+          postingGroupId={openGroupId}
+          accountsById={accountsById}
+        />
       )}
     </div>
   );

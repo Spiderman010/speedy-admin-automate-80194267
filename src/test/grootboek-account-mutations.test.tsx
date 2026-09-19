@@ -44,7 +44,7 @@ function renderFor(rows: LedgerPostingLike[], accountId = "gb-1100") {
   const running = buildRunningBalance({ rows, clientId: "c-1", accountId, period: Q1, accounts });
   render(
     <MemoryRouter>
-      <GrootboekAccountMutations running={running} periodLabel="2027 Q1" />
+      <GrootboekAccountMutations clientId="client-1" accountsById={new Map()} running={running} periodLabel="2027 Q1" />
     </MemoryRouter>,
   );
   return running;

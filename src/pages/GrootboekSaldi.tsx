@@ -83,6 +83,12 @@ export default function GrootboekSaldi() {
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
   // Bewust ALLE rekeningen, ook inactieve: die kunnen saldo dragen.
   const { data: accounts } = useGrootboekrekeningen({ organizationId: activeOrganizationId ?? undefined, enabled: orgEnabled });
+  // Alleen om een rekening bij naam te kunnen tonen in het boekingspaneel;
+  // geen rekenwerk, geen classificatie.
+  const accountsById = useMemo(
+    () => new Map((accounts ?? []).map((a) => [a.id, { id: a.id, nummer: a.nummer, omschrijving: a.omschrijving }])),
+    [accounts],
+  );
   const postingsQuery = useLedgerPostings({ clientId, period, enabled: orgEnabled });
   const completenessQuery = useLedgerCompleteness(clientId);
   // 6C-b8 PR 3: beginbalansstatus voor het rapportjaar — metadata, geen cijfers.
@@ -164,7 +170,14 @@ export default function GrootboekSaldi() {
     }
     if (accountId) {
       if (!running) return <ReportSkeleton />;
-      return <GrootboekAccountMutations running={running} periodLabel={periodLabel(selection)} />;
+      return (
+        <GrootboekAccountMutations
+          running={running}
+          periodLabel={periodLabel(selection)}
+          clientId={clientId!}
+          accountsById={accountsById}
+        />
+      );
     }
     if (report.totals.rowCount === 0) {
       return <EmptyState icon={BookOpen} message={EMPTY_LEDGER_MESSAGE} />;
