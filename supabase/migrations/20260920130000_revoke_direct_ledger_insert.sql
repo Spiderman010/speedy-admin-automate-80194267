@@ -1,0 +1,86 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 6C-b9 voorwerk — de directe schrijfdeur naar het grootboek sluiten.
+--
+-- WAT ER MIS WAS
+-- De fundering (20260914120000) gaf `authenticated` expliciet INSERT op
+-- public.ledger_postings:
+--
+--     GRANT SELECT, INSERT ON public.ledger_postings TO authenticated, service_role;
+--
+-- Dat was destijds nodig: de vijf writers bestonden nog niet, en zonder die
+-- GRANT zou de app helemaal niet hebben kunnen boeken. Inmiddels lopen alle
+-- vijf de boekingsstromen via SECURITY DEFINER-functies
+-- (post_purchase_invoice, post_sales_invoice, post_bank_allocation,
+-- post_manual_journal, post_opening_balance), elk met een eigen markertabel en
+-- een eigen claim-trigger.
+--
+-- Die claim-triggers beginnen echter allemaal met een vroege uitstap:
+--
+--     IF NEW.source_type <> '<eigen soort>' THEN RETURN NEW; END IF;
+--
+-- en op source_type staat alleen een VORMcontrole (`^[a-z][a-z0-9_]*$`), geen
+-- whitelist. Een gebruiker met de rol `assistant` kon dus via PostgREST een
+-- boekingsgroep met een zelfverzonnen source_type (bijvoorbeeld 'correctie')
+-- rechtstreeks in het grootboek plaatsen. Daarmee omzeilde hij élke
+-- writercontrole: de rolvloer van die stroom, de bedragcontroles, de
+-- brondocumentclaim én — het zwaarst — de gesloten-boekjaarregel, die
+-- uitsluitend ín de writers staat en nergens als trigger op ledger_postings.
+--
+-- De append-only-grendels beperkten de schade (wijzigen, verwijderen en
+-- uitbreiden van een bestaande groep bleef onmogelijk), maar een nieuwe,
+-- zelfverzonnen groep was mogelijk en onuitwisbaar.
+--
+-- WAT DEZE MIGRATIE DOET
+-- Eén ding: het INSERT-recht van `authenticated` intrekken. De schrijfdeur naar
+-- het grootboek loopt daarmee uitsluitend nog via de writers.
+--
+-- WAAROM GEEN source_type-WHITELIST
+-- Een whitelist zou de deur op een kier houden en bij elke nieuwe bronsoort
+-- opnieuw moeten worden bijgewerkt — een lijst die je kunt vergeten. Het
+-- recht intrekken sluit de deur en laat de writers de enige weg zijn. Een
+-- whitelist blijft daarnaast kwetsbaar voor het verzinnen van een BESTAANDE
+-- soort, want dan vuurt de claim-trigger wel maar moet die alles afvangen.
+--
+-- WAAROM DIT DE WRITERS NIET RAAKT
+-- Alle vijf zijn SECURITY DEFINER en draaien dus met de rechten van de
+-- eigenaar van de functie, niet van de aanroeper. De eigenaar is ook de
+-- eigenaar van de tabel, en op ledger_postings staat geen FORCE ROW LEVEL
+-- SECURITY, zodat RLS voor de eigenaar niet geldt. Het INSERT-recht van
+-- `authenticated` speelt in dat pad geen enkele rol. Dit is empirisch
+-- vastgesteld, niet beredeneerd: zie supabase/tests/ledger-write-boundary/.
+--
+-- SERVICE_ROLE BEHOUDT INSERT — BEWUST
+-- `service_role` omzeilt RLS en is de server-side identiteit voor edge
+-- functions, herstel- en onderhoudswerk. Vandaag raakt geen enkele edge
+-- function ledger_postings aan, maar die sleutel is niet in handen van een
+-- browsergebruiker, en de fundering noemt het behoud ervan expliciet
+-- ("service_role keeps SELECT and INSERT, so edge functions can still read and
+-- write postings normally"). Dat recht intrekken is een aparte afweging met
+-- eigen risico voor herstelscenario's; deze migratie doet dat niet en laat de
+-- bestaande UPDATE/DELETE/TRUNCATE-revokes op service_role ongemoeid.
+--
+-- WAT ONGEMOEID BLIJFT
+--   • SELECT voor authenticated (leesvloer read_only) — ongewijzigd;
+--   • de REVOKE van UPDATE/DELETE/TRUNCATE — ongewijzigd;
+--   • alle triggers, inclusief de vijf claim-triggers — ongewijzigd, en nu
+--     zuiver defence in depth;
+--   • de vijf writers — niet aangeraakt;
+--   • bestaande grootboekregels — niets wordt gelezen, gewijzigd of verwijderd.
+--
+-- rollback:
+--   GRANT INSERT ON public.ledger_postings TO authenticated;
+--   COMMENT ON POLICY role_ledger_postings_insert ON public.ledger_postings IS NULL;
+-- ─────────────────────────────────────────────────────────────────────────────
+
+REVOKE INSERT ON public.ledger_postings FROM authenticated;
+
+-- Het RLS-insertbeleid blijft staan als tweede laag. Zonder INSERT-recht wordt
+-- het nooit meer geëvalueerd, maar weghalen zou betekenen dat een toekomstige
+-- GRANT (bijvoorbeeld uit een routineus "GRANT ALL ... TO authenticated"-
+-- reparatiefragment) de deur wagenwijd openzet in plaats van alleen op een
+-- kier. De policy is de vangnetlaag onder het privilege.
+COMMENT ON POLICY role_ledger_postings_insert ON public.ledger_postings IS
+'Vangnet, geen toegangspad. Sinds 20260920130000 heeft authenticated geen INSERT-recht meer op ledger_postings; grootboekregels ontstaan uitsluitend via de SECURITY DEFINER-writers. Deze policy blijft bestaan zodat een onbedoelde GRANT de deur niet meteen wagenwijd openzet.';
+
+COMMENT ON TABLE public.ledger_postings IS
+'Append-only grootboekregels. Schrijven kan uitsluitend via de SECURITY DEFINER-boekingsfuncties (post_purchase_invoice, post_sales_invoice, post_bank_allocation, post_manual_journal, post_opening_balance); authenticated heeft alleen SELECT. UPDATE, DELETE en TRUNCATE zijn voor elke applicatierol ingetrokken.';

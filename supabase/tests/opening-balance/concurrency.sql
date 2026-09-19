@@ -432,11 +432,17 @@ $$);
 SELECT dblink_disconnect('c');
 
 -- ── C: dezelfde twee races, maar de gewone schrijver is een RECHTSTREEKSE
---      INSERT als de rol authenticated — het pad dat RLS toestaat en dat geen
---      enkele schrijverfunctie passeert. ─────────────────────────────────────
+--      INSERT die geen enkele schrijverfunctie passeert — het pad dat alleen de
+--      grendels en triggers op ledger_postings zelf kunnen tegenhouden.
+--
+--      Deze INSERT draait als EIGENAAR, niet meer als `authenticated`. Sinds
+--      20260920130000 heeft die rol geen INSERT-recht meer op ledger_postings,
+--      dus als authenticated zou de poging al bij de rechtencontrole stranden en
+--      zou de race nooit plaatsvinden — dan bewijst C niets over de grendel.
+--      Als eigenaar blijft de race intact: de trigger en de rijgrendel zijn
+--      precies wat hier wordt getoetst. ──────────────────────────────────────
 
 SELECT dblink_exec('b', 'BEGIN');
-SELECT dblink_exec('b', 'SET ROLE authenticated');
 BEGIN;
 SELECT public.post_opening_balance('00000000-0000-0000-0000-00000000bb03');
 SELECT dblink_send_query('b', $$INSERT INTO public.ledger_postings (organization_id, client_id,
@@ -448,21 +454,20 @@ SELECT dblink_send_query('b', $$INSERT INTO public.ledger_postings (organization
   FROM (VALUES ('00000000-0000-0000-0000-00000000f001'::uuid, 1, 9.00::numeric, 0::numeric),
                ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 9.00::numeric)) AS v(g, n, d, c)$$);
 SELECT pg_sleep(0.4);
-SELECT proof.expect_true('C1', 'ook een rechtstreekse INSERT als authenticated wacht op de grendel', $$
+SELECT proof.expect_true('C1', 'ook een rechtstreekse INSERT buiten de schrijvers om wacht op de grendel', $$
   SELECT dblink_is_busy('b') = 1
 $$);
 COMMIT;
 SELECT proof.remote_result('C2', 'en wordt daarna geweigerd', 'b', 'zou dubbel tellen');
 SELECT dblink_exec('b', 'ROLLBACK');
-SELECT dblink_exec('b', 'RESET ROLE');
 SELECT proof.expect_true('C3', 'het grootboek bevat alleen de beginbalans', $$
   SELECT count(*) = 2 AND bool_and(source_type = 'opening_balance')
   FROM public.ledger_postings WHERE client_id = '00000000-0000-0000-0000-00000000cc03'
 $$);
 
--- C omgekeerd: rechtstreekse INSERT eerst, beginbalans wacht.
+-- C omgekeerd: rechtstreekse INSERT eerst, beginbalans wacht. Ook als eigenaar,
+-- zie de toelichting bij C.
 SELECT dblink_exec('b', 'BEGIN');
-SELECT dblink_exec('b', 'SET ROLE authenticated');
 SELECT * FROM dblink('b', $$INSERT INTO public.ledger_postings (organization_id, client_id,
   grootboekrekening_id, posting_group_id, line_no, posting_date, boekjaar, debit_amount, credit_amount,
   currency, source_type, user_id)
@@ -481,7 +486,6 @@ SELECT proof.expect_true('C4', 'de beginbalans wacht op de rechtstreekse INSERT'
 SELECT dblink_exec('b', 'COMMIT');
 SELECT proof.remote_result('C5', 'en wordt daarna geweigerd', 'c', 'moet het eerste feit zijn');
 SELECT dblink_exec('c', 'ROLLBACK');
-SELECT dblink_exec('b', 'RESET ROLE');
 SELECT dblink_disconnect('c');
 
 -- ── D: een gewone boeting NÁ de beginbalansdatum blijft gewoon werken. ──────

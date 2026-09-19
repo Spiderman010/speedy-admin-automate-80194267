@@ -237,6 +237,15 @@ SELECT proof.expect_error('26', 'na boeken is een nihil-verklaring onmogelijk',
   $$SELECT public.declare_opening_balance_nil('00000000-0000-0000-0000-00000000b002')$$,
   'al een geboekte beginbalans');
 
+-- 28/29b/30 toetsen de TRIGGERS op ledger_postings, niet de rechten. Sinds
+-- 20260920130000 heeft `authenticated` geen INSERT-recht meer op die tabel, dus
+-- als authenticated zouden deze pogingen al bij de rechtencontrole stranden —
+-- "permission denied" in plaats van het triggerbericht, en dan bewijzen ze niets
+-- over de grendel die ze bedoelen te bewijzen. Ze draaien daarom als eigenaar,
+-- net als proef 47 hieronder. Dát het recht dicht is, wordt apart bewezen in
+-- supabase/tests/ledger-write-boundary/.
+RESET ROLE;
+
 -- 28 direct ledger insert without a claim refused ───────────────────────────
 SELECT proof.expect_error('28', 'een losse grootboekregel met deze bronsoort wordt geweigerd', $$
   INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
@@ -279,6 +288,8 @@ SELECT proof.expect_error('30', 'een tegenboeking mag deze bronsoort niet gebrui
   FROM public.ledger_postings lp
   WHERE lp.source_id = '00000000-0000-0000-0000-00000000b001' AND lp.line_no = 1
 $$, 'tegenboeking gebruikt een eigen bronsoort');
+
+SET ROLE authenticated;
 
 -- 2 balanced many-line opening, 31/32/33 category-neutral, 35 line numbering ─
 SELECT proof.draft('00000000-0000-0000-0000-00000000b003', '00000000-0000-0000-0000-0000000000c2', DATE '2027-01-01');
@@ -414,7 +425,10 @@ SELECT proof.expect_error('18b', 'een nihil-verklaring in een afgesloten boekjaa
 
 -- 19 an earlier ledger posting refuses the opening balance ──────────────────
 -- Klant 6 gets a memoriaal-like posting on 2026-12-31 through the ledger
--- directly (a second source is not needed to prove the rule).
+-- directly (a second source is not needed to prove the rule). Als eigenaar: dit
+-- is een arrangeerstap, geen bewering over wat `authenticated` mag — en sinds
+-- 20260920130000 mag die rol niet meer rechtstreeks in het grootboek schrijven.
+RESET ROLE;
 SELECT proof.expect_ok('19a', 'er staat al een boeking vóór de openingsdatum', $$
   INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
     line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
@@ -425,6 +439,7 @@ SELECT proof.expect_ok('19a', 'er staat al een boeking vóór de openingsdatum',
     ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 7.00::numeric)
   ) AS v(g, n, d, c), (SELECT '00000000-0000-0000-0000-0000000099f1'::uuid AS gid) AS grp
 $$);
+SET ROLE authenticated;
 SELECT proof.draft('00000000-0000-0000-0000-00000000b007', '00000000-0000-0000-0000-0000000000c6', DATE '2027-01-01');
 SELECT proof.line('00000000-0000-0000-0000-00000000b007', '00000000-0000-0000-0000-00000000f001', 10.00, 0, 1);
 SELECT proof.line('00000000-0000-0000-0000-00000000b007', '00000000-0000-0000-0000-00000000f002', 0, 10.00, 2);
@@ -598,6 +613,10 @@ SET ROLE authenticated;
 
 -- 45 na een geboekte beginbalans kan er niets meer vóór die datum ──────────
 -- Klant 1 heeft een geboekte beginbalans op 2027-01-01 (proef 1).
+-- Als eigenaar, om dezelfde reden als bij 28: hier wordt de TERUGWERKINGSGRENDEL
+-- getoetst. Als authenticated zou de poging sinds 20260920130000 al op het
+-- ontbrekende INSERT-recht afketsen en zou de grendel nooit aan bod komen.
+RESET ROLE;
 SELECT proof.expect_error('45', 'een terugwerkende boeking vóór de beginbalans wordt geweigerd', $$
   INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
     line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
@@ -609,9 +628,11 @@ SELECT proof.expect_error('45', 'een terugwerkende boeking vóór de beginbalans
     ('00000000-0000-0000-0000-00000000f002'::uuid, 2, 0::numeric, 3.00::numeric)
   ) AS v(g, n, d, c)
 $$, 'zou dubbel tellen');
+SET ROLE authenticated;
 SELECT proof.expect_true('45b', 'en het grootboek van die administratie is onveranderd', $$
   SELECT count(*) = 2 FROM public.ledger_postings WHERE client_id = '00000000-0000-0000-0000-0000000000c1'
 $$);
+RESET ROLE;
 -- Een administratie ZONDER geboekte beginbalans merkt er niets van: klant 6
 -- kreeg in proef 19a al een boeking op 2026-12-31 en mag er nog een krijgen.
 SELECT proof.expect_ok('45c', 'een administratie zonder geboekte beginbalans wordt niet geraakt', $$
@@ -630,6 +651,7 @@ $$);
 
 -- 46/47/48 elk gewoon DML-pad valt onder de bewaking ───────────────────────
 -- Klant 1 heeft een geboekte beginbalans op 2027-01-01 (proef 1).
+-- Nog steeds als eigenaar, om dezelfde reden als bij 45.
 SELECT proof.expect_error('46', 'een meerrijige INSERT ... SELECT met terugwerkende datum wordt geweigerd', $$
   INSERT INTO public.ledger_postings (organization_id, client_id, grootboekrekening_id, posting_group_id,
     line_no, posting_date, boekjaar, debit_amount, credit_amount, currency, source_type, user_id)
