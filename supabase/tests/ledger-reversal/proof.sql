@@ -57,6 +57,26 @@ EXCEPTION WHEN others THEN
   INSERT INTO proof.result VALUES (_n, _name, false, format('fout bij evaluatie: %s', SQLERRM));
 END $$;
 
+/*
+ * De VOLLEDIGE identiteit van een fout: SQLSTATE én de hele boodschap.
+ *
+ * Voor de tenantlek-regressie is een substringvergelijking niet genoeg. De hele
+ * claim is dat twee situaties voor een onbevoegde aanroeper ONONDERSCHEIDBAAR
+ * zijn; dat bewijs je alleen door beide antwoorden letterlijk naast elkaar te
+ * leggen.
+ */
+CREATE OR REPLACE FUNCTION proof.identity(_sql text)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE v_state text; v_msg text;
+BEGIN
+  EXECUTE _sql;
+  RETURN 'GEEN FOUT';
+EXCEPTION WHEN others THEN
+  GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
+  RETURN v_state || ' | ' || v_msg;
+END $$;
+
+GRANT EXECUTE ON FUNCTION proof.identity(text) TO public;
 GRANT EXECUTE ON FUNCTION proof.expect_error(text, text, text, text) TO public;
 GRANT EXECUTE ON FUNCTION proof.expect_ok(text, text, text) TO public;
 GRANT EXECUTE ON FUNCTION proof.expect_true(text, text, text) TO public;
@@ -204,6 +224,16 @@ SELECT proof.seed_raw('00000000-0000-0000-0000-000000000125', '00000000-0000-000
 SELECT proof.seed_raw('00000000-0000-0000-0000-000000000125', '00000000-0000-0000-0000-0000000000a1',
   '00000000-0000-0000-0000-0000000000cd', '00000000-0000-0000-0000-00000000f001', 2,
   DATE '2027-03-01', 2027, 0, 10.00, 'EUR', 'manual_journal', '4243');
+
+-- g130  KAPOT over organisaties heen: één regel in org A, één in org B. Alleen
+--       een aanroeper die voor BEIDE organisaties bevoegd is, mag hier een
+--       inhoudelijke melding over krijgen.
+SELECT proof.seed_raw('00000000-0000-0000-0000-000000000130', '00000000-0000-0000-0000-0000000000a1',
+  '00000000-0000-0000-0000-0000000000cd', '00000000-0000-0000-0000-00000000f002', 1,
+  DATE '2027-03-01', 2027, 10.00, 0, 'EUR', 'purchase_invoice', '5005');
+SELECT proof.seed_raw('00000000-0000-0000-0000-000000000130', '00000000-0000-0000-0000-0000000000a2',
+  '00000000-0000-0000-0000-0000000000c9', '00000000-0000-0000-0000-00000000f009', 2,
+  DATE '2027-03-01', 2027, 0, 10.00, 'EUR', 'purchase_invoice', '5005');
 
 -- g126  één regel: geen boeking
 SELECT proof.seed_raw('00000000-0000-0000-0000-000000000126', '00000000-0000-0000-0000-0000000000a1',
@@ -367,19 +397,62 @@ SELECT proof.expect_true('11c', 'de regelnummering is 1..n, aaneengesloten', $$
        = ARRAY[1,2,3,4]
 $$);
 
--- ── 11/12/13  onbekend, verkeerde tenant ────────────────────────────────────
+-- ── 12/13 + L  de tenantpoort: bestaan wordt nooit bevestigd ────────────────
+--
+-- De kern van deze regressie is niet "er komt een fout", maar "er komt EXACT
+-- dezelfde fout". Daarom wordt hier de volledige foutidentiteit vergeleken —
+-- SQLSTATE én boodschap — en niet een substring.
 
 SELECT proof.expect_error('12', 'een onbekende boekingsgroep wordt geweigerd',
   $$SELECT public.reverse_posting_group('00000000-0000-0000-0000-0000000009ff', DATE '2027-06-01')$$,
-  'niet gevonden');
+  'Boekingsgroep niet beschikbaar');
 
 SELECT proof.expect_error('13', 'een boekingsgroep van een andere organisatie wordt geweigerd',
   $$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000104', DATE '2027-06-01')$$,
-  'Geen rechten');
+  'Boekingsgroep niet beschikbaar');
 
 SELECT proof.expect_true('13a', 'en er is niets van die andere organisatie geboekt', $$
   SELECT NOT EXISTS (SELECT 1 FROM public.ledger_reversal_postings
                      WHERE original_posting_group_id = '00000000-0000-0000-0000-000000000104')
+$$);
+
+SELECT proof.expect_true('L1', 'niet-bestaand en andermans groep geven EXACT dezelfde fout (SQLSTATE + tekst)', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-0000000009ff', DATE '2027-06-01')$q$)
+       = proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000104', DATE '2027-06-01')$q$)
+$$);
+
+SELECT proof.expect_true('L2', 'en die fout is 42501 "Boekingsgroep niet beschikbaar"', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-0000000009ff', DATE '2027-06-01')$q$)
+       = '42501 | Boekingsgroep niet beschikbaar'
+$$);
+
+SELECT proof.expect_true('L3', 'de SQLSTATE is voor beide identiek', $$
+  SELECT split_part(proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-0000000009ff', DATE '2027-06-01')$q$), ' | ', 1)
+       = split_part(proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000104', DATE '2027-06-01')$q$), ' | ', 1)
+$$);
+
+SELECT proof.expect_true('L4', 'de boodschap is voor beide identiek', $$
+  SELECT split_part(proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-0000000009ff', DATE '2027-06-01')$q$), ' | ', 2)
+       = split_part(proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000104', DATE '2027-06-01')$q$), ' | ', 2)
+$$);
+
+SELECT proof.expect_true('L5', 'de boodschap noemt geen organisatie, administratie, rekening of bedrag', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000104', DATE '2027-06-01')$q$)
+         !~* '(organisatie|administratie|valuta|balans|regel|boekjaar|rekening|[0-9]{4}-[0-9]{2}-[0-9]{2})'
+$$);
+
+-- L6/L7 — de KAPOTTE groep over twee organisaties. Hier zou een naïeve
+-- LIMIT 1-autorisatie toevallig de rechten op één organisatie gebruiken en de
+-- andere negeren; dan zou een accountant van alleen org A te horen krijgen dát
+-- er een tweede organisatie in het spel is.
+SELECT proof.expect_true('L6', 'een accountant van slechts één organisatie leert niets over de kapotte multi-org groep', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000130', DATE '2027-06-01')$q$)
+       = '42501 | Boekingsgroep niet beschikbaar'
+$$);
+
+SELECT proof.expect_true('L7', 'die uitkomst is niet te onderscheiden van een niet-bestaande groep', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000130', DATE '2027-06-01')$q$)
+       = proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-0000000009ff', DATE '2027-06-01')$q$)
 $$);
 
 -- ── 14  al tegengeboekt ─────────────────────────────────────────────────────
@@ -502,6 +575,40 @@ SELECT proof.expect_error('19a', 'een assistant mag niet tegenboeken (vloer = ac
   $$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000110', DATE '2027-06-01')$$,
   'accountant vereist');
 
+-- L8/L9 — de assistant zit ín de organisatie en mag deze regels onder RLS
+-- gewoon LEZEN. Hem vertellen dat hij accountant moet zijn, verraadt dus niets
+-- wat hij niet al kan zien. Wat hij niet mag krijgen is INHOUD: geen bedragen,
+-- geen balansoordeel, geen administratie. Dat wordt hier letterlijk getoetst —
+-- op een groep die aantoonbaar kapot is (niet in balans), zodat er ook echt
+-- iets te lekken vált.
+SELECT proof.expect_true('L8', 'een assistant krijgt uitsluitend het rolantwoord, geen inhoud van de groep', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000120', DATE '2027-06-01')$q$)
+       = '42501 | Geen rechten om een tegenboeking te maken voor deze organisatie (accountant vereist)'
+$$);
+
+SELECT proof.expect_true('L9', 'en dat antwoord noemt geen bedrag, balans of administratie', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000120', DATE '2027-06-01')$q$)
+         !~* '(niet in balans|administratie |valuta|[0-9]+\.[0-9]{2})'
+$$);
+
+-- L10 — een accountant van organisatie B mag over een groep van organisatie A
+-- evenmin iets inhoudelijks horen; voor hem is zij simpelweg niet beschikbaar.
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e4', false);
+SELECT proof.expect_true('L10', 'een accountant van de ANDERE organisatie krijgt de generieke fout', $$
+  SELECT proof.identity($q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000120', DATE '2027-06-01')$q$)
+       = '42501 | Boekingsgroep niet beschikbaar'
+$$);
+
+-- L11 — wie voor BEIDE organisaties accountant is, krijgt de kapotte multi-org
+-- groep wél inhoudelijk te zien. Zonder dit bewijs zou de generieke fout ook
+-- kunnen betekenen dat de structurele controle stilletjes is verdwenen.
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e5', false);
+SELECT proof.expect_error('L11', 'een accountant van beide organisaties ziet de echte structuurfout',
+  $$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000130', DATE '2027-06-01')$$,
+  'meerdere organisaties');
+
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e2', false);
+
 SELECT set_config('test.user_id', '', false);
 SELECT proof.expect_error('19b', 'een niet-ingelogde aanroep wordt geweigerd',
   $$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000110', DATE '2027-06-01')$$,
@@ -602,6 +709,32 @@ $$);
 SELECT proof.expect_true('22c', 'de nieuwe claimtrigger laat elke andere bronsoort ongemoeid', $$
   SELECT (SELECT count(*) FROM public.ledger_postings
           WHERE source_type IN ('manual_journal', 'opening_balance', 'purchase_invoice')) > 0
+$$);
+
+-- L12 — ná autorisatie blijven de inhoudelijke weigeringen exact wat ze waren.
+-- Zonder deze controle zou de tenantpoort ongemerkt álles generiek kunnen maken
+-- en zou de gebruiker nooit meer horen wat er werkelijk aan de hand is.
+SELECT proof.expect_true('L12', 'een bevoegde accountant krijgt nog steeds vijf verschillende, inhoudelijke redenen', $$
+  WITH q(naam, identiteit) AS (VALUES
+    ('al tegengeboekt', proof.identity(
+      $q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000107', DATE '2027-07-01')$q$)),
+    ('tegenboeking van tegenboeking', proof.identity(
+      $q$SELECT public.reverse_posting_group(
+        (SELECT reversal_posting_group_id FROM public.ledger_reversal_postings
+          WHERE original_posting_group_id = '00000000-0000-0000-0000-000000000107'), DATE '2027-08-01')$q$)),
+    ('beginbalans', proof.identity(
+      $q$SELECT public.reverse_posting_group(
+        (SELECT posting_group_id FROM public.ledger_postings
+          WHERE source_type = 'opening_balance' LIMIT 1), DATE '2027-06-01')$q$)),
+    ('niet in balans', proof.identity(
+      $q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000120', DATE '2027-06-01')$q$)),
+    ('afgesloten boekjaar', proof.identity(
+      $q$SELECT public.reverse_posting_group('00000000-0000-0000-0000-000000000105', DATE '2027-06-01')$q$))
+  )
+  SELECT count(*) FILTER (WHERE identiteit = '42501 | Boekingsgroep niet beschikbaar') = 0
+     AND count(DISTINCT identiteit) = 5
+     AND bool_and(identiteit <> 'GEEN FOUT')
+  FROM q
 $$);
 
 -- ── 23  rapportage telt tegenboekingen gewoon mee ───────────────────────────

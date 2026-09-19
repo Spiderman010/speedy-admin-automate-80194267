@@ -52,6 +52,17 @@
 --     KEY, dus "één originele groep → hoogstens één tegenboeking" is een
 --     database-invariant en geen applicatieafspraak.
 --
+-- AUTORISATIE VÓÓR INHOUD
+-- Deze functie is SECURITY DEFINER en ziet dus rijen die RLS voor de aanroeper
+-- verbergt. Daarom staat er één poort vóór elke uitspraak over opgeslagen
+-- gegevens: een onbekende boekingsgroep en een boekingsgroep waarvoor de
+-- aanroeper geen leesrecht heeft, krijgen EXACT dezelfde fout — dezelfde
+-- SQLSTATE (42501) en dezelfde tekst ("Boekingsgroep niet beschikbaar") — zodat
+-- het antwoord nooit het bestaan van andermans boekhouding bevestigt. Pas
+-- daarna volgen de inhoudelijke weigeringen, en alleen voor een aanroeper die
+-- bevoegd is voor ÉLKE organisatie in de groep; een kapotte groep met twee
+-- organisaties wordt dus nooit half beoordeeld op de rechten van één ervan.
+--
 -- ROLVLOER: accountant
 -- Gelijk aan memoriaal (6C-b6) en beginbalans (6C-b8), en strenger dan de
 -- documentschrijvers (assistant). Een tegenboeking is met de hand opgestelde
@@ -454,6 +465,12 @@ DECLARE
 
   v_org           uuid;
   v_client_id     uuid;
+  -- De VOLLEDIGE sets, niet een steekproef: de autorisatiepoort in (5) moet
+  -- over elke organisatie in de groep kunnen oordelen, ook als die groep er
+  -- (kapot) meerdere bevat.
+  v_org_ids       uuid[];
+  v_client_ids    uuid[];
+  v_probe_org     uuid;
   v_currency      text;
   v_orig_date     date;
   v_orig_boekjaar integer;
@@ -501,24 +518,93 @@ BEGIN
   END IF;
   v_boekjaar := EXTRACT(YEAR FROM _posting_date)::integer;
 
-  -- (5) De administratie van de groep opzoeken, nog zonder grendel — alleen om
-  --     te weten wélke administratiegrendel genomen moet worden.
-  SELECT DISTINCT lp.client_id INTO v_client_id
+  -- ── (5) DE AUTORISATIEPOORT ────────────────────────────────────────────────
+  --
+  --     Alles hierboven gaat over de ARGUMENTEN en onthult niets over
+  --     opgeslagen gegevens. Alles hieronder wel. Hier ligt de grens.
+  --
+  --     WAAROM DIT ZO MOET
+  --     Deze functie is SECURITY DEFINER en ziet dus rijen die RLS voor de
+  --     aanroeper verbergt. Zou zij eerst "niet gevonden" zeggen en pas daarna
+  --     "geen rechten", dan is het verschil tussen die twee antwoorden een
+  --     orakel: een ingelogde buitenstaander kan boekingsgroep-id's aanbieden
+  --     en uit de foutboodschap aflezen wélke bestaan. Dat is een
+  --     cross-tenant existence leak, hoe klein ook. Beide gevallen krijgen
+  --     daarom exact dezelfde fout: dezelfde SQLSTATE én dezelfde tekst.
+  --
+  --     DE ORGANISATIES EERST, EN ALLEMAAL
+  --     Niet één organisatie via LIMIT 1. Bij een kapotte groep met twee
+  --     organisaties zou zo'n steekproef toevallig de rechten op de ene
+  --     kunnen gebruiken en de andere negeren — precies de tenantinformatie
+  --     die niet mag weglekken. De hele set wordt opgehaald en de aanroeper
+  --     moet bevoegd zijn voor ÉLKE organisatie erin.
+  SELECT array_agg(DISTINCT lp.organization_id)
+    INTO v_org_ids
   FROM public.ledger_postings lp
-  WHERE lp.posting_group_id = _posting_group_id
-  LIMIT 1;
+  WHERE lp.posting_group_id = _posting_group_id;
 
-  IF v_client_id IS NULL THEN
-    RAISE EXCEPTION 'Boekingsgroep niet gevonden' USING ERRCODE = 'P0002';
+  --     LEESDREMPEL. Onder read_only verbergt RLS deze rijen sowieso; dan mag
+  --     deze functie hun bestaan ook niet bevestigen. Een lege set (de groep
+  --     bestaat niet) en een set waarvoor de aanroeper niet bevoegd is, zijn
+  --     vanaf hier niet meer van elkaar te onderscheiden.
+  --     array_agg(DISTINCT …) slaat NULL-waarden over, dus een groep waarvan
+  --     elke rij op onverklaarbare wijze geen organisatie heeft, valt hier
+  --     eveneens uit — fail closed.
+  IF v_org_ids IS NULL THEN
+    RAISE EXCEPTION 'Boekingsgroep niet beschikbaar' USING ERRCODE = '42501';
   END IF;
 
-  -- (6) GRENDEL 0 — de administratie. Dezelfde grendel die elke grootboekregel
+  FOREACH v_probe_org IN ARRAY v_org_ids LOOP
+    IF NOT public.has_min_role(v_uid, v_probe_org, 'read_only') THEN
+      RAISE EXCEPTION 'Boekingsgroep niet beschikbaar' USING ERRCODE = '42501';
+    END IF;
+  END LOOP;
+
+  --     SCHRIJFDREMPEL. Vanaf hier is bekend dat de aanroeper deze regels
+  --     onder RLS gewoon mag lezen, dus een eerlijk antwoord over zijn eigen
+  --     rol verraadt niets wat hij niet al kan zien. ROLVLOER = accountant, en
+  --     ook hier voor élke organisatie in de groep.
+  FOREACH v_probe_org IN ARRAY v_org_ids LOOP
+    IF NOT public.has_min_role(v_uid, v_probe_org, 'accountant') THEN
+      RAISE EXCEPTION 'Geen rechten om een tegenboeking te maken voor deze organisatie (accountant vereist)'
+        USING ERRCODE = '42501';
+    END IF;
+  END LOOP;
+
+  -- (6) Pas NU mag er iets over de vorm van de groep worden gezegd. Een
+  --     kapotte groep met meerdere organisaties krijgt zijn eigen, inhoudelijke
+  --     melding — maar uitsluitend voor een aanroeper die voor al die
+  --     organisaties bevoegd is.
+  IF array_length(v_org_ids, 1) > 1 THEN
+    RAISE EXCEPTION 'Boekingsgroep bevat regels van meerdere organisaties en kan niet worden tegengeboekt'
+      USING ERRCODE = '23514';
+  END IF;
+  v_org := v_org_ids[1];
+
+  -- (7) De administratie, om te weten wélke administratiegrendel genomen moet
+  --     worden. Ook hier de hele set, niet een steekproef.
+  SELECT array_agg(DISTINCT lp.client_id)
+    INTO v_client_ids
+  FROM public.ledger_postings lp
+  WHERE lp.posting_group_id = _posting_group_id;
+
+  IF v_client_ids IS NULL THEN
+    RAISE EXCEPTION 'Boekingsgroep niet beschikbaar' USING ERRCODE = '42501';
+  END IF;
+
+  IF array_length(v_client_ids, 1) > 1 THEN
+    RAISE EXCEPTION 'Boekingsgroep bevat regels van meerdere administraties en kan niet worden tegengeboekt'
+      USING ERRCODE = '23514';
+  END IF;
+  v_client_id := v_client_ids[1];
+
+  -- (8) GRENDEL 0 — de administratie. Dezelfde grendel die elke grootboekregel
   --     via de trigger van 6C-b8 neemt, en die post_opening_balance() als
   --     eerste neemt. Hiermee grendelt deze schrijver in exact dezelfde
   --     volgorde als elke andere schrijfweg.
   PERFORM public.lock_ledger_client(v_client_id);
 
-  -- (7) Het origineel opnieuw lezen ONDER de grendel, als één aggregaat. Een
+  -- (9) Het origineel opnieuw lezen ONDER de grendel, als één aggregaat. Een
   --     gecommitte groep verandert niet meer (append-only + zegel), dus dit is
   --     de volledige, definitieve vorm van het origineel.
   SELECT COUNT(*),
@@ -556,31 +642,22 @@ BEGIN
   WHERE lp.posting_group_id = _posting_group_id;
 
   IF v_rows = 0 THEN
-    RAISE EXCEPTION 'Boekingsgroep niet gevonden' USING ERRCODE = 'P0002';
+    RAISE EXCEPTION 'Boekingsgroep niet beschikbaar' USING ERRCODE = '42501';
   END IF;
 
-  -- (8) Tenant en rol, allebei uit opgeslagen gegevens. ROLVLOER = accountant.
-  --     De rolcontrole komt vóór elk verder inhoudelijk oordeel, zodat een
-  --     aanroeper zonder rechten niets leert over de inhoud van de groep.
-  IF v_orgs > 1 THEN
-    RAISE EXCEPTION 'Boekingsgroep bevat regels van meerdere organisaties en kan niet worden tegengeboekt'
-      USING ERRCODE = '23514';
+  -- (10) De groep zoals hij ONDER de grendel blijkt te zijn, moet dezelfde zijn
+  --      als die waarvoor in (5) is geautoriseerd. Voor een gecommitte groep
+  --      kan dat niet verschillen — append-only plus het transactiezegel van
+  --      6C-b2 — maar als het tóch verschilt, is de autorisatie over een andere
+  --      groep gegaan dan die we nu zouden tegenboeken. Dan weigeren we
+  --      generiek, want elke inhoudelijke melding zou over ongeautoriseerde
+  --      gegevens gaan.
+  IF v_orgs > 1 OR v_org IS DISTINCT FROM v_org_ids[1]
+     OR v_clients > 1 OR v_client_id IS DISTINCT FROM v_client_ids[1] THEN
+    RAISE EXCEPTION 'Boekingsgroep niet beschikbaar' USING ERRCODE = '42501';
   END IF;
 
-  IF v_org IS NULL OR NOT public.has_min_role(v_uid, v_org, 'accountant') THEN
-    RAISE EXCEPTION 'Geen rechten om een tegenboeking te maken voor deze organisatie (accountant vereist)'
-      USING ERRCODE = '42501';
-  END IF;
-
-  -- (9) De administratie moet bij de organisatie van de groep horen. Dit is de
-  --     tenantcontrole: een groep van een andere organisatie is voor deze
-  --     aanroeper onbereikbaar, want (8) heeft de rol al op díe organisatie
-  --     getoetst.
-  IF v_clients > 1 THEN
-    RAISE EXCEPTION 'Boekingsgroep bevat regels van meerdere administraties en kan niet worden tegengeboekt'
-      USING ERRCODE = '23514';
-  END IF;
-
+  -- (11) De administratie moet bij de organisatie van de groep horen.
   SELECT * INTO v_client FROM public.clients WHERE id = v_client_id;
   IF NOT FOUND OR v_client.organization_id IS DISTINCT FROM v_org THEN
     RAISE EXCEPTION 'Administratie hoort niet bij de organisatie van deze boekingsgroep'
@@ -803,7 +880,7 @@ REVOKE ALL ON FUNCTION public.reverse_posting_group(uuid, date, text)
 GRANT EXECUTE ON FUNCTION public.reverse_posting_group(uuid, date, text) TO authenticated;
 
 COMMENT ON FUNCTION public.reverse_posting_group(uuid, date, text) IS
-'Boekt één bestaande boekingsgroep tegen als een NIEUWE, sluitende boekingsgroep in ledger_postings: één tegenregel per originele regel, met debet en credit verwisseld en met rekening, valuta, organisatie en administratie exact overgenomen. Elke tegenregel verwijst via reversal_of_posting_id naar de exacte originele grootboekregel; de groep-op-groep-lineage staat in ledger_reversal_postings, waarvan de primary key garandeert dat één groep hoogstens één keer wordt tegengeboekt. Vereist de rol accountant. Het origineel blijft ongewijzigd. Weigert een onbekende groep, een groep van een andere organisatie of administratie, een groep die zelf een tegenboeking is, een geboekte beginbalans, een reeds tegengeboekte groep, een kapotte of niet-sluitende groep, een andere valuta dan EUR, een datum vóór het origineel en een afgesloten boekjaar — zonder de datum ooit stilzwijgend te verschuiven.';
+'Boekt één bestaande boekingsgroep tegen als een NIEUWE, sluitende boekingsgroep in ledger_postings: één tegenregel per originele regel, met debet en credit verwisseld en met rekening, valuta, organisatie en administratie exact overgenomen. Elke tegenregel verwijst via reversal_of_posting_id naar de exacte originele grootboekregel; de groep-op-groep-lineage staat in ledger_reversal_postings, waarvan de primary key garandeert dat één groep hoogstens één keer wordt tegengeboekt. Vereist de rol accountant. Het origineel blijft ongewijzigd. Een onbekende boekingsgroep en een boekingsgroep waarvoor de aanroeper geen leesrecht heeft, geven exact dezelfde generieke fout ("Boekingsgroep niet beschikbaar", SQLSTATE 42501), zodat het antwoord van deze functie nooit het bestaan van andermans boekhouding bevestigt; inhoudelijke meldingen volgen pas na autorisatie voor élke organisatie in de groep. Weigert verder een groep die zelf een tegenboeking is, een geboekte beginbalans, een reeds tegengeboekte groep, een kapotte of niet-sluitende groep, een andere valuta dan EUR, een datum vóór het origineel en een afgesloten boekjaar — zonder de datum ooit stilzwijgend te verschuiven.';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 4) De claimtrigger — verdediging in de diepte

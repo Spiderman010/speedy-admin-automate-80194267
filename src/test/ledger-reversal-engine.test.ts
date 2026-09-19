@@ -101,8 +101,45 @@ describe("Migratie — de tegenboekingsmotor", () => {
   });
 
   it("11. de rolvloer is accountant, gelijk aan memoriaal en beginbalans", () => {
-    expect(flat).toMatch(/has_min_role\(v_uid, v_org, 'accountant'\)/);
+    expect(flat).toMatch(/has_min_role\(v_uid, v_probe_org, 'accountant'\)/);
     expect(flat).not.toMatch(/has_min_role\([^)]*'assistant'\)/);
+  });
+
+  it("11a. bestaan wordt nooit bevestigd: dezelfde fout voor onbekend en onbevoegd", () => {
+    // Eén tekst, één SQLSTATE. Zou er ergens nog een tweede formulering staan,
+    // dan is het verschil tussen die twee antwoorden weer een orakel.
+    expect(flat).not.toMatch(/Boekingsgroep niet gevonden/);
+    const generiek = [...sql.matchAll(/RAISE EXCEPTION 'Boekingsgroep niet beschikbaar' USING ERRCODE = '42501'/g)];
+    expect(generiek.length).toBeGreaterThanOrEqual(3);
+    expect(flat).not.toMatch(/'Boekingsgroep niet beschikbaar'[^;]*ERRCODE = '(?!42501)/);
+  });
+
+  it("11b. de autorisatiepoort komt vóór elke uitspraak over de inhoud van de groep", () => {
+    const poort = sql.indexOf("has_min_role(v_uid, v_probe_org, 'accountant')");
+    expect(poort).toBeGreaterThan(0);
+    // Elk inhoudelijk oordeel staat ná de poort.
+    for (const needle of [
+      "Boekingsgroep bevat regels van meerdere organisaties",
+      "Boekingsgroep bevat regels van meerdere administraties",
+      "zelf een tegenboeking",
+      "Deze boekingsgroep is al tegengeboekt",
+      "Boekingsgroep is niet in balans",
+      "is afgesloten voor deze administratie",
+      "wordt niet ondersteund; alleen EUR",
+    ]) {
+      expect(sql.indexOf(needle), needle).toBeGreaterThan(poort);
+    }
+  });
+
+  it("11c. de autorisatie kijkt naar ELKE organisatie in de groep, nooit naar een steekproef", () => {
+    // array_agg over de hele groep plus een FOREACH per organisatie; geen
+    // LIMIT 1 dat toevallig op één organisatie rechten zou gebruiken.
+    expect(flat).toMatch(/SELECT array_agg\(DISTINCT lp\.organization_id\) INTO v_org_ids/);
+    expect(flat).toMatch(/FOREACH v_probe_org IN ARRAY v_org_ids LOOP/);
+    expect(sql).not.toMatch(/LIMIT 1/);
+    // De leesdrempel gaat vooraf aan de schrijfdrempel.
+    expect(sql.indexOf("has_min_role(v_uid, v_probe_org, 'read_only')"))
+      .toBeLessThan(sql.indexOf("has_min_role(v_uid, v_probe_org, 'accountant')"));
   });
 
   it("12. authenticatie eerst, en alleen READ COMMITTED", () => {
