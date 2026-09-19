@@ -42,6 +42,8 @@ import {
 } from "@/hooks/useGrootboekrekeningen";
 import type { Grootboekrekening } from "@/hooks/useGrootboekrekeningen";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
+import { useClientContext } from "@/hooks/useClientContext";
+import { useAccountsWithActivity } from "@/hooks/useAccountsWithActivity";
 import {
   CLASSIFIED_LABEL,
   EMPTY_CLASSIFICATION,
@@ -136,6 +138,12 @@ export default function Grootboek() {
   /** De classificatie zoals ze bij het openen van het dialoog stond. */
   const [loadedClassification, setLoadedClassification] = useState<ClassificationForm>(EMPTY_CLASSIFICATION);
   const [classificatieFilter, setClassificatieFilter] = useState<ClassificationFilter>("alle");
+  /**
+   * "Met saldo" staat los van de rapportagefilters, zodat de twee te combineren
+   * zijn: met saldo én niet geclassificeerd is precies de lijst die bijgewerkt
+   * moet worden.
+   */
+  const [alleenMetSaldo, setAlleenMetSaldo] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const { toast } = useToast();
   const { activeOrganizationId, isReady } = useActiveOrganization();
@@ -145,6 +153,26 @@ export default function Grootboek() {
     organizationId: activeOrganizationId ?? undefined,
     enabled: orgEnabled,
   });
+  /**
+   * Grootboekactiviteit hoort bij één administratie; het rekeningschema is
+   * organisatiebreed. De administratiekeuze komt uit de bestaande gedeelde
+   * context — geen tweede kiezer op deze pagina. Het rekenwerk zelf staat in
+   * `useAccountsWithActivity`: dit scherm gaat over stamgegevens en
+   * classificatie en roept geen rapportage-engine aan.
+   */
+  const { selectedClientId } = useClientContext();
+  const saldoClientId =
+    selectedClientId && selectedClientId !== "all" ? selectedClientId : undefined;
+  const saldoBeschikbaar = !!saldoClientId;
+  const saldoActiviteit = useAccountsWithActivity({
+    clientId: saldoClientId,
+    accounts: rekeningen,
+    enabled: orgEnabled && alleenMetSaldo,
+  });
+  // Alleen bij "ready" is er iets om op te filteren; in elke andere toestand
+  // blijft de lijst volledig en zegt het scherm waarom.
+  const idsMetSaldo = saldoActiviteit.status === "ready" ? saldoActiviteit.ids : undefined;
+
   const addRek = useAddGrootboekrekening();
   const updateRek = useUpdateGrootboekrekening();
   const deleteRek = useDeleteGrootboekrekening();
@@ -175,6 +203,7 @@ export default function Grootboek() {
       if (statusFilter === "inactief" && r.actief) return false;
       if (hasCategorieFilter && r.categorie !== categorieFilter) return false;
       if (!matchesClassificationFilter(r, classificatieFilter)) return false;
+      if (alleenMetSaldo && idsMetSaldo && !idsMetSaldo.has(r.id)) return false;
       if (!q) return true;
       return (
         r.nummer.toString().includes(q) ||
@@ -182,7 +211,7 @@ export default function Grootboek() {
         r.categorie.toLowerCase().includes(q)
       );
     });
-  }, [rekeningen, trimmedSearch, statusFilter, categorieFilter, hasCategorieFilter, classificatieFilter]);
+  }, [rekeningen, trimmedSearch, statusFilter, categorieFilter, hasCategorieFilter, classificatieFilter, alleenMetSaldo, idsMetSaldo]);
 
   const emptyMessage = (): string => {
     if (totalCount === 0) {
@@ -431,6 +460,41 @@ export default function Grootboek() {
               )
             }
           />
+        </div>
+        {/* "Met saldo" staat op een eigen rij: het is geen rapportagestatus maar
+            een vraag over de grootboekmutaties, en het combineert met elk van de
+            chips hierboven. */}
+        <div data-testid="saldo-filters" className="flex flex-wrap items-center gap-1.5">
+          <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Grootboek</span>
+          {saldoBeschikbaar ? (
+            <>
+              <FilterChip
+                label="Met saldo"
+                active={alleenMetSaldo}
+                onClick={() => setAlleenMetSaldo(!alleenMetSaldo)}
+              />
+              {alleenMetSaldo && saldoActiviteit.status === "loading" && (
+                <span className="text-xs text-muted-foreground" data-testid="saldo-laden">
+                  Grootboekmutaties laden…
+                </span>
+              )}
+              {/* Fail-closed: het filter staat aan maar doet niets, en dat mag
+                  niet stil gebeuren. Er wordt niets verborgen — de volledige
+                  lijst blijft staan — maar de gebruiker hoort te weten dat er
+                  niet op saldo gefilterd wordt. */}
+              {alleenMetSaldo && saldoActiviteit.status === "error" && (
+                <span className="text-xs text-destructive" role="alert" data-testid="saldo-fout">
+                  Saldo kon niet betrouwbaar worden bepaald; de lijst wordt niet op saldo gefilterd.
+                </span>
+              )}
+            </>
+          ) : (
+            // Activiteit hoort bij één administratie; zonder keuze zou het
+            // filter een willekeurig antwoord geven. Dan liever niets beloven.
+            <span className="text-xs text-muted-foreground" data-testid="saldo-geen-administratie">
+              Kies een administratie om op saldo te filteren.
+            </span>
+          )}
         </div>
       </div>
 

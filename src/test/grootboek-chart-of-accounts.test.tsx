@@ -10,6 +10,9 @@ const state = {
   updateVariables: undefined as { id: string; actief?: boolean } | undefined,
   deletePending: false,
   seedPending: false,
+  /** Administratie en grootboekmutaties voor het "Met saldo"-filter. */
+  clientId: "client-1" as string,
+  postings: [] as any[],
 };
 
 const toastSpy = vi.fn();
@@ -24,6 +27,15 @@ vi.mock("@/hooks/use-toast", () => ({
 }));
 vi.mock("@/hooks/useActiveOrganization", () => ({
   useActiveOrganization: () => ({ activeOrganizationId: "org-1", isReady: true }),
+}));
+// Sinds het "Met saldo"-filter leest de pagina ook grootboekmutaties. Deze
+// tests gaan over het schema en de bestaande filters; de saldobron staat hier
+// standaard leeg en heeft een eigen testbestand.
+vi.mock("@/hooks/useClientContext", () => ({
+  useClientContext: () => ({ selectedClientId: state.clientId, setSelectedClientId: vi.fn() }),
+}));
+vi.mock("@/hooks/useAccountsWithActivity", () => ({
+  useAccountsWithActivity: () => ({ ids: undefined, isPending: false, isError: false }),
 }));
 vi.mock("@/hooks/useGrootboekrekeningen", () => ({
   useGrootboekrekeningen: () => ({ data: state.rekeningen, isLoading: state.isLoading }),
@@ -87,6 +99,8 @@ const statusFilters = () => within(screen.getByTestId("status-filters"));
 const categorieFilters = () => within(screen.getByTestId("categorie-filters"));
 
 beforeEach(() => {
+  state.clientId = "client-1";
+  state.postings = [];
   state.rekeningen = [];
   state.isLoading = false;
   state.updatePending = false;
