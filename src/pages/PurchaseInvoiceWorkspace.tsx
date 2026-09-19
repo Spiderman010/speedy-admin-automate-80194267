@@ -34,6 +34,7 @@ import {
   isPartiallyFilledLine,
 } from "@/lib/purchase-line-validation";
 import { aggregateInvoiceLines, evaluatePurchaseInvoice } from "@/lib/ledger-catchup";
+import { suggestLedgerAccountFromLegacyText } from "@/lib/legacy-ledger-suggestion";
 import { deriveHeaderFromLines } from "@/lib/purchase-header-derivation";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import { round2 } from "@/lib/btw-calc";
@@ -233,13 +234,29 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         isBtwVrijgesteld,
       });
       if (prefill) {
-        const ledger = ledgers?.find((g) => g.id === invoice.ledger_account_id);
+        // `purchase_invoices.ledger_account_id` wordt hier NIET gebruikt, en mag
+        // dat ook nooit: die kolom hoort bij het id-domein van `ledger_accounts`,
+        // terwijl een boekingsregel een id uit `grootboekrekeningen` nodig heeft.
+        // Twee verschillende tabellen, twee verschillende domeinen. Zouden twee
+        // uuid's uit die domeinen ooit gelijk zijn, dan is dat toeval en geen
+        // relatie — en dat toeval als "gekozen rekening" behandelen zou een
+        // boeking op een willekeurige rekening kunnen opleveren.
+        //
+        // Een afgeleide regel begint dus ALTIJD zonder rekening. De enige
+        // toegestane weg loopt via `ledger_account_text`: exact nummer, precies
+        // één boekbare kandidaat, en de gebruiker bevestigt zelf.
+        const legacyLabel = invoice.ledger_account_text?.trim() || null;
+        const suggestie = suggestLedgerAccountFromLegacyText(legacyLabel, ledgers ?? [], invoice.client_id);
         nextLines = [{
           omschrijving: invoice.supplier || "Factuurregel",
           amount_input: formatAmountInput(prefill.amount_excl),
           btw_percentage: String(prefill.btw_percentage),
-          grootboekrekening_id: invoice.ledger_account_id ?? null,
-          grootboek_label: ledger ? `${ledger.nummer} - ${ledger.omschrijving}` : (invoice.ledger_account_text ?? ""),
+          grootboekrekening_id: null,
+          grootboek_label: "",
+          derived: true,
+          legacyLabel,
+          suggestedAccount:
+            suggestie.kind === "uniek" ? { id: suggestie.account.id, label: suggestie.label } : null,
         }];
       } else {
         nextLines = [];
@@ -343,6 +360,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   }));
 
   const hasPartialLine = partialLines.length > 0;
+  /** Staat er een regel op het scherm die nog nergens is opgeslagen? */
+  const heeftConceptregels = lines.some((l) => l.derived);
   // Regels met inhoud maar zonder grootboekrekening. Opslaan mag nog — de
   // rekening opzoeken kost tijd — maar goedkeuren niet: de boekingsfunctie
   // weigert elke regel zonder rekening, dus een goedgekeurde factuur zou nooit
@@ -791,7 +810,14 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               <FieldGroup title="Boekingscontext">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="min-w-0">
-                    <Label>Standaard grootboek</Label>
+                    <Label>Standaard grootboek (notitie)</Label>
+                    {/* Dit veld is uitsluitend TEKST. `ledger_account_id`
+                        verwijst naar een andere tabel (`ledger_accounts`) dan de
+                        rekeningen die deze kiezer toont (`grootboekrekeningen`),
+                        dus een id uit deze lijst kan hier niet worden opgeslagen
+                        zonder FK-fout — en wordt hier dan ook niet opgeslagen.
+                        De rekening die werkelijk telt staat per boekingsregel.
+                        Zie het auditpunt in de PR-beschrijving. */}
                     <GrootboekCombobox
                       value={header.ledger_label}
                       onValueChange={(v) => patchHeader({ ledger_label: v })}
@@ -799,6 +825,10 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                       noneOption
                       className="h-9"
                     />
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Alleen een notitie op de factuur. De rekening waarop geboekt wordt, staat per
+                      boekingsregel.
+                    </p>
                   </div>
                   <div className="min-w-0">
                     <Label>Notities</Label>
@@ -828,6 +858,18 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                   </Button>
                 )}
               </div>
+
+              {/* Oude facturen hebben geen opgeslagen boekingsregels. De regel
+                  hierboven is dan afgeleid uit de factuurkop en bestaat alleen
+                  op dit scherm — daarom zegt de boekbaarheid hieronder (terecht)
+                  dat er nog geen regels zijn. Dat verschil moet uitgesproken
+                  worden, anders lijkt het rapport te liegen. */}
+              {heeftConceptregels && (
+                <p className="text-xs text-muted-foreground" data-testid="derived-line-notice">
+                  Deze boekingsregel is nog niet opgeslagen. Hij is afgeleid uit de factuurtotalen;
+                  kies een grootboekrekening en sla op, dan telt hij mee voor het boeken.
+                </p>
+              )}
 
               <PurchaseInvoiceLinesTable
                 lines={lines}

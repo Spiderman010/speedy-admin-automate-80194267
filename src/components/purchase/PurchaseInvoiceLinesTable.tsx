@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -19,8 +20,24 @@ export interface LineRow {
   omschrijving: string;
   amount_input: string;
   btw_percentage: string;
+  /** De ENIGE echte rekening. Leeg betekent: nog geen rekening gekozen. */
   grootboekrekening_id: string | null;
+  /**
+   * Het label van de gekozen rekening. Bevat uitsluitend de weergave van een
+   * werkelijk gekozen rekening — nooit losse tekst uit een oude factuur, want
+   * dan zou de kiezer gevuld lijken zonder dat er een rekening achter zit.
+   */
   grootboek_label: string;
+  /**
+   * Deze regel is afgeleid uit de factuurkop en staat NIET in de database.
+   * Oude facturen hebben vaak geen opgeslagen boekingsregels; de werkbank toont
+   * er dan één als concept, zodat de gebruiker hem kan afmaken en opslaan.
+   */
+  derived?: boolean;
+  /** Vrije tekst uit de oude factuur, puur ter referentie. Geen rekening. */
+  legacyLabel?: string | null;
+  /** Precies één ondubbelzinnige kandidaat; alleen ná bevestiging toegewezen. */
+  suggestedAccount?: { id: string; label: string } | null;
 }
 
 export interface PurchaseInvoiceLinesTableProps {
@@ -111,6 +128,43 @@ export function PurchaseInvoiceLinesTable({
                     noneOption
                     className="h-8"
                   />
+                  {/* Oude factuur zonder opgeslagen regels: de tekst van toen is
+                      geen rekening. Ze staat hier als verwijzing, en alleen bij
+                      precies één ondubbelzinnige treffer is er iets te
+                      bevestigen — met één klik, door de gebruiker. */}
+                  {!line.grootboekrekening_id && line.legacyLabel && (
+                    <div className="mt-1 space-y-1" data-testid="legacy-account-hint">
+                      <p className="text-[11px] text-muted-foreground">
+                        Oude factuurtekst: <span className="font-mono">{line.legacyLabel}</span>
+                      </p>
+                      {line.suggestedAccount ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px] font-normal">
+                            Voorgestelde rekening uit oude factuur — bevestigen
+                          </Badge>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-6 px-2 text-[11px]"
+                            data-testid="legacy-account-confirm"
+                            onClick={() =>
+                              onPatchLine(idx, {
+                                grootboekrekening_id: line.suggestedAccount!.id,
+                                grootboek_label: line.suggestedAccount!.label,
+                              })
+                            }
+                          >
+                            Bevestig {line.suggestedAccount.label}
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground" data-testid="legacy-account-no-suggestion">
+                          Geen eenduidige rekening te bepalen; kies er zelf één.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="py-1.5">
                   <Input
