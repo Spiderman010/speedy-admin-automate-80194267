@@ -14,6 +14,12 @@
 #   bootstrap.sql                                   test double of the prerequisites
 #   supabase/migrations/20260914120000_...sql       the REAL ledger foundation (6C-b2)
 #   supabase/migrations/20260919120000_...sql       the REAL migration under test
+#   supabase/migrations/20260920130000_...sql       the write-boundary hardening,
+#                                                   part of the schema since
+#                                                   6C-b9 voorwerk — applied here
+#                                                   so this suite proves the
+#                                                   invariants still hold WITH the
+#                                                   direct-insert door closed
 #   proof.sql + concurrency.sql                     the proofs
 # and prints one line per numbered proof plus a summary.
 
@@ -37,6 +43,8 @@ run -f "$REPO/supabase/migrations/20260919120000_add_opening_balance_posting.sql
 
 # Idempotency: the migration must survive a second application unchanged.
 run -f "$REPO/supabase/migrations/20260919120000_add_opening_balance_posting.sql"    > /dev/null
+
+run -f "$REPO/supabase/migrations/20260920130000_revoke_direct_ledger_insert.sql"    > /dev/null
 
 run -f "$HERE/proof.sql"                                > /dev/null
 run -v conn="$CONN" -f "$HERE/concurrency.sql"          > /dev/null
