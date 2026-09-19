@@ -19,6 +19,7 @@ import Memoriaal from "./pages/Memoriaal";
 import Beginbalans from "./pages/Beginbalans";
 import GrootboekSaldi from "./pages/GrootboekSaldi";
 import GrootboekHistorisch from "./pages/GrootboekHistorisch";
+import GrootboekIntegriteit from "./pages/GrootboekIntegriteit";
 import Balans from "./pages/Balans";
 import WinstVerlies from "./pages/WinstVerlies";
 import ProefSaldibalans from "./pages/ProefSaldibalans";
@@ -88,6 +89,7 @@ const App = () => (
               <Route path="/grootboek/memoriaal" element={<Memoriaal />} />
               <Route path="/grootboek/beginbalans" element={<Beginbalans />} />
               <Route path="/grootboek/historisch" element={<GrootboekHistorisch />} />
+              <Route path="/grootboek/integriteit" element={<GrootboekIntegriteit />} />
               <Route path="/grootboek/saldi" element={<GrootboekSaldi />} />
               <Route path="/grootboek/saldi/:accountId" element={<GrootboekSaldi />} />
               {/* Balans/W&V PR 4: de jaarrekeningrapporten hangen onder
