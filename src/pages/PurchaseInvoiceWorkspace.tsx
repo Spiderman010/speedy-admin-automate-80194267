@@ -53,6 +53,7 @@ import {
 } from "@/components/purchase/PurchaseInvoiceLinesTable";
 import { PurchaseInvoiceActionBar } from "@/components/purchase/PurchaseInvoiceActionBar";
 import { PurchaseInvoicePostingReadiness } from "@/components/purchase/PurchaseInvoicePostingReadiness";
+import { PurchaseInvoiceQueue } from "@/components/purchase/PurchaseInvoiceQueue";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
 
@@ -647,13 +648,19 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
       <div
         data-testid="workspace-grid"
-        className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[minmax(0,11fr)_minmax(0,9fr)]"
+        className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[15rem_minmax(30rem,1.25fr)_minmax(21rem,1fr)]"
       >
-        {/* Left column: processing */}
-        <div className="min-w-0 space-y-4">
+        <PurchaseInvoiceQueue
+          invoices={sortedInvoices}
+          activeInvoiceId={invoiceId}
+          onSelect={(id) => navigate(`/facturen/inkoop/${id}`)}
+        />
+
+        {/* Centre column: processing */}
+        <div className="min-w-0 space-y-3">
           {/* Factuurgegevens */}
           <Card>
-            <CardContent className="space-y-5 pt-5">
+            <CardContent className="space-y-4 p-4">
               <h2 className="text-sm font-semibold">Factuurgegevens</h2>
 
               <FieldGroup title="Identificatie">
@@ -848,7 +855,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           {/* Boekingsregels + totalencontrole together, so the reason approve is
               blocked is visible right where the lines are edited. */}
           <Card>
-            <CardContent className="space-y-4 pt-5">
+            <CardContent className="space-y-3 p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-sm font-semibold">Boekingsregels</h2>
                 <PurchaseInvoiceTotalsStatusPill state={totalsState} />
@@ -898,6 +905,52 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               />
             </CardContent>
           </Card>
+
+          <div data-testid="purchase-posting-section">
+            {posting ? (
+              <p className="text-xs text-muted-foreground" data-testid="purchase-posting-done">
+                Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens en
+                boekingsregels liggen daarmee vast; een correctie vereist een tegenboeking.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {/* Eerst het oordeel, dan pas de knop: de gebruiker hoort te weten
+                    waaróm er niet geboekt kan worden vóór hij het probeert. */}
+                <PurchaseInvoicePostingReadiness
+                  record={postingReadiness}
+                  onOpenSettings={() => navigate("/klanten")}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  {!isPostableStatus && (
+                    <p className="text-xs text-muted-foreground" data-testid="purchase-posting-blocker">
+                      Keur de factuur eerst goed; daarna kan deze in het grootboek worden geboekt.
+                    </p>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="purchase-posting-button"
+                    disabled={!canApprove || !isPostableStatus || readinessBlocked || postInvoice.isPending || !invoiceId}
+                    onClick={async () => {
+                      if (!invoiceId) return;
+                      try {
+                        await postInvoice.mutateAsync(invoiceId);
+                        toast({ title: "Factuur geboekt" });
+                      } catch (e) {
+                        toast({
+                          title: "Boeken niet gelukt",
+                          description: e instanceof Error ? e.message : undefined,
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
+                    {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right column: original document */}
@@ -911,52 +964,6 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
             </Card>
           </div>
         </div>
-      </div>
-
-      <div className="mt-4" data-testid="purchase-posting-section">
-        {posting ? (
-          <p className="text-xs text-muted-foreground" data-testid="purchase-posting-done">
-            Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens en
-            boekingsregels liggen daarmee vast; een correctie vereist een tegenboeking.
-          </p>
-        ) : (
-          <div className="space-y-3">
-          {/* Eerst het oordeel, dan pas de knop: de gebruiker hoort te weten
-              waaróm er niet geboekt kan worden vóór hij het probeert. */}
-          <PurchaseInvoicePostingReadiness
-            record={postingReadiness}
-            onOpenSettings={() => navigate("/klanten")}
-          />
-          <div className="flex flex-wrap items-center gap-2">
-          {!isPostableStatus && (
-            <p className="text-xs text-muted-foreground" data-testid="purchase-posting-blocker">
-              Keur de factuur eerst goed; daarna kan deze in het grootboek worden geboekt.
-            </p>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="purchase-posting-button"
-            disabled={!canApprove || !isPostableStatus || readinessBlocked || postInvoice.isPending || !invoiceId}
-            onClick={async () => {
-              if (!invoiceId) return;
-              try {
-                await postInvoice.mutateAsync(invoiceId);
-                toast({ title: "Factuur geboekt" });
-              } catch (e) {
-                toast({
-                  title: "Boeken niet gelukt",
-                  description: e instanceof Error ? e.message : undefined,
-                  variant: "destructive",
-                });
-              }
-            }}
-          >
-            {postInvoice.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
-          </Button>
-          </div>
-          </div>
-        )}
       </div>
 
       <PurchaseInvoiceActionBar

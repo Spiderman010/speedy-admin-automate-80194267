@@ -148,12 +148,14 @@ export function PurchaseInvoiceLinesTable({
                             size="sm"
                             className="h-6 px-2 text-[11px]"
                             data-testid="legacy-account-confirm"
-                            onClick={() =>
+                            onClick={() => {
+                              const suggestion = line.suggestedAccount;
+                              if (!suggestion) return;
                               onPatchLine(idx, {
-                                grootboekrekening_id: line.suggestedAccount!.id,
-                                grootboek_label: line.suggestedAccount!.label,
-                              })
-                            }
+                                grootboekrekening_id: suggestion.id,
+                                grootboek_label: suggestion.label,
+                              });
+                            }}
                           >
                             Bevestig {line.suggestedAccount.label}
                           </Button>

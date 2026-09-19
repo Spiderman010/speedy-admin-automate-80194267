@@ -61,7 +61,7 @@ export function PurchaseInvoiceTotalsSummary({
     );
 
   return (
-    <div data-testid="totals-summary" data-totals-state={state} className="space-y-3">
+    <div data-testid="totals-summary" data-totals-state={state} className="space-y-2">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

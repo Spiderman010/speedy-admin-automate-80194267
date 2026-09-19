@@ -37,7 +37,7 @@ export function PurchaseInvoicePostingReadiness({
 
   if (record.state === "klaar") {
     return (
-      <Alert data-testid="posting-readiness" data-readiness="klaar">
+      <Alert data-testid="posting-readiness" data-readiness="klaar" className="py-3">
         <CheckCircle2 className="h-4 w-4" />
         <AlertTitle>Klaar om te boeken</AlertTitle>
         <AlertDescription>
@@ -53,7 +53,7 @@ export function PurchaseInvoicePostingReadiness({
   const heeftConfiguratieblokkade = record.blocks.some((b) => b.configuratie);
 
   return (
-    <Alert variant="destructive" data-testid="posting-readiness" data-readiness="geblokkeerd">
+    <Alert variant="destructive" data-testid="posting-readiness" data-readiness="geblokkeerd" className="py-3">
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle>Nog niet boekbaar</AlertTitle>
       <AlertDescription>
