@@ -1,3 +1,4 @@
+import { assertBranchSqlKeepsLedgerFoundation } from "@/test/support/branch-sql-scope";
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -414,7 +415,12 @@ describe("scope", () => {
     }
     expect(changed).not.toContain("package.json");
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
-    expect(changed!.filter((f) => f.startsWith("supabase/") || f.endsWith(".sql"))).toEqual([]);
+    // Voorheen: "deze branch bevat geen supabase/ of .sql". Dat was een
+    // uitspraak over de SCOPE van deze polish-PR, geen invariant — elke latere
+    // fase die terecht een migratie meebrengt (6C-b9) laat hem omvallen. Wat
+    // werkelijk beschermd moet worden is de fundering waar de rekenlagen op
+    // lezen; test 15 hierboven bewaakt die rekenlagen zelf byte-voor-byte.
+    assertBranchSqlKeepsLedgerFoundation(changed!);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
 
     // Voorheen: "src/App.tsx staat niet in de diff". Dat was een uitspraak over

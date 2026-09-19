@@ -122,6 +122,7 @@ vi.mock("@/hooks/usePurchaseInvoicePosting", () => ({
 }));
 
 import PurchaseInvoiceWorkspaceRoute from "@/pages/PurchaseInvoiceWorkspace";
+import { assertBranchSqlKeepsLedgerFoundation, assertBranchTouchesNoExistingWriter } from "@/test/support/branch-sql-scope";
 
 function renderWorkspace() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -432,6 +433,14 @@ describe("statische grenzen", () => {
       return; // geen origin/main beschikbaar
     }
     expect(changed).not.toMatch(/integrations\/supabase\/types\.ts/);
-    expect(changed.split("\n").filter((f) => f.startsWith("supabase/") || f.endsWith(".sql"))).toEqual([]);
+    const changedList = changed.split("\n").filter(Boolean);
+    // Voorheen: "deze branch bevat geen migratie en geen SQL". Dat was een
+    // uitspraak over de SCOPE van die PR, geen invariant — elke latere fase die
+    // terecht een migratie meebrengt, laat hem omvallen. Bewaakt blijft wat er
+    // werkelijk toe doet: een migratie in deze branch mag de grootboekfundering
+    // niet wijzigen of weggooien, en mag geen bestaande boekingsschrijver
+    // herschrijven.
+    assertBranchSqlKeepsLedgerFoundation(changedList);
+    assertBranchTouchesNoExistingWriter(changedList);
   });
 });

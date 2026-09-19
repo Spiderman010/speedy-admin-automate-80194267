@@ -45,6 +45,7 @@ run -f "$REPO/supabase/migrations/20260919120000_add_opening_balance_posting.sql
 run -f "$REPO/supabase/migrations/20260919120000_add_opening_balance_posting.sql"    > /dev/null
 
 run -f "$REPO/supabase/migrations/20260920130000_revoke_direct_ledger_insert.sql"    > /dev/null
+run -f "$REPO/supabase/migrations/20260921120000_add_ledger_reversal_posting.sql"    > /dev/null
 
 run -f "$HERE/proof.sql"                                > /dev/null
 run -v conn="$CONN" -f "$HERE/concurrency.sql"          > /dev/null

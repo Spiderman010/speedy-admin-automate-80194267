@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { assertBranchSqlKeepsLedgerFoundation } from "@/test/support/branch-sql-scope";
 
 /**
  * Fase 6C-b8 (PR 2) — statische bewaking van de UI-laag.
@@ -123,11 +124,24 @@ describe("Beginbalans-UI — branch-scope", () => {
     // eigen, losstaande migratie toe. Wat bewaakt moet blijven is dat de
     // beginbalans-UI nooit meerijdt op een wijziging van het beginbalans- of
     // ledgerschema en dat toegevoegde SQL die objecten niet aanraakt.
-    expect(changed!.filter((f) => /add_opening_balance_posting|add_ledger_postings_foundation|supabase\/tests\/opening-balance\//.test(f))).toEqual([]);
+    // De runner van het beginbalansbewijs is hiervan uitgezonderd: een latere
+    // fase mag daar haar eigen migratie aan toevoegen, juist om te BEWIJZEN dat
+    // de beginbalansinvarianten er nog steeds bij gelden. Wat onaangeraakt moet
+    // blijven zijn de bewijzen zelf (bootstrap.sql, proof.sql, concurrency.sql)
+    // en het beginbalans- en grootboekschema.
+    expect(changed!.filter((f) => /add_opening_balance_posting|add_ledger_postings_foundation|supabase\/tests\/opening-balance\/(?!run-proof\.sh)/.test(f))).toEqual([]);
+    // Voorheen: toegevoegde SQL mocht de woorden opening_balance of
+    // ledger_postings niet eens NOEMEN. Dat is te grof: 6C-b9 leest de bronsoort
+    // 'opening_balance' om een beginbalans juist NIET tegen te boeken, en
+    // schrijft additief in het grootboekspoor. Wat bewaakt moet blijven is dat
+    // er geen beginbalansOBJECT wordt gemaakt, gewijzigd of weggegooid, en dat
+    // de grootboekfundering additief blijft.
     for (const f of changed!.filter((f) => f.endsWith(".sql") && existsSync(f))) {
       const code = readFileSync(f, "utf8").split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
-      expect(code, f).not.toMatch(/opening_balance|ledger_postings|journal_entries/);
+      expect(code, f).not.toMatch(/journal_entries/);
+      expect(code, f).not.toMatch(/(?:CREATE|ALTER|DROP)\s+(?:TABLE|INDEX|POLICY)[^;]*opening_balance/i);
     }
+    assertBranchSqlKeepsLedgerFoundation(changed!);
   });
 
   branchIt("55. gegenereerde Supabase-types ongewijzigd", () => {

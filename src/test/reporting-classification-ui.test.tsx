@@ -87,6 +87,7 @@ import {
   validateClassification,
 } from "@/lib/reporting-classification";
 import type { ClassificationForm } from "@/lib/reporting-classification";
+import { assertBranchSqlKeepsLedgerFoundation, assertBranchTouchesNoExistingWriter } from "@/test/support/branch-sql-scope";
 
 const makeAccount = (over: Partial<any> = {}) => ({
   id: `gb-${Math.random().toString(36).slice(2)}`,
@@ -826,8 +827,15 @@ describe("branch-scope", () => {
   const branchIt = changed === null ? it.skip : it;
 
   branchIt("29. geen migratie en geen SQL in deze branch", () => {
-    expect(changed!.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed!.filter((f) => f.endsWith(".sql"))).toEqual([]);
+    const changedList = changed!;
+    // Voorheen: "deze branch bevat geen migratie en geen SQL". Dat was een
+    // uitspraak over de SCOPE van die PR, geen invariant — elke latere fase die
+    // terecht een migratie meebrengt, laat hem omvallen. Bewaakt blijft wat er
+    // werkelijk toe doet: een migratie in deze branch mag de grootboekfundering
+    // niet wijzigen of weggooien, en mag geen bestaande boekingsschrijver
+    // herschrijven.
+    assertBranchSqlKeepsLedgerFoundation(changedList);
+    assertBranchTouchesNoExistingWriter(changedList);
   });
 
   branchIt("30. de gegenereerde types zijn ongewijzigd", () => {

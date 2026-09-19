@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { assertBranchSqlKeepsLedgerFoundation } from "@/test/support/branch-sql-scope";
 
 /**
  * Fase 6C-b7 PR 2 — de oude "Grootboekmutaties" heet nu "Bronmutaties", zodat
@@ -55,26 +56,9 @@ describe("Bronmutaties — hernoeming", () => {
     // hier werkelijk beschermd moet worden is het contract waar deze laag op
     // leest: een migratie in deze branch mag de fundering uit 6C-b2 niet
     // wijzigen of weggooien.
-    for (const bestand of changed.split("\n").filter((f) => f.startsWith("supabase/migrations/"))) {
-      const sql = readFileSync(bestand, "utf8")
-        .split("\n")
-        .filter((r) => !r.trimStart().startsWith("--"))
-        .join("\n");
-      expect(sql, bestand).not.toMatch(/ALTER TABLE public\.ledger_postings/);
-      expect(sql, bestand).not.toMatch(/DROP TABLE[^;]*ledger_postings/);
-      // Een migratie mag haar EIGEN toevoeging aan ledger_postings idempotent
-      // weggooien, maar nooit een object uit de fundering zelf.
-      const fundering = readFileSync(
-        "supabase/migrations/20260914120000_add_ledger_postings_foundation.sql",
-        "utf8",
-      );
-      for (const drop of sql.match(/DROP (?:TABLE|FUNCTION|TRIGGER|POLICY|INDEX)[^;]*/g) ?? []) {
-        if (!/ledger_postings/.test(drop)) continue;
-        const naam = drop.match(/DROP \w+(?: IF EXISTS)? ([\w.]+)/)?.[1] ?? "";
-        expect(fundering, `${bestand}: ${drop}`).not.toContain(`CREATE TRIGGER ${naam}`);
-        expect(fundering, `${bestand}: ${drop}`).not.toContain(`CREATE CONSTRAINT TRIGGER ${naam}`);
-        expect(fundering, `${bestand}: ${drop}`).not.toContain(`INDEX IF NOT EXISTS ${naam}`);
-      }
-    }
+    // Het onderscheid tussen een ADDITIEVE migratie (mag) en een die de
+    // fundering wijzigt of weggooit (mag niet) staat op één plek, zodat
+    // dertien testbestanden er niet dertien varianten van onderhouden.
+    assertBranchSqlKeepsLedgerFoundation(changed.split("\n").filter(Boolean));
   });
 });

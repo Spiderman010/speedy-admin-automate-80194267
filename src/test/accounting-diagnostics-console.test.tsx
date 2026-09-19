@@ -56,6 +56,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "user-1" } }) }));
 
 import { useAccountingDiagnostics } from "@/hooks/useAccountingDiagnostics";
+import { assertBranchSqlKeepsLedgerFoundation, assertBranchTouchesNoExistingWriter } from "@/test/support/branch-sql-scope";
 
 const CLIENT = "client-1";
 const ANDER = "client-2";
@@ -412,7 +413,15 @@ describe("statische grenzen", () => {
       return;
     }
     expect(changed).not.toMatch(/integrations\/supabase\/types\.ts/);
-    expect(changed.split("\n").filter((f) => f.startsWith("supabase/") || f.endsWith(".sql"))).toEqual([]);
+    const changedList = changed.split("\n").filter(Boolean);
+    // Voorheen: "deze branch bevat geen migratie en geen SQL". Dat was een
+    // uitspraak over de SCOPE van die PR, geen invariant — elke latere fase die
+    // terecht een migratie meebrengt, laat hem omvallen. Bewaakt blijft wat er
+    // werkelijk toe doet: een migratie in deze branch mag de grootboekfundering
+    // niet wijzigen of weggooien, en mag geen bestaande boekingsschrijver
+    // herschrijven.
+    assertBranchSqlKeepsLedgerFoundation(changedList);
+    assertBranchTouchesNoExistingWriter(changedList);
     // De bestaande regel- en rapportagelagen blijven ongemoeid.
     for (const f of [
       "src/lib/ledger-catchup.ts", "src/lib/ledger-integrity.ts", "src/lib/ledger-reporting.ts",

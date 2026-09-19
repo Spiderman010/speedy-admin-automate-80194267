@@ -294,8 +294,18 @@ describe("Balans/W&V PR 1 — branch-scope", () => {
     // migratie zelf meebracht; op elke latere branch (zoals de UI-PR) is de
     // lijst leeg. De invariant is dat dit spoor nooit een ándere migratie
     // aanraakt.
+    // Voorheen: de lijst gewijzigde migraties mocht hoogstens DEZE ene
+    // bevatten. Dat was waar op het classificatiespoor zelf, maar het is geen
+    // invariant: een latere fase (6C-b9) voegt terecht een eigen, losstaande
+    // migratie toe. De invariant is dat er nooit een BESTAANDE migratie wordt
+    // gewijzigd — nieuwe bestanden erbij mogen.
     const migrations = changed!.filter((f) => f.startsWith("supabase/migrations/"));
-    expect(migrations.filter((f) => f !== MIGRATION)).toEqual([]);
+    const bestaandOpMain = new Set(
+      execFileSync("git", ["ls-tree", "--name-only", "origin/main", "supabase/migrations/"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      }).split("\n").filter(Boolean),
+    );
+    expect(migrations.filter((f) => f !== MIGRATION && bestaandOpMain.has(f))).toEqual([]);
   });
 
   branchIt("24. de seed, de rapportagekern en de afhankelijkheden zijn onaangeraakt", () => {

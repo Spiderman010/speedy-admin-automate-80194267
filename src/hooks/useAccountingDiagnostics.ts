@@ -22,8 +22,10 @@ import {
   type DiagnosticItem,
   type DomainSummary,
   type LedgerDiagnosticsAccount,
+  diagnosticsForReversals,
   type LedgerSummary,
 } from "@/lib/accounting-diagnostics";
+import { evaluateReversalIntegrity, type ReversalMarkerLike } from "@/lib/reversal-integrity";
 
 /**
  * Accounting Diagnostics — de datalaag. UITSLUITEND LEZEN.
@@ -69,6 +71,70 @@ async function fetchAll<T>(
   return all;
 }
 
+/**
+ * TIJDELIJKE SHIM — verwijderen zodra 20260921120000 in productie is toegepast
+ * en `src/integrations/supabase/types.ts` opnieuw is gegenereerd.
+ *
+ * `ledger_reversal_postings` staat nog niet in de gegenereerde types, dus de
+ * getypeerde client kent de tabel niet. De structurele cast is bewust zo smal
+ * mogelijk: precies de ene query die hier nodig is, niets meer. `types.ts` mag
+ * nooit met de hand worden bijgewerkt (patterns §11).
+ */
+interface UntypedMarkerApi {
+  from(table: string): {
+    select(columns: string): {
+      eq(
+        column: string,
+        value: string,
+      ): {
+        order(
+          column: string,
+          options: { ascending: boolean },
+        ): {
+          range(from: number, to: number): PromiseLike<{ data: unknown; error: { code?: string } | null }>;
+        };
+      };
+    };
+  };
+}
+
+/**
+ * Deploy-venster. Verschijnt de frontend vóór de migratie, dan kent PostgREST
+ * de tabel niet en zou de HELE diagnostiekquery falen — een bestaande pagina
+ * zou dan breken door een dimensie die er nog niet is. "Kan het niet weten" is
+ * hier daarom `null` en nadrukkelijk niet "er is niets": zonder markers wordt
+ * de tegenboekingscontrole overgeslagen in plaats van schoon gemeld.
+ */
+const DEPLOY_WINDOW_CODES = new Set(["PGRST002", "PGRST204", "PGRST205", "42P01", "42883"]);
+
+export async function fetchReversalMarkers(clientId: string): Promise<ReversalMarkerLike[] | null> {
+  const api = supabase as unknown as UntypedMarkerApi;
+  const all: ReversalMarkerLike[] = [];
+  const seen = new Set<string>();
+  for (let offset = 0; ; ) {
+    const { data, error } = await api
+      .from("ledger_reversal_postings")
+      .select("original_posting_group_id, reversal_posting_group_id, organization_id, client_id, line_count")
+      .eq("client_id", clientId)
+      .order("original_posting_group_id", { ascending: true })
+      .range(offset, offset + BATCH - 1);
+    if (error) {
+      if (error.code && DEPLOY_WINDOW_CODES.has(error.code)) return null;
+      throw error;
+    }
+    const batch = (data ?? []) as ReversalMarkerLike[];
+    for (const row of batch) {
+      if (!seen.has(row.original_posting_group_id)) {
+        seen.add(row.original_posting_group_id);
+        all.push(row);
+      }
+    }
+    if (batch.length === 0) break;
+    offset += batch.length;
+  }
+  return all;
+}
+
 function chunk<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
@@ -95,7 +161,7 @@ export async function fetchAccountingDiagnostics(clientId: string): Promise<Acco
   if (!clientRow) throw new Error("Administratie niet gevonden");
   const config = clientRow as CatchupClientConfig;
 
-  const [purchaseInvoices, salesInvoices, purchaseMarkers, salesMarkers, bankMarkers, manualMarkers, postings, accounts, integrity] =
+  const [purchaseInvoices, salesInvoices, purchaseMarkers, salesMarkers, bankMarkers, manualMarkers, postings, accounts, integrity, reversalMarkers] =
     await Promise.all([
       fetchAll<CatchupPurchaseInvoice>(
         (offset) =>
@@ -159,6 +225,7 @@ export async function fetchAccountingDiagnostics(clientId: string): Promise<Acco
       ),
       // De vier integriteitsregels komen ongewijzigd uit /grootboek/integriteit.
       fetchLedgerIntegrity(clientId),
+      fetchReversalMarkers(clientId),
     ]);
 
   // Inkoopregels: gescoped via de factuur-id's, in blokken. Nooit per factuur.
@@ -208,6 +275,10 @@ export async function fetchAccountingDiagnostics(clientId: string): Promise<Acco
     ...salesMarkers.map((m) => m.posting_group_id),
     ...bankMarkers.map((m) => m.posting_group_id),
     ...manualMarkers.map((m) => m.posting_group_id),
+    // Alleen de TEGENboekingsgroep. De oorspronkelijke groep is legitiem ook
+    // door haar eigen documentmarker geclaimd; die meetellen zou van elke
+    // tegenboeking een valse "dubbele groepsclaim" maken.
+    ...(reversalMarkers ?? []).map((m) => m.reversal_posting_group_id),
   ]) {
     markerClaimsPerGroup.set(groupId, (markerClaimsPerGroup.get(groupId) ?? 0) + 1);
   }
@@ -221,13 +292,23 @@ export async function fetchAccountingDiagnostics(clientId: string): Promise<Acco
     ...diagnosticsForPurchaseIntegrity(integrity.findings),
   ];
   const salesItems = salesRecords.flatMap((r) => diagnosticsForDocument(r, groupContext));
-  const ledgerItems = diagnosticsForLedger({
-    integrityFindings: integrity.findings,
-    postings,
-    accounts,
-    clientId,
-    markerClaimsPerGroup,
-  });
+  const ledgerItems = [
+    ...diagnosticsForLedger({
+      integrityFindings: integrity.findings,
+      postings,
+      accounts,
+      clientId,
+      markerClaimsPerGroup,
+    }),
+    // Tegenboekingslineage. Zonder markertabel (deploy-venster) wordt deze
+    // dimensie overgeslagen; er wordt nooit "schoon" beweerd op basis van
+    // gegevens die niet konden worden opgehaald.
+    ...(reversalMarkers === null
+      ? []
+      : diagnosticsForReversals(
+          evaluateReversalIntegrity({ markers: reversalMarkers, postings }).findings,
+        )),
+  ];
 
   return {
     purchase: { items: purchaseItems, summary: summarizeDiagnostics(purchaseItems, purchaseRecords) },

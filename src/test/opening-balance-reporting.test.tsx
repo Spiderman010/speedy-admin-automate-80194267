@@ -25,6 +25,7 @@ import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompleten
 import { GrootboekAccountMutations } from "@/components/grootboek/GrootboekAccountMutations";
 import type { OpeningBalanceMarker, OpeningBalanceRow } from "@/lib/opening-balance-utils";
 import { useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
+import { assertBranchSqlKeepsLedgerFoundation } from "@/test/support/branch-sql-scope";
 
 const overviewState = {
   data: undefined as { headers: OpeningBalanceRow[]; marker: OpeningBalanceMarker | null } | undefined,
@@ -511,7 +512,17 @@ describe("statische bewaking", () => {
     // eigen, losstaande migratie toe. Bewaakt blijft: het beginbalans- en
     // ledgerschema en de beginbalansproof zijn onaangeraakt, en toegevoegde SQL
     // raakt die objecten niet aan.
-    expect(changed.filter((f) => /add_opening_balance_posting|add_ledger_postings_foundation|supabase\/tests\/opening-balance\//.test(f))).toEqual([]);
+    // De runner van het beginbalansbewijs is hiervan uitgezonderd: een latere
+    // fase mag daar haar eigen migratie aan toevoegen, juist om te BEWIJZEN dat
+    // de beginbalansinvarianten er nog steeds bij gelden. Wat onaangeraakt moet
+    // blijven zijn de bewijzen zelf (bootstrap.sql, proof.sql, concurrency.sql)
+    // en het beginbalans- en grootboekschema.
+    expect(changed.filter((f) => /add_opening_balance_posting|add_ledger_postings_foundation|supabase\/tests\/opening-balance\/(?!run-proof\.sh)/.test(f))).toEqual([]);
+    // Voorheen: toegevoegde SQL mocht de woorden opening_balance of
+    // ledger_postings niet eens NOEMEN. Zie de toelichting in
+    // opening-balance-ui-scope.test.ts: dat is een scope-uitspraak, geen
+    // invariant. Bewaakt blijft dat geen beginbalansOBJECT wordt aangeraakt en
+    // dat de grootboekfundering additief blijft.
     for (const f of changed.filter((f) => f.endsWith(".sql"))) {
       let code = "";
       try {
@@ -520,8 +531,10 @@ describe("statische bewaking", () => {
         continue; // verwijderd bestand
       }
       code = code.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
-      expect(code, f).not.toMatch(/opening_balance|ledger_postings|journal_entries/);
+      expect(code, f).not.toMatch(/journal_entries/);
+      expect(code, f).not.toMatch(/(?:CREATE|ALTER|DROP)\s+(?:TABLE|INDEX|POLICY)[^;]*opening_balance/i);
     }
+    assertBranchSqlKeepsLedgerFoundation(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     expect(changed.filter((f) => /nav\.ts$|package-lock|bun\.lockb/.test(f))).toEqual([]);

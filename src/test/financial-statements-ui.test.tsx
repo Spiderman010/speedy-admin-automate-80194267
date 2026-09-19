@@ -90,6 +90,7 @@ import {
   openingBalanceContributionFromRows,
 } from "@/lib/financial-statements";
 import { formatCents } from "@/lib/financial-statements-presentation";
+import { assertBranchSqlKeepsLedgerFoundation, assertBranchTouchesNoExistingWriter } from "@/test/support/branch-sql-scope";
 
 /**
  * `formatCents` gebruikt Intl en dus een harde spatie (U+00A0) tussen € en het
@@ -674,8 +675,15 @@ describe("branch-scope", () => {
   const branchIt = changed === null ? it.skip : it;
 
   branchIt("39/40. geen migratie en geen SQL", () => {
-    expect(changed!.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed!.filter((f) => f.endsWith(".sql"))).toEqual([]);
+    const changedList = changed!;
+    // Voorheen: "deze branch bevat geen migratie en geen SQL". Dat was een
+    // uitspraak over de SCOPE van die PR, geen invariant — elke latere fase die
+    // terecht een migratie meebrengt, laat hem omvallen. Bewaakt blijft wat er
+    // werkelijk toe doet: een migratie in deze branch mag de grootboekfundering
+    // niet wijzigen of weggooien, en mag geen bestaande boekingsschrijver
+    // herschrijven.
+    assertBranchSqlKeepsLedgerFoundation(changedList);
+    assertBranchTouchesNoExistingWriter(changedList);
   });
 
   branchIt("41. de gegenereerde types zijn ongewijzigd", () => {
