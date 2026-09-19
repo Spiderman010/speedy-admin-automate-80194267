@@ -36,14 +36,14 @@ export function PurchaseInvoiceQueue({
     <aside
       data-testid="invoice-queue"
       aria-label="Factuurwachtrij"
-      className="min-w-0 overflow-hidden rounded-md border bg-card min-[1360px]:sticky min-[1360px]:top-[4.5rem] min-[1360px]:h-[calc(100dvh-6.5rem)]"
+      className="min-w-0 overflow-hidden rounded-md border bg-card xl:sticky xl:top-[4.5rem] xl:h-[calc(100dvh-6.5rem)]"
     >
       <div className="flex h-11 items-center justify-between border-b px-3">
         <h2 className="text-sm font-semibold">Wachtrij</h2>
         <span className="font-mono text-xs tabular-nums text-muted-foreground">{invoices.length}</span>
       </div>
-      <ScrollArea className="max-h-56 min-[1360px]:h-[calc(100%-2.75rem)] min-[1360px]:max-h-none">
-        <nav className="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-1 p-1.5 min-[1360px]:grid-flow-row min-[1360px]:auto-cols-auto">
+      <ScrollArea className="max-h-56 xl:h-[calc(100%-2.75rem)] xl:max-h-none">
+        <nav className="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-1 p-1.5 xl:grid-flow-row xl:auto-cols-auto">
           {invoices.map((item) => {
             const active = item.id === activeInvoiceId;
             const amount = item.amount_incl ?? item.amount_excl;
