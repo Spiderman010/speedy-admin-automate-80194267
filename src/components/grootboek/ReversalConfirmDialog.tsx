@@ -15,7 +15,11 @@ import {
   MAX_REVERSAL_REASON_LENGTH,
   formatReversalAccountLabel,
   normalizeReversalReason,
+  APPEND_ONLY_NOTICE,
+  ORIGINAL_HEADING,
   ORIGINAL_REMAINS_NOTICE,
+  REASON_LABEL,
+  REVERSAL_DATE_LABEL,
   PREVIEW_NOTICE,
   REVERSAL_CONFIRM_BUTTON,
   REVERSAL_CONFIRM_TITLE,
@@ -94,12 +98,18 @@ export function ReversalConfirmDialog({
           <DialogTitle className="text-base">{REVERSAL_CONFIRM_TITLE}</DialogTitle>
           <DialogDescription className="text-xs">
             De database maakt de tegenboeking en bepaalt de regels; dit scherm legt alleen uit wat er gebeurt.
+            Er wordt niets bewerkt en niets verwijderd.
           </DialogDescription>
         </DialogHeader>
 
         <Alert data-testid="reversal-original-remains">
           <Info className="h-4 w-4" />
-          <AlertDescription>{ORIGINAL_REMAINS_NOTICE}</AlertDescription>
+          <AlertDescription>
+            {ORIGINAL_REMAINS_NOTICE}
+            <span className="mt-1 block text-xs text-muted-foreground" data-testid="reversal-append-only">
+              {APPEND_ONLY_NOTICE}
+            </span>
+          </AlertDescription>
         </Alert>
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
@@ -113,12 +123,18 @@ export function ReversalConfirmDialog({
             <dt className="text-xs text-muted-foreground">Boekingstotaal</dt>
             <dd className="font-mono font-semibold tabular-nums">{formatCents(summary.debitCents)}</dd>
           </div>
+          <div className="col-span-2">
+            <dt className="text-xs text-muted-foreground">{ORIGINAL_HEADING}</dt>
+            <dd className="font-mono break-all text-xs" data-testid="reversal-original-group">
+              {summary.postingGroupId}
+            </dd>
+          </div>
         </dl>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor={dateId}>
-              Boekingsdatum tegenboeking <span aria-hidden="true">*</span>
+              {REVERSAL_DATE_LABEL} <span aria-hidden="true">*</span>
             </Label>
             <Input
               id={dateId}
@@ -136,7 +152,7 @@ export function ReversalConfirmDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor={reasonId}>Toelichting (optioneel)</Label>
+            <Label htmlFor={reasonId}>{REASON_LABEL} (optioneel)</Label>
             <Textarea
               id={reasonId}
               value={reason}
@@ -212,15 +228,17 @@ export function ReversalConfirmDialog({
           >
             Annuleren
           </Button>
+          {/* Bewust de gewone primaire knop en niet de destructieve variant:
+              die is in dit ontwerpsysteem de verwijderknop, en er wordt hier
+              niets verwijderd. */}
           <Button
             type="button"
-            variant="destructive"
             className="h-11 sm:h-9"
             disabled={isPending || !!issue}
             onClick={handleConfirm}
             data-testid="reversal-confirm-button"
           >
-            {isPending ? "Bezig met tegenboeken…" : REVERSAL_CONFIRM_BUTTON}
+            {isPending ? "Bezig met boeken…" : REVERSAL_CONFIRM_BUTTON}
           </Button>
         </DialogFooter>
       </DialogContent>

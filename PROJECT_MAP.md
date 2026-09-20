@@ -946,6 +946,23 @@ src/pages/Balans.tsx · src/pages/WinstVerlies.tsx         geven de secties door
 
 ---
 
+### Tegenboekingen — de correctieflow leesbaar gemaakt
+
+**Uitsluitend presentatie en navigatie.** Geen migratie, geen SQL, geen RPC-wijziging, geen schemawijziging, geen typewijziging, geen afhankelijkheid en geen nieuwe route. `reverse_posting_group()`, de markertabel, `useLedgerReversal.ts` en elke rekenlaag zijn byte-voor-byte gelijk aan `origin/main`; een test bewaakt dat.
+
+De motor van 6C-b9 was af en de UI werkte, maar zij liet de correctie er te veel uitzien als een verwijdering: de actie stond in een rood kader met de destructieve knopvariant, een tegenboeking toonde alleen een badge — zonder datum, reden of verwijzing — en er was geen enkele manier om van een origineel naar zijn tegenboeking te navigeren of terug.
+
+- **Drie toestanden, elk met eigen woorden.** Een gewone boeking is **Geboekt** en biedt **"Tegenboeking maken"** aan; een teruggedraaid origineel is **"Teruggedraaid"** en biedt géén tweede actie; de tegenboeking zelf is **"Tegenboeking"** en biedt evenmin een actie (de bronsoort `reversal` was en blijft niet-ondersteund). De woordenschat staat op één plek in `ledger-reversal-ui.ts`.
+- **Geen verwijderaffordance meer.** De actieknop en de bevestigingsknop gebruiken niet langer `variant="destructive"`; het rode kader is weg. Dat is in dit ontwerpsysteem de verwijderknop, en er wordt hier niets verwijderd. Een test leest beide blokken en weigert de destructieve variant. Geen enkele knop heet nog iets met "bewerken", "verwijderen" of "ongedaan maken" — de *uitleg* mag die woorden juist wél gebruiken, want zij stelt gerust dat grootboekregels nooit worden gewijzigd of verwijderd.
+- **Het auditblok toont bij beide richtingen hetzelfde:** **Datum tegenboeking**, **Reden** en de verwijzing naar de andere boekingsgroep. Alles komt uit de vastgelegde marker; ontbreekt een optioneel veld, dan staat er **"Niet vastgelegd"** in plaats van een verzonnen waarde. Er wordt geen gebruiker getoond, omdat die niet in dit leesmodel zit.
+- **Navigatie in beide richtingen, zonder nieuwe route.** "Bekijk tegenboeking" en "Bekijk originele boeking" zetten de `openGroupId` van het mutatieoverzicht om; hetzelfde paneel toont dan de andere groep en de rekeningcontext eronder blijft staan. De callback is optioneel: zonder callback blijven de verwijzingen zichtbaar, alleen zonder knop.
+- **De bevestiging zegt nu voluit wat er gebeurt:** het origineel blijft ongewijzigd bestaan, er komt een nieuwe spiegelbeeldige boeking bij, om wélke boekingsgroep het gaat, en dat een tegenboeking zelf óók definitief in de audittrail staat en niet kan worden teruggenomen. De primaire actie heet **"Tegenboeking boeken"**, de secundaire "Annuleren".
+- **Geen enkele bescherming verzwakt.** De `useRef`-grendel vóór de eerste render, de `disabled` op de knop en de tweede controle in de dialoog staan er alle drie nog; een test vuurt drie klikken binnen één tick af en telt één RPC. Het RPC-contract is letterlijk ongewijzigd: `{_posting_group_id, _posting_date, _reason}`, zonder bedrag of rekening.
+- **Eén testdubbel is waarheidsgetrouwer gemaakt.** De nep-Supabase gaf voor béide markerqueries dezelfde rij terug, ongeacht de kolom waarop werd gefilterd — waardoor een boekingsgroep tegelijk origineel én tegenboeking leek, wat in de database niet kan bestaan. Het dubbel houdt nu rekening met de `eq`-kolom.
+- **Tests:** `src/test/ledger-reversal-navigation.test.tsx` (27) plus de 43 bestaande reversal-UI-tests, waarvan drie copy-asserties zijn bijgewerkt aan de nieuwe woordenschat.
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**

@@ -173,6 +173,9 @@ export function GrootboekAccountMutations({
           clientId={clientId}
           postingGroupId={openGroupId}
           accountsById={accountsById}
+          /* Origineel ↔ tegenboeking: hetzelfde paneel toont de andere groep.
+             Geen nieuwe route, en de rekeningcontext eronder blijft staan. */
+          onNavigateToGroup={(id) => setOpenGroupId(id)}
         />
       )}
     </div>
