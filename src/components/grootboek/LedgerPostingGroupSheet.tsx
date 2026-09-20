@@ -151,9 +151,9 @@ export function LedgerPostingGroupSheet({
       }}
     >
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
-        <SheetHeader>
-          <SheetTitle>Boeking</SheetTitle>
-          <SheetDescription>
+        <SheetHeader className="space-y-1 pb-1">
+          <SheetTitle className="text-base">Boeking</SheetTitle>
+          <SheetDescription className="text-xs">
             De vastgelegde grootboekregels van deze boeking. Grootboekregels worden nooit gewijzigd of verwijderd.
           </SheetDescription>
         </SheetHeader>
@@ -170,64 +170,83 @@ export function LedgerPostingGroupSheet({
             </AlertDescription>
           </Alert>
         ) : (
-          <div className="mt-4 space-y-5">
+          <div className="mt-3 space-y-4">
             {/* ── Samenvatting ─────────────────────────────────────────── */}
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="font-normal" data-testid="posting-group-source">
-                {bronLabel}
-              </Badge>
-              {availability.kind === "already_reversed" ? (
-                <Badge variant="secondary" className="font-normal" data-testid="posting-group-status">
-                  Tegengeboekt
+            <div className="rounded-md border bg-muted/30">
+              <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
+                <Badge variant="outline" className="bg-background font-normal" data-testid="posting-group-source">
+                  {bronLabel}
                 </Badge>
-              ) : relationQuery.data?.asReversal ? (
-                <Badge variant="secondary" className="font-normal" data-testid="posting-group-status">
-                  Tegenboeking
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="font-normal" data-testid="posting-group-status">
-                  Geboekt
-                </Badge>
-              )}
-            </div>
+                {availability.kind === "already_reversed" ? (
+                  <Badge variant="secondary" className="font-normal" data-testid="posting-group-status">
+                    Tegengeboekt
+                  </Badge>
+                ) : relationQuery.data?.asReversal ? (
+                  <Badge variant="secondary" className="font-normal" data-testid="posting-group-status">
+                    Tegenboeking
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-background font-normal" data-testid="posting-group-status">
+                    Geboekt
+                  </Badge>
+                )}
+                <span className="ml-auto font-mono text-sm font-semibold tabular-nums">
+                  {formatCents(summary.debitCents)}
+                </span>
+              </div>
 
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm" data-testid="posting-group-summary">
-              <Veld label="Boekingsdatum" value={summary.postingDate ? formatDatumNL(summary.postingDate) : "—"} mono />
-              <Veld label="Boekjaar" value={summary.boekjaar === null ? "—" : String(summary.boekjaar)} mono />
-              <Veld label="Totaal debet" value={formatCents(summary.debitCents)} mono />
-              <Veld label="Totaal credit" value={formatCents(summary.creditCents)} mono />
-              <Veld label="Aantal regels" value={String(summary.lineCount)} mono />
-              <Veld label="Valuta" value={summary.currency ?? "—"} />
-            </dl>
+              <dl
+                className="grid grid-cols-2 gap-x-4 gap-y-2 px-3 py-2 text-sm sm:grid-cols-3"
+                data-testid="posting-group-summary"
+              >
+                <Veld label="Boekingsdatum" value={summary.postingDate ? formatDatumNL(summary.postingDate) : "—"} mono />
+                <Veld label="Boekjaar" value={summary.boekjaar === null ? "—" : String(summary.boekjaar)} mono />
+                <Veld label="Totaal debet" value={formatCents(summary.debitCents)} mono />
+                <Veld label="Totaal credit" value={formatCents(summary.creditCents)} mono />
+                <Veld label="Aantal regels" value={String(summary.lineCount)} mono />
+                <Veld label="Valuta" value={summary.currency ?? "—"} />
+              </dl>
+            </div>
 
             {/* ── De vastgelegde regels ────────────────────────────────── */}
             <div className="-mx-1 overflow-x-auto px-1">
               <table className="w-full min-w-[460px] text-sm" data-testid="posting-group-lines">
                 <caption className="sr-only">Grootboekregels van deze boeking</caption>
                 <thead>
-                  <tr className="border-b text-xs text-muted-foreground">
-                    <th scope="col" className="px-2 py-1 text-left font-medium">Rekening</th>
-                    <th scope="col" className="px-2 py-1 text-left font-medium">Omschrijving</th>
-                    <th scope="col" className="px-2 py-1 text-right font-medium">Debet</th>
-                    <th scope="col" className="px-2 py-1 text-right font-medium">Credit</th>
+                  <tr className="border-b bg-muted/50 text-xs text-muted-foreground">
+                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Rekening</th>
+                    <th scope="col" className="px-2 py-1.5 text-left font-medium">Omschrijving</th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">Debet</th>
+                    <th scope="col" className="px-2 py-1.5 text-right font-medium">Credit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {lines.map((row) => (
                     <tr key={row.id} className="border-b last:border-0" data-testid="posting-group-line">
-                      <td className="px-2 py-1 break-words">
+                      <td className="px-2 py-1.5 break-words font-medium">
                         {formatReversalAccountLabel(accountsById.get(row.grootboekrekening_id), row.grootboekrekening_id)}
                       </td>
-                      <td className="px-2 py-1 break-words text-muted-foreground">{row.description || "—"}</td>
-                      <td className="whitespace-nowrap px-2 py-1 text-right font-mono tabular-nums">
+                      <td className="px-2 py-1.5 break-words text-muted-foreground">{row.description || "—"}</td>
+                      <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">
                         {toCents(row.debit_amount) !== 0 ? formatCents(toCents(row.debit_amount)) : ""}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-1 text-right font-mono tabular-nums">
+                      <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">
                         {toCents(row.credit_amount) !== 0 ? formatCents(toCents(row.credit_amount)) : ""}
                       </td>
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t text-xs">
+                    <td className="px-2 py-1.5 text-muted-foreground" colSpan={2}>Totaal</td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono font-semibold tabular-nums">
+                      {formatCents(summary.debitCents)}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono font-semibold tabular-nums">
+                      {formatCents(summary.creditCents)}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
 
@@ -282,6 +301,7 @@ export function LedgerPostingGroupSheet({
           </div>
         )}
 
+
         {postingGroupId && (
           <ReversalConfirmDialog
             open={confirmOpen}
@@ -311,27 +331,23 @@ function ReversalArea({
 }) {
   if (availability.kind === "already_reversed") {
     return (
-      <div className="rounded-md border border-dashed p-3 text-sm" data-testid="reversal-already">
+      <div className="rounded-md border bg-muted/30 p-3 text-sm" data-testid="reversal-already">
         <p className="font-medium">Deze boeking is tegengeboekt.</p>
-        <dl className="mt-2 space-y-1 text-xs text-muted-foreground">
-          <div className="flex gap-2">
-            <dt>Tegenboeking</dt>
-            <dd className="font-mono break-all" data-testid="reversal-group-id">
-              {availability.reversalPostingGroupId}
-            </dd>
-          </div>
-          {relation?.asOriginal && (
-            <div className="flex gap-2">
-              <dt>Datum</dt>
-              <dd className="font-mono">{formatDatumNL(relation.asOriginal.posting_date)}</dd>
-            </div>
-          )}
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <dt>Datum</dt>
+          <dd className="font-mono tabular-nums text-foreground">
+            {relation?.asOriginal ? formatDatumNL(relation.asOriginal.posting_date) : "—"}
+          </dd>
           {relation?.asOriginal?.reason && (
-            <div className="flex gap-2">
+            <>
               <dt>Toelichting</dt>
-              <dd className="break-words">{relation.asOriginal.reason}</dd>
-            </div>
+              <dd className="break-words text-foreground">{relation.asOriginal.reason}</dd>
+            </>
           )}
+          <dt>Tegenboeking</dt>
+          <dd className="font-mono break-all" data-testid="reversal-group-id">
+            {availability.reversalPostingGroupId}
+          </dd>
         </dl>
         <p className="mt-2 text-xs text-muted-foreground">
           De oorspronkelijke boeking hierboven is ongewijzigd gebleven. Een boeking wordt hoogstens één keer
@@ -358,23 +374,25 @@ function ReversalArea({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+      <p className="text-sm font-medium">Correctie</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        De oorspronkelijke boeking blijft staan; er komt een nieuwe boeking bij.
+      </p>
       <Button
         type="button"
         variant="destructive"
-        className="h-11 sm:h-9"
+        className="mt-3 h-11 w-full sm:h-9 sm:w-auto"
         disabled={isPending}
         onClick={onOpenConfirm}
         data-testid="reversal-open-button"
       >
         {isPending ? "Bezig met tegenboeken…" : "Tegenboeken"}
       </Button>
-      <p className="text-xs text-muted-foreground">
-        De oorspronkelijke boeking blijft staan; er komt een nieuwe boeking bij.
-      </p>
     </div>
   );
 }
+
 
 function Veld({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
