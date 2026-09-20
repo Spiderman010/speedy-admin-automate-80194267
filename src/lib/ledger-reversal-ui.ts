@@ -190,10 +190,38 @@ export const PREVIEW_NOTICE =
   "Voorbeeld ter uitleg. De tegenboeking wordt door de database gemaakt uit de opgeslagen grootboekregels.";
 
 export const ORIGINAL_REMAINS_NOTICE =
-  "De oorspronkelijke boeking blijft bestaan. Er wordt een nieuwe tegenboeking gemaakt.";
+  "De originele boeking blijft ongewijzigd bestaan. Er wordt een nieuwe, spiegelbeeldige boeking aan het grootboek toegevoegd.";
 
-export const REVERSAL_CONFIRM_TITLE = "Tegenboeking bevestigen";
-export const REVERSAL_CONFIRM_BUTTON = "Tegenboeking bevestigen";
+export const REVERSAL_CONFIRM_TITLE = "Tegenboeking boeken";
+export const REVERSAL_CONFIRM_BUTTON = "Tegenboeking boeken";
+
+/**
+ * Eén vaste woordenschat voor de hele correctieflow.
+ *
+ * Een grootboek is append-only: er wordt nooit iets bewerkt, ongedaan gemaakt
+ * of verwijderd. Woorden die dát suggereren horen hier dus niet thuis — ook
+ * niet als ze in spreektaal handig zijn. "Teruggedraaid" beschrijft wat er met
+ * de boeking IS gebeurd; de boeking zelf staat er nog precies zoals zij stond.
+ */
+export const REVERSED_BADGE = "Teruggedraaid";
+export const REVERSAL_BADGE = "Tegenboeking";
+export const NORMAL_BADGE = "Geboekt";
+export const ORIGINAL_HEADING = "Originele boeking";
+export const REVERSAL_ACTION_LABEL = "Tegenboeking maken";
+export const REVERSAL_ACTION_PENDING_LABEL = "Bezig met boeken…";
+export const REASON_LABEL = "Reden";
+export const REVERSAL_DATE_LABEL = "Datum tegenboeking";
+export const VIEW_REVERSAL_LABEL = "Bekijk tegenboeking";
+export const VIEW_ORIGINAL_LABEL = "Bekijk originele boeking";
+
+/** Wat er ontbreekt, blijft ontbreken: er wordt nooit een waarde verzonnen. */
+export const NOT_RECORDED = "Niet vastgelegd";
+
+export const APPEND_ONLY_NOTICE =
+  "Een tegenboeking is zelf ook een definitieve boeking: zij blijft samen met het origineel in de audittrail staan en kan niet worden teruggenomen.";
+
+export const ONCE_ONLY_NOTICE =
+  "Een boeking wordt hoogstens één keer teruggedraaid.";
 
 // ── Mag er een actie worden aangeboden? ─────────────────────────────────────
 

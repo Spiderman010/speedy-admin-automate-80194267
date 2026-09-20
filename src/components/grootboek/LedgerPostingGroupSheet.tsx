@@ -11,6 +11,19 @@ import { formatCents, formatDatumNL } from "@/lib/grootboek-saldi-utils";
 // Eén centenconventie voor de hele app: die van de rapportagekern.
 import { toCents } from "@/lib/ledger-reporting";
 import {
+  APPEND_ONLY_NOTICE,
+  NORMAL_BADGE,
+  NOT_RECORDED,
+  ONCE_ONLY_NOTICE,
+  ORIGINAL_HEADING,
+  REASON_LABEL,
+  REVERSAL_ACTION_LABEL,
+  REVERSAL_ACTION_PENDING_LABEL,
+  REVERSAL_BADGE,
+  REVERSAL_DATE_LABEL,
+  REVERSED_BADGE,
+  VIEW_ORIGINAL_LABEL,
+  VIEW_REVERSAL_LABEL,
   formatReversalAccountLabel,
   postingGroupLines,
   postingGroupWarnings,
@@ -29,6 +42,7 @@ import {
   useReversalRelation,
   useReversePostingGroup,
 } from "@/hooks/useLedgerReversal";
+import { ArrowLeftRight } from "lucide-react";
 import { ReversalConfirmDialog } from "./ReversalConfirmDialog";
 
 /**
@@ -50,6 +64,13 @@ export interface LedgerPostingGroupSheetProps {
   clientId: string;
   postingGroupId: string | null;
   accountsById: ReadonlyMap<string, ReversalAccountRef>;
+  /**
+   * Naar een gekoppelde boekingsgroep springen — origineel ↔ tegenboeking.
+   * Het paneel blijft open en toont de andere groep; er komt geen route bij en
+   * de rekeningcontext gaat niet verloren. Ontbreekt de callback, dan worden de
+   * verwijzingen getoond zonder knop.
+   */
+  onNavigateToGroup?: (postingGroupId: string) => void;
 }
 
 export function LedgerPostingGroupSheet({
@@ -58,6 +79,7 @@ export function LedgerPostingGroupSheet({
   clientId,
   postingGroupId,
   accountsById,
+  onNavigateToGroup,
 }: LedgerPostingGroupSheetProps) {
   const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -179,15 +201,15 @@ export function LedgerPostingGroupSheet({
                 </Badge>
                 {availability.kind === "already_reversed" ? (
                   <Badge variant="secondary" className="font-normal" data-testid="posting-group-status">
-                    Tegengeboekt
+                    {REVERSED_BADGE}
                   </Badge>
                 ) : relationQuery.data?.asReversal ? (
                   <Badge variant="secondary" className="font-normal" data-testid="posting-group-status">
-                    Tegenboeking
+                    {REVERSAL_BADGE}
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="bg-background font-normal" data-testid="posting-group-status">
-                    Geboekt
+                    {NORMAL_BADGE}
                   </Badge>
                 )}
                 <span className="ml-auto font-mono text-sm font-semibold tabular-nums">
@@ -270,6 +292,7 @@ export function LedgerPostingGroupSheet({
               relation={relationQuery.data ?? null}
               isPending={reverse.isPending}
               onOpenConfirm={() => setConfirmOpen(true)}
+              onNavigateToGroup={onNavigateToGroup}
             />
 
             {/* ── Technische details ───────────────────────────────────── */}
@@ -323,36 +346,72 @@ function ReversalArea({
   relation,
   isPending,
   onOpenConfirm,
+  onNavigateToGroup,
 }: {
   availability: ReturnType<typeof reversalAvailability>;
-  relation: { asOriginal: { reversal_posting_group_id: string; posting_date: string; reason: string | null } | null } | null;
+  relation: {
+    asOriginal: { reversal_posting_group_id: string; posting_date: string; reason: string | null } | null;
+    asReversal?: { original_posting_group_id: string; posting_date: string; reason: string | null } | null;
+  } | null;
   isPending: boolean;
   onOpenConfirm: () => void;
+  onNavigateToGroup?: (postingGroupId: string) => void;
 }) {
+  /*
+   * DEZE GROEP IS ZELF EEN TEGENBOEKING.
+   *
+   * Dat staat vóór elke andere uitkomst: een tegenboeking komt nooit voor een
+   * tweede tegenboeking in aanmerking, en de gebruiker moet meteen zien dat hij
+   * naar de correctie kijkt en niet naar het origineel.
+   */
+  if (relation?.asReversal) {
+    const marker = relation.asReversal;
+    return (
+      <div className="rounded-md border bg-muted/30 p-3 text-sm" data-testid="reversal-is-reversal">
+        <p className="font-medium">Dit is een tegenboeking.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Zij corrigeert de originele boeking hieronder. Beide boekingen blijven in het grootboek staan.
+        </p>
+        <AuditVelden
+          datum={marker.posting_date}
+          reden={marker.reason}
+          verwijzingLabel={ORIGINAL_HEADING}
+          verwijzing={marker.original_posting_group_id}
+          testId="reversal-original-group-id"
+        />
+        <NavigatieKnop
+          label={VIEW_ORIGINAL_LABEL}
+          groupId={marker.original_posting_group_id}
+          onNavigateToGroup={onNavigateToGroup}
+          testId="reversal-goto-original"
+        />
+      </div>
+    );
+  }
+
+  /* DEZE GROEP IS TERUGGEDRAAID. Geen tweede actie, wel de volledige herkomst. */
   if (availability.kind === "already_reversed") {
+    const marker = relation?.asOriginal ?? null;
     return (
       <div className="rounded-md border bg-muted/30 p-3 text-sm" data-testid="reversal-already">
-        <p className="font-medium">Deze boeking is tegengeboekt.</p>
-        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <dt>Datum</dt>
-          <dd className="font-mono tabular-nums text-foreground">
-            {relation?.asOriginal ? formatDatumNL(relation.asOriginal.posting_date) : "—"}
-          </dd>
-          {relation?.asOriginal?.reason && (
-            <>
-              <dt>Toelichting</dt>
-              <dd className="break-words text-foreground">{relation.asOriginal.reason}</dd>
-            </>
-          )}
-          <dt>Tegenboeking</dt>
-          <dd className="font-mono break-all" data-testid="reversal-group-id">
-            {availability.reversalPostingGroupId}
-          </dd>
-        </dl>
-        <p className="mt-2 text-xs text-muted-foreground">
-          De oorspronkelijke boeking hierboven is ongewijzigd gebleven. Een boeking wordt hoogstens één keer
-          tegengeboekt.
+        <p className="font-medium">Deze originele boeking is teruggedraaid.</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          De regels hierboven zijn ongewijzigd gebleven; de correctie staat in een aparte tegenboeking.
         </p>
+        <AuditVelden
+          datum={marker?.posting_date ?? null}
+          reden={marker?.reason ?? null}
+          verwijzingLabel={REVERSAL_BADGE}
+          verwijzing={availability.reversalPostingGroupId}
+          testId="reversal-group-id"
+        />
+        <NavigatieKnop
+          label={VIEW_REVERSAL_LABEL}
+          groupId={availability.reversalPostingGroupId}
+          onNavigateToGroup={onNavigateToGroup}
+          testId="reversal-goto-reversal"
+        />
+        <p className="mt-2 text-xs text-muted-foreground">{ONCE_ONLY_NOTICE}</p>
       </div>
     );
   }
@@ -373,26 +432,95 @@ function ReversalArea({
     );
   }
 
+  /*
+   * Een gewone, nog niet teruggedraaide boeking.
+   *
+   * Bewust GEEN destructieve opmaak: dit verwijdert niets en wijzigt niets. Een
+   * rode "gevaar"-knop zou precies de indruk wekken die deze flow moet
+   * wegnemen. De database blijft bepalen of het mag.
+   */
   return (
-    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+    <div className="rounded-md border p-3" data-testid="reversal-action-area">
       <p className="text-sm font-medium">Correctie</p>
       <p className="mt-1 text-xs text-muted-foreground">
-        De oorspronkelijke boeking blijft staan; er komt een nieuwe boeking bij.
+        De originele boeking blijft staan; er komt een nieuwe, spiegelbeeldige boeking bij.
       </p>
       <Button
         type="button"
-        variant="destructive"
         className="mt-3 h-11 w-full sm:h-9 sm:w-auto"
         disabled={isPending}
         onClick={onOpenConfirm}
         data-testid="reversal-open-button"
       >
-        {isPending ? "Bezig met tegenboeken…" : "Tegenboeken"}
+        {isPending ? REVERSAL_ACTION_PENDING_LABEL : REVERSAL_ACTION_LABEL}
       </Button>
     </div>
   );
 }
 
+/**
+ * Datum, reden en de verwijzing naar de andere boeking — uitsluitend uit de
+ * vastgelegde marker. Ontbreekt een optioneel veld, dan staat dat er ook:
+ * "Niet vastgelegd". Er wordt nooit een datum of een reden verzonnen, en er
+ * wordt geen gebruiker getoond omdat die niet in dit leesmodel zit.
+ */
+function AuditVelden({
+  datum,
+  reden,
+  verwijzingLabel,
+  verwijzing,
+  testId,
+}: {
+  datum: string | null;
+  reden: string | null;
+  verwijzingLabel: string;
+  verwijzing: string;
+  testId: string;
+}) {
+  return (
+    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <dt>{REVERSAL_DATE_LABEL}</dt>
+      <dd className="font-mono tabular-nums text-foreground" data-testid="reversal-date">
+        {datum ? formatDatumNL(datum) : NOT_RECORDED}
+      </dd>
+      <dt>{REASON_LABEL}</dt>
+      <dd className="break-words text-foreground" data-testid="reversal-reason">
+        {reden ?? NOT_RECORDED}
+      </dd>
+      <dt>{verwijzingLabel}</dt>
+      <dd className="font-mono break-all" data-testid={testId}>
+        {verwijzing}
+      </dd>
+    </dl>
+  );
+}
+
+function NavigatieKnop({
+  label,
+  groupId,
+  onNavigateToGroup,
+  testId,
+}: {
+  label: string;
+  groupId: string;
+  onNavigateToGroup?: (postingGroupId: string) => void;
+  testId: string;
+}) {
+  if (!onNavigateToGroup) return null;
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="mt-3 h-11 w-full sm:h-8 sm:w-auto"
+      onClick={() => onNavigateToGroup(groupId)}
+      data-testid={testId}
+    >
+      <ArrowLeftRight className="mr-2 h-4 w-4" aria-hidden="true" />
+      {label}
+    </Button>
+  );
+}
 
 function Veld({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (

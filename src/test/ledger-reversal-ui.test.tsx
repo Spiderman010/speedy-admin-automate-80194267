@@ -54,16 +54,35 @@ function tableStub(table: string) {
     rec.tableCalls.push({ table, op });
     throw new Error(`De applicatie mag niet ${op} op ${table}`);
   };
-  const result =
-    table === "ledger_postings"
-      ? { data: rec.rows, error: null }
-      : { data: rec.marker, error: null };
+  /*
+   * De markertabel wordt twee keer bevraagd — één keer op
+   * `original_posting_group_id` en één keer op `reversal_posting_group_id` —
+   * en in de echte database kan hoogstens één daarvan raak zijn. Het dubbel
+   * moet dat filter dus nabootsen: gaf het voor béide queries dezelfde rij
+   * terug, dan zou een boekingsgroep tegelijk origineel én tegenboeking lijken,
+   * en dat kan niet bestaan.
+   */
+  let eqKolom: string | null = null;
+  let eqWaarde: unknown = null;
+  const markerResult = () => {
+    if (!rec.marker) return { data: null, error: null };
+    if (eqKolom && (rec.marker as Record<string, unknown>)[eqKolom] !== eqWaarde) {
+      return { data: null, error: null };
+    }
+    return { data: rec.marker, error: null };
+  };
+  const result = () =>
+    table === "ledger_postings" ? { data: rec.rows, error: null } : markerResult();
   const chain: Record<string, unknown> = {
     select: () => chain,
-    eq: () => chain,
+    eq: (kolom: string, waarde: unknown) => {
+      eqKolom = kolom;
+      eqWaarde = waarde;
+      return chain;
+    },
     order: () => chain,
-    maybeSingle: () => Promise.resolve(result),
-    then: (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve),
+    maybeSingle: () => Promise.resolve(result()),
+    then: (resolve: (v: unknown) => unknown) => Promise.resolve(result()).then(resolve),
     insert: write("insert"), update: write("update"), delete: write("delete"), upsert: write("upsert"),
   };
   rec.tableCalls.push({ table, op: "select" });
@@ -168,9 +187,9 @@ async function openConfirm() {
 // ── 1-5  wanneer is de actie er wel en niet? ────────────────────────────────
 
 describe("de correctieactie wordt alleen aangeboden waar dat mag", () => {
-  it("1. een geboekte, ondersteunde boeking toont de actie 'Tegenboeken'", async () => {
+  it("1. een geboekte, ondersteunde boeking toont de actie 'Tegenboeking maken'", async () => {
     renderSheet();
-    expect(await screen.findByTestId("reversal-open-button")).toHaveTextContent("Tegenboeken");
+    expect(await screen.findByTestId("reversal-open-button")).toHaveTextContent("Tegenboeking maken");
   });
 
   it("2. een tegenboeking zelf toont geen actie, maar een uitleg", async () => {
@@ -195,7 +214,7 @@ describe("de correctieactie wordt alleen aangeboden waar dat mag", () => {
       posting_date: "2027-06-01", reason: "Onjuiste kostenrekening", created_at: "2027-06-01T10:00:00Z",
     };
     renderSheet();
-    expect(await screen.findByTestId("reversal-already")).toHaveTextContent(/tegengeboekt/i);
+    expect(await screen.findByTestId("reversal-already")).toHaveTextContent(/teruggedraaid/i);
     expect(screen.getByTestId("reversal-group-id")).toHaveTextContent("rev-9");
     expect(screen.queryByTestId("reversal-open-button")).toBeNull();
   });
@@ -280,7 +299,7 @@ describe("de bevestiging", () => {
     renderSheet();
     await openConfirm();
     expect(screen.getByTestId("reversal-original-remains")).toHaveTextContent(
-      "De oorspronkelijke boeking blijft bestaan. Er wordt een nieuwe tegenboeking gemaakt.",
+      "De originele boeking blijft ongewijzigd bestaan. Er wordt een nieuwe, spiegelbeeldige boeking aan het grootboek toegevoegd.",
     );
   });
 
