@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import {
   BANK_BULK_MAX_BATCH,
+  BankBulkPartialError,
   bulkErrorMessage,
   chunkTransactionIds,
   isDeployWindowError,
@@ -101,11 +102,18 @@ export function usePostBankTransactionsBulk() {
       }
 
       const results: BankBulkResult[] = [];
-      for (const chunk of chunkTransactionIds(transactionIds, BANK_BULK_MAX_BATCH)) {
+      const chunks = chunkTransactionIds(transactionIds, BANK_BULK_MAX_BATCH);
+      for (const [index, chunk] of chunks.entries()) {
         const { data, error } = await bulkApi().rpc("post_bank_transactions_bulk", {
           _transaction_ids: chunk,
         });
-        if (error) throw new Error(bulkErrorMessage(error));
+        if (error) {
+          // Breekt een latere partij af, dan zijn de eerdere partijen wél
+          // geboekt. Die uitkomsten gaan mee de fout in: weggooien zou doen
+          // alsof er niets is gebeurd. Er wordt niets opnieuw geprobeerd.
+          const nietAangeboden = chunks.slice(index).reduce((som, c) => som + c.length, 0);
+          throw new BankBulkPartialError(bulkErrorMessage(error), results, nietAangeboden);
+        }
         results.push(...(data ?? []));
       }
       return results;
