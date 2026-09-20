@@ -9,6 +9,7 @@ import {
   MAX_REVERSAL_REASON_LENGTH,
   normalizeReversalReason,
   postingGroupLines,
+  postingGroupWarnings,
   previewReversalLines,
   reversalAvailability,
   reversalAwareSourceLabel,
@@ -203,6 +204,68 @@ describe("de correctieactie wordt alleen aangeboden waar dat mag", () => {
     expect(regels[0]).toHaveTextContent("100,00");
     expect(regels[2]).toHaveTextContent("1600");
     expect(regels[2]).toHaveTextContent("121,00");
+  });
+});
+
+// ── afwijkende groepen: de UI legt uit, de database beslist ────────────────
+
+describe("een afwijkende boeking wordt niet door de UI geblokkeerd", () => {
+  const afwijkend: [string, () => LedgerPostingLike[]][] = [
+    ["1. niet sluitend", () => inkoopGroep().slice(0, 2)],
+    ["2. meerdere valuta", () => [...inkoopGroep(), row({ id: "x", line_no: 4, currency: "USD", credit_amount: 1 })]],
+    ["3. meerdere datums/boekjaren", () => [
+      ...inkoopGroep(), row({ id: "x", line_no: 4, posting_date: "2027-09-09", boekjaar: 2028, credit_amount: 1 }),
+    ]],
+    ["4. meerdere bronsoorten", () => [
+      ...inkoopGroep(), row({ id: "x", line_no: 4, source_type: "manual_journal", credit_amount: 1 }),
+    ]],
+  ];
+
+  for (const [naam, maak] of afwijkend) {
+    it(`${naam}: de knop blijft beschikbaar, met een waarschuwing erbij`, async () => {
+      rec.rows = maak();
+      renderSheet();
+      expect(await screen.findByTestId("reversal-open-button")).toBeEnabled();
+      expect(screen.getByTestId("posting-group-warnings")).toBeInTheDocument();
+    });
+  }
+
+  it("5. de RPC wordt voor zo'n afwijkende groep daadwerkelijk aangeroepen", async () => {
+    rec.rows = inkoopGroep().slice(0, 2); // niet sluitend
+    renderSheet();
+    const bevestig = await openConfirm();
+    fireEvent.change(screen.getByTestId("reversal-date-input"), { target: { value: "2027-06-01" } });
+    fireEvent.click(bevestig);
+    await waitFor(() => expect(rec.rpcCalls.some((c) => c.fn === "reverse_posting_group")).toBe(true));
+  });
+
+  it("6. en de weigering van de server (23514) wordt daarna getoond", async () => {
+    rec.rows = inkoopGroep().slice(0, 2);
+    rec.rpcResult = () => ({
+      data: null,
+      error: { code: "23514", message: "Boekingsgroep is niet in balans: debet 121.00 is ongelijk aan credit 0.00 (verschil 121.00)" },
+    });
+    renderSheet();
+    const bevestig = await openConfirm();
+    fireEvent.change(screen.getByTestId("reversal-date-input"), { target: { value: "2027-06-01" } });
+    fireEvent.click(bevestig);
+    await waitFor(() => expect(toasts.length).toBeGreaterThan(0));
+    const t = toasts[toasts.length - 1];
+    expect(t.title).toBe("Tegenboeken niet gelukt");
+    expect(t.description).toMatch(/niet in balans/i);
+  });
+
+  it("4b. maar een gemengde groep met een tegenboekingsregel blijft geblokkeerd", async () => {
+    rec.rows = [...inkoopGroep(), row({ id: "x", line_no: 4, source_type: "reversal", credit_amount: 1, reversal_of_posting_id: "r1" })];
+    renderSheet();
+    expect(await screen.findByTestId("reversal-unsupported")).toBeInTheDocument();
+    expect(screen.queryByTestId("reversal-open-button")).toBeNull();
+  });
+
+  it("een gezonde boeking krijgt géén waarschuwing", async () => {
+    renderSheet();
+    await screen.findByTestId("reversal-open-button");
+    expect(screen.queryByTestId("posting-group-warnings")).toBeNull();
   });
 });
 
@@ -409,13 +472,56 @@ describe("de pure laag", () => {
     expect(geenRecht.kind).toBe("not_allowed");
   });
 
-  it("een niet-sluitende groep wordt niet aangeboden", () => {
-    const scheef = summarizePostingGroup(GROUP, inkoopGroep().slice(0, 2));
-    const uitkomst = reversalAvailability({
-      summary: scheef, existingReversalGroupId: null, markerUnavailable: false,
-      markerPending: false, canReverse: true, roleUnavailable: false,
-    });
-    expect(uitkomst.kind).toBe("not_reversible");
+  it("GEEN boekhoudkundig oordeel: een afwijkende groep blijft beschikbaar", () => {
+    // Niet sluitend, meerdere valuta, meerdere datums, meerdere bronsoorten:
+    // stuk voor stuk oordelen van reverse_posting_group(). De UI mag ze tonen,
+    // niet afdwingen.
+    for (const rijen of [
+      inkoopGroep().slice(0, 2), // niet in balans
+      [...inkoopGroep(), row({ id: "x", line_no: 4, currency: "USD", credit_amount: 1 })],
+      [...inkoopGroep(), row({ id: "x", line_no: 4, posting_date: "2027-09-09", boekjaar: 2028, credit_amount: 1 })],
+      [...inkoopGroep(), row({ id: "x", line_no: 4, source_type: "manual_journal", credit_amount: 1 })],
+    ]) {
+      const uitkomst = reversalAvailability({
+        summary: summarizePostingGroup(GROUP, rijen), existingReversalGroupId: null,
+        markerUnavailable: false, markerPending: false, canReverse: true, roleUnavailable: false,
+      });
+      expect(uitkomst.kind).toBe("available");
+    }
+  });
+
+  it("die afwijkingen worden wel als waarschuwing benoemd", () => {
+    expect(postingGroupWarnings(summarizePostingGroup(GROUP, inkoopGroep()))).toEqual([]);
+    const rommelig = summarizePostingGroup(GROUP, [
+      ...inkoopGroep().slice(0, 2),
+      row({ id: "x", line_no: 4, currency: "USD", posting_date: "2027-09-09", source_type: "manual_journal", credit_amount: 1 }),
+    ]);
+    const warnings = postingGroupWarnings(rommelig);
+    expect(warnings).toHaveLength(4);
+    expect(warnings.join(" ")).toMatch(/niet gelijk.*valuta.*boekingsdatums.*bronsoorten/s);
+  });
+
+  it("de twee niet-ondersteunde bronsoorten blokkeren wél — ook in een gemengde groep", () => {
+    for (const soort of ["reversal", "opening_balance"]) {
+      const gemengd = summarizePostingGroup(GROUP, [
+        ...inkoopGroep(),
+        row({ id: "x", line_no: 4, source_type: soort, credit_amount: 1 }),
+      ]);
+      const uitkomst = reversalAvailability({
+        summary: gemengd, existingReversalGroupId: null, markerUnavailable: false,
+        markerPending: false, canReverse: true, roleUnavailable: false,
+      });
+      expect(uitkomst.kind, soort).toBe("unsupported_source");
+    }
+  });
+
+  it("de pure laag bevat geen enkele boekhoudkundige acceptatieregel meer", () => {
+    const bron = readFileSync("src/lib/ledger-reversal-ui.ts", "utf8");
+    const start = bron.indexOf("export function reversalAvailability");
+    const poort = bron.slice(start, bron.indexOf("\n}", start));
+    // De poort kijkt naar toestand, claim, opgeslagen bronsoort en rol — niet
+    // naar balans, valuta, datum of boekjaar.
+    expect(poort).not.toMatch(/balanced|currency|postingDate|boekjaar/);
   });
 
   it("de toelichting wordt getrimd en lege tekst wordt null", () => {

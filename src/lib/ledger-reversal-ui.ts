@@ -84,8 +84,15 @@ export function formatReversalAccountLabel(
 
 export interface PostingGroupSummary {
   postingGroupId: string;
-  /** `null` zodra de regels het oneens zijn; dan is er niets te bevestigen. */
+  /** `null` zodra de regels het oneens zijn; alleen voor weergave. */
   sourceType: string | null;
+  /**
+   * ÁLLE opgeslagen bronsoorten in de groep, ontdubbeld en gesorteerd. De
+   * poort voor niet-ondersteunde bronsoorten kijkt hiernaar en niet naar
+   * `sourceType`: een gemengde groep die ergens een tegenboekingsregel bevat
+   * zou anders door de mazen glippen.
+   */
+  sourceTypes: string[];
   sourceId: string | null;
   postingDate: string | null;
   boekjaar: number | null;
@@ -101,8 +108,8 @@ export interface PostingGroupSummary {
  * Leest af wat er is geboekt. Telt in hele centen, precies zoals de
  * rapportagekern, zodat scherm en rapport niet uit elkaar kunnen lopen. Een
  * groep die het over meerdere datums, valuta of bronsoorten heeft, levert
- * `null` op die velden op: dan is de groep kapot en hoort er geen actie te
- * worden aangeboden.
+ * `null` op die velden op — dat is een WAARNEMING, geen oordeel: of er
+ * tegengeboekt mag worden beslist `reverse_posting_group()`.
  */
 export function summarizePostingGroup(
   postingGroupId: string,
@@ -124,6 +131,7 @@ export function summarizePostingGroup(
   return {
     postingGroupId,
     sourceType: uniek(eigen.map((r) => r.source_type)),
+    sourceTypes: [...new Set(eigen.map((r) => r.source_type))].sort(),
     sourceId: uniek(eigen.map((r) => r.source_id ?? null)),
     postingDate: uniek(eigen.map((r) => r.posting_date)),
     boekjaar: uniek(eigen.map((r) => r.boekjaar)),
@@ -194,10 +202,8 @@ export type ReversalAvailability =
   | { kind: "unknown"; reason: string }
   /** Al tegengeboekt — de marker zegt het, niet een saldo of een omschrijving. */
   | { kind: "already_reversed"; reversalPostingGroupId: string }
-  /** Deze bronsoort wordt bewust niet ondersteund. */
+  /** Deze opgeslagen bronsoort wordt bewust niet ondersteund. */
   | { kind: "unsupported_source"; sourceType: string; explanation: string }
-  /** De groep zelf deugt niet; de RPC zou hem sowieso weigeren. */
-  | { kind: "not_reversible"; reason: string }
   /** De rol is bekend en te laag. */
   | { kind: "not_allowed"; reason: string }
   /** De actie mag worden aangeboden. De RPC blijft de autoriteit. */
@@ -220,6 +226,26 @@ export interface ReversalAvailabilityInput {
  * boeking, dan pas de rol. Een onzekere toestand mag nooit als "mag wel"
  * eindigen, en een tweede tegenboeking mag zelfs niet worden aangeboden.
  */
+/**
+ * WAT HIER BEWUST NIET STAAT
+ *
+ * Geen enkele boekhoudkundige acceptatieregel. Of een boeking sluit, of zij
+ * één valuta heeft, of haar boekjaar bij haar datum hoort, of zij uit één
+ * bronsoort bestaat — dat zijn oordelen van `reverse_posting_group()`, en die
+ * functie velt ze opnieuw bij élke aanroep. Ze hier herhalen zou een tweede
+ * regelset opleveren die van de echte kan gaan afwijken, en dan wint stilletjes
+ * de verkeerde: de UI zou een accountant tegenhouden bij een boeking die de
+ * database wél zou accepteren, of andersom een valse geruststelling geven.
+ *
+ * Zulke afwijkingen worden daarom getoond als WAARSCHUWING
+ * (`postingGroupWarnings()`), niet als slot. De accountant mag de RPC
+ * aanroepen; weigert de database, dan komt de reden van de database.
+ *
+ * Wat hier wél mag blokkeren is alles wat géén boekhoudkundig oordeel is:
+ * een onbekende of mislukte toestand, een reeds vastgelegde claim, een
+ * opgeslagen bronsoort die de motor per definitie niet aanneemt, en een rol
+ * die aantoonbaar te laag is.
+ */
 export function reversalAvailability(input: ReversalAvailabilityInput): ReversalAvailability {
   const { summary } = input;
 
@@ -235,27 +261,17 @@ export function reversalAvailability(input: ReversalAvailabilityInput): Reversal
   if (input.existingReversalGroupId) {
     return { kind: "already_reversed", reversalPostingGroupId: input.existingReversalGroupId };
   }
-  if (summary.sourceType && UNSUPPORTED_REVERSAL_SOURCE_TYPES.includes(summary.sourceType)) {
+  // De twee bronsoorten die de motor per definitie weigert. Afgelezen uit de
+  // OPGESLAGEN source_type van de regels, nooit uit een rekeningnummer of een
+  // label — en uit álle regels, zodat een gemengde groep die ergens een
+  // tegenboekingsregel bevat evenmin wordt aangeboden.
+  const nietOndersteund = summary.sourceTypes.find((t) => UNSUPPORTED_REVERSAL_SOURCE_TYPES.includes(t));
+  if (nietOndersteund) {
     return {
       kind: "unsupported_source",
-      sourceType: summary.sourceType,
-      explanation: UNSUPPORTED_REVERSAL_EXPLANATION[summary.sourceType],
+      sourceType: nietOndersteund,
+      explanation: UNSUPPORTED_REVERSAL_EXPLANATION[nietOndersteund],
     };
-  }
-  // Een groep die het oneens is over haar eigen bronsoort, datum of valuta, of
-  // die niet sluit, wordt door de RPC geweigerd. Dat hier al zeggen bespaart
-  // een onbegrijpelijke fout; de RPC blijft de autoriteit.
-  if (!summary.sourceType) {
-    return { kind: "not_reversible", reason: "Deze boekingsgroep bevat meerdere bronsoorten en kan niet worden tegengeboekt." };
-  }
-  if (!summary.postingDate || !summary.boekjaar) {
-    return { kind: "not_reversible", reason: "Deze boekingsgroep heeft geen eenduidige boekingsdatum." };
-  }
-  if (!summary.currency) {
-    return { kind: "not_reversible", reason: "Deze boekingsgroep bevat meerdere valuta." };
-  }
-  if (!summary.balanced) {
-    return { kind: "not_reversible", reason: "Deze boekingsgroep sluit niet; een niet-sluitende boeking wordt niet tegengeboekt maar onderzocht." };
   }
   if (input.roleUnavailable) {
     return { kind: "unknown", reason: "Rechten konden niet worden gecontroleerd; ververs de pagina." };
@@ -268,6 +284,35 @@ export function reversalAvailability(input: ReversalAvailabilityInput): Reversal
   }
   return { kind: "available" };
 }
+
+/**
+ * Opvallendheden in de opgeslagen regels, als INFORMATIE — nooit als slot.
+ *
+ * Dit vertelt een accountant wat hij zelf ook uit de regels zou aflezen, zodat
+ * hij niet verrast wordt door een serverweigering. Het spreekt geen oordeel
+ * uit over de vraag óf er mag worden tegengeboekt: dat doet de database.
+ */
+export function postingGroupWarnings(summary: PostingGroupSummary): string[] {
+  const warnings: string[] = [];
+  if (summary.lineCount === 0) return warnings;
+
+  if (!summary.balanced) {
+    warnings.push("Debet en credit van deze boeking zijn niet gelijk of zijn nul.");
+  }
+  if (!summary.currency) {
+    warnings.push("Deze boeking bevat meerdere valuta.");
+  }
+  if (!summary.postingDate || !summary.boekjaar) {
+    warnings.push("Deze boeking bevat meerdere boekingsdatums of boekjaren.");
+  }
+  if (summary.sourceTypes.length > 1) {
+    warnings.push("Deze boeking bevat meerdere bronsoorten.");
+  }
+  return warnings;
+}
+
+export const WARNINGS_NOTICE =
+  "De database beoordeelt bij het tegenboeken opnieuw of deze boeking daarvoor in aanmerking komt, en weigert met een reden als dat niet zo is.";
 
 // ── Het formulier ───────────────────────────────────────────────────────────
 

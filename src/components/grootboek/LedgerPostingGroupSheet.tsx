@@ -13,11 +13,13 @@ import { toCents } from "@/lib/ledger-reporting";
 import {
   formatReversalAccountLabel,
   postingGroupLines,
+  postingGroupWarnings,
   previewReversalLines,
   reversalAvailability,
   reversalAwareSourceLabel,
   summarizePostingGroup,
   isSettledElsewhere,
+  WARNINGS_NOTICE,
   type ReversalAccountRef,
   type ReversalErrorKind,
 } from "@/lib/ledger-reversal-ui";
@@ -134,6 +136,10 @@ export function LedgerPostingGroupSheet({
     }
   };
 
+  // Informatie, geen slot: opvallendheden in de opgeslagen regels worden
+  // getoond, maar houden een accountant niet tegen. De database beslist.
+  const warnings = useMemo(() => postingGroupWarnings(summary), [summary]);
+
   const bronLabel = summary.sourceType ? reversalAwareSourceLabel(summary.sourceType) : "Meerdere bronnen";
 
   return (
@@ -224,6 +230,20 @@ export function LedgerPostingGroupSheet({
                 </tbody>
               </table>
             </div>
+
+            {/* ── Opvallendheden: informatie, nooit een blokkade ───────── */}
+            {warnings.length > 0 && (
+              <Alert data-testid="posting-group-warnings">
+                <AlertDescription>
+                  <ul className="list-disc space-y-1 pl-4">
+                    {warnings.map((w) => (
+                      <li key={w}>{w}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs text-muted-foreground">{WARNINGS_NOTICE}</p>
+                </AlertDescription>
+              </Alert>
+            )}
 
             {/* ── De actie, of de reden waarom er geen is ──────────────── */}
             <ReversalArea
@@ -325,14 +345,6 @@ function ReversalArea({
     return (
       <Alert data-testid="reversal-unsupported">
         <AlertDescription>{availability.explanation}</AlertDescription>
-      </Alert>
-    );
-  }
-
-  if (availability.kind === "not_reversible") {
-    return (
-      <Alert variant="destructive" data-testid="reversal-not-reversible">
-        <AlertDescription>{availability.reason}</AlertDescription>
       </Alert>
     );
   }
