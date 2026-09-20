@@ -51,21 +51,30 @@ import {
   NONE_VALUE,
   NORMAL_SIDE_LABELS,
   REPORT_GROUP_LABELS,
+  REPORT_SUBGROUP_LABELS,
+  SUBGROUP_CLUSTER_LABELS,
+  CLASSIFICATION_CONFLICT_LABELS,
+  CONFLICT_BADGE_LABEL,
   STATEMENT_TYPE_LABELS,
   STATEMENT_TYPE_SHORT_LABELS,
   UNCLASSIFIED_LABEL,
   buildClassificationPayload,
   classificationErrorMessage,
   classificationFromAccount,
+  classificationConflicts,
   classificationLabel,
   groupsFor,
+  subgroupsFor,
+  subgroupLabel,
   hasClassificationIssues,
   isClassified,
   isNormalSide,
   isReportGroup,
+  isReportSubgroup,
   isStatementType,
   matchesClassificationFilter,
   onReportGroupChange,
+  onReportSubgroupChange,
   onStatementTypeChange,
   validateClassification,
 } from "@/lib/reporting-classification";
@@ -560,6 +569,22 @@ export default function Grootboek() {
                               >
                                 {STATEMENT_TYPE_SHORT_LABELS[r.statement_type as "balans" | "winst_verlies"]} ·{" "}
                                 {classificationLabel(r)}
+                                {subgroupLabel(r) && <> · {subgroupLabel(r)}</>}
+                              </span>
+                            )}
+                            {/* Een opgeslagen waarde die deze versie niet kan
+                                plaatsen wordt gemeld, nooit stil hersteld of
+                                weggegooid: dat blijft mensenwerk. */}
+                            {classificationConflicts(r).length > 0 && (
+                              <span
+                                className="text-xs text-destructive"
+                                data-testid={`classificatie-conflict-${r.id}`}
+                                role="note"
+                              >
+                                {CONFLICT_BADGE_LABEL}:{" "}
+                                {classificationConflicts(r)
+                                  .map((c) => CLASSIFICATION_CONFLICT_LABELS[c])
+                                  .join(" ")}
                               </span>
                             )}
                           </div>
@@ -768,7 +793,7 @@ export default function Grootboek() {
                   uitsluitend de groepen van dát rapport. */}
               {form.statementType !== null && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="gb-report-group">Groep *</Label>
+                  <Label htmlFor="gb-report-group">Rapportagecategorie *</Label>
                   {/* Lege waarde (niet de sentinel): de groepenlijst kent geen
                       "geen keuze"-item, dus toont Radix dan de placeholder. */}
                   <Select
@@ -790,7 +815,7 @@ export default function Grootboek() {
                         classificationIssues.reportGroup && "border-destructive focus-visible:ring-destructive",
                       )}
                     >
-                      <SelectValue placeholder="Kies een groep" />
+                      <SelectValue placeholder="Kies een rapportagecategorie" />
                     </SelectTrigger>
                     <SelectContent>
                       {groupsFor(form.statementType).map((g) => (
@@ -801,6 +826,61 @@ export default function Grootboek() {
                   {classificationIssues.reportGroup && (
                     <p id="gb-report-group-error" className="text-xs text-destructive" role="alert">
                       {classificationIssues.reportGroup}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* De groepkeuze hangt aan de gekozen CATEGORIE: alleen de
+                  groepen van díe categorie worden getoond, zodat een
+                  combinatie als "Vlottende activa + Loonheffingen" niet eens
+                  aan te wijzen is. Optioneel: een categorie zonder groep is
+                  een geldige, normale toestand. */}
+              {form.reportGroup !== null && subgroupsFor(form.reportGroup).length > 0 && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="gb-report-subgroup">Groep</Label>
+                  <Select
+                    value={form.reportSubgroup ?? NONE_VALUE}
+                    onValueChange={(v) =>
+                      setForm((p) =>
+                        onReportSubgroupChange(p, isReportSubgroup(v) ? v : null) as AccountForm,
+                      )
+                    }
+                  >
+                    <SelectTrigger
+                      id="gb-report-subgroup"
+                      data-testid="gb-report-subgroup"
+                      aria-invalid={!!classificationIssues.reportSubgroup}
+                      aria-describedby={
+                        classificationIssues.reportSubgroup ? "gb-report-subgroup-error" : undefined
+                      }
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NONE_VALUE}>Nog geen groep</SelectItem>
+                      {subgroupsFor(form.reportGroup).map((sg, index, alle) => {
+                        // Alleen presentatie: de vier kopjes binnen Overige
+                        // bedrijfskosten, zodat de indeling zichtbaar is
+                        // zonder dat er een derde niveau wordt opgeslagen.
+                        const cluster = SUBGROUP_CLUSTER_LABELS[sg];
+                        const vorig = index > 0 ? SUBGROUP_CLUSTER_LABELS[alle[index - 1]] : undefined;
+                        return (
+                          <div key={sg}>
+                            {cluster && cluster !== vorig && (
+                              <p className="px-2 pt-2 text-xs font-medium text-muted-foreground">
+                                {cluster}
+                              </p>
+                            )}
+                            <SelectItem value={sg}>{REPORT_SUBGROUP_LABELS[sg]}</SelectItem>
+                          </div>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  {classificationIssues.reportSubgroup && (
+                    <p id="gb-report-subgroup-error" className="text-xs text-destructive" role="alert">
+                      {classificationIssues.reportSubgroup}
                     </p>
                   )}
                 </div>

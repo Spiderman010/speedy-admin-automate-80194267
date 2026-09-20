@@ -357,6 +357,7 @@ describe("Rekeningschema — toevoegen/bewerken", () => {
       // Een nieuwe rekening wordt nooit automatisch geclassificeerd.
       statement_type: null,
       report_group: null,
+      report_subgroup: null,
       normal_side: null,
       report_sort: null,
     }));

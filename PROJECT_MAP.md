@@ -902,6 +902,29 @@ src/components/bank/BankBulkCandidateSheet.tsx      het auditpaneel per bankrege
 
 ---
 
+### Rapportagetaxonomie — het tweede niveau (`report_subgroup`)
+
+Migratiebestand:
+```
+supabase/migrations/20260923120000_add_report_subgroup.sql
+```
+
+**Status: ⏳ Nog niet toegepast.** Toepassen via de Lovable Cloud SQL editor van project `alxlbdhpbwlehbdbfejw`, ná review. De leescontroles vooraf en de postcheck staan in de header van het bestand.
+
+De vraag was één expliciet, herbruikbaar classificatiemodel voor Balans en W&V, zonder afleiding uit rekeningnummers of -namen. Het onderzoek vooraf liet zien dat de helft er al stond: `report_group` (Balans/W&V PR 1, toegepast) kent zeven balanswaarden die **exact** de zeven gevraagde balanscategorieën zijn. Wat ontbrak was een **tweede niveau** — "Liquide middelen", "Voorraden", "Handelsdebiteuren" bestonden nergens.
+
+- **Eén additieve, nullable kolom.** `report_group` behoudt haar betekenis en haar vijftien waarden en is voortaan de **Categorie**; `report_subgroup` is de **Groep** daarbinnen. Twee nieuwe CHECKs: het waardendomein, en het paar (een groep hoort bij precies één categorie). Beide slagen op NULL.
+- **Geen bestaande classificatie verandert.** Een rekening die iemand op `vlottende_activa` heeft gezet, houdt die waarde en krijgt `report_subgroup = NULL` — "categorie gekozen, groep nog niet", een geldige en normale toestand. Er wordt geen rij gelezen, herschreven, geraden of omgezet, en er is geen combinatie die door deze migratie ongeldig kan worden. Geen backfill, geen lookup-tabel, geen normalisatieproject.
+- **Bewuste afwijking van de letterlijke opdracht.** De gevraagde W&V-indeling zet `Huisvestingskosten`, `Verkoopkosten`, `Autokosten` en `Kantoorkosten` op het hoogste niveau; in het bestaande domein zijn dat onderdelen van `overige_bedrijfskosten`. Promoveren zou het vijftien-waardendomein wijzigen en daarmee opgeslagen classificaties én de statement-engine (PR 3) ongeldig maken. Ze staan daarom als subgroepen, met die vier namen als **tussenkopjes in het formulier**, zodat de gevraagde hiërarchie wel zichtbaar is. `Resultaat na belasting` is bewust géén subgroep: dat is geen rekening maar een presentatieregel die de engine al synthetisch berekent.
+- **Niets wordt afgeleid.** Geen rekeningnummer, geen naamfragment, geen `categorie`, geen nummerreeks, geen RGS. `1100` komt in geen enkel bestand van deze fase voor. Een classificatie ontstaat uitsluitend doordat iemand haar invult.
+- **Normale zijde blijft metadata.** `defaultNormalSideFor()` levert een **voorstel** dat alleen een leeg veld invult en een gemaakte keuze nooit overschrijft. Privé is de uitzondering die het waard is apart te noemen: opnamen debet, stortingen credit, binnen één categorie. W&V krijgt geen voorstel — baten en lasten lopen per groep beide kanten op. De zijde raakt geen boeking en geen saldo: die komen uit `ledger_postings`.
+- **Opgeslagen waarden die deze versie niet kent worden gemeld, niet hersteld.** `classificationConflicts()` benoemt zes gevallen (onbekend rapport, onbekende categorie, categorie buiten rapport, onbekende groep, groep buiten categorie, groep zonder categorie); het overzicht toont "Controle nodig" met de reden. Het formulier biedt zo'n waarde niet opnieuw aan, zodat niemand haar per ongeluk opnieuw opslaat — maar in de database blijft zij staan tot iemand bewust ingrijpt.
+- **UI:** in de bestaande sectie "Rapportageclassificatie" heet de eerste keuze nu **Rapportagecategorie** (niet "Categorie": dat label is al bezet door het bestaande `categorie`-veld en twee gelijknamige velden zijn slecht voor toetsenbord en schermlezer) en komt daaronder **Groep**, die uitsluitend de groepen van de gekozen categorie toont. Een combinatie als `Vlottende activa` + `Loonheffingen` is daarmee niet aan te wijzen, wordt door de validatie geweigerd én zou door `buildClassificationPayload()` alsnog als `null` worden verstuurd. De groep is optioneel.
+- **Beginbalansstatus: niets gebouwd, want alles bestond al.** Migratie `20260919120000` kent de drie gevraagde toestanden — geen bewering (`unknown`), geboekt (`post_opening_balance()`) en nihil verklaard (`declare_opening_balance_nil()` → `nil_declared_at`) — en een nihil-verklaring schrijft per ontwerp **geen enkele grootboekregel**, omdat een saldo van nul niet in `ledger_postings` uit te drukken is. `ledger-completeness.ts` toont ze als `posted` / `nil` / `unknown` met eigen labels en severity. Deze PR legt dat alleen vast in tests; er is geen regel aan gewijzigd.
+- **Tests:** `src/test/reporting-taxonomy.test.ts` (30: Liquide middelen wél onder Vlottende activa en niet onder Vaste activa, de niet-passende combinatie langs drie wegen geweigerd, balans- en W&V-groepen nooit vermengd, elke subgroep bij precies één categorie, de TypeScript-kaart letterlijk naast de CHECK in de migratie gelegd, de bestaande classificatie die ongewijzigd doorkomt, geen nummer- of naamafleiding, de zijde als voorstel dat niets overschrijft, het volledige voorbeeld Vlottende activa → Liquide middelen → Debet, en de drie beginbalanstoestanden). `reporting-classification-ui.test.tsx` en `grootboek-chart-of-accounts.test.tsx` kregen het nieuwe veld in hun payload-asserties en de nieuwe labelnamen; twee statische bewakers zijn versmald van het WOORD naar de VELDTOEGANG, omdat de taxonomie sinds deze PR zelf een niveau heeft dat "Categorie" heet en dat woord dus legitiem in zichtbare teksten voorkomt.
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**
