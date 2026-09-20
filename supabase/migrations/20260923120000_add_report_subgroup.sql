@@ -62,13 +62,36 @@
 --   WHERE statement_type IS NOT NULL OR report_group IS NOT NULL
 --   GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 --
---   -- (c) de vier bestaande CHECKs moeten er zijn (anders is 20260920120000
---   --     niet toegepast en hoort deze migratie niet te draaien):
+--   -- (c) de VIJF bestaande CHECKs moeten er zijn (anders is 20260920120000
+--   --     niet toegepast en hoort deze migratie niet te draaien).
+--   --
+--   --     Ze worden hier bij naam genoemd in plaats van met een LIKE-patroon.
+--   --     Twee redenen: `AND ... LIKE ... OR ... LIKE ...` bindt AND sterker
+--   --     dan OR, zodat de tweede tak zonder haakjes ELKE tabel zou matchen —
+--   --     en `grootboekrekeningen_normal_side_check` begint met geen van beide
+--   --     patronen, zodat een van de vijf sowieso buiten beeld bleef. Een
+--   --     expliciete lijst heeft geen van beide problemen.
 --   SELECT conname FROM pg_constraint
 --   WHERE conrelid = 'public.grootboekrekeningen'::regclass
---     AND conname LIKE 'grootboekrekeningen_report%'
---      OR conname LIKE 'grootboekrekeningen_statement%'
+--     AND conname IN (
+--       'grootboekrekeningen_statement_type_check',
+--       'grootboekrekeningen_report_group_check',
+--       'grootboekrekeningen_reporting_pair_check',
+--       'grootboekrekeningen_normal_side_check',
+--       'grootboekrekeningen_report_sort_check'
+--     )
 --   ORDER BY 1;
+--   -- verwacht: vijf rijen
+--
+--   -- (c2) en deze twee horen nog NIET te bestaan:
+--   SELECT conname FROM pg_constraint
+--   WHERE conrelid = 'public.grootboekrekeningen'::regclass
+--     AND (
+--       conname LIKE 'grootboekrekeningen_report_subgroup%'
+--       OR conname LIKE 'grootboekrekeningen_subgroup%'
+--     )
+--   ORDER BY 1;
+--   -- verwacht: geen rijen
 --
 -- POSTCHECK (na toepassen):
 --

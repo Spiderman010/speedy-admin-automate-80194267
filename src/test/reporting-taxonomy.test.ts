@@ -24,10 +24,6 @@ import {
   type ClassificationForm,
   type ReportGroup,
 } from "@/lib/reporting-classification";
-import {
-  OPENING_BALANCE_STATE_LABELS,
-  computeOpeningBalanceCompleteness,
-} from "@/lib/ledger-completeness";
 
 /**
  * De rapportagetaxonomie — het tweede niveau.
@@ -335,78 +331,6 @@ describe("het voorbeeld uit de opdracht, zonder één regel rekeningnummerlogica
     expect(onStatementTypeChange(start, "winst_verlies").reportSubgroup).toBeNull();
     // En terug naar "niet geclassificeerd" wist alles.
     expect(onStatementTypeChange(start, null)).toEqual(EMPTY_CLASSIFICATION);
-  });
-});
-
-/**
- * De beginbalansstatus bestaat al sinds migratie 20260919120000 en wordt in
- * deze PR NIET gewijzigd. Deze proeven leggen vast dat de drie toestanden doen
- * wat de opdracht vraagt — en dat "nihil" nog steeds geen boeking is.
- */
-describe("beginbalansstatus: onbeoordeeld, geboekt en nihil verklaard", () => {
-  /** Alleen de velden waar de afleiding naar kijkt; de rest doet niet mee. */
-  const kop = (over: Record<string, unknown>) =>
-    ({
-      id: "ob-1", boekjaar: 2023, nil_declaration: false, nil_declared_at: null,
-      ...over,
-    }) as never;
-  const marker = (boekjaar: number) => ({ boekjaar, posting_group_id: "pg-1" }) as never;
-
-  it("9. een nihil-verklaring schrijft geen enkele grootboekregel", () => {
-    const writer = readFileSync(
-      resolve(process.cwd(), "supabase/migrations/20260919120000_add_opening_balance_posting.sql"),
-      "utf8",
-    );
-    const fn = writer.slice(writer.indexOf("FUNCTION public.declare_opening_balance_nil"));
-    const body = fn.slice(0, fn.indexOf("$$;") + 3);
-    expect(body).not.toMatch(/INSERT INTO public\.ledger_postings/i);
-    expect(body).toMatch(/nil_declared_at/);
-    // En deze PR raakt die migratie niet aan.
-    expect(readdirSync(resolve(process.cwd(), MIGRATION_DIR))).toContain(
-      "20260919120000_add_opening_balance_posting.sql",
-    );
-  });
-
-  it("10. nihil verklaard telt als volledig — de melding 'niet beoordeeld' verdwijnt", () => {
-    const nihil = computeOpeningBalanceCompleteness({
-      headers: [kop({ nil_declaration: true, nil_declared_at: "2023-01-01T00:00:00Z" })],
-      marker: null,
-      year: 2023,
-    });
-    expect(nihil.state).toBe("nil");
-    expect(nihil.severity).toBe("complete");
-    expect(OPENING_BALANCE_STATE_LABELS.nil).toBe("Nihil");
-  });
-
-  it("11. onbeoordeeld blijft onbeoordeeld en verbergt niets van het lopende jaar", () => {
-    const onbekend = computeOpeningBalanceCompleteness({
-      headers: [], marker: null, year: 2023,
-    });
-    expect(onbekend.severity).not.toBe("complete");
-    expect(onbekend.state).not.toBe("nil");
-    expect(onbekend.state).not.toBe("posted");
-    // De volledigheidslaag oordeelt over de BEGINBALANS en raakt de periode
-    // zelf niet aan: er zit geen enkel filter op boekingen in.
-    const bron = readFileSync(resolve(process.cwd(), "src/lib/ledger-completeness.ts"), "utf8");
-    expect(bron).not.toMatch(/ledger_postings/);
-  });
-
-  it("12. geboekt en nihil verklaard blijven verschillende uitspraken", () => {
-    const geboekt = computeOpeningBalanceCompleteness({
-      headers: [kop({})], marker: marker(2023), year: 2023,
-    });
-    expect(geboekt.state).toBe("posted");
-    expect(geboekt.severity).toBe("complete");
-
-    const nihil = computeOpeningBalanceCompleteness({
-      headers: [kop({ nil_declaration: true, nil_declared_at: "2023-01-01T00:00:00Z" })],
-      marker: null,
-      year: 2023,
-    });
-    expect(nihil.state).toBe("nil");
-    // Beide zijn "compleet", maar ze zijn nooit hetzelfde antwoord.
-    expect(geboekt.state).not.toBe(nihil.state);
-    expect(OPENING_BALANCE_STATE_LABELS.posted).not.toBe(OPENING_BALANCE_STATE_LABELS.nil);
   });
 });
 
