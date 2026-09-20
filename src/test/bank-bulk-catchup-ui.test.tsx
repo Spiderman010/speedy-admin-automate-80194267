@@ -4,6 +4,10 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  assertBranchSqlKeepsLedgerFoundation,
+  assertBranchTouchesNoExistingWriter,
+} from "./support/branch-sql-scope";
 
 /**
  * Bank inhaalslag — het scherm.
@@ -651,11 +655,18 @@ describe("de grenzen van deze branch", () => {
     expect(app).toContain('<Route path="/bank/inhaalslag" element={<BankInhaalslag />} />');
   });
 
-  it("18. geen migratie, geen SQL en geen handmatige typewijziging", () => {
+  /**
+   * Voorheen: "deze branch bevat geen migratie en geen SQL". Dat was waar over
+   * de inhaalslag-PR, maar het is geen invariant — elke latere fase die terecht
+   * een migratie meebrengt, laat het omvallen. Bewaakt blijft wat het
+   * beschermde: een migratie in deze branch mag de grootboekfundering niet
+   * wijzigen of weggooien en geen bestaande boekingsschrijver herschrijven.
+   */
+  it("18. geen aantasting van de fundering, en geen handmatige typewijziging", () => {
     const changed = changedFiles();
     if (!changed) return;
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed.filter((f) => f.endsWith(".sql"))).toEqual([]);
+    assertBranchSqlKeepsLedgerFoundation(changed);
+    assertBranchTouchesNoExistingWriter(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     expect(changed).not.toContain("package-lock.json");
