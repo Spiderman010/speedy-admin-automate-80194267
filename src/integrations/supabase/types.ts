@@ -163,9 +163,87 @@ export type Database = {
           },
         ]
       }
+      bank_transaction_postings: {
+        Row: {
+          bank_transaction_id: string
+          boekjaar: number
+          btw_amount: number
+          btw_percentage: number | null
+          client_id: string
+          created_at: string
+          grootboekrekening_id: string
+          gross_amount: number
+          net_amount: number
+          organization_id: string
+          posting_date: string
+          posting_group_id: string
+          user_id: string
+        }
+        Insert: {
+          bank_transaction_id: string
+          boekjaar: number
+          btw_amount: number
+          btw_percentage?: number | null
+          client_id: string
+          created_at?: string
+          grootboekrekening_id: string
+          gross_amount: number
+          net_amount: number
+          organization_id: string
+          posting_date: string
+          posting_group_id: string
+          user_id: string
+        }
+        Update: {
+          bank_transaction_id?: string
+          boekjaar?: number
+          btw_amount?: number
+          btw_percentage?: number | null
+          client_id?: string
+          created_at?: string
+          grootboekrekening_id?: string
+          gross_amount?: number
+          net_amount?: number
+          organization_id?: string
+          posting_date?: string
+          posting_group_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_transaction_postings_bank_transaction_id_fkey"
+            columns: ["bank_transaction_id"]
+            isOneToOne: true
+            referencedRelation: "bank_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transaction_postings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transaction_postings_grootboekrekening_id_fkey"
+            columns: ["grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transaction_postings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bank_transactions: {
         Row: {
           amount: number
+          btw_percentage: number | null
           camt_addtl_ntry_inf: string | null
           camt_counterparty_name: string | null
           camt_ustrd: string | null
@@ -187,6 +265,7 @@ export type Database = {
         }
         Insert: {
           amount: number
+          btw_percentage?: number | null
           camt_addtl_ntry_inf?: string | null
           camt_counterparty_name?: string | null
           camt_ustrd?: string | null
@@ -208,6 +287,7 @@ export type Database = {
         }
         Update: {
           amount?: number
+          btw_percentage?: number | null
           camt_addtl_ntry_inf?: string | null
           camt_counterparty_name?: string | null
           camt_ustrd?: string | null
@@ -1860,6 +1940,10 @@ export type Database = {
       lock_ledger_client: { Args: { _client_id: string }; Returns: undefined }
       post_bank_allocation: {
         Args: { _allocation_id: string }
+        Returns: string
+      }
+      post_bank_transaction: {
+        Args: { _transaction_id: string }
         Returns: string
       }
       post_manual_journal: { Args: { _journal_id: string }; Returns: string }
