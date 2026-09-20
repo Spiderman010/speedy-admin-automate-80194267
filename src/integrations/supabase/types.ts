@@ -798,6 +798,75 @@ export type Database = {
           },
         ]
       }
+      ledger_reversal_postings: {
+        Row: {
+          boekjaar: number
+          client_id: string
+          created_at: string
+          currency: string
+          line_count: number
+          organization_id: string
+          original_boekjaar: number
+          original_posting_date: string
+          original_posting_group_id: string
+          original_source_type: string
+          posting_date: string
+          reason: string | null
+          reversal_posting_group_id: string
+          total_amount: number
+          user_id: string
+        }
+        Insert: {
+          boekjaar: number
+          client_id: string
+          created_at?: string
+          currency: string
+          line_count: number
+          organization_id: string
+          original_boekjaar: number
+          original_posting_date: string
+          original_posting_group_id: string
+          original_source_type: string
+          posting_date: string
+          reason?: string | null
+          reversal_posting_group_id: string
+          total_amount: number
+          user_id: string
+        }
+        Update: {
+          boekjaar?: number
+          client_id?: string
+          created_at?: string
+          currency?: string
+          line_count?: number
+          organization_id?: string
+          original_boekjaar?: number
+          original_posting_date?: string
+          original_posting_group_id?: string
+          original_source_type?: string
+          posting_date?: string
+          reason?: string | null
+          reversal_posting_group_id?: string
+          total_amount?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledger_reversal_postings_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_reversal_postings_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       leveranciers: {
         Row: {
           actief: boolean
@@ -1832,6 +1901,14 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      reverse_posting_group: {
+        Args: {
+          _posting_date: string
+          _posting_group_id: string
+          _reason?: string
+        }
+        Returns: string
       }
       role_rank: {
         Args: { _role: Database["public"]["Enums"]["app_role"] }
