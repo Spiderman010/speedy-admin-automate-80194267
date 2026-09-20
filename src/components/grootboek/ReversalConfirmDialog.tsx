@@ -89,10 +89,10 @@ export function ReversalConfirmDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{REVERSAL_CONFIRM_TITLE}</DialogTitle>
-          <DialogDescription>
+      <DialogContent className="max-h-[90vh] gap-4 overflow-y-auto sm:max-w-2xl">
+        <DialogHeader className="space-y-1">
+          <DialogTitle className="text-base">{REVERSAL_CONFIRM_TITLE}</DialogTitle>
+          <DialogDescription className="text-xs">
             De database maakt de tegenboeking en bepaalt de regels; dit scherm legt alleen uit wat er gebeurt.
           </DialogDescription>
         </DialogHeader>
@@ -102,73 +102,75 @@ export function ReversalConfirmDialog({
           <AlertDescription>{ORIGINAL_REMAINS_NOTICE}</AlertDescription>
         </Alert>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
           <div>
             <dt className="text-xs text-muted-foreground">Datum oorspronkelijke boeking</dt>
             <dd className="font-mono tabular-nums" data-testid="reversal-original-date">
               {summary.postingDate ? formatDatumNL(summary.postingDate) : "—"}
             </dd>
           </div>
-          <div>
+          <div className="text-right sm:text-left">
             <dt className="text-xs text-muted-foreground">Boekingstotaal</dt>
-            <dd className="font-mono tabular-nums">{formatCents(summary.debitCents)}</dd>
+            <dd className="font-mono font-semibold tabular-nums">{formatCents(summary.debitCents)}</dd>
           </div>
         </dl>
 
-        <div className="space-y-1.5">
-          <Label htmlFor={dateId}>
-            Boekingsdatum tegenboeking <span aria-hidden="true">*</span>
-          </Label>
-          <Input
-            id={dateId}
-            type="date"
-            required
-            value={postingDate}
-            onChange={(e) => setPostingDate(e.target.value)}
-            className="h-11 sm:h-9"
-            data-testid="reversal-date-input"
-          />
-          <p className="text-xs text-muted-foreground">
-            Kies bewust in welke periode de correctie landt. Er wordt niets voorgevuld en niets verschoven;
-            een afgesloten boekjaar wordt door de database geweigerd.
-          </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor={dateId}>
+              Boekingsdatum tegenboeking <span aria-hidden="true">*</span>
+            </Label>
+            <Input
+              id={dateId}
+              type="date"
+              required
+              value={postingDate}
+              onChange={(e) => setPostingDate(e.target.value)}
+              className="h-11 sm:h-9"
+              data-testid="reversal-date-input"
+            />
+            <p className="text-xs text-muted-foreground">
+              Kies bewust in welke periode de correctie landt. Er wordt niets voorgevuld en niets verschoven;
+              een afgesloten boekjaar wordt door de database geweigerd.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor={reasonId}>Toelichting (optioneel)</Label>
+            <Textarea
+              id={reasonId}
+              value={reason}
+              rows={2}
+              onChange={(e) => setReason(e.target.value)}
+              data-testid="reversal-reason-input"
+            />
+            <p
+              className={reasonLength > MAX_REVERSAL_REASON_LENGTH ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+              data-testid="reversal-reason-counter"
+            >
+              {reasonLength} / {MAX_REVERSAL_REASON_LENGTH} tekens
+            </p>
+          </div>
         </div>
 
-        <div className="space-y-1.5">
-          <Label htmlFor={reasonId}>Toelichting (optioneel)</Label>
-          <Textarea
-            id={reasonId}
-            value={reason}
-            rows={2}
-            onChange={(e) => setReason(e.target.value)}
-            data-testid="reversal-reason-input"
-          />
-          <p
-            className={reasonLength > MAX_REVERSAL_REASON_LENGTH ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
-            data-testid="reversal-reason-counter"
-          >
-            {reasonLength} / {MAX_REVERSAL_REASON_LENGTH} tekens
-          </p>
-        </div>
-
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
+        <div className="rounded-md border">
+          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2">
             <span className="text-sm font-medium">Effect van de tegenboeking</span>
-            <Badge variant="outline" className="font-normal" data-testid="reversal-preview-badge">
+            <Badge variant="outline" className="bg-background font-normal" data-testid="reversal-preview-badge">
               Voorbeeld
             </Badge>
           </div>
-          <p className="text-xs text-muted-foreground" data-testid="reversal-preview-notice">
+          <p className="px-3 pt-2 text-xs text-muted-foreground" data-testid="reversal-preview-notice">
             {PREVIEW_NOTICE}
           </p>
-          <div className="-mx-1 overflow-x-auto px-1">
+          <div className="overflow-x-auto px-1 pb-1">
             <table className="w-full min-w-[420px] text-sm" data-testid="reversal-preview-table">
               <caption className="sr-only">Voorbeeld van de tegenboeking per grootboekrekening</caption>
               <thead>
                 <tr className="border-b text-xs text-muted-foreground">
-                  <th scope="col" className="px-2 py-1 text-left font-medium">Rekening</th>
-                  <th scope="col" className="px-2 py-1 text-right font-medium">Debet</th>
-                  <th scope="col" className="px-2 py-1 text-right font-medium">Credit</th>
+                  <th scope="col" className="px-2 py-1.5 text-left font-medium">Rekening</th>
+                  <th scope="col" className="px-2 py-1.5 text-right font-medium">Debet</th>
+                  <th scope="col" className="px-2 py-1.5 text-right font-medium">Credit</th>
                 </tr>
               </thead>
               <tbody>
@@ -176,13 +178,13 @@ export function ReversalConfirmDialog({
                   const account = accountsById.get(line.grootboekrekeningId);
                   return (
                     <tr key={line.originalRowId} className="border-b last:border-0" data-testid="reversal-preview-row">
-                      <td className="px-2 py-1 break-words">
+                      <td className="px-2 py-1.5 break-words">
                         {formatReversalAccountLabel(account, line.grootboekrekeningId)}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-1 text-right font-mono tabular-nums">
+                      <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">
                         {line.debitCents !== 0 ? formatCents(line.debitCents) : ""}
                       </td>
-                      <td className="whitespace-nowrap px-2 py-1 text-right font-mono tabular-nums">
+                      <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">
                         {line.creditCents !== 0 ? formatCents(line.creditCents) : ""}
                       </td>
                     </tr>
@@ -192,6 +194,7 @@ export function ReversalConfirmDialog({
             </table>
           </div>
         </div>
+
 
         {issue && (
           <p className="text-sm text-destructive" role="alert" data-testid="reversal-form-issue">
