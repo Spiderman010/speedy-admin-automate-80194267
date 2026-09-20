@@ -118,38 +118,41 @@ export function GrootboekAccountMutations({
                       {formatCents(l.balanceCents)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <button
-                        type="button"
-                        onClick={() => setOpenGroupId(l.row.posting_group_id)}
-                        className={cn(
-                          "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground",
-                          "hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                        )}
-                        aria-label={`Open boeking van ${l.row.description || formatDatumNL(l.row.posting_date)}`}
-                        title="Open boeking"
-                        data-testid="open-posting-group"
-                        data-posting-group-id={l.row.posting_group_id}
-                      >
-                        <Layers className="h-4 w-4" />
-                      </button>
-                      {source.kind === "resolved" ? (
-                        <Link
-                          to={source.path}
+                      <div className="inline-flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setOpenGroupId(l.row.posting_group_id)}
                           className={cn(
-                            "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground",
-                            "hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-muted-foreground",
+                            "hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           )}
-                          aria-label={`Open bron (${source.label}) van ${l.row.description || formatDatumNL(l.row.posting_date)}`}
-                          title="Open bron"
+                          aria-label={`Open boeking van ${l.row.description || formatDatumNL(l.row.posting_date)}`}
+                          title="Open boeking"
+                          data-testid="open-posting-group"
+                          data-posting-group-id={l.row.posting_group_id}
                         >
-                          <ArrowUpRight className="h-4 w-4" />
-                        </Link>
-                      ) : (
-                        <span className="text-xs text-muted-foreground" data-testid="source-unavailable">
-                          Bron niet beschikbaar
-                        </span>
-                      )}
+                          <Layers className="h-4 w-4" />
+                        </button>
+                        {source.kind === "resolved" ? (
+                          <Link
+                            to={source.path}
+                            className={cn(
+                              "inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent text-muted-foreground",
+                              "hover:border-border hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            )}
+                            aria-label={`Open bron (${source.label}) van ${l.row.description || formatDatumNL(l.row.posting_date)}`}
+                            title="Open bron"
+                          >
+                            <ArrowUpRight className="h-4 w-4" />
+                          </Link>
+                        ) : (
+                          <span className="text-xs text-muted-foreground" data-testid="source-unavailable">
+                            Bron niet beschikbaar
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
+
                   </TableRow>
                 );
               })}
