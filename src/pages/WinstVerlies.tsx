@@ -24,6 +24,8 @@ import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { subgroupSectionsForGroups } from "@/lib/financial-statements-subgroups";
+import { ReportDrilldownSheet } from "@/components/overzichten/ReportDrilldownSheet";
+import { groupView, type DrilldownTarget } from "@/lib/report-drilldown";
 import { useLedgerCompleteness } from "@/hooks/useLedgerCompleteness";
 import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
@@ -79,6 +81,13 @@ export default function WinstVerlies() {
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
   /*
+   * De doorklik draagt alleen een AANWIJZING: welke categorie, groep of
+   * rekening de gebruiker wil zien. Elk bedrag in het paneel komt uit de
+   * engine of uit de kern — hier wordt niets herrekend en geen periode
+   * gewisseld.
+   */
+  const [drilldown, setDrilldown] = useState<DrilldownTarget | null>(null);
+  /*
    * Het tweede taxonomieniveau (report_subgroup), uitsluitend presentatie.
    * De rekeningen komen uit dezelfde query die `useFinancialStatements` al
    * doet — react-query deelt de cache op dezelfde sleutel, dus dit is geen
@@ -95,6 +104,28 @@ export default function WinstVerlies() {
       ready ? subgroupSectionsForGroups(ready.profitLoss.groups, rekeningenVoorIndeling ?? []) : undefined,
     [ready, rekeningenVoorIndeling],
   );
+
+
+  /** Rekeningnamen voor het boekingspaneel; puur presentatie. */
+  const drilldownAccountsById = useMemo(
+    () =>
+      new Map(
+        (rekeningenVoorIndeling ?? []).map((r) => [
+          r.id,
+          { id: r.id, nummer: r.nummer, omschrijving: r.omschrijving },
+        ]),
+      ),
+    [rekeningenVoorIndeling],
+  );
+  /** De aangeklikte categorie, opgedeeld zoals het rapport haar toont. */
+  const drilldownView = useMemo(() => {
+    if (!drilldown || !ready) return null;
+    const alleGroepen = [...ready.profitLoss.groups];
+    const alleSecties = [...(wvSecties ?? [])];
+    const groep = alleGroepen.find((g) => g.key === drilldown.groupKey);
+    if (!groep) return null;
+    return groupView(groep, alleSecties.find((s) => s.group.key === drilldown.groupKey));
+  }, [drilldown, ready, wvSecties]);
 
   // Per overzicht geteld: niet-geclassificeerde activiteit die aantoonbaar aan
   // de balanskant hoort mag hier nooit als oorzaak van een lege W&V gelden.
@@ -181,6 +212,7 @@ export default function WinstVerlies() {
           caption="Winst-en-verliesrekening"
           groups={profitLoss.groups}
           sections={wvSecties}
+                onDrilldown={setDrilldown}
           totalLabel="Resultaat"
           totalCents={profitLoss.netResultCents}
           testId="wv-table"
@@ -286,6 +318,23 @@ export default function WinstVerlies() {
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
           </Card>
         </div>
+      )}
+
+      {/* Doorklikken zonder het rapport te verlaten: dezelfde administratie,
+          dezelfde periode, en onderin het bestaande boekingspaneel. */}
+      {clientId && (
+        <ReportDrilldownSheet
+          target={drilldown}
+          onTargetChange={setDrilldown}
+          view={drilldownView}
+          clientId={clientId}
+          period={period}
+          periodLabel={periodLabel(selection)}
+          clientName={selectedClient?.name ?? "administratie"}
+          accountsById={drilldownAccountsById}
+          accounts={rekeningenVoorIndeling ?? []}
+          reportLabel="Winst-en-verliesrekening"
+        />
       )}
     </>
   );

@@ -963,6 +963,27 @@ De motor van 6C-b9 was af en de UI werkte, maar zij liet de correctie er te veel
 
 ---
 
+### Doorklikken vanuit de rapporten naar de boeking
+
+**Lezen, presentatie en navigatie.** Geen migratie, geen SQL, geen schemawijziging, geen typewijziging, geen afhankelijkheid, geen nieuwe route. Negen reken- en motorbestanden zijn byte-voor-byte gelijk aan `origin/main` — de kern, de engine, de subgroepenlaag, de proef- en saldibalans, de classificatie, `useFinancialStatements`, `useLedgerReversal` en het boekingspaneel zelf; een test bewaakt dat.
+
+```
+src/lib/report-drilldown.ts                              puur: het pad en de aansluiting
+src/components/overzichten/ReportDrilldownSheet.tsx      één paneel voor alle drie de rapporten
+```
+
+- **Van bedrag naar boeking, in één paneel.** Categorie → groep → rekening → mutaties → boekingsdetail, zonder het rapport te verlaten. Het laatste niveau is het bestaande `GrootboekAccountMutations`, dat op zijn beurt het bestaande `LedgerPostingGroupSheet` opent — inclusief de tegenboekingsflow van PR #185. Er is dus geen tweede mutatie- of boekingsimplementatie bijgekomen.
+- **Waarom in het paneel en niet via `/grootboek/saldi/:accountId`:** die route houdt haar eigen periodekeuze bij en leest niets uit de URL, dus een klik vanuit een kwartaalrapport zou stilletjes in een jaarweergave landen. Het paneel gebruikt letterlijk de `period` van het rapport. De bestaande link blijft gewoon bestaan.
+- **De aansluiting is het punt.** Elk bedrag in het paneel is een veld van de engine (`group.totalCents`, `section.subtotalCents`, `line.displayedCents`) of van de kern; er wordt niets herrekend. `report-drilldown.ts` levert per niveau een expliciete `reconciles`-uitspraak, en wijkt die af, dan zegt het paneel dat in plaats van te doen alsof. Rekeningen komen hoogstens één keer voor (`accountsAreUnique`), en de sectie "Nog niet ingedeeld" is gewoon doorklikbaar.
+- **Balans: beginsaldo apart.** Een balanspost bevat vaak een overloop uit eerdere perioden. Het paneel toont daarom **Beginsaldo + Mutaties periode = Eindsaldo**, alle drie uit `buildRunningBalance()` — dezelfde kern die het rapport voedt. Is er een overloop, dan staat er expliciet bij dat de getoonde mutaties alleen het deel van deze periode verklaren. Is er niets vóór de periode geboekt, dan is het beginsaldo 0 — een uitkomst, geen aanname. Er wordt geen beginbalans verzonnen en aan de beginbalanslogica is niets veranderd.
+- **Kolommenbalans:** alleen de stap rekening → mutaties, want dat rapport kent geen categorieën en die zijn er ook niet bijgekomen. Het rekeningnummer opent het paneel; de periodekolommen en het eindsaldo sluiten aan op dezelfde rollup die de tabel zelf toont.
+- **Periode- en administratiegrens.** Het paneel krijgt de `period` en de `clientId` van het rapport door en kiest er nooit zelf een. De tenantgrens zit bovendien in de kern: `buildRunningBalance()` **weigert** rijen van een andere administratie met een harde fout, en een test toont dat.
+- **Geen extra netwerkverzoek.** `useLedgerPostings({clientId, period})` gebruikt dezelfde query key als het rapport al gebruikt, dus react-query deelt de cache. De query staat bovendien uit zolang er geen rekening is aangewezen.
+- **Lege en foutsituaties** zijn apart: geen onderliggende rekeningen, een rekening zonder mutaties in de periode maar mét saldo, een mislukte query, en een categorie die niet in dit rapport bestaat.
+- **Tests:** `src/test/report-drilldown.test.tsx` (21; de fixtures lopen door de échte kern en engine). Dekt de drie rapporten, de aansluiting per niveau, de scheiding beginsaldo/mutaties, de periode- en administratiegrens, de unieke rekeningen, het vangnet, het openen van het boekingspaneel met de tegenboekingsactie erin, en de statische grenzen (geen schrijfpad, geen afleiding uit nummer of naam, geen migratie, rekenlagen byte-identiek).
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**

@@ -25,6 +25,8 @@ import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { subgroupSectionsForGroups } from "@/lib/financial-statements-subgroups";
+import { ReportDrilldownSheet } from "@/components/overzichten/ReportDrilldownSheet";
+import { groupView, type DrilldownTarget } from "@/lib/report-drilldown";
 import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
 import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
@@ -87,6 +89,13 @@ export default function Balans() {
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
   /*
+   * De doorklik draagt alleen een AANWIJZING: welke categorie, groep of
+   * rekening de gebruiker wil zien. Elk bedrag in het paneel komt uit de
+   * engine of uit de kern — hier wordt niets herrekend en geen periode
+   * gewisseld.
+   */
+  const [drilldown, setDrilldown] = useState<DrilldownTarget | null>(null);
+  /*
    * Het tweede taxonomieniveau (report_subgroup), uitsluitend presentatie.
    * De rekeningen komen uit dezelfde query die `useFinancialStatements` al
    * doet — react-query deelt de cache op dezelfde sleutel, dus dit is geen
@@ -112,6 +121,28 @@ export default function Balans() {
         : undefined,
     [ready, rekeningenVoorIndeling],
   );
+
+
+  /** Rekeningnamen voor het boekingspaneel; puur presentatie. */
+  const drilldownAccountsById = useMemo(
+    () =>
+      new Map(
+        (rekeningenVoorIndeling ?? []).map((r) => [
+          r.id,
+          { id: r.id, nummer: r.nummer, omschrijving: r.omschrijving },
+        ]),
+      ),
+    [rekeningenVoorIndeling],
+  );
+  /** De aangeklikte categorie, opgedeeld zoals het rapport haar toont. */
+  const drilldownView = useMemo(() => {
+    if (!drilldown || !ready) return null;
+    const alleGroepen = [...ready.balanceSheet.assetGroups, ...ready.balanceSheet.liabilityEquityGroups];
+    const alleSecties = [...(activaSecties ?? []), ...(passivaSecties ?? [])];
+    const groep = alleGroepen.find((g) => g.key === drilldown.groupKey);
+    if (!groep) return null;
+    return groupView(groep, alleSecties.find((s) => s.group.key === drilldown.groupKey));
+  }, [drilldown, ready, activaSecties, passivaSecties]);
 
   // Is er activiteit maar geen enkele geclassificeerde balansregel, dan zegt de
   // specifieke melding het al; de generieke volledigheidsmelding zou hetzelfde
@@ -225,6 +256,7 @@ export default function Balans() {
                 caption="Activa"
                 groups={balanceSheet.assetGroups}
                 sections={activaSecties}
+                onDrilldown={setDrilldown}
                 totalLabel="Totaal activa"
                 totalCents={balanceSheet.totalAssetsCents}
                 testId="balans-activa-table"
@@ -243,6 +275,7 @@ export default function Balans() {
                 caption="Passiva"
                 groups={balanceSheet.liabilityEquityGroups}
                 sections={passivaSecties}
+                onDrilldown={setDrilldown}
                 systemLines={balanceSheet.systemLines}
                 totalLabel="Totaal passiva"
                 totalCents={balanceSheet.totalLiabilitiesEquityCents}
@@ -353,6 +386,23 @@ export default function Balans() {
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
           </Card>
         </div>
+      )}
+
+      {/* Doorklikken zonder het rapport te verlaten: dezelfde administratie,
+          dezelfde periode, en onderin het bestaande boekingspaneel. */}
+      {clientId && (
+        <ReportDrilldownSheet
+          target={drilldown}
+          onTargetChange={setDrilldown}
+          view={drilldownView}
+          clientId={clientId}
+          period={period}
+          periodLabel={periodLabel(selection)}
+          clientName={selectedClient?.name ?? "administratie"}
+          accountsById={drilldownAccountsById}
+          accounts={rekeningenVoorIndeling ?? []}
+          reportLabel="Balans"
+        />
       )}
     </>
   );
