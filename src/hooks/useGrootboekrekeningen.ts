@@ -21,6 +21,12 @@ export interface Grootboekrekening {
    */
   statement_type?: string | null;
   report_group?: string | null;
+  /**
+   * Tweede niveau van de taxonomie (migratie 20260923120000). Optioneel, net
+   * als de andere vier: "categorie gekozen, groep nog niet" is een normale
+   * toestand en de toestand waarin elke bestaande classificatie begint.
+   */
+  report_subgroup?: string | null;
   normal_side?: string | null;
   report_sort?: number | null;
 }
@@ -33,8 +39,29 @@ export interface Grootboekrekening {
 export interface GrootboekClassificationInput {
   statement_type?: string | null;
   report_group?: string | null;
+  report_subgroup?: string | null;
   normal_side?: string | null;
   report_sort?: number | null;
+}
+
+/**
+ * TIJDELIJKE SHIM — weg zodra 20260923120000 is toegepast en
+ * `src/integrations/supabase/types.ts` opnieuw is gegenereerd (nooit met de
+ * hand bijwerken, zie AGENTS.md). De gegenereerde types kennen
+ * `report_subgroup` nog niet, dus zouden insert en update afketsen op een
+ * kolom die in productie straks gewoon bestaat. De cast is zo smal mogelijk:
+ * precies deze twee schrijfacties op deze ene tabel, met echte veldtypes —
+ * geen brede `any`-laag, en niets wat een ander veld raakt.
+ */
+type GrootboekWriteRow = Record<string, string | number | boolean | null | undefined>;
+
+interface GrootboekWriteApi {
+  from(table: "grootboekrekeningen"): {
+    insert(values: GrootboekWriteRow): PromiseLike<{ error: { message?: string; code?: string } | null }>;
+    update(values: GrootboekWriteRow): {
+      eq(column: "id", value: string): PromiseLike<{ error: { message?: string; code?: string } | null }>;
+    };
+  };
 }
 
 const DEFAULT_ACCOUNTS = [
@@ -380,7 +407,9 @@ export function useAddGrootboekrekening() {
       } & GrootboekClassificationInput,
     ) => {
       if (!user) throw new Error("Niet ingelogd");
-      const { error } = await supabase.from("grootboekrekeningen").insert({ ...data, user_id: user.id, client_id: null });
+      const { error } = await (supabase as unknown as GrootboekWriteApi)
+        .from("grootboekrekeningen")
+        .insert({ ...data, user_id: user.id, client_id: null });
       if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["grootboekrekeningen"] }),
@@ -392,7 +421,10 @@ export function useUpdateGrootboekrekening() {
 
   return useMutation({
     mutationFn: async ({ id, ...updates }: { id: string } & Partial<Grootboekrekening>) => {
-      const { error } = await supabase.from("grootboekrekeningen").update(updates).eq("id", id);
+      const { error } = await (supabase as unknown as GrootboekWriteApi)
+        .from("grootboekrekeningen")
+        .update(updates as GrootboekWriteRow)
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["grootboekrekeningen"] }),

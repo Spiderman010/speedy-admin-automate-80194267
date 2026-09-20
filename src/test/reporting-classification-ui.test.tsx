@@ -101,6 +101,7 @@ const makeAccount = (over: Partial<any> = {}) => ({
   updated_at: "2026-01-01T00:00:00Z",
   statement_type: null,
   report_group: null,
+  report_subgroup: null,
   normal_side: null,
   report_sort: null,
   ...over,
@@ -205,6 +206,7 @@ describe("toestandsregels (puur)", () => {
     expect(buildClassificationPayload(form())).toEqual({
       statement_type: null,
       report_group: null,
+      report_subgroup: null,
       normal_side: null,
       report_sort: null,
     });
@@ -213,7 +215,10 @@ describe("toestandsregels (puur)", () => {
   it("7b. een ongeldige combinatie kan nooit een payload opleveren", () => {
     // Zelfs als de toestand op een of andere manier corrupt raakt.
     expect(buildClassificationPayload(form({ statementType: "balans", reportGroup: "netto_omzet" as never })))
-      .toEqual({ statement_type: null, report_group: null, normal_side: null, report_sort: null });
+      .toEqual({
+        statement_type: null, report_group: null, report_subgroup: null,
+        normal_side: null, report_sort: null,
+      });
     expect(buildClassificationPayload(form({ reportGroup: "vaste_activa" })).report_group).toBeNull();
   });
 
@@ -263,6 +268,7 @@ describe("toestandsregels (puur)", () => {
     ).toEqual({
       statementType: "winst_verlies",
       reportGroup: "afschrijvingen",
+      reportSubgroup: null,
       normalSide: "debet",
       reportSort: "0",
     });
@@ -411,8 +417,8 @@ describe("formulier — opslaan", () => {
     ];
     renderGrootboek();
     openEditDialog();
-    expect(screen.getByRole("combobox", { name: /rapport/i })).toHaveTextContent("Balans");
-    expect(screen.getByRole("combobox", { name: /groep/i })).toHaveTextContent("Vlottende activa");
+    expect(screen.getByRole("combobox", { name: /^rapport$/i })).toHaveTextContent("Balans");
+    expect(screen.getByRole("combobox", { name: /rapportagecategorie/i })).toHaveTextContent("Vlottende activa");
     expect(screen.getByRole("combobox", { name: /normale zijde/i })).toHaveTextContent("Debet");
     expect(screen.getByLabelText(/sortering/i)).toHaveValue(5);
   });
@@ -422,7 +428,7 @@ describe("formulier — opslaan", () => {
     renderGrootboek();
     openEditDialog();
 
-    fireEvent.click(screen.getByRole("combobox", { name: /groep/i }));
+    fireEvent.click(screen.getByRole("combobox", { name: /rapportagecategorie/i }));
     expect(await screen.findByRole("option", { name: "Eigen vermogen" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Privé" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Netto-omzet" })).toBeNull();
@@ -435,12 +441,12 @@ describe("formulier — opslaan", () => {
     renderGrootboek();
     openEditDialog();
 
-    await chooseOption(/rapport/i, "Winst-en-verliesrekening");
-    expect(screen.getByRole("combobox", { name: /groep/i })).toHaveTextContent("Kies een groep");
+    await chooseOption(/^rapport$/i, "Winst-en-verliesrekening");
+    expect(screen.getByRole("combobox", { name: /rapportagecategorie/i })).toHaveTextContent("Kies een rapportagecategorie");
     expect(screen.getByRole("button", { name: /opslaan/i })).toBeDisabled();
 
     // En de lijst toont nu uitsluitend W&V-groepen.
-    fireEvent.click(screen.getByRole("combobox", { name: /groep/i }));
+    fireEvent.click(screen.getByRole("combobox", { name: /rapportagecategorie/i }));
     expect(await screen.findByRole("option", { name: "Netto-omzet" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Vaste activa" })).toBeNull();
   });
@@ -453,10 +459,10 @@ describe("formulier — opslaan", () => {
     renderGrootboek();
     openEditDialog();
 
-    await chooseOption(/rapport/i, "Balans");
+    await chooseOption(/^rapport$/i, "Balans");
     const melding = await screen.findByRole("alert");
-    expect(melding).toHaveTextContent(/kies een groep binnen balans/i);
-    const groep = screen.getByRole("combobox", { name: /groep/i });
+    expect(melding).toHaveTextContent(/kies een categorie binnen balans/i);
+    const groep = screen.getByRole("combobox", { name: /rapportagecategorie/i });
     expect(groep).toHaveAttribute("aria-invalid", "true");
     expect(groep).toHaveAttribute("aria-describedby", "gb-report-group-error");
   });
@@ -466,7 +472,7 @@ describe("formulier — opslaan", () => {
     renderGrootboek();
     openEditDialog();
 
-    await chooseOption(/rapport/i, "Balans");
+    await chooseOption(/^rapport$/i, "Balans");
     const opslaan = screen.getByRole("button", { name: /opslaan/i });
     expect(opslaan).toBeDisabled();
     fireEvent.click(opslaan);
@@ -518,7 +524,7 @@ describe("formulier — opslaan", () => {
     renderGrootboek();
     openEditDialog();
 
-    await chooseOption(/rapport/i, "Niet geclassificeerd");
+    await chooseOption(/^rapport$/i, "Niet geclassificeerd");
     fireEvent.click(screen.getByRole("button", { name: /opslaan/i }));
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
 
@@ -540,8 +546,8 @@ describe("formulier — opslaan", () => {
     renderGrootboek();
     openEditDialog();
 
-    await chooseOption(/rapport/i, "Winst-en-verliesrekening");
-    await chooseOption(/groep/i, "Netto-omzet");
+    await chooseOption(/^rapport$/i, "Winst-en-verliesrekening");
+    await chooseOption(/rapportagecategorie/i, "Netto-omzet");
     await chooseOption(/normale zijde/i, "Credit");
     fireEvent.change(screen.getByLabelText(/sortering/i), { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: /opslaan/i }));
@@ -564,8 +570,8 @@ describe("formulier — opslaan", () => {
     renderGrootboek();
     openEditDialog();
 
-    await chooseOption(/rapport/i, "Balans");
-    await chooseOption(/groep/i, "Voorzieningen");
+    await chooseOption(/^rapport$/i, "Balans");
+    await chooseOption(/rapportagecategorie/i, "Voorzieningen");
     fireEvent.click(screen.getByRole("button", { name: /opslaan/i }));
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
     expect(updateMutateAsync.mock.calls[0][0].normal_side).toBeNull();
@@ -581,9 +587,9 @@ describe("formulier — opslaan", () => {
     fireEvent.change(screen.getByLabelText(/nummer/i), { target: { value: "25" } });
     fireEvent.change(screen.getByLabelText(/omschrijving/i), { target: { value: "Bedrijfsgebouwen" } });
     await chooseOption(/categorie/i, "Activa");
-    expect(screen.getByRole("combobox", { name: /rapport/i })).toHaveTextContent("Niet geclassificeerd");
+    expect(screen.getByRole("combobox", { name: /^rapport$/i })).toHaveTextContent("Niet geclassificeerd");
     // Zonder rapport is er geen groepkeuze zichtbaar.
-    expect(screen.queryByRole("combobox", { name: /groep/i })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: /rapportagecategorie/i })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /toevoegen/i }));
     await waitFor(() => expect(addMutateAsync).toHaveBeenCalled());
@@ -664,10 +670,10 @@ describe("onaangeroerde classificatie blijft met rust", () => {
 
     // Dezelfde rekening, nu mét een ingreep in de classificatie: onvolledig,
     // dus geblokkeerd.
-    await chooseOption(/rapport/i, "Winst-en-verliesrekening");
+    await chooseOption(/^rapport$/i, "Winst-en-verliesrekening");
     expect(screen.getByRole("button", { name: /opslaan/i })).toBeDisabled();
     // En na een geldige keuze gaat ze gewoon mee.
-    await chooseOption(/groep/i, "Belastingen");
+    await chooseOption(/rapportagecategorie/i, "Belastingen");
     fireEvent.click(screen.getByRole("button", { name: /opslaan/i }));
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalled());
     expect(updateMutateAsync.mock.calls[0][0]).toMatchObject({
@@ -701,7 +707,7 @@ describe("rechten", () => {
     openEditDialog();
     const blok = screen.getByTestId("rapportageclassificatie");
     expect(blok).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: /rapport/i })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: /^rapport$/i })).toBeDisabled();
     expect(screen.getByText(/bekijken maar niet wijzigen/i)).toBeInTheDocument();
   });
 
@@ -736,7 +742,7 @@ describe("rechten", () => {
     renderGrootboek();
     openEditDialog();
     expect(screen.getByTestId("rapportageclassificatie")).not.toBeDisabled();
-    expect(screen.getByRole("combobox", { name: /rapport/i })).not.toBeDisabled();
+    expect(screen.getByRole("combobox", { name: /^rapport$/i })).not.toBeDisabled();
   });
 });
 
@@ -783,9 +789,16 @@ describe("statische grenzen", () => {
   });
 
   it("19/20. er wordt nergens geclassificeerd op nummer, categorie of omschrijving", () => {
-    // De pure module kent `categorie` niet eens: in de code komt het woord niet
-    // voor, dus er kan niets uit worden afgeleid.
-    expect(libCode).not.toMatch(/categorie|omschrijving/);
+    // De pure module LEEST `categorie` en `omschrijving` nergens: geen
+    // veldtoegang, geen property, geen destructurering. Het WOORD mag wel
+    // voorkomen — de taxonomie heeft sinds 20260923120000 zelf een niveau dat
+    // "Categorie" heet, en dat staat in de foutteksten die de gebruiker ziet.
+    // Op het woord toetsen zou die labels verbieden zonder iets te beschermen.
+    for (const veld of ["categorie", "omschrijving"]) {
+      expect(libCode, veld).not.toMatch(new RegExp(`\\.\\s*${veld}\\b`));
+      expect(libCode, veld).not.toMatch(new RegExp(`\\b${veld}\\s*[?]?\\s*:`));
+      expect(libCode, veld).not.toMatch(new RegExp(`\\[\\s*["']${veld}["']\\s*\\]`));
+    }
     // `nummer` evenmin — geen enkel rekeningbereik.
     expect(libCode).not.toMatch(/\bnummer\b/);
     // En de pagina leidt geen classificatie af uit een bereik of uit categorie.
@@ -862,7 +875,13 @@ describe("branch-scope", () => {
 
   it("55b. de gegenereerde types worden uitsluitend als typen geïmporteerd", () => {
     for (const bron of [hooksSource, pageSource]) {
-      for (const line of bron.split("\n").filter((l) => /integrations\/supabase\/types/.test(l))) {
+      const regels = bron
+        .split("\n")
+        // Commentaar telt niet: een shim die in haar uitleg naar het
+        // gegenereerde bestand verwijst, importeert er niets uit.
+        .filter((l) => !l.trimStart().startsWith("*") && !l.trimStart().startsWith("//"))
+        .filter((l) => /integrations\/supabase\/types/.test(l));
+      for (const line of regels) {
         expect(line).toMatch(/^import type /);
       }
     }
