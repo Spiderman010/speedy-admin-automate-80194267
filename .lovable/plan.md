@@ -1,35 +1,35 @@
-# Inkoopwerkbank: compacte drieluik-layout
+# Bankboekingen zichtbaar maken in de rapportages
 
-## Doel
-De bestaande Inkoopwerkbank wordt een rustige, informatie-dichte werkplek waarin wachtrij, boekingsgegevens en brondocument tegelijk te beoordelen zijn. Alle bestaande data, validaties, statussen en acties blijven ongewijzigd.
+## Wat ik heb gevonden
 
-## Wijzigingen
-- Voeg links een compacte factuurwachtrij toe op basis van de al geladen inkoopfacturen, met leverancier, nummer, datum, bedrag en bestaande status; de actieve factuur krijgt een duidelijke selectie-indicatie.
-- Herschik de desktopweergave naar drie functionele zones: wachtrij links, boekingsformulier en regels in het midden, documentpreview rechts.
-- Maak factuurgegevens, boekingsregels, totalen en boekbaarheidsmelding compacter door minder verticale tussenruimte en een duidelijkere visuele groepering.
-- Houd de bestaande factuuridentiteit bovenaan zichtbaar met leverancier, nummer, datum, totaal en status.
-- Houd bestaande acties onderaan sticky; voeg geen nieuwe actie toe en wijzig geen bestaande voorwaarden of afhandeling.
-- Behoud een bruikbare responsive weergave: op kleinere schermen verdwijnt de vaste zij-aan-zij-indeling en blijven formulier, regels en document logisch gestapeld en horizontaal bruikbaar.
+Bij AA-Secure staan 342 bankregels (2023 t/m 2025) op "Handmatig geboekt" en alle 342 hebben een grootboekrekening. Toch staat er voor deze administratie geen enkele regel in het grootboek, en de rapportages lezen uitsluitend het grootboek.
 
-## Bestanden binnen scope
-- `src/pages/PurchaseInvoiceWorkspace.tsx`
-- Inkoop-specifieke presentatiecomponenten onder `src/components/purchase/`
-- Gerichte Inkoopwerkbank UI-tests onder `src/test/`
+De oorzaak: "Handmatig geboekt" in het bankscherm legt alleen vast *welke rekening* jij bij die bankregel kiest. Er bestaat op dit moment geen functie die zo'n bankregel daadwerkelijk als boeking (bank tegen de gekozen rekening) wegschrijft. Alleen bankregels die aan een in- of verkoopfactuur zijn gekoppeld hebben zo'n boekingsfunctie; direct gecodeerde bankregels hebben die nooit gehad. Daarom blijft het scherm zeggen "geboekt", terwijl de rapportages leeg blijven.
 
-## Buiten scope
-- Geen hooks, bedragen, BTW, accountmapping, readiness, statusovergangen of postinggedrag wijzigen.
-- Geen accounting-, ledger-, reversal- of correctiebestanden wijzigen.
-- Geen database, SQL, migraties, RLS, RPC's, gegenereerde types of dependencies wijzigen.
-- Geen gedeelde shell of andere pagina's herontwerpen.
+De instellingen van AA-Secure zijn wél compleet (bank-, debiteuren-, crediteuren- en beide BTW-rekeningen zijn ingesteld), dus zodra de boekingsfunctie er is, kan deze administratie direct verwerkt worden.
 
-## Technische details
-- De wachtrij gebruikt uitsluitend `usePurchaseInvoices` en bestaande navigatie naar `/facturen/inkoop/:id`.
-- Nieuwe code blijft puur presentational; afgeleide labels en sortering volgen de reeds geladen facturen en bestaande statuswaarden.
-- Desktop krijgt stabiele kolombreedtes en onafhankelijke verticale bruikbaarheid voor wachtrij en document; mobiel houdt de bestaande formulierflow.
-- De huidige action handlers en gate-booleans worden ongewijzigd doorgegeven.
+## Wat ik ga bouwen
 
-## Validatie
-- Gerichte UI-tests controleren wachtrij-inhoud, actieve rij, navigatie, drieluik-layout en behoud van bestaande acties.
-- Daarna: `npx tsc --noEmit`, `npm run lint`, `npm run test`, `npm run build`, `git diff --check`.
-- Diffcontrole bevestigt dat alleen Inkoop-UI en gerichte tests gewijzigd zijn.
-- Na validatie wordt een PR naar `main` geopend en niet gemerged.
+### 1. BTW per bankregel
+Een BTW-percentage per bankregel (21 / 9 / 0 / geen), in te vullen in het bankscherm naast de grootboekrekening. Boekingssjablonen die al een BTW-percentage hebben, vullen dit automatisch in. Bij BTW-vrijgestelde administraties blijft het veld leeg en wordt er geen BTW geboekt.
+
+### 2. Echte boeking van een bankregel
+Een nieuwe serverfunctie zet één bankregel in het grootboek:
+- bedrag af → gekozen rekening debet (netto) + BTW te vorderen debet, bank credit
+- bedrag bij → bank debet, gekozen rekening credit (netto) + BTW te betalen credit
+Datum, boekjaar en bedrag komen altijd van de bankregel zelf; de frontend rekent niets uit. Elke bankregel kan maar één keer geboekt worden, en een geboekte regel kan daarna niet meer gewijzigd worden (zelfde bescherming als bij facturen).
+
+### 3. Knop in het bankscherm
+Per bankregel en voor een selectie van regels: "Boeken in grootboek", met een duidelijke markering welke regels al geboekt zijn. Regels zonder rekening of met een onvolledige administratie-instelling geven de reden waarom ze nog niet geboekt kunnen worden.
+
+### 4. Inhaalactie per jaar
+De bestaande inhaalpagina (Historisch boeken) krijgt bankregels erbij: kies een jaar, zie hoeveel regels boekbaar zijn en boek ze in één run. Hiermee haal je de 342 regels van AA-Secure alsnog op.
+
+## Technisch
+
+- Migratie 1: `bank_transactions.btw_percentage numeric null` (additief).
+- Migratie 2: markertabel `bank_transaction_postings` (transactie-id uniek, posting_group_id, org/client/user, created_at) met GRANTs, RLS op organisatielidmaatschap, en INSERT/UPDATE/DELETE geweigerd — identiek aan `bank_allocation_postings`.
+- Migratie 3: `post_bank_transaction(_transaction_id uuid)` security definer, in dezelfde stijl als `post_bank_allocation`: client-lock, rolcheck (`has_min_role` accountant), org-check, statuscheck (`handmatig_geboekt` zonder allocatieregels), rekening- en bedragvalidatie, BTW-splitsing op basis van `btw_percentage`, marker-insert, Nederlandse foutmeldingen. Plus `enforce_bank_transaction_source_claim`-trigger en mutatieblokkade op geboekte regels.
+- Frontend: `src/pages/Bank.tsx` (BTW-veld, boekknop, statusindicatie), nieuwe hook `useBankTransactionPosting.ts` (alleen RPC + invalidatie), uitbreiding `src/lib/ledger-catchup.ts` + `useLedgerCatchup.ts` + `src/pages/GrootboekHistorisch.tsx` met bron "bank".
+- Tests: postingregels (debet/credit-richting, BTW-splitsing, dubbelboeking geweigerd), catch-up-beoordeling, en UI-tests voor de boekknop.
+- Buiten scope: bestaande factuur- en afletterboekingen, rapportagelogica, snelstart-export.
