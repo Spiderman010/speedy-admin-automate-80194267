@@ -331,27 +331,23 @@ function ReversalArea({
 }) {
   if (availability.kind === "already_reversed") {
     return (
-      <div className="rounded-md border border-dashed p-3 text-sm" data-testid="reversal-already">
+      <div className="rounded-md border bg-muted/30 p-3 text-sm" data-testid="reversal-already">
         <p className="font-medium">Deze boeking is tegengeboekt.</p>
-        <dl className="mt-2 space-y-1 text-xs text-muted-foreground">
-          <div className="flex gap-2">
-            <dt>Tegenboeking</dt>
-            <dd className="font-mono break-all" data-testid="reversal-group-id">
-              {availability.reversalPostingGroupId}
-            </dd>
-          </div>
-          {relation?.asOriginal && (
-            <div className="flex gap-2">
-              <dt>Datum</dt>
-              <dd className="font-mono">{formatDatumNL(relation.asOriginal.posting_date)}</dd>
-            </div>
-          )}
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <dt>Datum</dt>
+          <dd className="font-mono tabular-nums text-foreground">
+            {relation?.asOriginal ? formatDatumNL(relation.asOriginal.posting_date) : "—"}
+          </dd>
           {relation?.asOriginal?.reason && (
-            <div className="flex gap-2">
+            <>
               <dt>Toelichting</dt>
-              <dd className="break-words">{relation.asOriginal.reason}</dd>
-            </div>
+              <dd className="break-words text-foreground">{relation.asOriginal.reason}</dd>
+            </>
           )}
+          <dt>Tegenboeking</dt>
+          <dd className="font-mono break-all" data-testid="reversal-group-id">
+            {availability.reversalPostingGroupId}
+          </dd>
         </dl>
         <p className="mt-2 text-xs text-muted-foreground">
           De oorspronkelijke boeking hierboven is ongewijzigd gebleven. Een boeking wordt hoogstens één keer
@@ -378,23 +374,25 @@ function ReversalArea({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
+      <p className="text-sm font-medium">Correctie</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        De oorspronkelijke boeking blijft staan; er komt een nieuwe boeking bij.
+      </p>
       <Button
         type="button"
         variant="destructive"
-        className="h-11 sm:h-9"
+        className="mt-3 h-11 w-full sm:h-9 sm:w-auto"
         disabled={isPending}
         onClick={onOpenConfirm}
         data-testid="reversal-open-button"
       >
         {isPending ? "Bezig met tegenboeken…" : "Tegenboeken"}
       </Button>
-      <p className="text-xs text-muted-foreground">
-        De oorspronkelijke boeking blijft staan; er komt een nieuwe boeking bij.
-      </p>
     </div>
   );
 }
+
 
 function Veld({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
