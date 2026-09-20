@@ -214,6 +214,15 @@ export function BankTransactionDetailSheet({
 
         {/* Action footer */}
         <div className="border-t px-6 py-4 space-y-2">
+          {isHandmatig && (
+            <div className="pb-2">
+              <BankTransactionPostingAction
+                transaction={tx}
+                allocationCount={allocations.length}
+              />
+            </div>
+          )}
+
           <Button
             variant="outline"
             size="sm"
