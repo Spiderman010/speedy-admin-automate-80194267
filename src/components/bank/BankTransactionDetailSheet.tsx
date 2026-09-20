@@ -11,6 +11,7 @@ import { FileSearch, Link2, Unlink, HelpCircle, CheckCircle2, X } from "lucide-r
 import type { Tables } from "@/integrations/supabase/types";
 import type { BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
 import { parseMT940Description, getDisplayDescription } from "@/lib/mt940-description-parser";
+import { BankTransactionPostingAction } from "@/components/bank/BankTransactionPostingAction";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
