@@ -152,3 +152,218 @@ export function bulkErrorMessage(error: unknown): string {
   }
   return message;
 }
+
+// ── Presentatie ─────────────────────────────────────────────────────────────
+//
+// Alles hieronder is weergave en selectie. Er wordt nog steeds geen enkel
+// boekhoudkundig oordeel geveld: de toestanden komen van de server en worden
+// hier alleen van een Nederlands label voorzien, gefilterd en geteld.
+
+/** Nederlandse labels. Zij veranderen de betekenis van de servertoestand niet. */
+export const WORKFLOW_LABELS: Record<BankBulkWorkflowState, string> = {
+  ready: "Gereed",
+  review_needed: "Controle nodig",
+  blocked: "Geblokkeerd",
+  posted: "Geboekt",
+};
+
+/**
+ * Status wordt nooit alleen met kleur verteld: elke badge draagt haar label,
+ * en de rij draagt de servertoestand ook als data-attribuut.
+ */
+export const WORKFLOW_BADGE_VARIANT: Record<
+  BankBulkWorkflowState,
+  "default" | "secondary" | "destructive" | "outline"
+> = {
+  ready: "default",
+  review_needed: "outline",
+  blocked: "destructive",
+  posted: "secondary",
+};
+
+/**
+ * Wat langs de gewone weg aangeboden mag worden: uitsluitend `ready`.
+ *
+ * `review_needed` is bewust NIET selecteerbaar. Die rijen blijven volledig
+ * inspecteerbaar, maar ze meesturen zou suggereren dat ze geldig zijn terwijl
+ * de server juist zegt dat er nog iets aan moet gebeuren — en de weigering zou
+ * dan pas ná de bulkactie zichtbaar worden. `blocked` en `posted` evenmin.
+ */
+export function isSelectable(row: BankBulkCandidate): boolean {
+  return row.workflow_state === "ready";
+}
+
+export function selectableCandidates(rows: readonly BankBulkCandidate[]): BankBulkCandidate[] {
+  return rows.filter(isSelectable);
+}
+
+export interface CandidateFilter {
+  /** Vrije tekst over omschrijving, tegenrekening en bedrag. */
+  search?: string;
+  /** `null` = alle toestanden. */
+  state?: BankBulkWorkflowState | null;
+  /** Alleen wat aandacht vraagt: controle nodig of geblokkeerd. */
+  onlyDeviations?: boolean;
+}
+
+export function filterCandidates(
+  rows: readonly BankBulkCandidate[],
+  filter: CandidateFilter,
+): BankBulkCandidate[] {
+  const naald = (filter.search ?? "").trim().toLowerCase();
+  return rows.filter((row) => {
+    if (filter.state && row.workflow_state !== filter.state) return false;
+    if (filter.onlyDeviations && row.workflow_state !== "review_needed" && row.workflow_state !== "blocked") {
+      return false;
+    }
+    if (!naald) return true;
+    const hooiberg = [
+      row.description ?? "",
+      row.counter_account ?? "",
+      String(row.amount),
+      row.transaction_date,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return hooiberg.includes(naald);
+  });
+}
+
+/**
+ * De selectie opnieuw naast de server leggen. Na een boekingsronde is een
+ * geboekte regel niet langer `ready`; die valt er hier vanzelf uit. Een id die
+ * de server helemaal niet meer teruggeeft, verdwijnt eveneens — de selectie
+ * mag nooit id's bevatten die niemand meer kan zien.
+ */
+export function reconcileSelection(
+  selected: Iterable<string>,
+  rows: readonly BankBulkCandidate[],
+): string[] {
+  const nogSelecteerbaar = new Set(selectableCandidates(rows).map((r) => r.transaction_id));
+  return [...selected].filter((id) => nogSelecteerbaar.has(id));
+}
+
+export interface SelectionBreakdown {
+  selected: number;
+  ready: number;
+  reviewNeeded: number;
+  blocked: number;
+  posted: number;
+  /** Geselecteerd maar niet meer in de geladen gegevens aanwezig. */
+  unknown: number;
+}
+
+/**
+ * Wat er werkelijk in de selectie zit, geteld tegen de GELADEN servergegevens
+ * — nooit tegen een aanname. Zo kan de actiebalk niet iets anders beweren dan
+ * wat er staat.
+ */
+export function selectionBreakdown(
+  rows: readonly BankBulkCandidate[],
+  selected: Iterable<string>,
+): SelectionBreakdown {
+  const perId = new Map(rows.map((r) => [r.transaction_id, r]));
+  const uitkomst: SelectionBreakdown = {
+    selected: 0, ready: 0, reviewNeeded: 0, blocked: 0, posted: 0, unknown: 0,
+  };
+  for (const id of selected) {
+    uitkomst.selected += 1;
+    const row = perId.get(id);
+    if (!row) { uitkomst.unknown += 1; continue; }
+    if (row.workflow_state === "ready") uitkomst.ready += 1;
+    else if (row.workflow_state === "review_needed") uitkomst.reviewNeeded += 1;
+    else if (row.workflow_state === "blocked") uitkomst.blocked += 1;
+    else uitkomst.posted += 1;
+  }
+  return uitkomst;
+}
+
+/**
+ * Wat er daadwerkelijk wordt aangeboden. Ook als er op een andere manier iets
+ * in de selectie zou belanden, gaat er nooit meer dan `ready` de deur uit:
+ * deze functie is de laatste zeef vóór de RPC.
+ */
+export function submittableIds(
+  rows: readonly BankBulkCandidate[],
+  selected: Iterable<string>,
+): string[] {
+  const selectie = new Set(selected);
+  return selectableCandidates(rows)
+    .filter((r) => selectie.has(r.transaction_id))
+    .map((r) => r.transaction_id);
+}
+
+/**
+ * Een mislukking halverwege een reeks partijen.
+ *
+ * De hook knipt meer dan `BANK_BULK_MAX_BATCH` id's in opeenvolgende
+ * verzoeken. Breekt er één af, dan vallen de id's van die ronde uiteen in
+ * DRIE groepen, en die mogen nooit op één hoop:
+ *
+ *   • `results` — de partijen die volledig zijn teruggekomen. Vastgesteld
+ *     feit; weggooien zou de gebruiker laten geloven dat er niets is gebeurd.
+ *
+ *   • `outcomeUnknown` — de id's van de partij waarvan het VERZOEK mislukte.
+ *     Dat verzoek is de deur al uit. Een transportfout zegt niets over wat de
+ *     database heeft gedaan: die kan de boekingen gecommit hebben en het
+ *     antwoord kan onderweg verloren zijn gegaan. "Niet geboekt" is hier dus
+ *     evenzeer een gok als "wel geboekt", en beide zijn fout om te tonen.
+ *
+ *   • `notSubmitted` — uitsluitend de id's van de partijen die daarná kwamen
+ *     en nooit zijn verstuurd. Alleen dáárvan is met zekerheid te zeggen dat
+ *     er niets mee is gebeurd.
+ *
+ * De schrijver is idempotent (een tweede aanbieding levert `already_posted`),
+ * dus opnieuw aanbieden is veilig — maar dat is een bewuste keuze van de
+ * gebruiker, nooit iets wat deze laag zelf doet.
+ */
+export class BankBulkPartialError extends Error {
+  /** De uitkomsten die vaststaan, uit eerder voltooide partijen. */
+  readonly results: BankBulkResult[];
+  /** Aantal id's in de partij waarvan het verzoek mislukte ná verzending. */
+  readonly outcomeUnknown: number;
+  /** Aantal id's in latere partijen die nooit zijn aangeboden. */
+  readonly notSubmitted: number;
+
+  constructor(
+    message: string,
+    results: BankBulkResult[],
+    outcomeUnknown: number,
+    notSubmitted: number,
+  ) {
+    super(message);
+    this.name = "BankBulkPartialError";
+    this.results = results;
+    this.outcomeUnknown = outcomeUnknown;
+    this.notSubmitted = notSubmitted;
+  }
+}
+
+/** De resultaten die ondanks een afgebroken ronde al vaststaan. */
+export function resultsFromError(error: unknown): BankBulkResult[] {
+  return error instanceof BankBulkPartialError ? error.results : [];
+}
+
+/**
+ * De indeling in de drie groepen, op één plek.
+ *
+ * Dit is de hele P2 van deze correctie: `chunks[index]` is de partij waarvan
+ * het verzoek mislukte. Die is VERSTUURD, dus haar uitkomst is onbekend; zij
+ * hoort bij `outcomeUnknown` en nadrukkelijk niet bij `notSubmitted`. Alleen
+ * `chunks[index + 1 …]` is nooit de deur uit geweest.
+ *
+ * Het staat hier als pure functie zodat de indeling zelf getoetst kan worden
+ * en niet alleen de tekst van de hook.
+ */
+export function partialErrorForChunk(
+  chunks: readonly (readonly string[])[],
+  index: number,
+  results: BankBulkResult[],
+  message: string,
+): BankBulkPartialError {
+  const mislukt = chunks[index] ?? [];
+  const nietAangeboden = chunks
+    .slice(index + 1)
+    .reduce((som, c) => som + c.length, 0);
+  return new BankBulkPartialError(message, results, mislukt.length, nietAangeboden);
+}

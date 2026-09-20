@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
 import { Button } from "@/components/ui/button";
@@ -1963,6 +1963,11 @@ export default function Bank() {
           >
             <Zap className="mr-2 h-4 w-4" />
             Verwerken {openCount > 0 && `(${openCount})`}
+          </Button>
+          <Button variant="outline" asChild>
+            {/* De inhaalslag is een detail van dit werkgebied, geen eigen
+                bestemming: /bank/inhaalslag valt onder hetzelfde nav-item. */}
+            <Link to="/bank/inhaalslag">Inhaalslag grootboek</Link>
           </Button>
           <Button onClick={() => setUploadOpen(true)}>
             <Upload className="mr-2 h-4 w-4" />Upload afschrift

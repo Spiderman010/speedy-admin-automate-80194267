@@ -10,6 +10,7 @@ import Klanten from "./pages/Klanten";
 import Facturen from "./pages/Facturen";
 import PurchaseInvoiceWorkspace from "./pages/PurchaseInvoiceWorkspace";
 import Bank from "./pages/Bank";
+import BankInhaalslag from "./pages/BankInhaalslag";
 import Verkoop from "./pages/Verkoop";
 import Boekingen from "./pages/Boekingen";
 import Overzichten from "./pages/Overzichten";
@@ -81,6 +82,7 @@ const App = () => (
               <Route path="/facturen" element={<Facturen />} />
               <Route path="/facturen/inkoop/:invoiceId" element={<PurchaseInvoiceWorkspace />} />
               <Route path="/bank" element={<Bank />} />
+              <Route path="/bank/inhaalslag" element={<BankInhaalslag />} />
               <Route path="/verkoop" element={<Verkoop />} />
               <Route path="/boekingen" element={<Boekingen />} />
               <Route path="/overzichten" element={<Overzichten />} />

@@ -343,13 +343,35 @@ describe("de grenzen van deze branch", () => {
     expect(raw).not.toContain("ycuofllsdssoezwwpqmv");
   });
 
-  it("33. deze branch voegt geen pagina, route of navigatie-item toe", () => {
+  /**
+   * Dit was eerst "deze branch voegt geen pagina of route toe". Dat was waar
+   * over de backend-PR, maar het is geen INVARIANT: de UI-PR erna brengt
+   * terecht een pagina en een route mee, en dan staat de reviewer voor de
+   * keuze tussen de pagina of de test terwijl er met beide niets mis is —
+   * precies het patroon dat `src/test/support/branch-sql-scope.ts` al voor SQL
+   * beschrijft. Wat deze assertie werkelijk beschermde, staat hieronder: geen
+   * nieuwe navigatiearchitectuur, geen afhankelijkheid, en geen scherm dat
+   * alsnog zelf gaat boeken.
+   */
+  it("33. geen nieuw navigatie-item, geen afhankelijkheid, en geen scherm dat zelf boekt", () => {
     const changed = changedFiles();
     if (!changed) return;
-    expect(changed.filter((f) => f.startsWith("src/pages/"))).toEqual([]);
-    expect(changed).not.toContain("src/App.tsx");
-    expect(changed).not.toContain("src/lib/nav.ts");
+
+    expect(changed).not.toContain("src/components/layout/nav.ts");
     expect(changed).not.toContain("package.json");
     expect(changed).not.toContain("package-lock.json");
+
+    for (const bestand of changed.filter(
+      (f) => f.startsWith("src/pages/") || f.startsWith("src/components/"),
+    )) {
+      const tekst = readFileSync(resolve(process.cwd(), bestand), "utf8");
+      expect(tekst, `${bestand}: geen schrijfpad naar het grootboek`).not.toMatch(
+        /from\(["'](ledger_postings|bank_transaction_postings)["']\)/,
+      );
+      expect(tekst, `${bestand}: de enkelvoudige schrijver hoort niet in de UI`).not.toMatch(
+        /rpc\(["']post_bank_transaction["']/,
+      );
+      expect(tekst, `${bestand}: geen herhaalde BTW-formule`).not.toMatch(/\/\s*\(\s*1\s*\+/);
+    }
   });
 });

@@ -6,6 +6,7 @@ import {
   bulkErrorMessage,
   chunkTransactionIds,
   isDeployWindowError,
+  partialErrorForChunk,
   type BankBulkCandidate,
   type BankBulkResult,
 } from "@/lib/bank-bulk-posting";
@@ -101,11 +102,20 @@ export function usePostBankTransactionsBulk() {
       }
 
       const results: BankBulkResult[] = [];
-      for (const chunk of chunkTransactionIds(transactionIds, BANK_BULK_MAX_BATCH)) {
+      const chunks = chunkTransactionIds(transactionIds, BANK_BULK_MAX_BATCH);
+      for (const [index, chunk] of chunks.entries()) {
         const { data, error } = await bulkApi().rpc("post_bank_transactions_bulk", {
           _transaction_ids: chunk,
         });
-        if (error) throw new Error(bulkErrorMessage(error));
+        if (error) {
+          // DRIE groepen, nooit op één hoop. `results` staat vast. DEZE partij
+          // is al verstuurd: een transportfout zegt niets over wat de database
+          // ermee heeft gedaan, dus haar uitkomst is ONBEKEND — niet "niet
+          // aangeboden". Alleen de partijen hierná zijn met zekerheid nooit
+          // verstuurd. De indeling zelf staat in de pure laag, zodat zij
+          // toetsbaar is. Er wordt niets opnieuw geprobeerd.
+          throw partialErrorForChunk(chunks, index, results, bulkErrorMessage(error));
+        }
         results.push(...(data ?? []));
       }
       return results;
