@@ -23,6 +23,8 @@ import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
+import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
+import { subgroupSectionsForGroups } from "@/lib/financial-statements-subgroups";
 import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
 import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
@@ -84,6 +86,33 @@ export default function Balans() {
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
+  /*
+   * Het tweede taxonomieniveau (report_subgroup), uitsluitend presentatie.
+   * De rekeningen komen uit dezelfde query die `useFinancialStatements` al
+   * doet — react-query deelt de cache op dezelfde sleutel, dus dit is geen
+   * tweede verzoek. Er wordt hier niets opgeteld: `subgroupSectionsForGroups`
+   * deelt de regels van de engine op en geeft elk groepstotaal ongewijzigd
+   * door.
+   */
+  const { data: rekeningenVoorIndeling } = useGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
+  const activaSecties = useMemo(
+    () =>
+      ready
+        ? subgroupSectionsForGroups(ready.balanceSheet.assetGroups, rekeningenVoorIndeling ?? [])
+        : undefined,
+    [ready, rekeningenVoorIndeling],
+  );
+  const passivaSecties = useMemo(
+    () =>
+      ready
+        ? subgroupSectionsForGroups(ready.balanceSheet.liabilityEquityGroups, rekeningenVoorIndeling ?? [])
+        : undefined,
+    [ready, rekeningenVoorIndeling],
+  );
+
   // Is er activiteit maar geen enkele geclassificeerde balansregel, dan zegt de
   // specifieke melding het al; de generieke volledigheidsmelding zou hetzelfde
   // nog eens herhalen.
@@ -195,6 +224,7 @@ export default function Balans() {
               <FinancialStatementTable
                 caption="Activa"
                 groups={balanceSheet.assetGroups}
+                sections={activaSecties}
                 totalLabel="Totaal activa"
                 totalCents={balanceSheet.totalAssetsCents}
                 testId="balans-activa-table"
@@ -212,6 +242,7 @@ export default function Balans() {
               <FinancialStatementTable
                 caption="Passiva"
                 groups={balanceSheet.liabilityEquityGroups}
+                sections={passivaSecties}
                 systemLines={balanceSheet.systemLines}
                 totalLabel="Totaal passiva"
                 totalCents={balanceSheet.totalLiabilitiesEquityCents}
