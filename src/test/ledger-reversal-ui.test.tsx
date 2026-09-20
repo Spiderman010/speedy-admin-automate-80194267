@@ -1,3 +1,7 @@
+import {
+  assertBranchSqlKeepsLedgerFoundation,
+  assertBranchTouchesNoExistingWriter,
+} from "@/test/support/branch-sql-scope";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -588,9 +592,13 @@ describe("scope", () => {
     expect(changed).not.toContain("src/pages/DiagnosticsAccounting.tsx");
   });
 
-  branchIt("22. geen migratie, geen SQL, geen handmatige typewijziging, geen dependency", () => {
-    expect(changed!.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed!.filter((f) => f.endsWith(".sql"))).toEqual([]);
+  branchIt("22. geen handmatige typewijziging, geen dependency, en SQL raakt de fundering niet", () => {
+    // Voorheen: "geen supabase/ en geen .sql in deze branch". Dat was een
+    // uitspraak over de SCOPE van de correctie-UI-PR, geen invariant — een
+    // latere branch die terecht een migratie meebrengt laat hem omvallen. Wat
+    // bewaakt moet blijven is de grootboekfundering waar deze laag op leest.
+    assertBranchSqlKeepsLedgerFoundation(changed!);
+    assertBranchTouchesNoExistingWriter(changed!);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);

@@ -830,6 +830,29 @@ select to_regclass('public.ledger_reversal_postings') as marker,
 
 ---
 
+### Directe bankboeking — correctieve verharding
+
+De zevende schrijver, `public.post_bank_transaction(uuid)`, is toegevoegd en toegepast met migratie `20260920195805_6ad6dbd8-cdb3-4ecd-8482-46464f138c39.sql` (commit 63f920c). Die boekt één handmatig gecodeerde bankregel rechtstreeks in het grootboek — netto op de gekozen rekening, BTW apart, bank aan de andere kant — en claimt haar in `public.bank_transaction_postings`, waarvan de primary key op `bank_transaction_id` de idempotentiegarantie is. **Dat bestand is toegepast en wordt nooit meer gewijzigd.**
+
+Correctieve migratie:
+```
+supabase/migrations/20260921140000_harden_bank_transaction_posting.sql
+```
+
+**Status: ⏳ Nog niet toegepast.** Toepassen via de Lovable Cloud SQL editor van project `alxlbdhpbwlehbdbfejw`, ná review. De leescontroles vooraf en de postcheck staan in de header van het bestand.
+
+Drie dingen, additief, zonder één cijfer aan de boekhouding te veranderen:
+
+- **Markerrechten.** De marker kreeg `GRANT ALL ... TO service_role`. Een rol die de claim zelf mag schrijven kan er een verzinnen (en zo een legitieme boeking voor altijd blokkeren) of er een verwijderen (en zo een dubbele boeking mogelijk maken). Nu, net als bij alle zes de andere markertabellen: `REVOKE ALL` van `anon`, `authenticated` en `service_role`, gevolgd door `GRANT SELECT` aan `authenticated` en `service_role`. Geen enkele applicatierol schrijft nog in de marker.
+- **Functierechten.** Er stond alleen `REVOKE ALL ... FROM PUBLIC`; een grant die een platformdefault rechtstreeks aan `anon` of `service_role` geeft, overleeft dat. Elke applicatierol wordt nu expliciet genoemd, en alleen `authenticated` krijgt EXECUTE terug. De REVOKE/GRANT staan zowel vóór als ná de `CREATE OR REPLACE`, omdat die de bestaande ACL behoudt.
+- **Tenant-orakel.** De schrijver onderscheidde een onbekende banktransactie (`P0002`, "niet gevonden") van die van een andere organisatie (`42501`, "Geen rechten…"). Omdat de functie `SECURITY DEFINER` is en dus rijen ziet die RLS verbergt, was dat verschil een cross-tenant existence leak. Nu geldt één poort in twee drempels: **leesdrempel** — bestaat de rij niet, óf heeft de aanroeper geen `read_only` op haar organisatie, dan is het antwoord exact `42501 | Banktransactie niet beschikbaar`, in beide gevallen identiek; **schrijfdrempel** — wie die drempel haalt mag de rij onder RLS toch al lezen, dus dat er `assistant` nodig is mag eerlijk worden gezegd. Pas ná beide drempels volgt élke inhoudelijke melding.
+
+**Ongewijzigd:** debet/credit en de richting bij inkomend/uitgaand geld, de BTW-splitsing en de vrijstellingsregel, de keuze van bank-, tegen- en BTW-rekening, de afgesloten-boekjaarregel, de rolvloer `assistant`, `source_type = 'bank_transaction'`, de markeridentiteit, de claimtrigger, de bevriezing van een geboekte bankregel, de directe-schrijfdeurgrens en de UI. `SELECT ... FOR UPDATE` staat op exact dezelfde plek, zodat het gelijktijdigheidsgedrag letterlijk hetzelfde blijft; alleen de meldingen die erop volgen zijn veranderd.
+
+**Bewijs:** `supabase/tests/bank-transaction-posting/` (`run-proof.sh`, **53 bewijzen** tegen een echte PostgreSQL) — de exacte regels bij uitgaand en inkomend geld zonder BTW en bij 9% en 21%, de afronding op de cent (100,00 bruto bij 21% → 82,64 + 17,36), de onaangeroerde banktransactie, marker en grootboekregels die bij elkaar horen, een geforceerde mislukking ná de marker die alles terugdraait, dubbel boeken geweigerd, twee gelijktijdige sessies met precies één winnaar, de tenantpoort met de **volledige foutidentiteit** naast elkaar gelegd (SQLSTATE én boodschap), de markertabel onschrijfbaar voor `authenticated` én `service_role`, de EXECUTE-rechten, en de nog steeds gesloten directe schrijfdeur naar `ledger_postings`. Plus `src/test/bank-transaction-posting-hardening.test.ts` (15 statische asserties, waaronder dat alles ná de poort regel voor regel gelijk is aan de toegepaste versie en dat geen bestaande migratie wordt gewijzigd).
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**
