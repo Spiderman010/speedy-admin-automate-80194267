@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   evaluateReversalIntegrity,
@@ -463,9 +463,21 @@ describe("branch-scope", () => {
   }
   const branchIt = changed === null ? it.skip : it;
 
-  branchIt("39. precies één migratie in deze branch, en geen bestaande wordt gewijzigd", () => {
+  branchIt("39. geen BESTAANDE migratie wordt gewijzigd; hooguit die van deze fase komt erbij", () => {
+    // Voorheen: de lijst moest exact [MIGRATION] zijn. Dat gold op de branch die
+    // de motor meebracht; een latere branch van dezelfde fase (de correctie-UI)
+    // voegt terecht géén migratie toe en liet die assertie omvallen. De
+    // invariant is dat dit spoor nooit een bestaande migratie aanraakt.
     const migrations = changed!.filter((f) => f.startsWith("supabase/migrations/"));
-    expect(migrations).toEqual([MIGRATION]);
+    const bestaandOpMain = new Set(
+      execFileSync("git", ["ls-tree", "--name-only", "origin/main", "supabase/migrations/"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .split("\n")
+        .filter(Boolean),
+    );
+    expect(migrations.filter((f) => f !== MIGRATION && bestaandOpMain.has(f))).toEqual([]);
   });
 
   branchIt("40. de grootboekfundering blijft additief en geen bestaande schrijver wordt aangeraakt", () => {
@@ -492,9 +504,14 @@ describe("branch-scope", () => {
     }
   });
 
-  branchIt("43. deze PR bouwt geen correctie-UI: geen nieuwe pagina, route of navigatie-item", () => {
-    expect(changed!.filter((f) => f.startsWith("src/pages/"))).toEqual([]);
-    expect(changed).not.toContain("src/App.tsx");
-    expect(changed!.filter((f) => f.endsWith("nav.ts"))).toEqual([]);
+  branchIt("43. de motor blijft server-side: geen gewijzigd bestand krijgt een schrijfpad naar het grootboek", () => {
+    // Voorheen: "deze PR bouwt geen correctie-UI". Dat was de scope van de
+    // motor-PR, geen invariant — de correctie-UI is juist de volgende stap. Wat
+    // bewaakt moet blijven is dat die UI nooit de boekhoudautoriteit wordt.
+    for (const file of changed!.filter((f) => /^src\/.*\.(ts|tsx)$/.test(f) && existsSync(f))) {
+      const text = readFileSync(file, "utf8");
+      expect(text, file).not.toMatch(/ledger_postings[\s\S]{0,200}\.\s*(insert|upsert|update|delete)\s*\(/);
+      expect(text, file).not.toMatch(/ledger_reversal_postings[\s\S]{0,200}\.\s*(insert|upsert|update|delete)\s*\(/);
+    }
   });
 });
