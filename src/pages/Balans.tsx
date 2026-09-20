@@ -401,6 +401,7 @@ export default function Balans() {
           clientName={selectedClient?.name ?? "administratie"}
           accountsById={drilldownAccountsById}
           accounts={rekeningenVoorIndeling ?? []}
+          reportKind="balance_sheet"
           reportLabel="Balans"
         />
       )}

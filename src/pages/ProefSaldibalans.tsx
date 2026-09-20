@@ -166,6 +166,10 @@ export default function ProefSaldibalans() {
               accountNumber: rij.account.nummer,
               accountName: rij.account.omschrijving,
               displayedCents: eindsaldoCents,
+              // De kolommenbalans toont debet-positief, net als de kern; er is
+              // dus geen oriëntatieverschil om uit te leggen.
+              rawSignedCents: eindsaldoCents,
+              presentationSide: "debet" as const,
               isContra: false,
             },
           ],
@@ -410,6 +414,7 @@ export default function ProefSaldibalans() {
           clientName={selectedClient?.name ?? "administratie"}
           accountsById={drilldownAccountsById}
           accounts={accounts ?? []}
+          reportKind="trial_balance"
           reportLabel="Proef- en saldibalans"
         />
       )}

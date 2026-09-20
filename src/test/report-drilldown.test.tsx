@@ -96,9 +96,11 @@ import { formatCents } from "@/lib/financial-statements-presentation";
 import {
   accountReconciliation,
   accountsAreUnique,
+  balanceOrientation,
   groupView,
   linesBelongToAccount,
   linesWithinPeriod,
+  profitLossReconciliation,
   subgroupReconciles,
 } from "@/lib/report-drilldown";
 
@@ -500,5 +502,245 @@ describe("scope", () => {
     ]) {
       expect(readFileSync(p, "utf8"), p).toBe(toon(p));
     }
+  });
+});
+
+
+// ── De uitleg per rapportsoort ──────────────────────────────────────────────
+
+/**
+ * De P2 uit de review: een W&V-bedrag gaat over de GEKOZEN PERIODE, en een
+ * beginsaldo/eindsaldo-opstelling zou daar cumulatieve historie als verklaring
+ * naast zetten. Deze fixture maakt dat verschil groot genoeg om niet te kunnen
+ * missen: 80.000 omzet vorig jaar, 20.000 dit jaar.
+ */
+const KOSTEN = acc({
+  id: "a-kosten", nummer: 4400, omschrijving: "Kantoorkosten", categorie: "kosten",
+  statement_type: "winst_verlies", report_group: "overige_bedrijfskosten",
+  report_subgroup: "kantoorbenodigdheden",
+});
+
+function jaarMetHistorie() {
+  state.accounts = [BANK, KAPITAAL, OMZET, KOSTEN];
+  state.rows = [
+    ...entry(BANK.id, OMZET.id, "80000.00", `${VORIG}-06-01`),
+    ...entry(BANK.id, OMZET.id, "20000.00", `${YEAR}-04-01`),
+    ...entry(KOSTEN.id, BANK.id, "1500.00", `${YEAR}-05-01`),
+  ];
+}
+
+/** De rapportregel van één rekening, rechtstreeks uit de engine. */
+function wvRegel(accountId: string) {
+  const e = engine();
+  const secties = subgroupSectionsForGroups(e.profitLoss.groups, state.accounts);
+  for (const g of e.profitLoss.groups) {
+    const view = groupView(g, secties.find((x) => x.group.key === g.key));
+    const rij = view.subgroups.flatMap((x) => x.accounts).find((a) => a.accountId === accountId);
+    if (rij) return rij;
+  }
+  throw new Error(`geen W&V-regel voor ${accountId}`);
+}
+
+describe("W&V verklaart de periode, niet de historie", () => {
+  it("1. het rapportbedrag is de mutatie van de periode, niet het cumulatieve saldo", () => {
+    jaarMetHistorie();
+    const rij = wvRegel(OMZET.id);
+    // 20.000 dit jaar — niet 100.000 cumulatief.
+    expect(rij.displayedCents).toBe(2000000);
+    // En de kern draagt de historie wél: dat maakt het verschil scherp.
+    expect(running(OMZET.id).openingCents).toBe(-8000000);
+  });
+
+  it("1b. het paneel toont geen beginsaldo of cumulatief eindsaldo bij een W&V-regel", async () => {
+    jaarMetHistorie();
+    renderWv();
+    klikGroep("netto_omzet");
+    await klikGroepMet("omzet_hoog_tarief");
+    await klikRekening(OMZET.id);
+    await screen.findByTestId("drilldown-account-level");
+
+    expect(screen.getByTestId("drilldown-reconciliation")).toHaveAttribute("data-kind", "profit_loss");
+    expect(screen.queryByTestId("drilldown-opening")).toBeNull();
+    expect(screen.queryByTestId("drilldown-closing")).toBeNull();
+    // En de 80.000 uit vorig jaar staat nergens als verklaring.
+    expect(screen.getByTestId("drilldown-reconciliation").textContent).not.toMatch(/80\.000|100\.000/);
+  });
+
+  it("2. een creditnormale omzetrekening sluit aan, met de oriëntatie benoemd", async () => {
+    jaarMetHistorie();
+    const rij = wvRegel(OMZET.id);
+    const a = profitLossReconciliation(rij, running(OMZET.id));
+    expect(a.periodCreditCents).toBe(2000000);
+    expect(a.periodDebitCents).toBe(0);
+    expect(a.netMovementCents).toBe(-2000000);
+    expect(a.orientedCents).toBe(rij.displayedCents);
+    expect(a.reconciles).toBe(true);
+    expect(a.isMirrored).toBe(true);
+
+    renderWv();
+    klikGroep("netto_omzet");
+    await klikGroepMet("omzet_hoog_tarief");
+    await klikRekening(OMZET.id);
+    await screen.findByTestId("drilldown-account-level");
+    // Twee tegengestelde getallen mogen nooit zonder uitleg naast elkaar staan.
+    expect(screen.getByTestId("drilldown-orientation-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("drilldown-report-amount")).toHaveTextContent(bedrag(rij.displayedCents));
+    expect(screen.getByTestId("drilldown-net-movement")).toHaveTextContent(bedrag(a.netMovementCents));
+    expect(screen.queryByTestId("drilldown-mismatch")).toBeNull();
+  });
+
+  it("3. een debetnormale kostenrekening sluit aan in de andere richting", async () => {
+    jaarMetHistorie();
+    const rij = wvRegel(KOSTEN.id);
+    const a = profitLossReconciliation(rij, running(KOSTEN.id));
+    expect(a.periodDebitCents).toBe(150000);
+    expect(a.netMovementCents).toBe(150000);
+    expect(a.orientedCents).toBe(rij.displayedCents);
+    expect(a.reconciles).toBe(true);
+    expect(a.isMirrored).toBe(false);
+
+    renderWv();
+    klikGroep("overige_bedrijfskosten");
+    await klikGroepMet("kantoorbenodigdheden");
+    await klikRekening(KOSTEN.id);
+    await screen.findByTestId("drilldown-account-level");
+    // Geen oriëntatie-uitleg nodig: de twee bedragen zijn gelijk.
+    expect(screen.queryByTestId("drilldown-orientation-notice")).toBeNull();
+    expect(screen.getByTestId("drilldown-period-debit")).toHaveTextContent(bedrag(150000));
+  });
+
+  it("2b/3b. elke W&V-regel in het rapport sluit aan op haar periodemutatie", () => {
+    jaarMetHistorie();
+    const e = engine();
+    const secties = subgroupSectionsForGroups(e.profitLoss.groups, state.accounts);
+    for (const g of e.profitLoss.groups) {
+      const view = groupView(g, secties.find((x) => x.group.key === g.key));
+      for (const rij of view.subgroups.flatMap((x) => x.accounts)) {
+        expect(profitLossReconciliation(rij, running(rij.accountId)).reconciles, rij.accountId).toBe(true);
+      }
+    }
+  });
+});
+
+describe("Balans benoemt de oriëntatie", () => {
+  it("4. beginsaldo + mutatie = grootboeksaldo, en het balansbedrag staat erbij", async () => {
+    jaar();
+    renderBalans();
+    klikGroep("eigen_vermogen");
+    await klikGroepMet("ondernemingsvermogen");
+    await klikRekening(KAPITAAL.id);
+    await screen.findByTestId("drilldown-account-level");
+
+    const a = accountReconciliation(running(KAPITAAL.id));
+    expect(a.openingCents + a.periodMovementCents).toBe(a.closingCents);
+    expect(screen.getByTestId("drilldown-reconciliation")).toHaveAttribute("data-kind", "balance_sheet");
+    expect(screen.getByTestId("drilldown-closing")).toHaveTextContent(bedrag(a.closingCents));
+
+    // Kapitaal staat aan de creditzijde: het rapportbedrag is de spiegeling,
+    // en dat wordt expliciet gezegd.
+    const e = engine();
+    const secties = subgroupSectionsForGroups(e.balanceSheet.liabilityEquityGroups, state.accounts);
+    const view = groupView(
+      e.balanceSheet.liabilityEquityGroups.find((g) => g.key === "eigen_vermogen")!,
+      secties.find((x) => x.group.key === "eigen_vermogen"),
+    );
+    const rij = view.subgroups.flatMap((x) => x.accounts).find((x) => x.accountId === KAPITAAL.id)!;
+    const o = balanceOrientation(rij, running(KAPITAAL.id));
+    expect(o.isMirrored).toBe(true);
+    expect(o.reconciles).toBe(true);
+    expect(screen.getByTestId("drilldown-orientation-notice")).toBeInTheDocument();
+    expect(screen.getByTestId("drilldown-report-amount")).toHaveTextContent(bedrag(o.reportCents));
+  });
+
+  it("4b. bij een debetzijde blijft er één getal staan, zonder overbodige uitleg", async () => {
+    jaar();
+    renderBalans();
+    klikGroep("vlottende_activa");
+    await klikGroepMet("liquide_middelen");
+    await klikRekening(BANK.id);
+    await screen.findByTestId("drilldown-account-level");
+    expect(screen.queryByTestId("drilldown-orientation-notice")).toBeNull();
+    expect(screen.queryByTestId("drilldown-report-amount")).toBeNull();
+  });
+
+  it("4c. elke balansregel sluit aan op haar grootboeksaldo", () => {
+    jaar();
+    const e = engine();
+    const groepen = [...e.balanceSheet.assetGroups, ...e.balanceSheet.liabilityEquityGroups];
+    const secties = subgroupSectionsForGroups(groepen, state.accounts);
+    for (const g of groepen) {
+      const view = groupView(g, secties.find((x) => x.group.key === g.key));
+      for (const rij of view.subgroups.flatMap((x) => x.accounts)) {
+        expect(balanceOrientation(rij, running(rij.accountId)).reconciles, rij.accountId).toBe(true);
+      }
+    }
+  });
+});
+
+describe("Kolommenbalans toont debet en credit apart", () => {
+  it("5. periode debet en periode credit staan er los, gelijk aan de rollup", async () => {
+    jaar();
+    renderPsb();
+    const knop = (await screen.findAllByTestId("psb-drilldown")).find(
+      (b) => b.getAttribute("data-account-id") === BANK.id,
+    )!;
+    fireEvent.click(knop);
+    await screen.findByTestId("drilldown-account-level");
+
+    const report = buildAccountReport({
+      rows: eigenRijen(), clientId: "client-1", period, accounts: state.accounts,
+    });
+    if (!report.ok) throw new Error("kern faalde");
+    const rollup = report.rollups.find((r) => r.account.id === BANK.id)!;
+
+    expect(screen.getByTestId("drilldown-reconciliation")).toHaveAttribute("data-kind", "trial_balance");
+    expect(screen.getByTestId("drilldown-period-debit")).toHaveTextContent(bedrag(rollup.periodDebitCents));
+    expect(screen.getByTestId("drilldown-period-credit")).toHaveTextContent(bedrag(rollup.periodCreditCents));
+    expect(screen.getByTestId("drilldown-opening")).toHaveTextContent(bedrag(rollup.openingCents));
+    expect(screen.getByTestId("drilldown-closing")).toHaveTextContent(bedrag(rollup.closingCents));
+  });
+});
+
+describe("het rapportsoort komt niet uit een label", () => {
+  it("de pagina's geven een expliciete discriminant mee", () => {
+    for (const [p, kind] of [
+      ["src/pages/Balans.tsx", "balance_sheet"],
+      ["src/pages/WinstVerlies.tsx", "profit_loss"],
+      ["src/pages/ProefSaldibalans.tsx", "trial_balance"],
+    ] as const) {
+      expect(readFileSync(p, "utf8"), p).toContain(`reportKind="${kind}"`);
+    }
+    const sheetCode = readFileSync("src/components/overzichten/ReportDrilldownSheet.tsx", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    // Het soort wordt nergens uit het label afgeleid …
+    expect(sheetCode).not.toMatch(/reportLabel\s*===|reportLabel\.(includes|match|startsWith)/);
+    // … en nergens uit een veld van de rekening. (De WOORDEN mogen wel: de
+    // taxonomie heeft zelf een niveau dat "categorie" heet, en dat staat in de
+    // schermteksten.)
+    expect(sheetCode).not.toMatch(/\.\s*(nummer|categorie)\b/);
+    // Het soort is een gesloten verzameling, geen vrije tekst.
+    expect(sheetCode).toMatch(/reportKind === "profit_loss"/);
+    expect(sheetCode).toMatch(/reportKind === "trial_balance"/);
+  });
+
+  it("6. de tegenboekingsnavigatie werkt nog vanuit de doorklik", async () => {
+    jaarMetHistorie();
+    renderWv();
+    klikGroep("overige_bedrijfskosten");
+    await klikGroepMet("kantoorbenodigdheden");
+    await klikRekening(KOSTEN.id);
+    fireEvent.click((await screen.findAllByTestId("open-posting-group"))[0]);
+    expect(await screen.findByTestId("reversal-open-button")).toHaveTextContent("Tegenboeking maken");
+  });
+
+  it("7/8. de oriëntatie komt uit de engine zelf, niet uit een tweede tekenmotor", () => {
+    const lib = readFileSync("src/lib/report-drilldown.ts", "utf8");
+    // De exportfunctie van de engine wordt hergebruikt.
+    expect(lib).toContain("displayedCents as orientCents");
+    // En er staat geen eigen omklapregel naast.
+    const code = lib.replace(/\/\*[\s\S]*?\*\//g, "").split("\n")
+      .map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    expect(code).not.toMatch(/=== "credit" \? -/);
   });
 });

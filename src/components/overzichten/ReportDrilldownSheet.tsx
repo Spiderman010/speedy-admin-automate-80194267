@@ -19,10 +19,14 @@ import type { ReversalAccountRef } from "@/lib/ledger-reversal-ui";
 import {
   accountReconciliation,
   accountRow,
+  balanceOrientation,
+  profitLossReconciliation,
   subgroupReconciles,
   subgroupView,
+  type DrilldownAccountRow,
   type DrilldownGroupView,
   type DrilldownTarget,
+  type ReportKind,
 } from "@/lib/report-drilldown";
 
 /**
@@ -55,6 +59,11 @@ export interface ReportDrilldownSheetProps {
   accounts: readonly LedgerAccountLike[];
   /** Het soort rapport, alleen voor de context in de kop. */
   reportLabel: string;
+  /**
+   * EXPLICIET welk rapport dit is. Bepaalt hoe een rekeningbedrag wordt
+   * uitgelegd; wordt nooit uit het label of uit de rekening afgeleid.
+   */
+  reportKind: ReportKind;
 }
 
 export function ReportDrilldownSheet({
@@ -68,6 +77,7 @@ export function ReportDrilldownSheet({
   accountsById,
   accounts,
   reportLabel,
+  reportKind,
 }: ReportDrilldownSheetProps) {
   const open = target !== null;
   const accountId = target?.level === "account" ? target.accountId : null;
@@ -139,6 +149,7 @@ export function ReportDrilldownSheet({
                 periodLabel={periodLabel}
                 clientId={clientId}
                 accountsById={accountsById}
+                reportKind={reportKind}
               />
             )}
           </div>
@@ -312,6 +323,7 @@ function RekeningNiveau({
   periodLabel,
   clientId,
   accountsById,
+  reportKind,
 }: {
   view: DrilldownGroupView;
   accountId: string;
@@ -321,6 +333,7 @@ function RekeningNiveau({
   periodLabel: string;
   clientId: string;
   accountsById: ReadonlyMap<string, ReversalAccountRef>;
+  reportKind: ReportKind;
 }) {
   const rapportRegel = accountRow(view, accountId);
 
@@ -342,8 +355,6 @@ function RekeningNiveau({
     );
   }
 
-  const aansluiting = accountReconciliation(running);
-
   return (
     <div className="space-y-3" data-testid="drilldown-account-level">
       {rapportRegel && (
@@ -354,34 +365,12 @@ function RekeningNiveau({
         />
       )}
 
-      {/*
-       * De opbouw van het eindsaldo. Dit staat er juist wél bij wanneer er een
-       * overloop is: anders zou het paneel suggereren dat de mutaties hieronder
-       * het hele saldo verklaren, terwijl een deel uit eerdere perioden komt.
-       */}
-      <dl
-        className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm"
-        data-testid="drilldown-reconciliation"
-      >
-        <dt className="text-muted-foreground">Beginsaldo</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-opening">
-          {formatCents(aansluiting.openingCents)}
-        </dd>
-        <dt className="text-muted-foreground">Mutaties {periodLabel}</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-movement">
-          {formatCents(aansluiting.periodMovementCents)}
-        </dd>
-        <dt className="font-medium">Eindsaldo</dt>
-        <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-closing">
-          {formatCents(aansluiting.closingCents)}
-        </dd>
-      </dl>
-
-      {aansluiting.hasOpeningContribution && (
-        <p className="text-xs text-muted-foreground" data-testid="drilldown-opening-notice">
-          Het eindsaldo bevat een overloop uit eerdere perioden; de mutaties hieronder verklaren
-          alleen het deel van {periodLabel}.
-        </p>
+      {reportKind === "profit_loss" && rapportRegel ? (
+        <WinstVerliesUitleg row={rapportRegel} running={running} periodLabel={periodLabel} />
+      ) : reportKind === "trial_balance" ? (
+        <KolommenUitleg running={running} periodLabel={periodLabel} />
+      ) : (
+        <BalansUitleg row={rapportRegel} running={running} periodLabel={periodLabel} />
       )}
 
       {running.lines.length === 0 ? (
@@ -395,6 +384,164 @@ function RekeningNiveau({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * W&V: uitsluitend de gekozen periode.
+ *
+ * Er staat hier bewust GEEN beginsaldo en GEEN cumulatief eindsaldo. Een
+ * resultaatrekening kan jaren historie dragen, en die historie verklaart het
+ * rapportbedrag niet — de engine rekent voor een W&V-regel met de mutatie van
+ * de periode, en dat is precies wat hier wordt uitgesplitst.
+ */
+function WinstVerliesUitleg({
+  row,
+  running,
+  periodLabel,
+}: {
+  row: DrilldownAccountRow;
+  running: ReturnType<typeof buildRunningBalance>;
+  periodLabel: string;
+}) {
+  const a = profitLossReconciliation(row, running);
+  return (
+    <>
+      <dl
+        className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm"
+        data-testid="drilldown-reconciliation"
+        data-kind="profit_loss"
+      >
+        <dt className="text-muted-foreground">Debet in {periodLabel}</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-debit">
+          {formatCents(a.periodDebitCents)}
+        </dd>
+        <dt className="text-muted-foreground">Credit in {periodLabel}</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-credit">
+          {formatCents(a.periodCreditCents)}
+        </dd>
+        <dt className="text-muted-foreground">Netto mutatie (debet-positief)</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-net-movement">
+          {formatCents(a.netMovementCents)}
+        </dd>
+        <dt className="font-medium">Bedrag in de winst-en-verliesrekening</dt>
+        <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-report-amount">
+          {formatCents(a.reportCents)}
+        </dd>
+      </dl>
+
+      {a.isMirrored && (
+        <p className="text-xs text-muted-foreground" data-testid="drilldown-orientation-notice">
+          Deze rekening staat aan de creditzijde van het rapport: het grootboek telt debet-positief,
+          de winst-en-verliesrekening toont hem omgekeerd. Het is hetzelfde bedrag.
+        </p>
+      )}
+      {!a.reconciles && <AansluitingWaarschuwing />}
+    </>
+  );
+}
+
+/** Balans: eindsaldo mét overloop, en de oriëntatie erbij wanneer die verschilt. */
+function BalansUitleg({
+  row,
+  running,
+  periodLabel,
+}: {
+  row: DrilldownAccountRow | null;
+  running: ReturnType<typeof buildRunningBalance>;
+  periodLabel: string;
+}) {
+  const a = accountReconciliation(running);
+  const orientatie = row ? balanceOrientation(row, running) : null;
+  return (
+    <>
+      <dl
+        className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm"
+        data-testid="drilldown-reconciliation"
+        data-kind="balance_sheet"
+      >
+        <dt className="text-muted-foreground">Beginsaldo</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-opening">
+          {formatCents(a.openingCents)}
+        </dd>
+        <dt className="text-muted-foreground">Mutaties {periodLabel}</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-movement">
+          {formatCents(a.periodMovementCents)}
+        </dd>
+        <dt className="font-medium">Grootboeksaldo (debet-positief)</dt>
+        <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-closing">
+          {formatCents(a.closingCents)}
+        </dd>
+        {/* Alleen tonen als het iets toevoegt: bij een debetzijde is het
+            hetzelfde getal en zou een tweede regel alleen ruis zijn. */}
+        {orientatie?.isMirrored && (
+          <>
+            <dt className="font-medium">Bedrag in Balans</dt>
+            <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-report-amount">
+              {formatCents(orientatie.reportCents)}
+            </dd>
+          </>
+        )}
+      </dl>
+
+      {orientatie?.isMirrored && (
+        <p className="text-xs text-muted-foreground" data-testid="drilldown-orientation-notice">
+          Deze rekening staat aan de creditzijde van de balans: het grootboek telt debet-positief,
+          de balans toont hem omgekeerd. Het is hetzelfde saldo.
+        </p>
+      )}
+      {a.hasOpeningContribution && (
+        <p className="text-xs text-muted-foreground" data-testid="drilldown-opening-notice">
+          Het eindsaldo bevat een overloop uit eerdere perioden; de mutaties hieronder verklaren
+          alleen het deel van {periodLabel}.
+        </p>
+      )}
+      {(!a.reconciles || orientatie?.reconciles === false) && <AansluitingWaarschuwing />}
+    </>
+  );
+}
+
+/** Kolommenbalans: dezelfde kolommen als de tabel, debet en credit apart. */
+function KolommenUitleg({
+  running,
+  periodLabel,
+}: {
+  running: ReturnType<typeof buildRunningBalance>;
+  periodLabel: string;
+}) {
+  const a = accountReconciliation(running);
+  return (
+    <>
+      <dl
+        className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm"
+        data-testid="drilldown-reconciliation"
+        data-kind="trial_balance"
+      >
+        <dt className="text-muted-foreground">Beginsaldo</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-opening">
+          {formatCents(a.openingCents)}
+        </dd>
+        <dt className="text-muted-foreground">Periode debet</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-debit">
+          {formatCents(a.periodDebitCents)}
+        </dd>
+        <dt className="text-muted-foreground">Periode credit</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-credit">
+          {formatCents(a.periodCreditCents)}
+        </dd>
+        <dt className="font-medium">Eindsaldo (debet-positief)</dt>
+        <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-closing">
+          {formatCents(a.closingCents)}
+        </dd>
+      </dl>
+      {a.hasOpeningContribution && (
+        <p className="text-xs text-muted-foreground" data-testid="drilldown-opening-notice">
+          Het eindsaldo bevat een overloop uit eerdere perioden; de mutaties hieronder verklaren
+          alleen het deel van {periodLabel}.
+        </p>
+      )}
+      {!a.reconciles && <AansluitingWaarschuwing />}
+    </>
   );
 }
 

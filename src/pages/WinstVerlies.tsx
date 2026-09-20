@@ -333,6 +333,7 @@ export default function WinstVerlies() {
           clientName={selectedClient?.name ?? "administratie"}
           accountsById={drilldownAccountsById}
           accounts={rekeningenVoorIndeling ?? []}
+          reportKind="profit_loss"
           reportLabel="Winst-en-verliesrekening"
         />
       )}

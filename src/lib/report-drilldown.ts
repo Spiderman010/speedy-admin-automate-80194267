@@ -20,12 +20,26 @@
  * tests die vast.
  */
 
-import type {
-  FinancialStatementAccountLine,
-  FinancialStatementGroup,
+import {
+  displayedCents as orientCents,
+  type FinancialStatementAccountLine,
+  type FinancialStatementGroup,
 } from "./financial-statements";
+import type { NormalSide } from "./reporting-classification";
 import type { StatementGroupSections, StatementSubgroupSection } from "./financial-statements-subgroups";
 import type { LedgerPeriod, LedgerRunningBalance } from "./ledger-reporting";
+
+/**
+ * Welk rapport de doorklik verklaart. EXPLICIET meegegeven — nooit afgeleid
+ * uit een label, een rekeningnummer of een categorie.
+ *
+ * Dit onderscheid is niet cosmetisch. Een W&V-regel is de MUTATIE van de
+ * gekozen periode; een balansregel is een EINDSALDO waar een overloop uit
+ * eerdere perioden in kan zitten. Dezelfde uitleg voor beide zou bij een
+ * omzetrekening met jaren historie een cumulatief saldo presenteren als
+ * verklaring van een bedrag dat alleen over deze periode gaat.
+ */
+export type ReportKind = "profit_loss" | "balance_sheet" | "trial_balance";
 
 /** Waar de gebruiker naar kijkt. `null` = het paneel is dicht. */
 export type DrilldownTarget =
@@ -40,6 +54,14 @@ export interface DrilldownAccountRow {
   accountName: string;
   /** Exact `FinancialStatementAccountLine.displayedCents` — niet herrekend. */
   displayedCents: number;
+  /** Exact `FinancialStatementAccountLine.rawSignedCents` — debet-positief. */
+  rawSignedCents: number;
+  /**
+   * De oriëntatie van de KOLOM waarin het rapport deze regel toont, zoals de
+   * engine hem heeft vastgesteld. Wordt hier alleen doorgegeven, nooit
+   * afgeleid: het paneel gebruikt hem met de exportfunctie van de engine zelf.
+   */
+  presentationSide: NormalSide;
   isContra: boolean;
 }
 
@@ -67,6 +89,8 @@ function toRow(line: FinancialStatementAccountLine): DrilldownAccountRow {
     accountNumber: line.accountNumber,
     accountName: line.accountName,
     displayedCents: line.displayedCents,
+    rawSignedCents: line.rawSignedCents,
+    presentationSide: line.presentationSide,
     isContra: line.isContra,
   };
 }
@@ -220,4 +244,91 @@ export function linesWithinPeriod(
 /** Staat er alleen de aangeklikte rekening in? */
 export function linesBelongToAccount(running: LedgerRunningBalance, accountId: string): boolean {
   return running.lines.every((l) => l.row.grootboekrekening_id === accountId);
+}
+
+// ── De aansluiting op het AANGEKLIKTE rapportbedrag ─────────────────────────
+
+/**
+ * Wat een W&V-bedrag werkelijk verklaart.
+ *
+ * Een W&V-regel is de MUTATIE van de gekozen periode — de engine zet
+ * `rawSignedCents` voor een resultaatrekening op `periodDebit − periodCredit`
+ * en niet op het eindsaldo. Een beginsaldo/eindsaldo-opstelling zou hier dus
+ * cumulatieve historie presenteren als verklaring van een bedrag dat alleen
+ * over deze periode gaat: bij een omzetrekening met jaren historie leest dat
+ * als 80.000 "verklaring" bij een rapportregel van 20.000.
+ *
+ * De oriëntatie komt van de engine zelf: `presentationSide` staat op de regel
+ * en `orientCents()` is de exportfunctie die de engine óók gebruikt om
+ * `displayedCents` te maken. Er is hier dus geen tweede tekenmotor.
+ */
+export interface ProfitLossReconciliation {
+  /** Het bedrag waarop geklikt is, zoals het rapport het toont. */
+  reportCents: number;
+  periodDebitCents: number;
+  periodCreditCents: number;
+  /** Debet-positief, de conventie van de kern. */
+  netMovementCents: number;
+  /** De mutatie in de oriëntatie van de rapportkolom. */
+  orientedCents: number;
+  presentationSide: NormalSide;
+  /** Wijst het rapportbedrag de andere kant op dan de kernconventie? */
+  isMirrored: boolean;
+  /** De periodemutatie verklaart het rapportbedrag exact. */
+  reconciles: boolean;
+}
+
+export function profitLossReconciliation(
+  row: DrilldownAccountRow,
+  running: LedgerRunningBalance,
+): ProfitLossReconciliation {
+  const periodDebitCents = sum(running.lines.map((l) => l.debitCents));
+  const periodCreditCents = sum(running.lines.map((l) => l.creditCents));
+  const netMovementCents = periodDebitCents - periodCreditCents;
+  const oriented = orientCents(netMovementCents, row.presentationSide);
+  return {
+    reportCents: row.displayedCents,
+    periodDebitCents,
+    periodCreditCents,
+    netMovementCents,
+    orientedCents: oriented,
+    presentationSide: row.presentationSide,
+    isMirrored: row.presentationSide === "credit" && netMovementCents !== 0,
+    reconciles: oriented === row.displayedCents,
+  };
+}
+
+/**
+ * De laatste stap van een balansaansluiting: het debet-positieve
+ * grootboeksaldo naast het bedrag zoals de Balans het toont.
+ *
+ * Bij een creditzijde (eigen vermogen, schulden) zijn die twee elkaars
+ * spiegelbeeld. Twee tegengestelde getallen zonder uitleg naast elkaar is
+ * precies wat een lezer doet twijfelen aan het rapport; daarom benoemt het
+ * paneel ze allebei, en alleen wanneer ze verschillen.
+ */
+export interface BalanceOrientation {
+  /** `LedgerRunningBalance.closingCents`, debet-positief. */
+  ledgerClosingCents: number;
+  /** `FinancialStatementAccountLine.displayedCents`. */
+  reportCents: number;
+  presentationSide: NormalSide;
+  /** De twee wijzen tegengesteld; dan hoort er uitleg bij. */
+  isMirrored: boolean;
+  /** Het grootboeksaldo verklaart het rapportbedrag exact. */
+  reconciles: boolean;
+}
+
+export function balanceOrientation(
+  row: DrilldownAccountRow,
+  running: LedgerRunningBalance,
+): BalanceOrientation {
+  const oriented = orientCents(running.closingCents, row.presentationSide);
+  return {
+    ledgerClosingCents: running.closingCents,
+    reportCents: row.displayedCents,
+    presentationSide: row.presentationSide,
+    isMirrored: oriented !== running.closingCents,
+    reconciles: oriented === row.displayedCents,
+  };
 }
