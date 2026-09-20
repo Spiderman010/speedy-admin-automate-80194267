@@ -924,6 +924,28 @@ De vraag was één expliciet, herbruikbaar classificatiemodel voor Balans en W&V
 
 ---
 
+### Rapportagetaxonomie — het tweede niveau zichtbaar in Balans en W&V
+
+**Uitsluitend presentatie. Geen migratie, geen SQL, geen schemawijziging, geen typewijziging, geen afhankelijkheid, geen route — en geen enkele wijziging aan een rekenlaag.** `financial-statements.ts`, `ledger-reporting.ts`, `proef-saldibalans.ts`, `financial-statements-presentation.ts`, `useFinancialStatements.ts` én `reporting-classification.ts` zijn byte-voor-byte gelijk aan `origin/main`; een test bewaakt dat.
+
+```
+src/lib/financial-statements-subgroups.ts                 puur: de regels van de engine opdelen per report_subgroup
+src/components/overzichten/FinancialStatementTable.tsx    optioneel tweede niveau in de tabel
+src/pages/Balans.tsx · src/pages/WinstVerlies.tsx         geven de secties door
+```
+
+- **De engine blijft de autoriteit en wordt niet aangeraakt.** `subgroupSectionsForGroups()` krijgt de groepen die `buildFinancialStatements()` al heeft berekend en **verdeelt alleen de regels**. `FinancialStatementGroup.totalCents` gaat ongewijzigd door; de subtotalen zijn sommen van precies dezelfde `displayedCents` die de engine zelf optelde (daar is `totalCents` letterlijk `lines.reduce((s, l) => s + l.displayedCents, 0)`). Omdat de partitie uitputtend en disjunct is, geldt Σ subtotalen = groepstotaal per constructie; `totalsMatch` en `sectionsCoverAllLines()` controleren dat alsnog.
+- **Geen rekening verdwijnt.** Elke regel komt in precies één sectie. Vijf gevallen: geen `statement_type` en geen `report_group` blijven in de bestaande sectie "Niet geclassificeerd"; een categorie zonder groep, een onbekende groep en een groep die niet bij haar categorie hoort vallen alle drie in **"Nog niet ingedeeld"**, achteraan binnen hun categorie, cursief en zonder alarm. Een verouderde waarde krijgt dus nooit een verzonnen kopje, maar verdwijnt evenmin.
+- **Het niveau verschijnt alleen als er iets ís ingedeeld.** Zolang niemand een `report_subgroup` heeft gekozen — de toestand vandaag — bestaat er per categorie één vangnetsectie en rendert de tabel letterlijk zoals voorheen. Dat is waarom alle 53 bestaande jaarrekening-UI-tests **ongewijzigd** slagen: de wijziging is onzichtbaar tot de eerste indeling is ingevuld.
+- **De clusterkopjes blijven presentatie.** Binnen `overige_bedrijfskosten` verschijnen Huisvestingskosten, Verkoopkosten, Autokosten en Kantoorkosten als tussenkopje zodra de groep eronder verandert. Het is een **label naast de sectie**, nooit haar sleutel, en er wordt niets opgeslagen — een test bewijst dat die woorden niet als sleutel voorkomen en dat de laag geen enkele `report_subgroup` terugschrijft.
+- **Sortering ongewijzigd.** Binnen een sectie blijft de volgorde die van de engine (`report_sort`, dan rekeningnummer, dan id); er wordt niet gesorteerd en niet gefilterd. De sectievolgorde is die van de taxonomie zelf, zodat "Liquide middelen" altijd op dezelfde plek staat, ongeacht welke rekening als eerste opdook. Een lege subgroep krijgt geen kopje.
+- **Systeemregels blijven wat ze waren:** ze staan buiten de groepen, krijgen geen rekeningnummer, geen drilldown en belanden in geen enkele sectie.
+- **Geen rekenwerk in de UI erbij.** De tabel en beide pagina's kregen geen `filter`, `sort`, `reduce` of centenrekenwerk; de bestaande bewaking daarop (PR 5, test 14) blijft groen. De pagina's halen de rekeningen uit dezelfde `useGrootboekrekeningen`-query die `useFinancialStatements` al doet — react-query deelt de cache op dezelfde sleutel, dus er komt geen tweede verzoek bij en geen tweede datalaag.
+- **Er wordt niets afgeleid:** geen rekeningnummer, geen naamfragment, geen `categorie`. Een test zet dezelfde bankrekening achtereenvolgens op 1100, 4242 en 9 en bewijst dat de indeling niet verandert.
+- **Tests:** `src/test/financial-statements-subgroups.test.tsx` (23; de fixtures lopen door de échte kern en engine, alleen de datahooks zijn gemockt). Dekt het tweede niveau op de balans, het vangnet, de verouderde waarde, de ongeclassificeerde sectie, elk categorietotaal en beide balanstotalen tegen de engine geijkt, het W&V-resultaat, de uitputtende en disjuncte partitie per groep, de clusterkopjes als presentatie, het onaangeroerde `report_subgroup`, de onveranderde `report_sort`-volgorde, de systeemregels, en de statische grenzen (geen afleiding, geen schrijfpad, geen migratie, rekenlagen byte-identiek).
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**

@@ -22,6 +22,8 @@ import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
+import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
+import { subgroupSectionsForGroups } from "@/lib/financial-statements-subgroups";
 import { useLedgerCompleteness } from "@/hooks/useLedgerCompleteness";
 import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
 import { periodFromSelection, periodLabel, type PeriodSelection } from "@/lib/grootboek-saldi-utils";
@@ -76,6 +78,24 @@ export default function WinstVerlies() {
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
+  /*
+   * Het tweede taxonomieniveau (report_subgroup), uitsluitend presentatie.
+   * De rekeningen komen uit dezelfde query die `useFinancialStatements` al
+   * doet — react-query deelt de cache op dezelfde sleutel, dus dit is geen
+   * tweede verzoek. Er wordt hier niets opgeteld: `subgroupSectionsForGroups`
+   * deelt de regels van de engine op en geeft elk groepstotaal ongewijzigd
+   * door.
+   */
+  const { data: rekeningenVoorIndeling } = useGrootboekrekeningen({
+    organizationId: activeOrganizationId ?? undefined,
+    enabled: orgEnabled,
+  });
+  const wvSecties = useMemo(
+    () =>
+      ready ? subgroupSectionsForGroups(ready.profitLoss.groups, rekeningenVoorIndeling ?? []) : undefined,
+    [ready, rekeningenVoorIndeling],
+  );
+
   // Per overzicht geteld: niet-geclassificeerde activiteit die aantoonbaar aan
   // de balanskant hoort mag hier nooit als oorzaak van een lege W&V gelden.
   const relevance = ready
@@ -160,6 +180,7 @@ export default function WinstVerlies() {
         <FinancialStatementTable
           caption="Winst-en-verliesrekening"
           groups={profitLoss.groups}
+          sections={wvSecties}
           totalLabel="Resultaat"
           totalCents={profitLoss.netResultCents}
           testId="wv-table"

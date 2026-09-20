@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -6,9 +7,11 @@ import {
 import { cn } from "@/lib/utils";
 import { accountLabel, formatCents } from "@/lib/financial-statements-presentation";
 import type {
+  FinancialStatementAccountLine,
   FinancialStatementGroup,
   FinancialStatementSystemLine,
 } from "@/lib/financial-statements";
+import type { StatementGroupSections } from "@/lib/financial-statements-subgroups";
 
 /**
  * Balans/W&V PR 4 — een gegroepeerd jaarrekeningoverzicht als tabel.
@@ -35,6 +38,13 @@ export interface FinancialStatementTableProps {
   /** De koptekst boven deze kolom, bv. "Activa". */
   caption: string;
   groups: readonly FinancialStatementGroup[];
+  /**
+   * Optioneel het tweede taxonomieniveau, kant-en-klaar opgedeeld door
+   * `subgroupSectionsForGroups()`. Ontbreekt het, of is er in een groep niets
+   * ingedeeld, dan rendert die groep precies zoals voorheen. Hier wordt niets
+   * opgeteld en niets gefilterd: de secties komen af.
+   */
+  sections?: readonly StatementGroupSections[];
   /** Presentatieregels die onder de groepen horen (alleen de balans heeft die). */
   systemLines?: readonly FinancialStatementSystemLine[];
   totalLabel: string;
@@ -46,6 +56,7 @@ export interface FinancialStatementTableProps {
 export function FinancialStatementTable({
   caption,
   groups,
+  sections,
   systemLines = [],
   totalLabel,
   totalCents,
@@ -66,8 +77,13 @@ export function FinancialStatementTable({
             <TableHead scope="col" className={cn(CELL, "w-36 text-right")}>Bedrag</TableHead>
           </TableRow>
         </TableHeader>
-        {groups.map((group) => (
-          <GroupRows key={group.key} group={group} accountPath={accountPath} />
+        {groups.map((group, index) => (
+          <GroupRows
+            key={group.key}
+            group={group}
+            sections={sections?.[index]}
+            accountPath={accountPath}
+          />
         ))}
 
         <TableBody>
@@ -114,11 +130,21 @@ export function FinancialStatementTable({
 
 function GroupRows({
   group,
+  sections,
   accountPath,
 }: {
   group: FinancialStatementGroup;
+  sections?: StatementGroupSections;
   accountPath: (accountId: string) => string;
 }) {
+  /*
+   * Het tweede niveau verschijnt alleen wanneer er werkelijk iets is
+   * ingedeeld. Zolang niemand een groep heeft gekozen, staat er één
+   * vangnetsectie met alles erin — en dan zou een kopje "Nog niet ingedeeld"
+   * boven élke rekening alleen maar ruis zijn. De tabel blijft dan letterlijk
+   * zoals zij was.
+   */
+  const toonSecties = !!sections && sections.hasSubgroups;
   return (
     // Eigen <tbody> per groep: dan is de kop een rowgroup-kop die een
     // schermlezer werkelijk aan de regels eronder koppelt.
@@ -133,39 +159,61 @@ function GroupRows({
         </th>
       </TableRow>
 
-      {group.lines.map((line) => (
-        <TableRow
-          key={line.accountId}
-          data-testid="statement-line"
-          data-account-id={line.accountId}
-          className="border-b-0 focus-within:bg-muted/40 hover:bg-muted/40"
-        >
-          <TableCell className={cn(CELL, "font-mono text-xs tabular-nums text-muted-foreground")}>
-            {line.accountNumber ?? "—"}
-          </TableCell>
-          <TableCell className={cn(CELL, "max-w-[280px]")}>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <Link
-                to={accountPath(line.accountId)}
-                className="min-w-0 break-words rounded-sm underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={`Open mutaties van ${accountLabel(line.accountNumber, line.accountName)}`}
-              >
-                {line.accountName}
-              </Link>
-              {line.isContra && (
-                <Badge
-                  variant="outline"
-                  className="text-xs font-normal"
-                  title="Deze rekening staat tegengesteld aan haar kolom en gaat er dus van af."
-                >
-                  Tegenrekening
-                </Badge>
+      {!toonSecties &&
+        group.lines.map((line) => (
+          <AccountRow key={line.accountId} line={line} accountPath={accountPath} />
+        ))}
+
+      {toonSecties &&
+        sections!.sections.map((section, index) => (
+          <Fragment key={section.key}>
+            {/* Alleen presentatie: het tussenkopje (Autokosten, Kantoorkosten,
+                …) staat er zodra het verandert, en wordt nergens opgeslagen. */}
+            {section.clusterLabel &&
+              section.clusterLabel !== sections!.sections[index - 1]?.clusterLabel && (
+                <TableRow className="border-0 hover:bg-transparent" data-testid="statement-cluster">
+                  <TableCell
+                    colSpan={3}
+                    className={cn(CELL, "pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground")}
+                  >
+                    {section.clusterLabel}
+                  </TableCell>
+                </TableRow>
               )}
-            </div>
-          </TableCell>
-          <Bedrag cents={line.displayedCents} />
-        </TableRow>
-      ))}
+
+            <TableRow
+              className="border-0 hover:bg-transparent"
+              data-testid="statement-subgroup"
+              data-subgroup={section.key}
+            >
+              <TableCell className={CELL} />
+              <TableCell
+                colSpan={2}
+                className={cn(
+                  CELL,
+                  "text-xs font-medium",
+                  // Het vangnet is geen indeling maar een gebrek aan indeling;
+                  // dat mag je zien, zonder alarm en zonder kleur alleen.
+                  section.isFallback ? "italic text-muted-foreground" : "text-foreground",
+                )}
+              >
+                {section.label}
+              </TableCell>
+            </TableRow>
+
+            {section.lines.map((line) => (
+              <AccountRow key={line.accountId} line={line} accountPath={accountPath} indented />
+            ))}
+
+            <TableRow className="border-0 hover:bg-transparent" data-testid="statement-subgroup-total" data-subgroup={section.key}>
+              <TableCell className={CELL} />
+              <TableCell className={cn(CELL, "pl-6 text-xs text-muted-foreground")}>
+                Subtotaal {section.label}
+              </TableCell>
+              <Bedrag cents={section.subtotalCents} />
+            </TableRow>
+          </Fragment>
+        ))}
 
       {group.lines.length === 0 && (
         <TableRow className="border-b-0 hover:bg-transparent">
@@ -185,6 +233,49 @@ function GroupRows({
         <Bedrag cents={group.totalCents} emphasis />
       </TableRow>
     </TableBody>
+  );
+}
+
+function AccountRow({
+  line,
+  accountPath,
+  indented,
+}: {
+  line: FinancialStatementAccountLine;
+  accountPath: (accountId: string) => string;
+  indented?: boolean;
+}) {
+  return (
+    <TableRow
+      data-testid="statement-line"
+      data-account-id={line.accountId}
+      className="border-b-0 focus-within:bg-muted/40 hover:bg-muted/40"
+    >
+      <TableCell className={cn(CELL, "font-mono text-xs tabular-nums text-muted-foreground")}>
+        {line.accountNumber ?? "—"}
+      </TableCell>
+      <TableCell className={cn(CELL, "max-w-[280px]", indented && "pl-6")}>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <Link
+            to={accountPath(line.accountId)}
+            className="min-w-0 break-words rounded-sm underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`Open mutaties van ${accountLabel(line.accountNumber, line.accountName)}`}
+          >
+            {line.accountName}
+          </Link>
+          {line.isContra && (
+            <Badge
+              variant="outline"
+              className="text-xs font-normal"
+              title="Deze rekening staat tegengesteld aan haar kolom en gaat er dus van af."
+            >
+              Tegenrekening
+            </Badge>
+          )}
+        </div>
+      </TableCell>
+      <Bedrag cents={line.displayedCents} />
+    </TableRow>
   );
 }
 
