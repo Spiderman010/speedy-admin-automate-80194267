@@ -297,20 +297,44 @@ export function submittableIds(
  * Een mislukking halverwege een reeks partijen.
  *
  * De hook knipt meer dan `BANK_BULK_MAX_BATCH` id's in opeenvolgende
- * verzoeken. Breekt een later verzoek af, dan zijn de eerdere partijen wél
- * geboekt. Die uitkomsten weggooien zou de gebruiker laten geloven dat er
- * niets is gebeurd; ze als succes tellen zou nog erger zijn. Daarom draagt de
- * fout de reeds ontvangen resultaten mee.
+ * verzoeken. Breekt er één af, dan vallen de id's van die ronde uiteen in
+ * DRIE groepen, en die mogen nooit op één hoop:
+ *
+ *   • `results` — de partijen die volledig zijn teruggekomen. Vastgesteld
+ *     feit; weggooien zou de gebruiker laten geloven dat er niets is gebeurd.
+ *
+ *   • `outcomeUnknown` — de id's van de partij waarvan het VERZOEK mislukte.
+ *     Dat verzoek is de deur al uit. Een transportfout zegt niets over wat de
+ *     database heeft gedaan: die kan de boekingen gecommit hebben en het
+ *     antwoord kan onderweg verloren zijn gegaan. "Niet geboekt" is hier dus
+ *     evenzeer een gok als "wel geboekt", en beide zijn fout om te tonen.
+ *
+ *   • `notSubmitted` — uitsluitend de id's van de partijen die daarná kwamen
+ *     en nooit zijn verstuurd. Alleen dáárvan is met zekerheid te zeggen dat
+ *     er niets mee is gebeurd.
+ *
+ * De schrijver is idempotent (een tweede aanbieding levert `already_posted`),
+ * dus opnieuw aanbieden is veilig — maar dat is een bewuste keuze van de
+ * gebruiker, nooit iets wat deze laag zelf doet.
  */
 export class BankBulkPartialError extends Error {
+  /** De uitkomsten die vaststaan, uit eerder voltooide partijen. */
   readonly results: BankBulkResult[];
-  /** Hoeveel id's er in deze ronde nooit zijn aangeboden. */
+  /** Aantal id's in de partij waarvan het verzoek mislukte ná verzending. */
+  readonly outcomeUnknown: number;
+  /** Aantal id's in latere partijen die nooit zijn aangeboden. */
   readonly notSubmitted: number;
 
-  constructor(message: string, results: BankBulkResult[], notSubmitted: number) {
+  constructor(
+    message: string,
+    results: BankBulkResult[],
+    outcomeUnknown: number,
+    notSubmitted: number,
+  ) {
     super(message);
     this.name = "BankBulkPartialError";
     this.results = results;
+    this.outcomeUnknown = outcomeUnknown;
     this.notSubmitted = notSubmitted;
   }
 }
@@ -318,4 +342,28 @@ export class BankBulkPartialError extends Error {
 /** De resultaten die ondanks een afgebroken ronde al vaststaan. */
 export function resultsFromError(error: unknown): BankBulkResult[] {
   return error instanceof BankBulkPartialError ? error.results : [];
+}
+
+/**
+ * De indeling in de drie groepen, op één plek.
+ *
+ * Dit is de hele P2 van deze correctie: `chunks[index]` is de partij waarvan
+ * het verzoek mislukte. Die is VERSTUURD, dus haar uitkomst is onbekend; zij
+ * hoort bij `outcomeUnknown` en nadrukkelijk niet bij `notSubmitted`. Alleen
+ * `chunks[index + 1 …]` is nooit de deur uit geweest.
+ *
+ * Het staat hier als pure functie zodat de indeling zelf getoetst kan worden
+ * en niet alleen de tekst van de hook.
+ */
+export function partialErrorForChunk(
+  chunks: readonly (readonly string[])[],
+  index: number,
+  results: BankBulkResult[],
+  message: string,
+): BankBulkPartialError {
+  const mislukt = chunks[index] ?? [];
+  const nietAangeboden = chunks
+    .slice(index + 1)
+    .reduce((som, c) => som + c.length, 0);
+  return new BankBulkPartialError(message, results, mislukt.length, nietAangeboden);
 }

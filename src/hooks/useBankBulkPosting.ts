@@ -3,10 +3,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
 import {
   BANK_BULK_MAX_BATCH,
-  BankBulkPartialError,
   bulkErrorMessage,
   chunkTransactionIds,
   isDeployWindowError,
+  partialErrorForChunk,
   type BankBulkCandidate,
   type BankBulkResult,
 } from "@/lib/bank-bulk-posting";
@@ -108,11 +108,13 @@ export function usePostBankTransactionsBulk() {
           _transaction_ids: chunk,
         });
         if (error) {
-          // Breekt een latere partij af, dan zijn de eerdere partijen wél
-          // geboekt. Die uitkomsten gaan mee de fout in: weggooien zou doen
-          // alsof er niets is gebeurd. Er wordt niets opnieuw geprobeerd.
-          const nietAangeboden = chunks.slice(index).reduce((som, c) => som + c.length, 0);
-          throw new BankBulkPartialError(bulkErrorMessage(error), results, nietAangeboden);
+          // DRIE groepen, nooit op één hoop. `results` staat vast. DEZE partij
+          // is al verstuurd: een transportfout zegt niets over wat de database
+          // ermee heeft gedaan, dus haar uitkomst is ONBEKEND — niet "niet
+          // aangeboden". Alleen de partijen hierná zijn met zekerheid nooit
+          // verstuurd. De indeling zelf staat in de pure laag, zodat zij
+          // toetsbaar is. Er wordt niets opnieuw geprobeerd.
+          throw partialErrorForChunk(chunks, index, results, bulkErrorMessage(error));
         }
         results.push(...(data ?? []));
       }

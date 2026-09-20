@@ -57,6 +57,8 @@ import BankInhaalslag, {
 } from "@/pages/BankInhaalslag";
 import {
   BankBulkPartialError,
+  chunkTransactionIds,
+  partialErrorForChunk,
   reconcileSelection,
   submittableIds,
   type BankBulkCandidate,
@@ -358,7 +360,7 @@ describe("resultaat", () => {
   it("13b. een afgebroken reeks partijen meldt wat wél is verwerkt, zonder herkansing", async () => {
     state.post = vi.fn().mockRejectedValue(
       new BankBulkPartialError("Boeken is niet gelukt. Probeer het opnieuw.",
-        [resultaat({ transaction_id: "a", outcome: "posted" })], 500),
+        [resultaat({ transaction_id: "a", outcome: "posted" })], 500, 200),
     );
     renderPagina();
     selecteer("tx-ready-1");
@@ -367,9 +369,155 @@ describe("resultaat", () => {
     fireEvent.click(screen.getByTestId("inhaalslag-bevestig"));
 
     await waitFor(() => expect(screen.getByTestId("inhaalslag-afgebroken")).toBeInTheDocument());
-    expect(screen.getByTestId("inhaalslag-afgebroken")).toHaveTextContent("500 bankregel(s) zijn niet aangeboden");
     expect(screen.getByTestId("resultaat-geboekt")).toHaveTextContent("1");
     expect(state.post).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Een verzoek dat de deur uit is, is niet hetzelfde als een verzoek dat nooit
+ * is gedaan. Breekt een partij af nadat zij is verstuurd, dan kan de database
+ * haar hebben verwerkt en het antwoord onderweg verloren zijn gegaan. De
+ * uitkomst is dan ONBEKEND — en het scherm mag noch "wel geboekt" noch "niet
+ * aangeboden" beweren.
+ */
+describe("de drie groepen bij een afgebroken partijreeks", () => {
+  const eersteVijfhonderd = [
+    resultaat({ transaction_id: "a", outcome: "posted" }),
+    resultaat({ transaction_id: "b", outcome: "already_posted", ordinal: 2 }),
+  ];
+
+  /** 500 geslaagd · 500 waarvan het verzoek faalde · 200 nooit verstuurd. */
+  const drieLuik = () =>
+    new BankBulkPartialError(
+      "Boeken is niet gelukt. Probeer het opnieuw.", eersteVijfhonderd, 500, 200,
+    );
+
+  async function boekMetFout(fout: unknown) {
+    state.post = vi.fn().mockRejectedValue(fout);
+    renderPagina();
+    selecteer("tx-ready-1");
+    fireEvent.click(screen.getByTestId("inhaalslag-bulk"));
+    await waitFor(() => screen.getByTestId("inhaalslag-bevestig"));
+    fireEvent.click(screen.getByTestId("inhaalslag-bevestig"));
+    await waitFor(() => expect(screen.getByTestId("inhaalslag-afgebroken")).toBeInTheDocument());
+  }
+
+  it("19. de fout draagt de drie groepen los van elkaar", () => {
+    const fout = drieLuik();
+    expect(fout.results).toHaveLength(2);
+    expect(fout.outcomeUnknown).toBe(500);
+    expect(fout.notSubmitted).toBe(200);
+  });
+
+  it("20. de mislukte partij telt als onbekend, niet als niet-aangeboden", async () => {
+    await boekMetFout(drieLuik());
+    expect(screen.getByTestId("afgebroken-onbekend")).toHaveTextContent(
+      "De uitkomst van 500 bankregel(s) kon niet worden bevestigd",
+    );
+  });
+
+  it("21. alleen de latere partijen heten niet-aangeboden", async () => {
+    await boekMetFout(drieLuik());
+    expect(screen.getByTestId("afgebroken-niet-aangeboden")).toHaveTextContent(
+      "200 bankregel(s) zijn daarna niet meer aangeboden",
+    );
+  });
+
+  it("22. het aantal van de mislukte partij wordt nergens 'niet aangeboden' genoemd", async () => {
+    await boekMetFout(drieLuik());
+    const melding = screen.getByTestId("inhaalslag-afgebroken").textContent ?? "";
+    expect(melding).not.toMatch(/500 bankregel\(s\) zijn daarna niet meer aangeboden/);
+    expect(melding).not.toMatch(/700/); // 500 + 200 op één hoop: precies de oude fout
+    // En er wordt geen uitkomst aan toegedicht.
+    expect(melding).not.toMatch(/500 bankregel\(s\) (zijn|is) (wel )?geboekt/);
+  });
+
+  it("23. de bevestigde uitkomsten van de eerdere partij blijven zichtbaar", async () => {
+    await boekMetFout(drieLuik());
+    expect(screen.getByTestId("inhaalslag-resultaat")).toBeInTheDocument();
+    expect(screen.getByTestId("resultaat-geboekt")).toHaveTextContent("1");
+    expect(screen.getByTestId("resultaat-al-geboekt")).toHaveTextContent("1");
+    expect(screen.getByTestId("resultaat-geweigerd")).toHaveTextContent("0");
+  });
+
+  it("24. er wordt niets automatisch opnieuw geprobeerd, en het scherm zegt dat", async () => {
+    await boekMetFout(drieLuik());
+    expect(state.post).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("inhaalslag-afgebroken")).toHaveTextContent(
+      /niets automatisch opnieuw geprobeerd/,
+    );
+    expect(screen.getByTestId("inhaalslag-afgebroken")).toHaveTextContent(/ververs eerst de actuele status/i);
+  });
+
+  it("25. na de fout wordt opnieuw opgehaald en de selectie verzoend", async () => {
+    const na = REGELS.map((r) =>
+      r.transaction_id === "tx-ready-1"
+        ? { ...r, workflow_state: "posted" as const, is_posted: true, posting_group_id: "pg-9" }
+        : r,
+    );
+    state.refetch = vi.fn().mockResolvedValue({ data: na });
+    await boekMetFout(drieLuik());
+    await waitFor(() => expect(state.refetch).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId("inhaalslag-bulkbalk")).not.toBeInTheDocument());
+  });
+
+  it("26. een fout die de drie groepen niet kent, telt als onbekend en niet als niet-aangeboden", async () => {
+    await boekMetFout(new Error("Netwerkfout"));
+    expect(screen.getByTestId("afgebroken-onbekend")).toHaveTextContent("1 bankregel(s)");
+    expect(screen.queryByTestId("afgebroken-niet-aangeboden")).not.toBeInTheDocument();
+  });
+
+  it("27. de indeling zelf: 500 geslaagd, 500 verstuurd-maar-onbekend, 200 nooit verstuurd", () => {
+    // Precies het voorbeeld uit de melding, op de ECHTE functie die de hook
+    // aanroept — niet op een nagebouwd dubbel.
+    const chunks = chunkTransactionIds(Array.from({ length: 1200 }, (_, i) => `id-${i}`));
+    expect(chunks.map((c) => c.length)).toEqual([500, 500, 200]);
+
+    const fout = partialErrorForChunk(chunks, 1, eersteVijfhonderd, "Verbinding verbroken");
+    expect(fout.results).toBe(eersteVijfhonderd);
+    expect(fout.outcomeUnknown).toBe(500);
+    expect(fout.notSubmitted).toBe(200);
+  });
+
+  it("27b. faalt de laatste partij, dan is er niets meer dat niet is aangeboden", () => {
+    const chunks = chunkTransactionIds(Array.from({ length: 1200 }, (_, i) => `id-${i}`));
+    const fout = partialErrorForChunk(chunks, 2, [], "x");
+    expect(fout.outcomeUnknown).toBe(200);
+    expect(fout.notSubmitted).toBe(0);
+  });
+
+  it("27c. faalt de eerste partij, dan staat er niets vast en is de rest niet aangeboden", () => {
+    const chunks = chunkTransactionIds(Array.from({ length: 1200 }, (_, i) => `id-${i}`));
+    const fout = partialErrorForChunk(chunks, 0, [], "x");
+    expect(fout.results).toEqual([]);
+    expect(fout.outcomeUnknown).toBe(500);
+    expect(fout.notSubmitted).toBe(700);
+  });
+
+  it("27d. de mislukte partij wordt nooit bij de niet-aangeboden geteld", () => {
+    const chunks = chunkTransactionIds(Array.from({ length: 1200 }, (_, i) => `id-${i}`));
+    for (const index of [0, 1, 2]) {
+      const fout = partialErrorForChunk(chunks, index, [], "x");
+      const nietAangebodenInclusief = chunks
+        .slice(index)
+        .reduce((som, c) => som + c.length, 0);
+      // De oude, foute som telde de mislukte partij mee; die mag nooit
+      // terugkomen als `notSubmitted`.
+      expect(fout.notSubmitted).not.toBe(nietAangebodenInclusief);
+      expect(fout.notSubmitted + fout.outcomeUnknown).toBe(nietAangebodenInclusief);
+    }
+  });
+});
+
+describe("de hook gebruikt die indeling ook echt", () => {
+  it("28. de hook rekent de groepen niet zelf uit maar roept de pure indeling aan", () => {
+    const hook = readFileSync(resolve(process.cwd(), "src/hooks/useBankBulkPosting.ts"), "utf8");
+    expect(hook).toContain("partialErrorForChunk(chunks, index, results, bulkErrorMessage(error))");
+    // Geen eigen som meer in de hook, en zeker niet de oude die de verstuurde
+    // partij als niet-aangeboden telde.
+    expect(hook).not.toMatch(/chunks\s*\.?\s*slice\(index\)/);
+    expect(hook).not.toMatch(/new BankBulkPartialError\(/);
   });
 });
 

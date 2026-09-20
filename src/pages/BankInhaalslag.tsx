@@ -103,7 +103,9 @@ export default function BankInhaalslag() {
   const [bevestig, setBevestig] = useState(false);
   const [detail, setDetail] = useState<BankBulkCandidate | null>(null);
   const [resultaat, setResultaat] = useState<BankBulkResult[] | null>(null);
-  const [afgebroken, setAfgebroken] = useState<{ message: string; notSubmitted: number } | null>(null);
+  const [afgebroken, setAfgebroken] = useState<
+    { message: string; outcomeUnknown: number; notSubmitted: number } | null
+  >(null);
   const [alleenGeweigerd, setAlleenGeweigerd] = useState(false);
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
@@ -163,11 +165,25 @@ export default function BankInhaalslag() {
     } catch (error) {
       // Een afgebroken ronde is geen "er is niets gebeurd": de partijen die al
       // terugkwamen, staan vast. Er wordt niets automatisch opnieuw geprobeerd.
+      //
+      // Kent de fout de drie groepen niet, dan wordt de hele ronde als
+      // ONBEKEND geteld en niet als "niet aangeboden": bij een onverwachte
+      // fout is nu juist niet vast te stellen of het verzoek de database heeft
+      // bereikt, en "niet aangeboden" zou dat wél beweren.
       setResultaat(resultsFromError(error));
-      setAfgebroken({
-        message: (error as Error).message,
-        notSubmitted: error instanceof BankBulkPartialError ? error.notSubmitted : aanTeBieden.length,
-      });
+      setAfgebroken(
+        error instanceof BankBulkPartialError
+          ? {
+              message: error.message,
+              outcomeUnknown: error.outcomeUnknown,
+              notSubmitted: error.notSubmitted,
+            }
+          : {
+              message: (error as Error).message,
+              outcomeUnknown: aanTeBieden.length,
+              notSubmitted: 0,
+            },
+      );
     }
     // De selectie opnieuw naast de server leggen zodra de nieuwe gegevens er
     // zijn; geboekte regels zijn dan niet langer `ready` en vallen eruit.
@@ -413,9 +429,21 @@ export default function BankInhaalslag() {
               <AlertTitle>De boekingsronde is halverwege afgebroken</AlertTitle>
               <AlertDescription>
                 <p>{afgebroken.message}</p>
+                {afgebroken.outcomeUnknown > 0 && (
+                  <p className="mt-1" data-testid="afgebroken-onbekend">
+                    De uitkomst van {afgebroken.outcomeUnknown} bankregel(s) kon niet worden
+                    bevestigd. Dat verzoek was al verstuurd; of de database het heeft verwerkt,
+                    is hier niet vast te stellen.
+                  </p>
+                )}
+                {afgebroken.notSubmitted > 0 && (
+                  <p className="mt-1" data-testid="afgebroken-niet-aangeboden">
+                    {afgebroken.notSubmitted} bankregel(s) zijn daarna niet meer aangeboden.
+                  </p>
+                )}
                 <p className="mt-1">
-                  {afgebroken.notSubmitted} bankregel(s) zijn niet aangeboden. Wat hieronder staat,
-                  is wél verwerkt. Er wordt niets automatisch opnieuw geprobeerd.
+                  Wat hieronder staat, is bevestigd. Er wordt niets automatisch opnieuw geprobeerd:
+                  ververs eerst de actuele status voordat je opnieuw boekt.
                 </p>
               </AlertDescription>
             </Alert>
