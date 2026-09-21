@@ -498,9 +498,35 @@ describe("scope", () => {
       "src/lib/reporting-classification.ts",
       "src/hooks/useFinancialStatements.ts",
       "src/hooks/useLedgerReversal.ts",
-      "src/components/grootboek/LedgerPostingGroupSheet.tsx",
     ]) {
       expect(readFileSync(p, "utf8"), p).toBe(toon(p));
+    }
+  });
+
+  /*
+   * `LedgerPostingGroupSheet.tsx` stond hierboven ook in de byte-vergelijking.
+   * Dat was waar over PR #186, maar het is geen INVARIANT: het bestand is een
+   * weergavecomponent, en een latere PR die er een presentatieblok uit hergebruikt
+   * — zoals de Platform Kit met `AuditTrailBlock` doet — laat zo'n assertie
+   * omvallen terwijl er niets mis is. Zelfde afweging als in
+   * `src/test/support/branch-sql-scope.ts`: de scope-uitspraak wordt vervangen
+   * door wat zij werkelijk beschermde.
+   *
+   * Wat zij beschermde: dit paneel raakt de tegenboekingsmotor niet aan. Het
+   * schrijft niet zelf, het praat niet rechtstreeks met de database, en het
+   * verzint geen eigen bewoording voor een correctie.
+   */
+  it("het boekingspaneel houdt de tegenboekingsmotor buiten zichzelf", () => {
+    const bron = readFileSync("src/components/grootboek/LedgerPostingGroupSheet.tsx", "utf8");
+
+    // Eén weg naar buiten voor een correctie: de bestaande hook.
+    expect(bron).toContain('from "@/hooks/useLedgerReversal"');
+    expect(bron).not.toMatch(/@\/integrations\/supabase/);
+    expect(bron).not.toMatch(/\.rpc\(|\.from\(/);
+
+    // De bewoording blijft uit de gedeelde laag komen, niet uit dit bestand.
+    for (const constante of ["NOT_RECORDED", "REASON_LABEL", "REVERSAL_DATE_LABEL", "ORIGINAL_HEADING"]) {
+      expect(bron, constante).toContain(constante);
     }
   });
 });

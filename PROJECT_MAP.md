@@ -987,6 +987,32 @@ src/components/overzichten/ReportDrilldownSheet.tsx      één paneel voor alle 
 
 ---
 
+### Platform Kit V1 — de gedeelde presentatielaag
+
+**Uitsluitend presentatie.** Geen migratie, geen SQL, geen RPC, geen schemawijziging, geen typewijziging, geen afhankelijkheid, geen nieuwe route.
+
+Het volledige handboek staat in **`docs/BOOKASSIST_PLATFORM_KIT.md`** — lees dat vóór je een terugkerend UI-patroon bouwt. Hier alleen de kern.
+
+```
+src/components/platform/AccountingAmount.tsx       bedrag in centen
+src/components/platform/AccountingNotice.tsx       info / waarschuwing / blokkade
+src/components/platform/AuditTrailBlock.tsx        vastgelegde metadata
+src/components/platform/ReconciliationBlock.tsx    regels + uitkomst
+src/components/platform/FinancialActionDialog.tsx  bevestiging met boekhoudkundig gevolg
+src/lib/platform/audit-trail.ts                    de regel achter een ontbrekend auditveld
+```
+
+- **De ontwikkelregel is REUSE → EXTEND → NEW.** Eerst de kit en de bestaande componenten, dan een prop erbij, en pas dan iets nieuws. Een nieuw terugkerend patroon vraagt om een expliciete reden in de PR; een eenmalige opmaak niet.
+- **Alleen bewezen patronen zijn gepromoveerd.** De aanleiding was telbaar: 124 keer een `tabular-nums`-bedrag in 40 bestanden en ruim 30 klassenvarianten, zes privé-`label → waarde`-hulpcomponenten, 21 `<dl>`-blokken, en waarschuwingen die ofwel rood als een fout werden getoond ofwel met losse `amber-*`-kleuren buiten het tokensysteem om.
+- **`AccountingNotice` is geen nieuw meldingsraamwerk** maar de brug tussen twee dingen die al bestonden: de shadcn-`Alert` (die alleen `default` en `destructive` kent) en de tokens `--warning` / `--info` / `--success` (die `Badge` al gebruikt).
+- **Vijf veiligheidsregels, met tests erop:** een component verzint nooit een bedrag, datum, reden of actor; bedragen zijn hele centen die al berekend zijn; er wordt niets afgeleid uit rekeningnummer, naam of categorie en er komt geen tweede tekenmotor naast `displayedCents()`; een component kiest nooit zelf een administratie of periode; en er zit geen schrijfpad in — geen Supabase-client, geen `useMutation`, geen RPC.
+- **Elk onderdeel heeft een échte aanroeper gekregen**, want een component zonder gebruiker is een gok. `ReversalConfirmDialog` draait nu op `FinancialActionDialog`, het auditblok van `LedgerPostingGroupSheet` op `AuditTrailBlock`, en de drie aansluitingsblokken van `ReportDrilldownSheet` op `ReconciliationBlock`. Alle 43 reversal-UI-, 27 navigatie- en 33 doorkliktests bleven **ongewijzigd** groen; dat is meteen het bewijs dat er niets aan gedrag veranderde.
+- **Bewust niet gebouwd:** `DataTableShell`, `EntityDetailSheet`, `ModulePageShell`, een gedeelde `StatusBadge` en een `PeriodClientToolbar`. Het patroon is er wel, maar nog niet stabiel genoeg, of het raakt te veel schermen tegelijk. Zie §8 van het handboek.
+- **Eén scope-uitspraak vervangen door haar invariant.** De doorkliktest legde vast dat negen bestanden byte-voor-byte gelijk aan `origin/main` waren, waaronder `LedgerPostingGroupSheet.tsx`. Dat was waar over PR #186 maar is geen invariant voor een weergavecomponent; het is vervangen door wat het beschermde — dat paneel schrijft niet zelf, praat niet rechtstreeks met de database en verzint geen eigen bewoording voor een correctie. De acht rekenlagen blijven byte-identiek.
+- **Tests:** `src/test/platform-kit.test.tsx` (42), inclusief statische grenstests per bestand in `src/components/platform/` en `src/lib/platform/`.
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**

@@ -1,14 +1,11 @@
 import { useId, useState } from "react";
-import { Button } from "@/components/ui/button";
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Info } from "lucide-react";
+import { AccountingAmount } from "@/components/platform/AccountingAmount";
+import { AccountingNotice } from "@/components/platform/AccountingNotice";
+import { FinancialActionDialog } from "@/components/platform/FinancialActionDialog";
 import { formatCents, formatDatumNL } from "@/lib/grootboek-saldi-utils";
 import {
   firstReversalFormIssue,
@@ -82,166 +79,146 @@ export function ReversalConfirmDialog({
   };
 
   return (
-    <Dialog
+    /*
+     * De schil (titel, uitleg, knoppen, vergrendeling) komt uit de Platform
+     * Kit; de twee eisen hierboven blijven van dit bestand. De datum wordt nog
+     * steeds niet voorgevuld, en de bevestigknop is nog steeds de gewone
+     * primaire knop — `intent="normal"` — omdat er niets wordt verwijderd.
+     */
+    <FinancialActionDialog
       open={open}
       onOpenChange={(next) => {
-        if (isPending) return; // niet sluiten terwijl de boeking loopt
         if (!next) {
           setPostingDate("");
           setReason("");
         }
         onOpenChange(next);
       }}
+      // Annuleren sluit via de bovenliggende component, net als voorheen.
+      onCancel={() => onOpenChange(false)}
+      title={REVERSAL_CONFIRM_TITLE}
+      explanation="De database maakt de tegenboeking en bepaalt de regels; dit scherm legt alleen uit wat er gebeurt. Er wordt niets bewerkt en niets verwijderd."
+      contentClassName="sm:max-w-2xl"
+      confirmLabel={REVERSAL_CONFIRM_BUTTON}
+      pendingLabel="Bezig met boeken…"
+      intent="normal"
+      isPending={isPending}
+      confirmDisabled={!!issue}
+      onConfirm={handleConfirm}
+      confirmTestId="reversal-confirm-button"
     >
-      <DialogContent className="max-h-[90vh] gap-4 overflow-y-auto sm:max-w-2xl">
-        <DialogHeader className="space-y-1">
-          <DialogTitle className="text-base">{REVERSAL_CONFIRM_TITLE}</DialogTitle>
-          <DialogDescription className="text-xs">
-            De database maakt de tegenboeking en bepaalt de regels; dit scherm legt alleen uit wat er gebeurt.
-            Er wordt niets bewerkt en niets verwijderd.
-          </DialogDescription>
-        </DialogHeader>
+      <AccountingNotice severity="info" data-testid="reversal-original-remains">
+        {ORIGINAL_REMAINS_NOTICE}
+        <span className="mt-1 block text-xs text-muted-foreground" data-testid="reversal-append-only">
+          {APPEND_ONLY_NOTICE}
+        </span>
+      </AccountingNotice>
 
-        <Alert data-testid="reversal-original-remains">
-          <Info className="h-4 w-4" />
-          <AlertDescription>
-            {ORIGINAL_REMAINS_NOTICE}
-            <span className="mt-1 block text-xs text-muted-foreground" data-testid="reversal-append-only">
-              {APPEND_ONLY_NOTICE}
-            </span>
-          </AlertDescription>
-        </Alert>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+        <div>
+          <dt className="text-xs text-muted-foreground">Datum oorspronkelijke boeking</dt>
+          <dd className="font-mono tabular-nums" data-testid="reversal-original-date">
+            {summary.postingDate ? formatDatumNL(summary.postingDate) : "—"}
+          </dd>
+        </div>
+        <div className="text-right sm:text-left">
+          <dt className="text-xs text-muted-foreground">Boekingstotaal</dt>
+          <dd className="font-mono font-semibold tabular-nums">{formatCents(summary.debitCents)}</dd>
+        </div>
+        <div className="col-span-2">
+          <dt className="text-xs text-muted-foreground">{ORIGINAL_HEADING}</dt>
+          <dd className="font-mono break-all text-xs" data-testid="reversal-original-group">
+            {summary.postingGroupId}
+          </dd>
+        </div>
+      </dl>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-          <div>
-            <dt className="text-xs text-muted-foreground">Datum oorspronkelijke boeking</dt>
-            <dd className="font-mono tabular-nums" data-testid="reversal-original-date">
-              {summary.postingDate ? formatDatumNL(summary.postingDate) : "—"}
-            </dd>
-          </div>
-          <div className="text-right sm:text-left">
-            <dt className="text-xs text-muted-foreground">Boekingstotaal</dt>
-            <dd className="font-mono font-semibold tabular-nums">{formatCents(summary.debitCents)}</dd>
-          </div>
-          <div className="col-span-2">
-            <dt className="text-xs text-muted-foreground">{ORIGINAL_HEADING}</dt>
-            <dd className="font-mono break-all text-xs" data-testid="reversal-original-group">
-              {summary.postingGroupId}
-            </dd>
-          </div>
-        </dl>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label htmlFor={dateId}>
-              {REVERSAL_DATE_LABEL} <span aria-hidden="true">*</span>
-            </Label>
-            <Input
-              id={dateId}
-              type="date"
-              required
-              value={postingDate}
-              onChange={(e) => setPostingDate(e.target.value)}
-              className="h-11 sm:h-9"
-              data-testid="reversal-date-input"
-            />
-            <p className="text-xs text-muted-foreground">
-              Kies bewust in welke periode de correctie landt. Er wordt niets voorgevuld en niets verschoven;
-              een afgesloten boekjaar wordt door de database geweigerd.
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor={reasonId}>{REASON_LABEL} (optioneel)</Label>
-            <Textarea
-              id={reasonId}
-              value={reason}
-              rows={2}
-              onChange={(e) => setReason(e.target.value)}
-              data-testid="reversal-reason-input"
-            />
-            <p
-              className={reasonLength > MAX_REVERSAL_REASON_LENGTH ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
-              data-testid="reversal-reason-counter"
-            >
-              {reasonLength} / {MAX_REVERSAL_REASON_LENGTH} tekens
-            </p>
-          </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor={dateId}>
+            {REVERSAL_DATE_LABEL} <span aria-hidden="true">*</span>
+          </Label>
+          <Input
+            id={dateId}
+            type="date"
+            required
+            value={postingDate}
+            onChange={(e) => setPostingDate(e.target.value)}
+            className="h-11 sm:h-9"
+            data-testid="reversal-date-input"
+          />
+          <p className="text-xs text-muted-foreground">
+            Kies bewust in welke periode de correctie landt. Er wordt niets voorgevuld en niets verschoven;
+            een afgesloten boekjaar wordt door de database geweigerd.
+          </p>
         </div>
 
-        <div className="rounded-md border">
-          <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2">
-            <span className="text-sm font-medium">Effect van de tegenboeking</span>
-            <Badge variant="outline" className="bg-background font-normal" data-testid="reversal-preview-badge">
-              Voorbeeld
-            </Badge>
-          </div>
-          <p className="px-3 pt-2 text-xs text-muted-foreground" data-testid="reversal-preview-notice">
-            {PREVIEW_NOTICE}
+        <div className="space-y-1.5">
+          <Label htmlFor={reasonId}>{REASON_LABEL} (optioneel)</Label>
+          <Textarea
+            id={reasonId}
+            value={reason}
+            rows={2}
+            onChange={(e) => setReason(e.target.value)}
+            data-testid="reversal-reason-input"
+          />
+          <p
+            className={reasonLength > MAX_REVERSAL_REASON_LENGTH ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+            data-testid="reversal-reason-counter"
+          >
+            {reasonLength} / {MAX_REVERSAL_REASON_LENGTH} tekens
           </p>
-          <div className="overflow-x-auto px-1 pb-1">
-            <table className="w-full min-w-[420px] text-sm" data-testid="reversal-preview-table">
-              <caption className="sr-only">Voorbeeld van de tegenboeking per grootboekrekening</caption>
-              <thead>
-                <tr className="border-b text-xs text-muted-foreground">
-                  <th scope="col" className="px-2 py-1.5 text-left font-medium">Rekening</th>
-                  <th scope="col" className="px-2 py-1.5 text-right font-medium">Debet</th>
-                  <th scope="col" className="px-2 py-1.5 text-right font-medium">Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {previewLines.map((line) => {
-                  const account = accountsById.get(line.grootboekrekeningId);
-                  return (
-                    <tr key={line.originalRowId} className="border-b last:border-0" data-testid="reversal-preview-row">
-                      <td className="px-2 py-1.5 break-words">
-                        {formatReversalAccountLabel(account, line.grootboekrekeningId)}
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">
-                        {line.debitCents !== 0 ? formatCents(line.debitCents) : ""}
-                      </td>
-                      <td className="whitespace-nowrap px-2 py-1.5 text-right font-mono tabular-nums">
-                        {line.creditCents !== 0 ? formatCents(line.creditCents) : ""}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
         </div>
+      </div>
+
+      <div className="rounded-md border">
+        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-3 py-2">
+          <span className="text-sm font-medium">Effect van de tegenboeking</span>
+          <Badge variant="outline" className="bg-background font-normal" data-testid="reversal-preview-badge">
+            Voorbeeld
+          </Badge>
+        </div>
+        <p className="px-3 pt-2 text-xs text-muted-foreground" data-testid="reversal-preview-notice">
+          {PREVIEW_NOTICE}
+        </p>
+        <div className="overflow-x-auto px-1 pb-1">
+          <table className="w-full min-w-[420px] text-sm" data-testid="reversal-preview-table">
+            <caption className="sr-only">Voorbeeld van de tegenboeking per grootboekrekening</caption>
+            <thead>
+              <tr className="border-b text-xs text-muted-foreground">
+                <th scope="col" className="px-2 py-1.5 text-left font-medium">Rekening</th>
+                <th scope="col" className="px-2 py-1.5 text-right font-medium">Debet</th>
+                <th scope="col" className="px-2 py-1.5 text-right font-medium">Credit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {previewLines.map((line) => {
+                const account = accountsById.get(line.grootboekrekeningId);
+                return (
+                  <tr key={line.originalRowId} className="border-b last:border-0" data-testid="reversal-preview-row">
+                    <td className="px-2 py-1.5 break-words">
+                      {formatReversalAccountLabel(account, line.grootboekrekeningId)}
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <AccountingAmount cents={line.debitCents} blankWhenZero />
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <AccountingAmount cents={line.creditCents} blankWhenZero />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
 
-        {issue && (
-          <p className="text-sm text-destructive" role="alert" data-testid="reversal-form-issue">
-            {issue}
-          </p>
-        )}
-
-        <DialogFooter>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 sm:h-9"
-            disabled={isPending}
-            onClick={() => onOpenChange(false)}
-          >
-            Annuleren
-          </Button>
-          {/* Bewust de gewone primaire knop en niet de destructieve variant:
-              die is in dit ontwerpsysteem de verwijderknop, en er wordt hier
-              niets verwijderd. */}
-          <Button
-            type="button"
-            className="h-11 sm:h-9"
-            disabled={isPending || !!issue}
-            onClick={handleConfirm}
-            data-testid="reversal-confirm-button"
-          >
-            {isPending ? "Bezig met boeken…" : REVERSAL_CONFIRM_BUTTON}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {issue && (
+        <p className="text-sm text-destructive" role="alert" data-testid="reversal-form-issue">
+          {issue}
+        </p>
+      )}
+    </FinancialActionDialog>
   );
 }

@@ -1,11 +1,12 @@
 import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AccountingNotice } from "@/components/platform/AccountingNotice";
+import { ReconciliationBlock } from "@/components/platform/ReconciliationBlock";
 import { ChevronRight } from "lucide-react";
 import { formatCents } from "@/lib/financial-statements-presentation";
 import {
@@ -118,11 +119,9 @@ export function ReportDrilldownSheet({
         </SheetHeader>
 
         {view === null ? (
-          <Alert className="mt-4" data-testid="drilldown-unavailable">
-            <AlertDescription>
-              De onderliggende gegevens van dit bedrag zijn niet beschikbaar.
-            </AlertDescription>
-          </Alert>
+          <AccountingNotice severity="info" icon={null} className="mt-4" data-testid="drilldown-unavailable">
+            De onderliggende gegevens van dit bedrag zijn niet beschikbaar.
+          </AccountingNotice>
         ) : (
           <div className="mt-3 space-y-4">
             <Kruimelpad target={target!} view={view} onTargetChange={onTargetChange} />
@@ -339,11 +338,9 @@ function RekeningNiveau({
 
   if (isError) {
     return (
-      <Alert variant="destructive" data-testid="drilldown-error">
-        <AlertDescription>
-          De grootboekmutaties van deze rekening konden niet worden opgehaald. Ververs de pagina.
-        </AlertDescription>
-      </Alert>
+      <AccountingNotice severity="blocking" icon={null} data-testid="drilldown-error">
+        De grootboekmutaties van deze rekening konden niet worden opgehaald. Ververs de pagina.
+      </AccountingNotice>
     );
   }
   if (isPending || !running) {
@@ -407,28 +404,21 @@ function WinstVerliesUitleg({
   const a = profitLossReconciliation(row, running);
   return (
     <>
-      <dl
-        className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm"
+      <ReconciliationBlock
         data-testid="drilldown-reconciliation"
         data-kind="profit_loss"
-      >
-        <dt className="text-muted-foreground">Debet in {periodLabel}</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-debit">
-          {formatCents(a.periodDebitCents)}
-        </dd>
-        <dt className="text-muted-foreground">Credit in {periodLabel}</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-credit">
-          {formatCents(a.periodCreditCents)}
-        </dd>
-        <dt className="text-muted-foreground">Netto mutatie (debet-positief)</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-net-movement">
-          {formatCents(a.netMovementCents)}
-        </dd>
-        <dt className="font-medium">Bedrag in de winst-en-verliesrekening</dt>
-        <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-report-amount">
-          {formatCents(a.reportCents)}
-        </dd>
-      </dl>
+        rows={[
+          { label: `Debet in ${periodLabel}`, cents: a.periodDebitCents, testId: "drilldown-period-debit" },
+          { label: `Credit in ${periodLabel}`, cents: a.periodCreditCents, testId: "drilldown-period-credit" },
+          { label: "Netto mutatie (debet-positief)", cents: a.netMovementCents, testId: "drilldown-net-movement" },
+        ]}
+        result={{
+          label: "Bedrag in de winst-en-verliesrekening",
+          cents: a.reportCents,
+          testId: "drilldown-report-amount",
+        }}
+        reconciled={a.reconciles}
+      />
 
       {a.isMirrored && (
         <p className="text-xs text-muted-foreground" data-testid="drilldown-orientation-notice">
@@ -455,34 +445,25 @@ function BalansUitleg({
   const orientatie = row ? balanceOrientation(row, running) : null;
   return (
     <>
-      <dl
-        className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm"
+      <ReconciliationBlock
         data-testid="drilldown-reconciliation"
         data-kind="balance_sheet"
-      >
-        <dt className="text-muted-foreground">Beginsaldo</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-opening">
-          {formatCents(a.openingCents)}
-        </dd>
-        <dt className="text-muted-foreground">Mutaties {periodLabel}</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-movement">
-          {formatCents(a.periodMovementCents)}
-        </dd>
-        <dt className="font-medium">Grootboeksaldo (debet-positief)</dt>
-        <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-closing">
-          {formatCents(a.closingCents)}
-        </dd>
-        {/* Alleen tonen als het iets toevoegt: bij een debetzijde is het
-            hetzelfde getal en zou een tweede regel alleen ruis zijn. */}
-        {orientatie?.isMirrored && (
-          <>
-            <dt className="font-medium">Bedrag in Balans</dt>
-            <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-report-amount">
-              {formatCents(orientatie.reportCents)}
-            </dd>
-          </>
-        )}
-      </dl>
+        rows={[
+          { label: "Beginsaldo", cents: a.openingCents, testId: "drilldown-opening" },
+          { label: `Mutaties ${periodLabel}`, cents: a.periodMovementCents, testId: "drilldown-movement" },
+        ]}
+        result={
+          // De tweede uitkomstregel alleen als die iets toevoegt: bij een
+          // debetzijde is het hetzelfde getal en zou hij alleen ruis zijn.
+          orientatie?.isMirrored
+            ? [
+                { label: "Grootboeksaldo (debet-positief)", cents: a.closingCents, testId: "drilldown-closing" },
+                { label: "Bedrag in Balans", cents: orientatie.reportCents, testId: "drilldown-report-amount" },
+              ]
+            : { label: "Grootboeksaldo (debet-positief)", cents: a.closingCents, testId: "drilldown-closing" }
+        }
+        reconciled={a.reconciles && orientatie?.reconciles !== false}
+      />
 
       {orientatie?.isMirrored && (
         <p className="text-xs text-muted-foreground" data-testid="drilldown-orientation-notice">
@@ -512,28 +493,17 @@ function KolommenUitleg({
   const a = accountReconciliation(running);
   return (
     <>
-      <dl
-        className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 rounded-md border bg-muted/30 px-3 py-2 text-sm"
+      <ReconciliationBlock
         data-testid="drilldown-reconciliation"
         data-kind="trial_balance"
-      >
-        <dt className="text-muted-foreground">Beginsaldo</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-opening">
-          {formatCents(a.openingCents)}
-        </dd>
-        <dt className="text-muted-foreground">Periode debet</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-debit">
-          {formatCents(a.periodDebitCents)}
-        </dd>
-        <dt className="text-muted-foreground">Periode credit</dt>
-        <dd className="text-right font-mono tabular-nums" data-testid="drilldown-period-credit">
-          {formatCents(a.periodCreditCents)}
-        </dd>
-        <dt className="font-medium">Eindsaldo (debet-positief)</dt>
-        <dd className="text-right font-mono font-semibold tabular-nums" data-testid="drilldown-closing">
-          {formatCents(a.closingCents)}
-        </dd>
-      </dl>
+        rows={[
+          { label: "Beginsaldo", cents: a.openingCents, testId: "drilldown-opening" },
+          { label: "Periode debet", cents: a.periodDebitCents, testId: "drilldown-period-debit" },
+          { label: "Periode credit", cents: a.periodCreditCents, testId: "drilldown-period-credit" },
+        ]}
+        result={{ label: "Eindsaldo (debet-positief)", cents: a.closingCents, testId: "drilldown-closing" }}
+        reconciled={a.reconciles}
+      />
       {a.hasOpeningContribution && (
         <p className="text-xs text-muted-foreground" data-testid="drilldown-opening-notice">
           Het eindsaldo bevat een overloop uit eerdere perioden; de mutaties hieronder verklaren
@@ -557,13 +527,13 @@ function Totaalregel({ label, cents, testId }: { label: string; cents: number; t
 }
 
 function AansluitingWaarschuwing() {
+  // `icon={null}`: deze melding had er nooit een, en een doorklikpaneel dat
+  // ineens een icoon toont is een wijziging die hier niets oplost.
   return (
-    <Alert variant="destructive" data-testid="drilldown-mismatch">
-      <AlertDescription>
-        De onderdelen tellen niet op tot het getoonde totaal. Meld dit; er wordt hier niets
-        bijgeschat.
-      </AlertDescription>
-    </Alert>
+    <AccountingNotice severity="blocking" icon={null} data-testid="drilldown-mismatch">
+      De onderdelen tellen niet op tot het getoonde totaal. Meld dit; er wordt hier niets
+      bijgeschat.
+    </AccountingNotice>
   );
 }
 

@@ -6,6 +6,7 @@ import {
   Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AuditTrailBlock } from "@/components/platform/AuditTrailBlock";
 import { useToast } from "@/hooks/use-toast";
 import { formatCents, formatDatumNL } from "@/lib/grootboek-saldi-utils";
 // Eén centenconventie voor de hele app: die van de rapportagekern.
@@ -477,21 +478,33 @@ function AuditVelden({
   verwijzing: string;
   testId: string;
 }) {
+  // `fallback` is hier bewust gevuld: een ontbrekende reden mag niet stilletjes
+  // van het scherm verdwijnen, want dan lijkt het alsof er niets te melden was.
   return (
-    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <dt>{REVERSAL_DATE_LABEL}</dt>
-      <dd className="font-mono tabular-nums text-foreground" data-testid="reversal-date">
-        {datum ? formatDatumNL(datum) : NOT_RECORDED}
-      </dd>
-      <dt>{REASON_LABEL}</dt>
-      <dd className="break-words text-foreground" data-testid="reversal-reason">
-        {reden ?? NOT_RECORDED}
-      </dd>
-      <dt>{verwijzingLabel}</dt>
-      <dd className="font-mono break-all" data-testid={testId}>
-        {verwijzing}
-      </dd>
-    </dl>
+    <AuditTrailBlock
+      className="mt-2"
+      fallback={NOT_RECORDED}
+      entries={[
+        {
+          label: REVERSAL_DATE_LABEL,
+          value: datum ? formatDatumNL(datum) : null,
+          valueClassName: "font-mono tabular-nums text-foreground",
+          testId: "reversal-date",
+        },
+        {
+          label: REASON_LABEL,
+          value: reden,
+          valueClassName: "break-words text-foreground",
+          testId: "reversal-reason",
+        },
+        {
+          label: verwijzingLabel,
+          value: verwijzing,
+          valueClassName: "font-mono break-all",
+          testId,
+        },
+      ]}
+    />
   );
 }
 
