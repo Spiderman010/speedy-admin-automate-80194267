@@ -1039,7 +1039,18 @@ src/pages/Controle.tsx              /overzichten/controle
 - **De kern gooit; de controle vangt.** `buildAccountReport()` draait in een render-`useMemo` en de app heeft geen ErrorBoundary, dus een `LedgerReportingError` (vreemde administratie, vreemde valuta) zou een wit scherm geven in plaats van een nette melding. Die aanroep staat nu in een `try`: fail closed betekent ook niet omvallen.
 - **"Niets te controleren" ≠ "gecontroleerd en in orde".** Een periode zonder boekingen meldt dat met zoveel woorden in plaats van "Kolommenbalans sluit".
 - **De doorklik van de zelfcontrole wijst naar de kolommenbalans**, niet naar `/grootboek/integriteit`: die pagina toont de vier integriteitsregels en kan een gefaalde kernzelfcontrole niet laten zien.
-- **Tests:** `src/test/diagnostic-report.test.ts` (33, door de échte kern en motoren) en `src/test/controle-page.test.tsx` (9).
+- **Tests:** `src/test/diagnostic-report.test.ts` (56, door de échte kern en motoren) en `src/test/controle-page.test.tsx` (12).
+
+#### Diagnostics v1.1
+
+Nog steeds door de gebruiker gestart en uitsluitend lezend. Geen migratie, geen schema, geen RPC.
+
+- **Tegenboekingslineage hoort er nu bij.** De controle `reversal_integrity` ("Tegenboekingen / correcties") leest het oordeel onveranderd uit `evaluateReversalIntegrity()`; alle zes de bevindingsoorten zijn `error`, net als in `diagnosticsForReversals()`. Er wordt **niet gefilterd** — `reversalChecksCoverAll()` legt vast dat elke bevinding precies één keer wordt geteld, dezelfde belofte als `integrityChecksCoverAll()` en om dezelfde reden.
+- **Geen periodefilter op die controle.** `evaluateReversalIntegrity()` eist alle grootboekregels van de administratie: een tegenboeking mag in een ander jaar landen dan haar origineel, en met een periodefilter zou elk paar dat de jaargrens kruist er als kapotte lineage uitzien. Daarom `useLedgerPostings({ clientId })` zónder periode — dezelfde hook, een eigen cachesleutel. De controle zegt erbij dat zij voor de hele administratie geldt.
+- **Bewust geen doorklik.** `/grootboek/integriteit` evalueert tegenboekingen niet, en de enige console die dat wél doet (`/diagnostics/accounting`) is intern ("geen klantfunctie, geen nav-item"). Een verzonnen bestemming is erger dan geen.
+- **Onleesbare markertabel = technische storing.** `fetchReversalMarkers()` geeft `null` in het deploy-venster; dat is "we konden niet kijken", niet "er is niets". De run wordt er onvolledig van en kan dus geen "alles akkoord" melden.
+- **Eén canonieke administratiegrens voor rekeningen.** `accountsForClient()` / `accountBelongsToClient()` in `src/lib/account-scope.ts` leggen vast wat de database zelf afdwingt in `posting_account_ok()`: `client_id IS NULL OR client_id = _client_id` (`20260914120000_add_ledger_postings_foundation.sql:481`, herhaald in de VAT-, bank- en classificatiemigraties). Er wordt **niet** op `actief` gefilterd: een inactieve rekening kan saldo dragen.
+- **Dezelfde scope aan beide kanten van de controle.** De kolommenbalans, `buildAccountReport()` en de groepsindeling krijgen allemaal de gescopede verzameling. `useFinancialStatements` geeft intern de ongefilterde verzameling door en is bewust niet geforkt: beide motoren gebruiken `accounts` uitsluitend als opzoektabel en de rollups komen uit de RIJEN, die de kern al op administratie afdwingt. Een test bewijst dat gescopet en ongescopet exact hetzelfde rapport opleveren — die gelijkheid is de voorwaarde waaronder het verschil mag blijven bestaan.
 
 ---
 

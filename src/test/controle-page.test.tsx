@@ -17,6 +17,8 @@ const state = {
   rows: [] as Record<string, unknown>[],
   accounts: [] as Record<string, unknown>[],
   integrityError: false,
+  /** De tegenboekingsbron: schoon, kapot, of onleesbaar. */
+  reversals: "schoon" as "schoon" | "bevindingen" | "onleesbaar",
 };
 
 const writeCalls: string[] = [];
@@ -56,6 +58,34 @@ vi.mock("@/hooks/useLedgerIntegrity", () => ({
         },
     isPending: false,
     isError: state.integrityError,
+  }),
+}));
+vi.mock("@/hooks/useReversalIntegrity", () => ({
+  REVERSAL_MARKERS_QUERY_KEY: "reversal-markers",
+  useReversalIntegrity: () => ({
+    isPending: false,
+    isUnavailable: state.reversals === "onleesbaar",
+    data:
+      state.reversals === "onleesbaar"
+        ? undefined
+        : {
+            findings:
+              state.reversals === "bevindingen"
+                ? [{
+                    kind: "claim_zonder_origineel",
+                    subject: "g-1",
+                    detail: "geen oorspronkelijke regels",
+                    reference: { soort: "boekingsgroep", id: "g-1" },
+                  }]
+                : [],
+            reversalCount: state.reversals === "bevindingen" ? 1 : 0,
+            byKind: {
+              claim_zonder_origineel: state.reversals === "bevindingen" ? 1 : 0,
+              claim_zonder_tegenboeking: 0, tegenregel_zonder_origineel: 0,
+              tegenboeking_negeert_niet_exact: 0, lineage_buiten_administratie: 0,
+              dubbele_tegenboeking: 0,
+            },
+          },
   }),
 }));
 vi.mock("@/hooks/useLedgerCompleteness", () => ({
@@ -149,6 +179,7 @@ const toon = () => render(<MemoryRouter><Controle /></MemoryRouter>);
 beforeEach(() => {
   writeCalls.length = 0;
   state.integrityError = false;
+  state.reversals = "schoon";
   gezond();
 });
 
@@ -227,6 +258,37 @@ describe("fail closed op het scherm", () => {
     expect(rapport.contains(melding)).toBe(true);
     // DOCUMENT_POSITION_FOLLOWING: de telling komt ná de melding.
     expect(melding.compareDocumentPosition(telling) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("tegenboekingen op het scherm", () => {
+  it("20. een schone lineage telt mee als akkoord", () => {
+    toon();
+    fireEvent.click(screen.getByTestId("controle-uitvoeren"));
+    const regel = screen.getByTestId("controle-rapport").querySelector('[data-check="reversal_integrity"]');
+    expect(regel).not.toBeNull();
+    expect(regel!.getAttribute("data-severity")).toBe("ok");
+    expect(screen.getByTestId("controle-alles-akkoord")).toBeInTheDocument();
+  });
+
+  it("21. een bevinding is een blokkade, en géén technische storing", () => {
+    state.reversals = "bevindingen";
+    toon();
+    fireEvent.click(screen.getByTestId("controle-uitvoeren"));
+    const regel = screen.getByTestId("controle-rapport").querySelector('[data-check="reversal_integrity"]');
+    expect(regel!.getAttribute("data-severity")).toBe("error");
+    expect(screen.queryByTestId("controle-onvolledig")).toBeNull();
+    expect(screen.queryByTestId("controle-alles-akkoord")).toBeNull();
+  });
+
+  it("22. een onleesbare bron is wél een technische storing", () => {
+    state.reversals = "onleesbaar";
+    toon();
+    fireEvent.click(screen.getByTestId("controle-uitvoeren"));
+    expect(screen.getByTestId("controle-onvolledig").textContent).toContain("Tegenboekingen");
+    expect(screen.queryByTestId("controle-alles-akkoord")).toBeNull();
+    // Geen uitspraak over de lineage wanneer er niet gekeken kon worden.
+    expect(screen.getByTestId("controle-rapport").querySelector('[data-check="reversal_integrity"]')).toBeNull();
   });
 });
 

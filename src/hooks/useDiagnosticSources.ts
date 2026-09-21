@@ -4,9 +4,11 @@ import { useLedgerPostings } from "@/hooks/useLedgerPostings";
 import { useLedgerIntegrity } from "@/hooks/useLedgerIntegrity";
 import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
+import { useReversalIntegrity } from "@/hooks/useReversalIntegrity";
 import { buildAccountReport, type LedgerPeriod } from "@/lib/ledger-reporting";
 import { buildTrialBalance } from "@/lib/proef-saldibalans";
 import { subgroupSectionsForGroups, type StatementGroupSections } from "@/lib/financial-statements-subgroups";
+import { accountsForClient } from "@/lib/account-scope";
 import { available, unavailable, type DiagnosticRunInput, type Source } from "@/lib/diagnostic-report";
 
 /**
@@ -49,9 +51,15 @@ export function useDiagnosticSources({
   const completenessQuery = useLedgerCompleteness(clientId, { enabled });
   const openingBalance = useOpeningBalanceCompleteness(clientId, period);
   const statements = useFinancialStatements({ clientId, period, enabled });
+  const reversals = useReversalIntegrity(clientId, enabled);
 
+  /**
+   * DE CANONIEKE SCOPE van deze controle, uit de gedeelde regel — dezelfde die
+   * `posting_account_ok()` in de database afdwingt. Inactieve rekeningen
+   * blijven staan: die kunnen saldo dragen.
+   */
   const accounts = useMemo(
-    () => (accountsQuery.data ?? []).filter((a) => a.client_id === null || a.client_id === clientId),
+    () => accountsForClient(accountsQuery.data ?? [], clientId),
     [accountsQuery.data, clientId],
   );
 
@@ -91,6 +99,11 @@ export function useDiagnosticSources({
     return available(openingBalance.data);
   }, [openingBalance.isError, openingBalance.data]);
 
+  const reversalSource = useMemo(() => {
+    if (reversals.isUnavailable || !reversals.data) return unavailable<never>("Tegenboekingen");
+    return available(reversals.data);
+  }, [reversals.isUnavailable, reversals.data]);
+
   const statementsSource = useMemo(() => {
     if (statements.state.kind !== "ready") return unavailable<never>("Balans en winst-en-verliesrekening");
     return available(statements.state.result);
@@ -119,11 +132,13 @@ export function useDiagnosticSources({
     integrityQuery.isPending ||
     completenessQuery.isPending ||
     openingBalance.isPending ||
+    reversals.isPending ||
     statements.state.kind === "loading";
 
   const input: DiagnosticRunInput = {
     trialBalance,
     integrity,
+    reversals: reversalSource,
     statements: statementsSource,
     openingBalance: opening,
     completeness,
