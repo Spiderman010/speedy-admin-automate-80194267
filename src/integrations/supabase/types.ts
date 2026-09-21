@@ -589,6 +589,7 @@ export type Database = {
           organization_id: string | null
           report_group: string | null
           report_sort: number | null
+          report_subgroup: string | null
           statement_type: string | null
           updated_at: string
           user_id: string
@@ -605,6 +606,7 @@ export type Database = {
           organization_id?: string | null
           report_group?: string | null
           report_sort?: number | null
+          report_subgroup?: string | null
           statement_type?: string | null
           updated_at?: string
           user_id: string
@@ -621,6 +623,7 @@ export type Database = {
           organization_id?: string | null
           report_group?: string | null
           report_sort?: number | null
+          report_subgroup?: string | null
           statement_type?: string | null
           updated_at?: string
           user_id?: string
@@ -1903,11 +1906,79 @@ export type Database = {
         }
         Relationships: []
       }
+      year_closures: {
+        Row: {
+          client_id: string
+          closed_at: string
+          closed_by: string
+          fiscal_year: number
+          organization_id: string
+        }
+        Insert: {
+          client_id: string
+          closed_at?: string
+          closed_by: string
+          fiscal_year: number
+          organization_id: string
+        }
+        Update: {
+          client_id?: string
+          closed_at?: string
+          closed_by?: string
+          fiscal_year?: number
+          organization_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "year_closures_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "year_closures_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      bank_bulk_posting_candidates: {
+        Args: { _boekjaar?: number; _client_id: string }
+        Returns: {
+          amount: number
+          btw_percentage: number
+          counter_account: string
+          description: string
+          grootboekrekening_id: string
+          is_allocated: boolean
+          is_posted: boolean
+          match_status: string
+          posting_group_id: string
+          reason: string
+          transaction_date: string
+          transaction_id: string
+          workflow_state: string
+        }[]
+      }
+      close_fiscal_year: {
+        Args: { _client_id: string; _fiscal_year: number }
+        Returns: {
+          client_id: string
+          closed_at: string
+          closed_by: string
+          created: boolean
+          fiscal_year: number
+          organization_id: string
+        }[]
+      }
       declare_opening_balance_nil: {
         Args: { _opening_balance_id: string }
         Returns: undefined
@@ -1945,6 +2016,17 @@ export type Database = {
       post_bank_transaction: {
         Args: { _transaction_id: string }
         Returns: string
+      }
+      post_bank_transactions_bulk: {
+        Args: { _transaction_ids: string[] }
+        Returns: {
+          error_code: string
+          message: string
+          ordinal: number
+          outcome: string
+          posting_group_id: string
+          transaction_id: string
+        }[]
       }
       post_manual_journal: { Args: { _journal_id: string }; Returns: string }
       post_opening_balance: {
