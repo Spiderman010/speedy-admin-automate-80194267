@@ -25,6 +25,7 @@ import {
   AlertCircle,
   BarChart3,
   BookOpen,
+  CalendarCheck,
   ClipboardCheck,
   Download,
   FileBarChart,
@@ -76,6 +77,13 @@ const reportTypes = [
     icon: ClipboardCheck,
     status: "Beschikbaar",
     href: "/overzichten/controle",
+  },
+  // Year Close PR 1: alleen gereedheid; de afsluitmotor bestaat nog niet.
+  {
+    title: "Jaarafsluiting",
+    icon: CalendarCheck,
+    status: "Beschikbaar",
+    href: "/overzichten/jaarafsluiting",
   },
   { title: "Grootboek", icon: BookOpen, status: "Nog niet beschikbaar" },
   { title: "BTW-overzicht", icon: ReceiptText, status: "Nog niet beschikbaar" },
