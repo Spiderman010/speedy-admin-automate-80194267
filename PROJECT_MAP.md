@@ -1013,6 +1013,36 @@ src/lib/platform/audit-trail.ts                    de regel achter een ontbreken
 
 ---
 
+### Diagnostics v1 — "Controle uitvoeren" per administratie en periode
+
+**Uitsluitend lezen.** Geen migratie, geen SQL, geen RPC, geen schemawijziging, geen typewijziging, geen afhankelijkheid, geen nav-item, geen achtergrondtaak, geen AI.
+
+```
+src/lib/diagnostic-report.ts        puur: bestaande oordelen → één controle per onderwerp
+src/hooks/useDiagnosticSources.ts   de bronnen, uitsluitend via bestaande hooks
+src/pages/Controle.tsx              /overzichten/controle
+```
+
+- **Route `/overzichten/controle`, geen nieuw nav-item.** De pagina erft "Rapportages" via `isNavItemActive` (`startsWith("/overzichten")`), precies zoals `/overzichten/proef-saldibalans`, en is bereikbaar via een kaart op de rapportagehub. De bestaande interne console `/diagnostics/accounting` is bewust ongemoeid gelaten: die is per-record, niet periodegebonden en staat in `App.tsx` gemarkeerd als "geen klantfunctie, geen nav-item".
+- **Eén ernstladder, de bestaande.** `DiagnosticSeverity` (`ok` | `warning` | `error`) uit `accounting-diagnostics.ts` wordt hergebruikt; het scherm kiest andere wóórden (Akkoord / Waarschuwing / Blokkade) maar nooit een andere indeling. Een test weigert `"pass"`/`"blocking"` in het model.
+- **Er wordt niets herrekend.** Elke uitspraak komt uit een bestaande laag: `buildTrialBalance()` (zelfcontrole, begin-, periode- en eindbalans), `evaluateLedgerIntegrity()` (boekingsgroepen), `buildFinancialStatements()` (de zeven motorcontroles en de niet-geclassificeerde activiteit mét bedrag), `computeOpeningBalanceCompleteness()`, `computeLedgerCompleteness()` en `subgroupSectionsForGroups()`.
+- **Fail closed is structureel, geen afspraak.** Elke bron komt binnen als `Source<T>`: beschikbaar mét waarde, of niet beschikbaar. Ontbreekt er één, dan is de uitkomst `ok: false` en kan er per constructie geen "alles akkoord" uit komen — ook niet wanneer álle overige controles slagen. Een test bewijst precies dat geval. Het scherm noemt de ontbrekende bronnen bij naam en zegt erbij dat het om een **technische storing** gaat, geen boekhoudkundige bevinding.
+- **De periodegrens mag hier gecontroleerd worden** omdat de groepstrigger van 6C-b2 één `posting_date` per boekingsgroep afdwingt: een periodegrens kan nooit een journaalpost doormidden knippen (zie de kop van `ledger-reporting.ts`). Halfopen `[from, toExclusive)`, met een test op 31-12 versus 1-1.
+- **De zelfcontrole van de kern verpakt haar bevindingen.** Faalt zij, dan rekent `buildTrialBalance()` niet verder en blijven de losse `period_unbalanced` / `opening_unbalanced` van de kolommenbalans leeg — een onbalans zit dán ín de `{kind:"kernel"}`-fout. Wie alleen op het buitenste niveau kijkt, meldt "in balans" terwijl het grootboek scheef staat. De controlelaag kijkt daarom op beide niveaus; twee tests vallen om zodra dat wegvalt.
+- **Ontbrekende groep ≠ ontbrekende categorie.** Een rekening zonder `report_subgroup` blijft gewoon zichtbaar onder "Nog niet ingedeeld" en levert een waarschuwing op, nooit een blokkade. Zolang niemand in de administratie een groep heeft toegekend is het niveau "nog niet in gebruik" — anders zou elke rekening een waarschuwing geven zolang migratie `20260923120000` nog niet is toegepast.
+- **Bewust uitgesteld: de periodegebonden banktelling.** `bank_bulk_posting_candidates()` is read-only en client+boekjaar-gescoped, maar migratie `20260922120000` is **niet toegepast** — geen van beide RPC's staat in `src/integrations/supabase/types.ts`, waarom `useBankBulkPosting` een typeshim gebruikt. Aanroepen zou elke controle laten stranden. In plaats daarvan telt de controle openstaand werk via `computeLedgerCompleteness()`, **per administratie en niet per periode**, en dat staat er letterlijk bij.
+- **Geen schrijfpad.** Statische grenstests over alle drie de bestanden weigeren `insert`/`update`/`delete`/`upsert`, `useMutation`, élke `.rpc(`, de Supabase-client, een achtergrondtaak en AI. Een UI-test telt nul schrijfacties na twee klikken.
+- **De gebruiker start zelf.** Bij openen draait er geen controle en staat er geen enkele uitspraak op het scherm; de bronnen laden wel vast, zodat de klik direct antwoord geeft. De uitkomst is een momentopname die daarna niet meer meebeweegt met de cache.
+- **Eén scope-uitspraak vervangen door haar invariant.** `rapportages-ui.test.tsx` legde "alle vijf rapportkaarten" vast met een telling van hoe vaak "Beschikbaar" voorkomt. Elk nieuw opgeleverd rapport laat zo'n telling omvallen; vervangen door een assertie per kaart, wat sterker is dan een totaal.
+- **De integriteitscontrole wordt gepartitioneerd, niet gefilterd.** Een eerste versie hield alleen bevindingen met `reference.soort === "boekingsgroep"` over en liet daarmee `factuur_zonder_regels` vallen — een BLOKKERENDE bevinding die `/grootboek/integriteit` wél toont. Het rapport zei dan "alles akkoord" terwijl er een gebroken invariant open stond. Nu landt elke bevinding in precies één controle (`posting_groups`, `source_documents`, en een vangnet voor een onbekende soort); `integrityChecksCoverAll()` legt dat vast en vier tests vallen om zodra het terugkomt.
+- **Een inhoudelijke motorfout is geen technische storing.** Faalt `buildFinancialStatements()` om een boekhoudkundige reden, dan is de groepsindeling niet te bepalen — maar de run wordt daar niet "onvolledig" van, want de motorcontrole draagt die blokkade al. Alleen een échte laadfout maakt `ok: false`.
+- **De kern gooit; de controle vangt.** `buildAccountReport()` draait in een render-`useMemo` en de app heeft geen ErrorBoundary, dus een `LedgerReportingError` (vreemde administratie, vreemde valuta) zou een wit scherm geven in plaats van een nette melding. Die aanroep staat nu in een `try`: fail closed betekent ook niet omvallen.
+- **"Niets te controleren" ≠ "gecontroleerd en in orde".** Een periode zonder boekingen meldt dat met zoveel woorden in plaats van "Kolommenbalans sluit".
+- **De doorklik van de zelfcontrole wijst naar de kolommenbalans**, niet naar `/grootboek/integriteit`: die pagina toont de vier integriteitsregels en kan een gefaalde kernzelfcontrole niet laten zien.
+- **Tests:** `src/test/diagnostic-report.test.ts` (33, door de échte kern en motoren) en `src/test/controle-page.test.tsx` (9).
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**

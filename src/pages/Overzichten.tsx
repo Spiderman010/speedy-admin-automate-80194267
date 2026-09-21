@@ -25,6 +25,7 @@ import {
   AlertCircle,
   BarChart3,
   BookOpen,
+  ClipboardCheck,
   Download,
   FileBarChart,
   Landmark,
@@ -67,6 +68,14 @@ const reportTypes = [
     icon: BarChart3,
     status: "Beschikbaar",
     href: "/grootboek/winst-verlies",
+  },
+  // Diagnostics v1: één controle per administratie en periode, die uitsluitend
+  // bestaande oordelen samenvat — geen tweede boekhouding.
+  {
+    title: "Controle",
+    icon: ClipboardCheck,
+    status: "Beschikbaar",
+    href: "/overzichten/controle",
   },
   { title: "Grootboek", icon: BookOpen, status: "Nog niet beschikbaar" },
   { title: "BTW-overzicht", icon: ReceiptText, status: "Nog niet beschikbaar" },
