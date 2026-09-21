@@ -243,5 +243,5 @@ bestaande schermen tegelijk.
 | `EntityDetailSheet` | 4 zijpanelen delen de opzet, maar hun koppen en voetteksten verschillen nog te veel |
 | `DataTableShell` | ruim 20 tabellen, met echt uiteenlopende omhulsels; eerst de varianten terugbrengen |
 | `StatusBadge` | statussen verschillen per domein; een gedeelde kleurtoewijzing zou nu betekenis verzinnen |
-| `ModulePageShell` | `PageHeader` dekt het grootste deel al; de rest is per pagina verschillend |
+| `ModulePageShell` | de app heeft **twee bewuste paginakop-conventies**: 13 pagina's renderen `PageHeader`, 9 renderen een `sr-only` h1 en laten `AppHeader` de zichtbare titel leveren. Die splitsing is test-afgedwongen (`src/test/vraagposten-ui.test.tsx` weigert de string `PageHeader` in die pagina, `src/test/bank-ui.test.tsx` pint de `sr-only` h1) — één schil eroverheen zou een dubbele titel opleveren |
 | `PeriodClientToolbar` | raakt de periodekeuze, en die is boekhoudkundig gevoelig — apart en met opzet |
