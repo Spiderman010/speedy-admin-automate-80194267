@@ -1,6 +1,7 @@
 import type { DiagnosticSeverity } from "./accounting-diagnostics";
 import { severityForIntegrityFinding } from "./accounting-diagnostics";
 import type { LedgerIntegrityReport } from "./ledger-integrity";
+import type { ReversalIntegrityReport } from "./reversal-integrity";
 import type { TrialBalance, TrialBalanceFailure } from "./proef-saldibalans";
 import type { LedgerSelfCheckFailure } from "./ledger-reporting";
 import type { FinancialStatementsResult, UnclassifiedSummary } from "./financial-statements";
@@ -52,6 +53,7 @@ export type DiagnosticCheckId =
   | "trial_balance"
   | "posting_groups"
   | "source_documents"
+  | "reversal_integrity"
   | "integrity_other"
   | "opening_balance_status"
   | "statements"
@@ -96,6 +98,8 @@ export type DiagnosticRun =
 export interface DiagnosticRunInput {
   trialBalance: Source<TrialBalance>;
   integrity: Source<LedgerIntegrityReport>;
+  /** De tegenboekingslineage; `unavailable` zodra de markertabel niet leesbaar is. */
+  reversals: Source<ReversalIntegrityReport>;
   statements: Source<FinancialStatementsResult>;
   openingBalance: Source<OpeningBalanceCompleteness>;
   completeness: Source<LedgerCompleteness>;
@@ -342,6 +346,57 @@ export function integrityChecksCoverAll(report: LedgerIntegrityReport): boolean 
 }
 
 /**
+ * A6. De tegenboekingslineage.
+ *
+ * `evaluateReversalIntegrity()` velt het oordeel; hier wordt geteld en verder
+ * niets. Er wordt NIET gefilterd — niet op soort, niet op referentie, niet op
+ * wat dan ook — want elke bevinding is een gebroken invariant. Dat is ook de
+ * ernst die `diagnosticsForReversals()` er al aan geeft: alle zes de soorten
+ * zijn `error`, want een tegenboeking bestaat of bestaat niet; een "nog te
+ * doen"-toestand is er niet.
+ *
+ * GEEN DOORKLIK, met opzet. De enige pagina die tegenboekingslineage evalueert
+ * is de interne console /diagnostics/accounting, en die staat in `App.tsx`
+ * gemarkeerd als "geen klantfunctie, geen nav-item". /grootboek/integriteit
+ * evalueert tegenboekingen niet — daar zou een verwijzing doodlopen. Een
+ * verzonnen bestemming is erger dan geen.
+ */
+export function reversalIntegrity(report: ReversalIntegrityReport): DiagnosticCheck {
+  const basis = { id: "reversal_integrity" as const, title: "Tegenboekingen / correcties" };
+  const aantal = report.findings.length;
+  if (aantal === 0) {
+    return {
+      ...basis,
+      severity: "ok",
+      summary:
+        report.reversalCount === 0
+          ? "Er zijn in deze administratie geen tegenboekingen; er valt op de lineage niets aan te merken."
+          : `Elke tegenboeking verwijst naar haar oorspronkelijke boeking en negeert die exact (${telwoord(report.reversalCount, "tegenboeking", "tegenboekingen")}).`,
+    };
+  }
+  return {
+    ...basis,
+    severity: "error",
+    count: aantal,
+    summary:
+      `${telwoord(aantal, "bevinding", "bevindingen")} in de tegenboekingslineage. ` +
+      "Deze controle geldt voor de hele administratie, niet alleen voor deze periode.",
+  };
+}
+
+/**
+ * Elke bevinding van `evaluateReversalIntegrity()` is precies één keer geteld.
+ *
+ * Dezelfde belofte als `integrityChecksCoverAll()`, en om dezelfde reden: bij
+ * de grootboekintegriteit liet een filter ooit een blokkerende bevinding
+ * verdwijnen, waarna het rapport "alles akkoord" meldde. Hier kan dat niet,
+ * en deze functie is het bewijs.
+ */
+export function reversalChecksCoverAll(report: ReversalIntegrityReport): boolean {
+  return (reversalIntegrity(report).count ?? 0) === report.findings.length;
+}
+
+/**
  * D. De beginbalans. De toestand komt ongewijzigd uit
  * `computeOpeningBalanceCompleteness()`; er wordt hier niets herontworpen en
  * er wordt NOOIT een nihilverklaring afgedwongen. Een ontbrekende beginbalans
@@ -508,6 +563,9 @@ export function runDiagnostics(input: DiagnosticRunInput): DiagnosticRun {
 
   if (input.integrity.available === true) checks.push(...integrityChecks(input.integrity.value));
   else ontbreekt.push(input.integrity.label);
+
+  if (input.reversals.available === true) checks.push(reversalIntegrity(input.reversals.value));
+  else ontbreekt.push(input.reversals.label);
 
   if (input.openingBalance.available === true) checks.push(openingBalanceStatus(input.openingBalance.value));
   else ontbreekt.push(input.openingBalance.label);

@@ -18,9 +18,18 @@ import { subgroupSectionsForGroups, UNASSIGNED_SUBGROUP_KEY } from "@/lib/financ
 import { computeLedgerCompleteness, type OpeningBalanceCompleteness } from "@/lib/ledger-completeness";
 import type { LedgerIntegrityReport } from "@/lib/ledger-integrity";
 import {
+  evaluateReversalIntegrity,
+  REVERSAL_SOURCE_TYPE,
+  type ReversalFindingKind,
+  type ReversalIntegrityReport,
+} from "@/lib/reversal-integrity";
+import { accountBelongsToClient, accountsForClient } from "@/lib/account-scope";
+import {
   available,
   integrityChecks,
   integrityChecksCoverAll,
+  reversalChecksCoverAll,
+  reversalIntegrity,
   runDiagnostics,
   unavailable,
   type DiagnosticRunInput,
@@ -59,6 +68,7 @@ function entry(debit: string, credit: string, amount: string, date: string, clie
 
 const acc = <T extends { id: string }>(over: T) => ({
   nummer: 1000, omschrijving: "Rekening", categorie: "activa", actief: true,
+  client_id: null as string | null,
   statement_type: null as string | null, report_group: null as string | null,
   report_subgroup: null as string | null, normal_side: null, report_sort: null,
   ...over,
@@ -96,6 +106,12 @@ const SCHOON_INTEGRITY: LedgerIntegrityReport = {
     marker_zonder_boekingsgroep: 0, boekingsgroep_niet_in_balans: 0,
   },
 };
+
+/** Geen tegenboekingen, dus ook geen bevindingen — door de échte evaluator. */
+const GEEN_TEGENBOEKINGEN: ReversalIntegrityReport = evaluateReversalIntegrity({
+  markers: [],
+  postings: [],
+});
 
 const BEGINBALANS_GEBOEKT: OpeningBalanceCompleteness = {
   state: "posted", year: YEAR, assertionYear: YEAR, draftCount: 0,
@@ -157,6 +173,7 @@ function inputFor(
   return {
     trialBalance: available(trialBalanceOf(rows, accounts, "client-1", per)),
     integrity: available(SCHOON_INTEGRITY),
+    reversals: available(GEEN_TEGENBOEKINGEN),
     statements: available(statements),
     openingBalance: available(BEGINBALANS_GEBOEKT),
     completeness: available(ALLES_GEBOEKT),
@@ -591,5 +608,272 @@ describe("de grenzen van de controlelaag", () => {
     expect(bron).not.toMatch(/reduce\(\(.*\)\s*=>\s*.*\+\s*(signedAmountCents|debit_amount|credit_amount)/);
     expect(bron).not.toMatch(/\/\s*100|\*\s*100/);
     expect(bron).not.toMatch(/parseFloat|Number\(/);
+  });
+});
+
+// ── v1.1 — Tegenboekingslineage ────────────────────────────────────────────
+
+/**
+ * Alle zes de bevindingsoorten komen uit de ÉCHTE `evaluateReversalIntegrity()`;
+ * er wordt geen enkel `ReversalFinding` met de hand in elkaar gezet. Zo kan
+ * deze suite niet groen blijven terwijl de evaluator iets anders doet.
+ */
+describe("tegenboekingslineage", () => {
+  const rij = (over: Record<string, unknown>) => ({
+    id: "r", client_id: "client-1", grootboekrekening_id: BANK.id,
+    posting_group_id: "g", debit_amount: "100.00", credit_amount: "0.00",
+    currency: "EUR", source_type: "manual_journal", source_id: null,
+    reversal_of_posting_id: null, ...over,
+  });
+  const marker = (over: Record<string, unknown> = {}) => ({
+    original_posting_group_id: "g-orig", reversal_posting_group_id: "g-tegen",
+    organization_id: "org-1", client_id: "client-1", line_count: 1, ...over,
+  });
+
+  /** Eén origineel met één exacte tegenboeking: precies wat de motor maakt. */
+  const gezondeLineage = () => ({
+    markers: [marker()],
+    postings: [
+      rij({ id: "o1", posting_group_id: "g-orig", debit_amount: "100.00", credit_amount: "0.00" }),
+      rij({
+        id: "t1", posting_group_id: "g-tegen", debit_amount: "0.00", credit_amount: "100.00",
+        source_type: REVERSAL_SOURCE_TYPE, reversal_of_posting_id: "o1",
+      }),
+    ],
+  });
+
+  it("20. een gezonde lineage is akkoord", () => {
+    const report = evaluateReversalIntegrity(gezondeLineage());
+    expect(report.findings).toHaveLength(0);
+    const check = reversalIntegrity(report);
+    expect(check.severity).toBe("ok");
+    expect(check.id).toBe("reversal_integrity");
+    expect(check.summary).toContain("1 tegenboeking");
+  });
+
+  it("21. zonder tegenboekingen wordt er niets beweerd wat er niet is", () => {
+    const check = reversalIntegrity(evaluateReversalIntegrity({ markers: [], postings: [] }));
+    expect(check.severity).toBe("ok");
+    expect(check.summary).toContain("geen tegenboekingen");
+  });
+
+  /** Per soort één fixture die de échte evaluator die soort laat opleveren. */
+  const SOORTEN: ReadonlyArray<{ kind: ReversalFindingKind; maak: () => Parameters<typeof evaluateReversalIntegrity>[0] }> = [
+    {
+      kind: "claim_zonder_origineel",
+      maak: () => ({
+        markers: [marker()],
+        postings: [rij({ id: "t1", posting_group_id: "g-tegen", debit_amount: "0.00", credit_amount: "100.00", source_type: REVERSAL_SOURCE_TYPE, reversal_of_posting_id: "o1" }),
+                   rij({ id: "o1", posting_group_id: "g-anders" })],
+      }),
+    },
+    {
+      kind: "claim_zonder_tegenboeking",
+      maak: () => ({ markers: [marker()], postings: [rij({ id: "o1", posting_group_id: "g-orig" })] }),
+    },
+    {
+      kind: "tegenregel_zonder_origineel",
+      maak: () => ({
+        markers: [],
+        postings: [rij({ id: "t1", posting_group_id: "g-tegen", source_type: REVERSAL_SOURCE_TYPE, reversal_of_posting_id: null })],
+      }),
+    },
+    {
+      kind: "tegenboeking_negeert_niet_exact",
+      maak: () => ({
+        markers: [],
+        postings: [
+          rij({ id: "o1", posting_group_id: "g-orig", debit_amount: "100.00", credit_amount: "0.00" }),
+          // Bedragen NIET verwisseld: dit negeert het origineel niet.
+          rij({ id: "t1", posting_group_id: "g-tegen", debit_amount: "0.00", credit_amount: "99.00", source_type: REVERSAL_SOURCE_TYPE, reversal_of_posting_id: "o1" }),
+        ],
+      }),
+    },
+    {
+      kind: "lineage_buiten_administratie",
+      maak: () => ({
+        markers: [],
+        postings: [
+          rij({ id: "o1", posting_group_id: "g-orig", client_id: "client-2" }),
+          rij({ id: "t1", posting_group_id: "g-tegen", debit_amount: "0.00", credit_amount: "100.00", source_type: REVERSAL_SOURCE_TYPE, reversal_of_posting_id: "o1" }),
+        ],
+      }),
+    },
+    {
+      kind: "dubbele_tegenboeking",
+      maak: () => ({
+        markers: [marker(), marker({ reversal_posting_group_id: "g-tegen-2" })],
+        postings: [
+          rij({ id: "o1", posting_group_id: "g-orig" }),
+          rij({ id: "t1", posting_group_id: "g-tegen", debit_amount: "0.00", credit_amount: "100.00", source_type: REVERSAL_SOURCE_TYPE, reversal_of_posting_id: "o1" }),
+        ],
+      }),
+    },
+  ];
+
+  it.each(SOORTEN)("22. bevindingsoort $kind bereikt het controlerapport", ({ kind, maak }) => {
+    const report = evaluateReversalIntegrity(maak());
+    // De échte evaluator moet deze soort werkelijk opleveren, anders bewijst
+    // de rest van de test niets.
+    expect(report.byKind[kind], `evaluator leverde geen ${kind}`).toBeGreaterThan(0);
+    const check = reversalIntegrity(report);
+    expect(check.severity).toBe("error");
+    expect(check.count).toBe(report.findings.length);
+    expect(reversalChecksCoverAll(report)).toBe(true);
+  });
+
+  it("23. meerdere bevindingen worden allemaal geteld", () => {
+    const report = evaluateReversalIntegrity({
+      markers: [marker(), marker({ reversal_posting_group_id: "g-tegen-2" })],
+      postings: [
+        rij({ id: "t1", posting_group_id: "g-tegen", source_type: REVERSAL_SOURCE_TYPE, reversal_of_posting_id: null }),
+      ],
+    });
+    expect(report.findings.length).toBeGreaterThan(1);
+    expect(reversalIntegrity(report).count).toBe(report.findings.length);
+    expect(reversalChecksCoverAll(report)).toBe(true);
+  });
+
+  it("24. geen enkele bevinding kan door filtering verdwijnen", () => {
+    // Elke soort tegelijk, plus een verzonnen soort die de evaluator niet kent:
+    // ook die mag niet stilvallen.
+    const alle = SOORTEN.flatMap(({ maak }) => evaluateReversalIntegrity(maak()).findings);
+    const report: ReversalIntegrityReport = {
+      findings: [...alle, { kind: "iets_nieuws" as ReversalFindingKind, subject: "x", detail: "x", reference: { soort: "boekingsgroep", id: "x" } }],
+      reversalCount: 0,
+      byKind: GEEN_TEGENBOEKINGEN.byKind,
+    };
+    expect(reversalIntegrity(report).count).toBe(report.findings.length);
+    expect(reversalChecksCoverAll(report)).toBe(true);
+  });
+
+  it("25. een bevinding is een BOEKHOUDKUNDIGE uitslag, geen technische storing", () => {
+    const { rows, accounts } = gezond();
+    const report = evaluateReversalIntegrity(SOORTEN[0].maak());
+    const run = runDiagnostics(inputFor(rows, accounts, { reversals: available(report) }));
+    expect(run.ok).toBe(true);
+    expect(check(run, "reversal_integrity")?.severity).toBe("error");
+    expect(run.summary.blocking).toBeGreaterThan(0);
+  });
+
+  it("26. een onleesbare tegenboekingsbron maakt de hele run onvolledig", () => {
+    const { rows, accounts } = gezond();
+    const run = runDiagnostics(inputFor(rows, accounts, { reversals: unavailable("Tegenboekingen") }));
+    expect(run.ok).toBe(false);
+    if (run.ok !== false) throw new Error("onbereikbaar");
+    expect(run.unavailable).toContain("Tegenboekingen");
+    expect(check(run, "reversal_integrity")).toBeUndefined();
+  });
+
+  it("27. een schone lineage levert geen waarschuwing en geen blokkade op", () => {
+    const { rows, accounts } = gezond();
+    const run = runDiagnostics(inputFor(rows, accounts, {
+      reversals: available(evaluateReversalIntegrity(gezondeLineage())),
+    }));
+    expect(run.summary.blocking).toBe(0);
+    expect(run.summary.warnings).toBe(0);
+    expect(check(run, "reversal_integrity")?.severity).toBe("ok");
+  });
+
+  it("28. er wordt geen doorklik verzonnen naar een pagina die dit niet toont", () => {
+    const kapot = reversalIntegrity(evaluateReversalIntegrity(SOORTEN[0].maak()));
+    // /grootboek/integriteit evalueert tegenboekingen niet, en de enige console
+    // die dat wél doet is intern. Dan liever geen verwijzing.
+    expect(kapot.drilldown).toBeUndefined();
+  });
+});
+
+// ── v1.1 — Rekeningscope ───────────────────────────────────────────────────
+
+describe("de administratiegrens van het rekeningschema", () => {
+  const ORG_BREED = acc({ id: "s-org", nummer: 1000, omschrijving: "Kas (schema)" });
+  const VAN_A = acc({ id: "s-a", nummer: 1200, omschrijving: "Eigen rekening A" });
+  const VAN_B = acc({ id: "s-b", nummer: 1201, omschrijving: "Eigen rekening B" });
+  const INACTIEF = acc({ id: "s-inactief", nummer: 1300, omschrijving: "Opgeheven maar met saldo" });
+
+  const schema = [
+    { ...ORG_BREED, client_id: null },
+    { ...VAN_A, client_id: "client-1" },
+    { ...VAN_B, client_id: "client-2" },
+    { ...INACTIEF, client_id: "client-1", actief: false },
+  ];
+
+  it("29. een organisatiebrede rekening hoort bij elke administratie", () => {
+    expect(accountBelongsToClient({ client_id: null }, "client-1")).toBe(true);
+    expect(accountsForClient(schema, "client-1").map((a) => a.id)).toContain("s-org");
+  });
+
+  it("30. een eigen rekening hoort bij de eigen administratie", () => {
+    expect(accountsForClient(schema, "client-1").map((a) => a.id)).toContain("s-a");
+  });
+
+  it("31. de rekening van een ándere administratie hoort er NIET bij", () => {
+    expect(accountsForClient(schema, "client-1").map((a) => a.id)).not.toContain("s-b");
+    expect(accountBelongsToClient({ client_id: "client-2" }, "client-1")).toBe(false);
+  });
+
+  it("32. een inactieve rekening blijft staan: die kan saldo dragen", () => {
+    const gescoped = accountsForClient(schema, "client-1");
+    expect(gescoped.map((a) => a.id)).toContain("s-inactief");
+    expect(gescoped.some((a) => a.actief === false)).toBe(true);
+  });
+
+  it("33. van administratie wisselen verandert de verzameling deterministisch", () => {
+    expect(accountsForClient(schema, "client-1").map((a) => a.id)).toEqual(["s-org", "s-a", "s-inactief"]);
+    expect(accountsForClient(schema, "client-2").map((a) => a.id)).toEqual(["s-org", "s-b"]);
+    // Tweemaal dezelfde invoer, tweemaal dezelfde uitvoer.
+    expect(accountsForClient(schema, "client-1")).toEqual(accountsForClient(schema, "client-1"));
+    // Zonder administratie is er geen grens om tegen te toetsen.
+    expect(accountsForClient(schema, undefined)).toHaveLength(schema.length);
+  });
+
+  it("34. de grens leidt niets af uit nummer, naam, categorie of actief-vlag", () => {
+    const bron = readFileSync("src/lib/account-scope.ts", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    expect(bron).not.toMatch(/\.\s*(nummer|omschrijving|categorie|actief)\b/);
+    expect(bron).not.toMatch(/\d{3,4}\s*(<=|<|>=|>)|(<=|<|>=|>)\s*\d{3,4}/);
+    expect(bron).not.toMatch(/supabase|useQuery|\.push\(|\.sort\(/);
+  });
+
+  /**
+   * De kern van v1.1 deel 2: BEIDE paden van de controle zien hetzelfde.
+   *
+   * De kolommenbalans krijgt de gescopede verzameling; `useFinancialStatements`
+   * geeft intern de ONGEFILTERDE verzameling door. Dat mag alleen blijven
+   * bestaan als het aantoonbaar geen enkel getal verandert — en dat is zo,
+   * omdat beide motoren `accounts` uitsluitend als opzoektabel gebruiken en de
+   * rollups uit de RIJEN komen, die de kern al op administratie afdwingt.
+   */
+  it("35. gescopet en ongescopet leveren exact hetzelfde rapport op", () => {
+    const vreemd = { ...VAN_B, client_id: "client-2" };
+    const volledig = [...gezond().accounts, vreemd];
+    const gescoped = accountsForClient(volledig, "client-1");
+    const { rows } = gezond();
+
+    expect(gescoped).not.toEqual(volledig);
+    expect(trialBalanceOf(rows, gescoped)).toEqual(trialBalanceOf(rows, volledig));
+    expect(statementsOf(rows, gescoped)).toEqual(statementsOf(rows, volledig));
+
+    const a = runDiagnostics(inputFor(rows, gescoped));
+    const b = runDiagnostics(inputFor(rows, volledig));
+    expect(a.checks).toEqual(b.checks);
+    expect(a.summary).toEqual(b.summary);
+  });
+
+  it("36. de kern blijft rijen van een andere administratie weigeren", () => {
+    const vreemd = entry(BANK.id, KAPITAAL.id, "999.00", `${YEAR}-06-01`, "client-2");
+    expect(() =>
+      buildAccountReport({
+        rows: vreemd as never, clientId: "client-1", period,
+        accounts: accountsForClient(gezond().accounts, "client-1") as never,
+      }),
+    ).toThrow(LedgerReportingError);
+  });
+
+  it("37. de controlelaag schrijft de grens niet zelf nog eens uit", () => {
+    const bron = readFileSync("src/hooks/useDiagnosticSources.ts", "utf8");
+    expect(bron).toContain("accountsForClient");
+    expect(bron).not.toMatch(/client_id === null \|\| /);
   });
 });
