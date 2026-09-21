@@ -173,6 +173,23 @@ function Rapport({ readiness, clientName }: { readiness: YearCloseReadiness; cli
         );
       })}
 
+      {readiness.administrationWide.length > 0 && (
+        <section aria-labelledby="jaar-breed" data-testid="jaar-groep-administratiebreed">
+          <h3 id="jaar-breed" className="mb-1 text-sm font-semibold">
+            Administratiebreed ({readiness.administrationWide.length})
+          </h3>
+          <p className="mb-2 text-xs text-muted-foreground" data-testid="jaar-breed-uitleg">
+            Deze bevindingen gelden voor de hele administratie en dragen geen boekjaar. Zij zijn
+            daarom niet meegewogen in de gereedheid van {readiness.fiscalYear} — een bevinding uit een
+            ander boekjaar bewijst niets over dit boekjaar — maar ze staan hier wel, want verzwijgen
+            zou erger zijn.
+          </p>
+          <ul className="space-y-2">
+            {readiness.administrationWide.map((check) => <Bevinding key={check.id} check={check} />)}
+          </ul>
+        </section>
+      )}
+
       {/* Geen knop die niets doet: wát er nog moet gebeuren voordat afsluiten
           kan, staat er gewoon als zin. */}
       <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground" data-testid="jaar-nog-niet">

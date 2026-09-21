@@ -4,14 +4,17 @@ import { useLedgerPostings } from "@/hooks/useLedgerPostings";
 import { useDiagnosticSources } from "@/hooks/useDiagnosticSources";
 import { yearPeriod } from "@/lib/ledger-reporting";
 import { available, unavailable, runDiagnostics, type Source } from "@/lib/diagnostic-report";
-import { activityByBoekjaar, type YearCloseInput } from "@/lib/year-close-readiness";
+import { useUnpostedSourceWork } from "@/hooks/useUnpostedSourceWork";
+import { activityByBoekjaar, type UnpostedWorkItem, type YearCloseInput } from "@/lib/year-close-readiness";
 
 /**
  * De bronnen voor de gereedheidscontrole — UITSLUITEND LEZEN.
  *
  * Er komt geen enkele query bij die de app niet al doet:
  *
- *   • de controle zelf is `useDiagnosticSources` over `yearPeriod(boekjaar)`;
+ *   • de controle zelf is `useDiagnosticSources` over `yearPeriod(boekjaar)` —
+ *     maar let op: NIET elke controle daarin is jaargebonden. Welke wel en
+ *     welke niet staat in `CHECK_SCOPE` in `year-close-readiness.ts`;
  *   • het afsluitwatermerk zit al in `useClients` (dat `select("*")` doet);
  *   • de boekingen per boekjaar komen uit `useLedgerPostings({ clientId })`
  *     zónder periode — dezelfde cachesleutel die de tegenboekingscontrole uit
@@ -47,6 +50,7 @@ export function useYearCloseSources({
   const clientsQuery = useClients(organizationId, enabled);
   // Zonder periode: alle jaren, om te zien welke boekjaren nog open staan.
   const allPostings = useLedgerPostings({ clientId, enabled });
+  const unposted = useUnpostedSourceWork(clientId, enabled);
 
   const closedThrough = useMemo<Source<number | null>>(() => {
     if (clientsQuery.isError || !clientsQuery.data) return unavailable("Administratiegegevens");
@@ -60,7 +64,13 @@ export function useYearCloseSources({
     return available(activityByBoekjaar(allPostings.data));
   }, [allPostings.isError, allPostings.data]);
 
-  const isPending = diagnostics.isPending || clientsQuery.isPending || allPostings.isPending;
+  const unpostedWork = useMemo<Source<readonly UnpostedWorkItem[]>>(() => {
+    if (unposted.isError || !unposted.data) return unavailable("Openstaand bronwerk");
+    return available(unposted.data);
+  }, [unposted.isError, unposted.data]);
+
+  const isPending =
+    diagnostics.isPending || clientsQuery.isPending || allPostings.isPending || unposted.isPending;
 
   const input = useMemo(() => {
     if (!clientId) return null;
@@ -68,8 +78,9 @@ export function useYearCloseSources({
       diagnostics: runDiagnostics(diagnostics.input),
       closedThrough,
       activityByYear,
+      unpostedWork,
     };
-  }, [clientId, diagnostics.input, closedThrough, activityByYear]);
+  }, [clientId, diagnostics.input, closedThrough, activityByYear, unpostedWork]);
 
   return { isPending, input };
 }

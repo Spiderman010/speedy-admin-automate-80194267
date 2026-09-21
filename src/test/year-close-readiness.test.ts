@@ -17,7 +17,13 @@ import { accountsForClient } from "@/lib/account-scope";
 import { available, runDiagnostics, unavailable, type DiagnosticRunInput } from "@/lib/diagnostic-report";
 import {
   activityByBoekjaar,
+  bucketUnpostedWork,
   evaluateYearClose,
+  scopeGates,
+  scopeOf,
+  unpostedWorkThroughYear,
+  CHECK_SCOPE,
+  type UnpostedWorkItem,
   yearActivity,
   yearAlreadyClosed,
   yearOrder,
@@ -160,6 +166,7 @@ function readiness(
     diagnostics: runDiagnostics(diagnosticInput(rows, accounts, diagOver)),
     closedThrough: available(null),
     activityByYear: available(activityByBoekjaar(rows as never)),
+    unpostedWork: available([] as readonly UnpostedWorkItem[]),
     ...over,
   });
 }
@@ -205,7 +212,7 @@ describe("blokkades", () => {
     expect(r.summary.blocking).toBeGreaterThan(0);
   });
 
-  it("3. een gebroken boekingsintegriteit blokkeert", () => {
+  it("3. een administratiebrede integriteitsbevinding gate dit boekjaar NIET", () => {
     const { rows, accounts } = gezond();
     const kapot: LedgerIntegrityReport = {
       ...SCHOON_INTEGRITY, errorCount: 1,
@@ -216,11 +223,30 @@ describe("blokkades", () => {
       }],
     };
     const r = readiness(rows, accounts, {}, { integrity: available(kapot) });
-    expect(r.status).toBe("blocked");
-    expect(check(r, "posting_groups")?.severity).toBe("error");
+    // `evaluateLedgerIntegrity()` kent geen periode en haar bevindingen dragen
+    // geen boekjaar; toerekenen zou een gok zijn. De bevinding blijft dus wél
+    // zichtbaar, maar bepaalt niets over 2026.
+    expect(r.status).toBe("ready");
+    expect(check(r, "posting_groups")).toBeUndefined();
+    const breed = r.administrationWide.find((c) => c.id === "posting_groups");
+    expect(breed?.severity).toBe("error");
   });
 
-  it("4. een gebroken tegenboekingslineage blokkeert", () => {
+  it("3b. een onbalans binnen de afsluitscope blokkeert nog steeds", () => {
+    // Het vangnet: de zelfcontrole van de kern draait over precies de
+    // cumulatieve afsluitscope en meldt group_unbalanced daar wél.
+    const accounts = [BANK, KAPITAAL, OMZET];
+    const rows = [{
+      client_id: "client-1", posting_group_id: "g-scheef", posting_date: `${YEAR}-03-01`,
+      boekjaar: YEAR, currency: "EUR", source_type: "manual_journal",
+      id: "s1", line_no: 1, grootboekrekening_id: BANK.id, debit_amount: "100.00", credit_amount: "0.00",
+    }];
+    const r = readiness(rows, accounts);
+    expect(r.status).toBe("blocked");
+    expect(check(r, "ledger_self_check")?.severity).toBe("error");
+  });
+
+  it("4. een tegenboekingsbevinding gate dit boekjaar NIET", () => {
     const { rows, accounts } = gezond();
     const kapot = evaluateReversalIntegrity({
       markers: [],
@@ -233,8 +259,10 @@ describe("blokkades", () => {
     });
     expect(kapot.findings.length).toBeGreaterThan(0);
     const r = readiness(rows, accounts, {}, { reversals: available(kapot) });
-    expect(r.status).toBe("blocked");
-    expect(check(r, "reversal_integrity")?.severity).toBe("error");
+    // Een tegenboeking beslaat vaak twee boekjaren tegelijk; aan één jaar
+    // toerekenen zou een keuze zijn die de gegevens niet dragen.
+    expect(r.status).toBe("ready");
+    expect(r.administrationWide.find((c) => c.id === "reversal_integrity")?.severity).toBe("error");
   });
 
   it("5. een jaarrekening die niet gebouwd kan worden blokkeert", () => {
@@ -493,5 +521,163 @@ describe("boekjaar = kalenderjaar", () => {
     const p = yearPeriod(YEAR);
     expect(p.from).toBe(`${YEAR}-01-01`);
     expect(p.toExclusive).toBe(`${YEAR + 1}-01-01`);
+  });
+});
+
+// ── PR 1 follow-up: de scope van elke controle ─────────────────────────────
+
+/**
+ * De P2 uit de review. PR 1 behandelde de HELE uitkomst van `runDiagnostics()`
+ * alsof zij over het gekozen boekjaar ging. Dat was onjuist: de
+ * integriteitscontrole, de tegenboekingslineage en de volledigheid per bron
+ * zijn administratiebreed. Gevolg: een openstaande factuur uit 2027 maakte het
+ * afsluiten van 2026 onmogelijk, zonder dat daar één boekhoudregel voor is.
+ */
+describe("een later boekjaar besmet dit boekjaar niet", () => {
+  const werk = (source: UnpostedWorkItem["source"], jaar: number | null, id = `${source}-${jaar}`): UnpostedWorkItem =>
+    ({ source, id, boekjaar: jaar });
+
+  it("23. een openstaande INKOOPFACTUUR uit 2027 maakt 2026 niet 'niet gereed'", () => {
+    const { rows, accounts } = gezond();
+    const r = readiness(rows, accounts, { unpostedWork: available([werk("purchase_invoice", YEAR + 1)]) });
+    expect(r.status).toBe("ready");
+    expect(check(r, "unposted_work")?.severity).toBe("ok");
+    expect(check(r, "unposted_work")?.summary).toContain("later boekjaar");
+  });
+
+  it("24. openstaand MEMORIAAL- en BANKWERK uit een later jaar gate 2026 evenmin", () => {
+    const { rows, accounts } = gezond();
+    const r = readiness(rows, accounts, {
+      unpostedWork: available([
+        werk("manual_journal", YEAR + 1),
+        werk("bank_allocation", YEAR + 2),
+        werk("sales_invoice", YEAR + 1),
+      ]),
+    });
+    expect(r.status).toBe("ready");
+    expect(check(r, "unposted_work")?.severity).toBe("ok");
+  });
+
+  it("25. een administratiebrede bevinding blijft zichtbaar maar telt niet mee", () => {
+    const { rows, accounts } = gezond();
+    const openstaand = computeLedgerCompleteness({
+      purchase: { eligible: 3, posted: 1 },
+      sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
+      bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+      manual: { total: 0, posted: 0 },
+    });
+    const r = readiness(rows, accounts, {}, { completeness: available(openstaand) });
+    expect(r.status).toBe("ready");
+    expect(check(r, "bank_outstanding")).toBeUndefined();
+    expect(r.administrationWide.map((c) => c.id)).toContain("bank_outstanding");
+  });
+});
+
+describe("ouder onopgelost bronwerk beschermt het watermerk", () => {
+  const werk = (source: UnpostedWorkItem["source"], jaar: number | null, id = `${source}-${jaar}`): UnpostedWorkItem =>
+    ({ source, id, boekjaar: jaar });
+
+  it("26. werk uit 2025 verhindert het watermerk naar 2026 te zetten", () => {
+    const { rows, accounts } = gezond();
+    const r = readiness(rows, accounts, { unpostedWork: available([werk("purchase_invoice", VORIG)]) });
+    expect(r.status).toBe("blocked");
+    const c = check(r, "unposted_work");
+    expect(c?.severity).toBe("error");
+    expect(c?.count).toBe(1);
+    // De reden is de bestaande schrijversregel, niet een verzonnen norm.
+    expect(c?.summary).toContain("onboekbaar");
+  });
+
+  it("27. werk ín het gekozen boekjaar blokkeert net zo goed", () => {
+    const { rows, accounts } = gezond();
+    const r = readiness(rows, accounts, { unpostedWork: available([werk("manual_journal", YEAR)]) });
+    expect(r.status).toBe("blocked");
+    expect(check(r, "unposted_work")?.severity).toBe("error");
+  });
+
+  it("28. de indeling voor/in/na het boekjaar is exact", () => {
+    const items = [
+      werk("purchase_invoice", VORIG), werk("sales_invoice", YEAR),
+      werk("manual_journal", YEAR + 1), werk("bank_allocation", null),
+    ];
+    expect(bucketUnpostedWork(items, YEAR)).toEqual({ throughYear: 2, afterYear: 1, unknownYear: 1 });
+    expect(unpostedWorkThroughYear(YEAR, { throughYear: 0, afterYear: 0, unknownYear: 0 }).severity).toBe("ok");
+  });
+
+  it("29. een document zonder boekhoudkundige datum maakt de uitkomst onvolledig", () => {
+    const { rows, accounts } = gezond();
+    const r = readiness(rows, accounts, { unpostedWork: available([werk("bank_allocation", null)]) });
+    expect(r.status).toBe("incomplete");
+    expect(r.unavailable.join(" ")).toContain("Boekjaar van");
+  });
+
+  it("30. een onleesbare bronwerk-bron maakt de uitkomst onvolledig", () => {
+    const { rows, accounts } = gezond();
+    const r = readiness(rows, accounts, { unpostedWork: unavailable("Openstaand bronwerk") });
+    expect(r.status).toBe("incomplete");
+    expect(r.unavailable).toContain("Openstaand bronwerk");
+  });
+});
+
+describe("de scopetabel", () => {
+  it("31. elke controle die de gereedheid bepaalt is begrensd op het boekjaar", () => {
+    const { rows, accounts } = gezond();
+    const r = readiness(rows, accounts);
+    for (const c of r.checks) {
+      expect(scopeGates(scopeOf(c.id)), `${c.id} zou niet mogen gaten`).toBe(true);
+    }
+    for (const c of r.administrationWide) {
+      expect(scopeGates(scopeOf(c.id)), `${c.id} zou wél mogen gaten`).toBe(false);
+    }
+  });
+
+  it("32. de drie administratiebrede bronnen staan als zodanig ingedeeld", () => {
+    // Precies de drie die de review noemde, plus de twee andere
+    // integriteitsfamilies die uit dezelfde periodeloze bron komen.
+    expect(CHECK_SCOPE.posting_groups).toBe("administration_wide");
+    expect(CHECK_SCOPE.source_documents).toBe("administration_wide");
+    expect(CHECK_SCOPE.integrity_other).toBe("administration_wide");
+    expect(CHECK_SCOPE.reversal_integrity).toBe("administration_wide");
+    expect(CHECK_SCOPE.bank_outstanding).toBe("administration_wide");
+  });
+
+  it("33. een onbekende controle telt mee in plaats van stilletjes weg te vallen", () => {
+    expect(scopeOf("iets_nieuws")).toBe("cumulative");
+    expect(scopeGates(scopeOf("iets_nieuws"))).toBe(true);
+  });
+
+  it("34. de periodegebonden bronnen kunnen per constructie geen later jaar bevatten", () => {
+    // useLedgerPostings filtert met posting_date < toExclusive; een boeking uit
+    // 2027 komt dus niet in de kolommenbalans of de jaarrekening van 2026.
+    const accounts = [BANK, KAPITAAL, OMZET];
+    const rows = [
+      ...entry(BANK.id, OMZET.id, "100.00", `${YEAR}-06-01`),
+      ...entry(BANK.id, OMZET.id, "900.00", `${YEAR + 1}-06-01`),
+    ];
+    const statements = statementsOf(rows, accounts);
+    if (statements.ok !== true) throw new Error("motor faalde");
+    expect(statements.profitLoss.netResultCents).toBe(10000);
+    const bron = readFileSync("src/hooks/useLedgerPostings.ts", "utf8");
+    expect(bron).toContain('query.lt("posting_date", period.toExclusive)');
+  });
+});
+
+describe("de nieuwe bron leidt geen jaar af uit created_at", () => {
+  it("35. het boekjaar komt uit de boekhoudkundige datum", () => {
+    const ruw = readFileSync("src/hooks/useUnpostedSourceWork.ts", "utf8");
+    // Op de CODE, niet op het commentaar: de toelichting mag "created_at"
+    // gewoon noemen om uit te leggen dat het juist NIET wordt gebruikt.
+    const bron = ruw
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    for (const veld of ["invoice_date", "transaction_date", "posting_date"]) {
+      expect(bron, veld).toContain(veld);
+    }
+    expect(bron).not.toMatch(/created_at/);
+    // Geen schrijfpad.
+    expect(bron).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(|useMutation|\.rpc\(/);
+    // De postbaarheidsregels komen uit de bestaande constanten.
+    expect(bron).toContain("PURCHASE_POSTABLE_STATUSES");
+    expect(bron).toContain("SALES_POSTABLE_STATUSES");
   });
 });
