@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 // Overzichten bevat sinds 6C-b7 PR 3 een <Link> naar de proef- en saldibalans.
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,20 +61,37 @@ describe("Rapportages pagina", () => {
     expect(screen.getByRole("combobox", { name: "Administratie selecteren" })).toBeInTheDocument();
   });
 
-  it("rendert alle vijf rapportkaarten met tekstuele beschikbaarheidsstatus", () => {
+  /*
+   * Dit legde eerder "alle VIJF rapportkaarten" vast, met een telling van hoe
+   * vaak "Beschikbaar" voorkomt. Dat was waar op dat moment, maar het is geen
+   * INVARIANT: elk rapport dat later wordt opgeleverd — de controle van
+   * Diagnostics v1 bijvoorbeeld — laat zo'n telling omvallen terwijl er niets
+   * mis is. Zelfde afweging als in `src/test/support/branch-sql-scope.ts`.
+   *
+   * Wat de test werkelijk beschermde: elke kaart draagt zijn status als TEKST
+   * (niet alleen als kleur), en elk rapport heeft de status die erbij hoort.
+   * Dat wordt nu per kaart vastgelegd, wat sterker is dan een totaal.
+   */
+  it("rendert elke rapportkaart met zijn eigen tekstuele beschikbaarheidsstatus", () => {
     render(<MemoryRouter><Overzichten /></MemoryRouter>);
-    [
-      "Proef- en saldibalans",
-      "Balans",
-      "Winst-en-verliesrekening",
-      "Grootboek",
-      "BTW-overzicht",
-    ].forEach((title) => expect(screen.getByRole("heading", { level: 3, name: title })).toBeInTheDocument());
-    // Balans/W&V PR 4: de proef- en saldibalans, de balans en de W&V zijn
-    // beschikbaar; Grootboek en BTW-overzicht nog niet.
-    expect(screen.getAllByText("Beschikbaar")).toHaveLength(3);
+    const verwacht: Record<string, string> = {
+      "Proef- en saldibalans": "Beschikbaar",
+      "Balans": "Beschikbaar",
+      "Winst-en-verliesrekening": "Beschikbaar",
+      "Controle": "Beschikbaar",
+      "Grootboek": "Nog niet beschikbaar",
+      "BTW-overzicht": "Nog niet beschikbaar",
+    };
+    for (const [title, status] of Object.entries(verwacht)) {
+      const kop = screen.getByRole("heading", { level: 3, name: title });
+      const kaart = kop.closest("div.min-h-32");
+      expect(kaart, title).not.toBeNull();
+      // Exacte match op het statuselement zelf: "Nog niet beschikbaar" mag
+      // nooit als "Beschikbaar" wegkomen omdat het er toevallig in zit.
+      expect(within(kaart as HTMLElement).getByText(status), title).toBeInTheDocument();
+    }
+    // Geen enkele kaart draagt een status die het product niet kent.
     expect(screen.queryByText("Beschikbaar na openingsbalans")).toBeNull();
-    expect(screen.getAllByText("Nog niet beschikbaar")).toHaveLength(2);
   });
 
   it("toont niet-werkende periodefilters uitgeschakeld", () => {
