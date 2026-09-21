@@ -1094,6 +1094,23 @@ src/test/year-close-writer.test.ts          contract over de migratie + de app
 - **Geen heropening in v1.** Geen reopen-RPC, geen markermutatie, geen watermerkverlaging. De tegenboekingsmotor weigert uit zichzelf al elke datum in een afgesloten boekjaar; correcties horen in een later, open jaar.
 > **Let op — dit model gaat veranderen.** Een rookproef op productie liet zien dat "afgesloten" vandaag twee dingen tegelijk betekent: administratief afgerond **én** een permanent technisch schrijfverbod, zonder weg terug. Dat is niet het gewenste productmodel. `docs/BOEKASSIST_YEAR_CLOSE_LIFECYCLE.md` beschrijft de scheiding in twee begrippen — een **afsluitgebeurtenis** die kan worden teruggedraaid, en een aparte, instelbare **boekingsblokkade** — plus het voorwaartse migratiepad in acht kleine PR's. Dat document is **ontwerp**: er is nog niets van geïmplementeerd, geen migratie geschreven en niets toegepast. `src/test/year-close-coupling.test.ts` pint vast hoe de koppeling vandaag ligt — acht schrijvers, één byte-identieke toets, geen gedeelde helper — zodat de latere refactor aantoonbaar geen schrijver overslaat.
 
+### 6C-b11 — levenscyclusfundering (PR A)
+
+```
+supabase/migrations/20260925120000_add_fiscal_year_lifecycle_events.sql
+supabase/tests/fiscal-year-events/run-proof.sh      31 bewijzen tegen een echte PostgreSQL
+src/test/fiscal-year-events-migration.test.ts       contract over de migratie
+```
+
+Eerste stap van de herziening uit `docs/BOEKASSIST_YEAR_CLOSE_LIFECYCLE.md`. **Additief, en met opzet zonder één gedragswijziging.**
+
+- **`public.fiscal_year_events`** — onuitwisbare geschiedenis (`closed` / `reopened`), append-only tegen UPDATE, DELETE én TRUNCATE met `ENABLE ALWAYS`, tenantintegriteit via `posting_client_org_ok()`, RLS en rechten exact als `year_closures`: lezen met `read_only`, geen enkele directe schrijfrechtverlening. Een reden is **verplicht** bij een heropening en optioneel bij een afsluiting.
+- **`year_closures` blijft de huidige stand** met haar bestaande primary key `(client_id, fiscal_year)` als idempotentiegarantie — die tabel ombouwen tot log zou die garantie verplaatsen naar een "laatste rij"-zoekactie. Zij krijgt er één kolom bij: `status` (`closed` | `reopened`, default `closed`).
+- **Backfill: precies één `closed`-gebeurtenis per bestaande afsluitrij**, met `closed_at` → `occurred_at` en `closed_by` → `actor_id`. **`clients.afgesloten_boekjaar` is géén bron**: voor de handmatig gezette watermerken zonder afsluitrij bestaat geen tijdstip en geen actor, en die verzinnen zou een afsluiting fabriceren in precies de tabel die het auditspoor moet zijn. Die administraties blijven onaangeroerd en krijgen in PR E/F een echte herstelweg.
+- **Idempotent door een databaseregel**, niet door "de migratie draait één keer": een **partiële** unieke index op `(client_id, fiscal_year) WHERE backfilled`. Partieel, omdat een totale index `closed → reopened → closed` voorgoed onmogelijk zou maken.
+- **Nog niemand leest of schrijft deze tabel.** `close_fiscal_year()` is niet aangeraakt, `clients.afgesloten_boekjaar` blijft het technische watermerk, alle acht schrijvers houden hun eigen afgesloten-jaar-toets, de bulk-preflight is ongewijzigd, er kan niets worden heropend en er bestaat geen boekingsblokkade. De UI is niet aangeraakt en de gegenereerde types evenmin.
+- **De bestaande onuitwisbaarheid is niet versoepeld.** `prevent_year_closure_mutation()` weigert nog steeds élke UPDATE, dus `status` ligt vandaag feitelijk vast op `closed` — correct, want heropenen bestaat niet. **PR E versmalt die trigger bewust tot uitsluitend die kolom**, met een eigen bewijs en een eigen review.
+
 ### 6C-b10 — de jaarafsluiting (scherm, PR 2b)
 
 ```
