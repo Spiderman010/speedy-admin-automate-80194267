@@ -14,6 +14,9 @@ import {
   isTerminal,
   needsReconciliation,
   safeYearCloseErrorMetadata,
+  unresolvedWarnings,
+  WARNINGS_HEADING,
+  WARNINGS_NOTICE,
   type CloseAvailabilityInput,
   type YearClosure,
 } from "@/lib/year-close-action";
@@ -69,8 +72,8 @@ describe("Wanneer mag er worden afgesloten", () => {
     expect(closeAvailability(gereed({ readiness: null })).kind).toBe("no_snapshot");
   });
 
-  it("2-4. blocked, incomplete en warning bieden géén afsluiting aan", () => {
-    for (const status of ["blocked", "incomplete", "warning"] as const) {
+  it("2-3. blocked en incomplete bieden géén afsluiting aan", () => {
+    for (const status of ["blocked", "incomplete"] as const) {
       const uitkomst = closeAvailability(gereed({ readiness: readiness(status) }));
       expect(uitkomst.kind, status).toBe("not_ready");
       // Elke status krijgt zijn eigen uitleg; geen lege of gedeelde tekst.
@@ -78,17 +81,31 @@ describe("Wanneer mag er worden afgesloten", () => {
     }
   });
 
-  it("4b. een waarschuwing is bewust geen gereedheid — precies zoals PR 1 vastlegde", () => {
+  it("4. een waarschuwing houdt het afsluiten NIET tegen, maar wordt wel gemarkeerd", () => {
+    /*
+     * De rookproef op productie: AA-Secure, boekjaar 2023 — twaalf controles,
+     * tien akkoord, NUL blokkades, twee waarschuwingen die de
+     * databaseschrijver zelf bewust niet als blokkade behandelt. De oude regel
+     * ("elke waarschuwing = niet gereed") maakte die administratie
+     * onafsluitbaar zonder dat er financieel iets mis was.
+     */
     const uitkomst = closeAvailability(gereed({ readiness: readiness("warning") }));
-    expect(uitkomst.kind).toBe("not_ready");
-    // De UI blijft strenger dan het minimum dat de database afdwingt: de
-    // schrijver blokkeert bijvoorbeeld niet op een onvolledige beginbalans,
-    // maar dit scherm biedt bij een waarschuwing gewoon niets aan.
-    expect(uitkomst.kind === "not_ready" && uitkomst.reason).toMatch(/open werk/i);
+    expect(uitkomst.kind).toBe("available");
+    expect(uitkomst.kind === "available" && uitkomst.withWarnings).toBe(true);
   });
 
-  it("5. alleen `ready` levert een afsluitactie op", () => {
-    expect(closeAvailability(gereed()).kind).toBe("available");
+  it("5. een schone uitslag levert een afsluitactie op, zonder waarschuwingsvlag", () => {
+    const uitkomst = closeAvailability(gereed());
+    expect(uitkomst.kind).toBe("available");
+    expect(uitkomst.kind === "available" && uitkomst.withWarnings).toBe(false);
+  });
+
+  it("5b. een blokkade blijft een blokkade, ook als er daarnaast waarschuwingen staan", () => {
+    // Het versoepelen geldt UITSLUITEND voor `warning`. Er is geen pad waarlangs
+    // een blokkade of een onvolledige controle alsnog een knop oplevert.
+    for (const status of ["blocked", "incomplete"] as const) {
+      expect(closeAvailability(gereed({ readiness: readiness(status) })).kind, status).toBe("not_ready");
+    }
   });
 
   it("6. een onbekende of onleesbare afsluitstatus telt nooit als 'mag wel'", () => {
@@ -127,6 +144,47 @@ describe("Wanneer mag er worden afgesloten", () => {
 
   it("9c. een nog onbekend watermerk maakt niets inconsistent", () => {
     expect(closeAvailability(gereed({ watermark: undefined })).kind).toBe("available");
+  });
+});
+
+describe("De waarschuwingen die de gebruiker moet zien", () => {
+  const metChecks = (checks: YearCloseReadiness["checks"], wide: YearCloseReadiness["checks"] = []) => ({
+    ...readiness("warning"),
+    checks,
+    administrationWide: wide,
+  });
+
+  it("9d. geeft precies de waarschuwingen terug, met hun eigen woorden", () => {
+    const uit = unresolvedWarnings(
+      metChecks([
+        { id: "opening_balance_status", title: "Beginbalans", severity: "warning", summary: "Geen beginbalans-bewering voor dit boekjaar." },
+        { id: "period_balance", title: "Periodebalans", severity: "ok", summary: "In balans." },
+        { id: "subgroups", title: "Groepsindeling", severity: "warning", summary: "9 rekeningen hebben wel een categorie maar nog geen groep.", count: 9 },
+      ]),
+    );
+    expect(uit.map((c) => c.id)).toEqual(["opening_balance_status", "subgroups"]);
+    // De tekst komt letterlijk uit de momentopname; er wordt niets herschreven.
+    expect(uit[1].summary).toBe("9 rekeningen hebben wel een categorie maar nog geen groep.");
+    expect(uit[1].count).toBe(9);
+  });
+
+  it("9e. laat blokkades en akkoorden erbuiten", () => {
+    const uit = unresolvedWarnings(
+      metChecks([
+        { id: "period_balance", title: "A", severity: "error", summary: "x" },
+        { id: "statements", title: "B", severity: "ok", summary: "y" },
+      ]),
+    );
+    expect(uit).toEqual([]);
+  });
+
+  it("9f. de begeleidende zin zegt wat er gebeurt, zonder RPC- of SQL-taal", () => {
+    expect(WARNINGS_HEADING).toBe("Nog openstaande waarschuwingen");
+    expect(WARNINGS_NOTICE).toMatch(/blokkeren de jaarafsluiting niet/i);
+    expect(WARNINGS_NOTICE).toMatch(/opnieuw de financieel noodzakelijke voorwaarden/i);
+    for (const jargon of ["RPC", "SQL", "close_fiscal_year", "SQLSTATE", "watermerk"]) {
+      expect(WARNINGS_NOTICE, jargon).not.toContain(jargon);
+    }
   });
 });
 

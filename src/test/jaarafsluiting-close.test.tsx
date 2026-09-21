@@ -98,15 +98,38 @@ function diagnostics(): DiagnosticRun {
       summary: { executed: 1, passed: 1, warnings: 0, blocking: 0 },
     };
   }
-  const severity =
-    state.uitslag === "blokkade" ? "error" : state.uitslag === "waarschuwing" ? "warning" : "ok";
+  if (state.uitslag === "waarschuwing") {
+    // De rookproef op productie, nagebouwd: AA-Secure 2023 — nul blokkades,
+    // twee waarschuwingen die de databaseschrijver zelf niet tegenhoudt.
+    return {
+      ok: true,
+      checks: [
+        check("period_balance", "ok"),
+        {
+          id: "opening_balance_status",
+          title: "Beginbalans",
+          severity: "warning",
+          summary: "Geen beginbalans-bewering voor dit boekjaar.",
+        },
+        {
+          id: "subgroups",
+          title: "Groepsindeling",
+          severity: "warning",
+          summary: "9 rekeningen hebben wel een categorie maar nog geen groep.",
+          count: 9,
+        },
+      ],
+      summary: { executed: 3, passed: 1, warnings: 2, blocking: 0 },
+    };
+  }
+  const severity = state.uitslag === "blokkade" ? "error" : "ok";
   return {
     ok: true,
     checks: [check("period_balance", severity)],
     summary: {
       executed: 1,
       passed: severity === "ok" ? 1 : 0,
-      warnings: severity === "warning" ? 1 : 0,
+      warnings: 0,
       blocking: severity === "error" ? 1 : 0,
     },
   };
@@ -220,8 +243,8 @@ describe("Wanneer verschijnt de afsluitknop", () => {
     expect(screen.queryByTestId("jaar-geen-actie")).toBeNull();
   });
 
-  it("2-4. een blokkade, een onvolledige controle en een waarschuwing bieden niets aan", async () => {
-    for (const uitslag of ["blokkade", "onvolledig", "waarschuwing"] as const) {
+  it("2-3. een blokkade en een onvolledige controle bieden niets aan", async () => {
+    for (const uitslag of ["blokkade", "onvolledig"] as const) {
       state.uitslag = uitslag;
       const { unmount } = toon();
       await controleer();
@@ -235,10 +258,25 @@ describe("Wanneer verschijnt de afsluitknop", () => {
     expect(closeCalls()).toHaveLength(0);
   });
 
-  it("5. een schone controle levert wél een afsluitknop op", async () => {
+  it("4. een schone controle levert wél een afsluitknop op", async () => {
     toon();
     await controleer();
     expect(await screen.findByTestId("jaar-afsluiten")).toBeInTheDocument();
+  });
+
+  it("5. een waarschuwing levert óók een afsluitknop op — maar blijft amber", async () => {
+    state.uitslag = "waarschuwing";
+    toon();
+    await controleer();
+    expect(await screen.findByTestId("jaar-afsluiten")).toBeInTheDocument();
+    // De uitslag wordt NIET als schoon gepresenteerd.
+    const status = screen.getByTestId("jaar-status");
+    expect(status).toHaveAttribute("data-status", "warning");
+    expect(status).not.toHaveTextContent("Gereed voor afsluiten");
+    expect(screen.getByTestId("jaar-waarschuwingen")).toHaveTextContent("2");
+    // En de twee bevindingen staan er gewoon nog, met hun eigen woorden.
+    expect(screen.getByTestId("jaar-groep-warning")).toHaveTextContent(/Beginbalans/);
+    expect(screen.getByTestId("jaar-groep-warning")).toHaveTextContent(/Groepsindeling/);
   });
 
   it("6. een te lage rol krijgt uitleg in plaats van een knop", async () => {
@@ -305,6 +343,88 @@ describe("De bevestiging", () => {
     });
     await waitFor(() => expect(closeCalls().length).toBeGreaterThan(0));
     expect(closeCalls()).toHaveLength(1);
+  });
+});
+
+describe("Afsluiten mét openstaande waarschuwingen", () => {
+  it("12a. de dialoog somt elke openstaande waarschuwing op, met titel én samenvatting", async () => {
+    state.uitslag = "waarschuwing";
+    toon();
+    await controleer();
+    fireEvent.click(await screen.findByTestId("jaar-afsluiten"));
+    await screen.findByTestId("jaar-bevestigen");
+
+    const blok = screen.getByTestId("jaar-dialoog-waarschuwingen");
+    expect(blok).toHaveTextContent("Nog openstaande waarschuwingen (2)");
+
+    const regels = screen.getAllByTestId("jaar-dialoog-waarschuwing");
+    expect(regels).toHaveLength(2);
+    expect(regels.map((r) => r.getAttribute("data-check"))).toEqual([
+      "opening_balance_status",
+      "subgroups",
+    ]);
+    // Niet alleen de titel: de volledige samenvatting staat erbij, zodat er
+    // niets in een label wordt weggemoffeld.
+    expect(regels[0]).toHaveTextContent("Beginbalans — Geen beginbalans-bewering voor dit boekjaar.");
+    expect(regels[1]).toHaveTextContent(
+      "Groepsindeling — 9 rekeningen hebben wel een categorie maar nog geen groep.",
+    );
+  });
+
+  it("12b. de dialoog zegt dat deze waarschuwingen niet blokkeren, en houdt de gewone gevolgen", async () => {
+    state.uitslag = "waarschuwing";
+    toon();
+    await controleer();
+    fireEvent.click(await screen.findByTestId("jaar-afsluiten"));
+    await screen.findByTestId("jaar-bevestigen");
+
+    expect(screen.getByTestId("jaar-waarschuwingen-uitleg")).toHaveTextContent(
+      /blokkeren de jaarafsluiting niet/i,
+    );
+    // De gewone gevolgen van definitief afsluiten blijven staan.
+    const gevolgen = screen.getByTestId("jaar-gevolgen");
+    expect(gevolgen).toHaveTextContent(/geen nieuwe boekingen of tegenboekingen/i);
+    expect(gevolgen).toHaveTextContent(/niet meer worden heropend/i);
+  });
+
+  it("12c. er is nog steeds één expliciete bevestiging nodig, en geen tweede knop", async () => {
+    state.uitslag = "waarschuwing";
+    toon();
+    await controleer();
+    fireEvent.click(await screen.findByTestId("jaar-afsluiten"));
+    await screen.findByTestId("jaar-bevestigen");
+    // Het openen van de dialoog boekt nog niets.
+    expect(closeCalls()).toHaveLength(0);
+
+    // Precies één bevestigknop: de waarschuwing zelf IS het geïnformeerde pad,
+    // er is geen apart overridemechanisme naast.
+    expect(screen.getAllByTestId("jaar-bevestig-knop")).toHaveLength(1);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("jaar-bevestig-knop"));
+    });
+    await waitFor(() => expect(closeCalls()).toHaveLength(1));
+  });
+
+  it("12d. de databaseaanroep is exact dezelfde als bij een schone uitslag", async () => {
+    state.uitslag = "waarschuwing";
+    toon();
+    await controleer();
+    await sluitAf();
+    await waitFor(() => expect(closeCalls()).toHaveLength(1));
+    // Geen extra vlag, geen 'force', geen gereedheidsuitslag: het waarschuwings-
+    // pad verandert niets aan wat de database te horen krijgt.
+    expect(closeCalls()[0].args).toEqual({ _client_id: "client-1", _fiscal_year: JAAR });
+    expect(writeCalls).toEqual([]);
+  });
+
+  it("12e. bij een schone uitslag staat er geen waarschuwingsblok in de dialoog", async () => {
+    toon();
+    await controleer();
+    fireEvent.click(await screen.findByTestId("jaar-afsluiten"));
+    await screen.findByTestId("jaar-bevestigen");
+    expect(screen.queryByTestId("jaar-dialoog-waarschuwingen")).toBeNull();
   });
 });
 

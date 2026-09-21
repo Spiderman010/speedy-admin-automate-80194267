@@ -39,6 +39,9 @@ import {
   closeDialogExplanation,
   asClassifiedYearCloseError,
   closureReceiptEntries,
+  unresolvedWarnings,
+  WARNINGS_HEADING,
+  WARNINGS_NOTICE,
   type ClassifiedYearCloseError,
   type YearClosure,
   type YearCloseResult,
@@ -57,14 +60,20 @@ import {
  *
  * TWEE VRAGEN, IN DEZE VOLGORDE. Eerst: *kan dit boekjaar verantwoord worden
  * afgesloten?* — beantwoord met de oordelen die er al zijn. Pas als het
- * antwoord `ready` is, en pas na een expliciete bevestiging, gaat er één
- * aanroep naar `public.close_fiscal_year()`.
+ * antwoord géén blokkade en géén onvolledige controle is, en pas na een
+ * expliciete bevestiging, gaat er één aanroep naar
+ * `public.close_fiscal_year()`.
+ *
+ * WAARSCHUWINGEN HOUDEN NIET TEGEN, MAAR VERDWIJNEN OOK NIET. Zij blijven
+ * amber op de pagina staan én worden in de bevestigingsdialoog nog een keer
+ * opgesomd, met de woorden waarmee de controle ze zelf heeft vastgesteld. Dat
+ * is het hele overridemechanisme: er is geen verborgen vinkje en geen tweede
+ * knop. Een blokkade en een onvolledige controle blijven fail-closed.
  *
  * DEZE PAGINA REKENT NIET EN BESLIST NIET. Elke uitspraak komt uit
  * `evaluateYearClose()`; het afsluiten zelf doet de database, die alles onder
- * haar eigen grendel opnieuw keurt. Wat hier staat kan het scherm strenger
- * maken dan de database, nooit soepeler: bij een waarschuwing wordt er niets
- * aangeboden, ook al zou de schrijver die waarschuwing zelf niet blokkeren.
+ * haar eigen grendel opnieuw keurt en de financieel noodzakelijke
+ * voorwaarden afdwingt.
  *
  * ER WORDT GEEN BEDRAG GETOOND BIJ DE AFSLUITING. `year_closures` bewaart geen
  * resultaat, want er wordt geen resultaatboeking gemaakt; een berekening
@@ -105,10 +114,14 @@ const STATUS_PRESENTATION: Record<
     uitleg: "Elke controle is doorstaan. Er staat niets open dat het afsluiten in de weg zit.",
   },
   warning: {
-    label: "Nog niet gereed",
+    label: "Gereed, met openstaande waarschuwingen",
     severity: "warning",
+    // Blijft nadrukkelijk amber. Dit is géén schone uitslag, en dat hoort te
+    // blijven staan — maar het is ook geen blokkade: de waarschuwingen hier
+    // zijn bevindingen die de databaseschrijver zelf niet tegenhoudt. De
+    // gebruiker krijgt ze vóór het bevestigen nog een keer te zien.
     uitleg:
-      "Er staat open werk. Dit product kent geen regel die zegt dat een boekjaar met open werk toch mag worden afgesloten, dus dat wordt hier niet beweerd.",
+      "Er staan waarschuwingen open. Afsluiten kan, maar niet ongemerkt: u krijgt ze bij het bevestigen eerst te zien.",
   },
   blocked: {
     label: "Afsluiten geblokkeerd",
@@ -346,6 +359,16 @@ export default function Jaarafsluiting() {
     roleUnavailable: roleError,
   });
 
+  /**
+   * De waarschuwingen die de gebruiker vóór het bevestigen moet zien. Uit de
+   * VASTGEZETTE momentopname, niet uit de live cache: de dialoog hoort precies
+   * te tonen waarop de gebruiker zijn beslissing baseert.
+   */
+  const openstaandeWaarschuwingen = useMemo(
+    () => (huidigeSnapshot === null ? [] : unresolvedWarnings(huidigeSnapshot.readiness)),
+    [huidigeSnapshot],
+  );
+
   const clientNaam = selectedClient?.name ?? "—";
   const jaren = useMemo(() => recentYears(), []);
 
@@ -502,7 +525,9 @@ export default function Jaarafsluiting() {
                     {CLOSE_ACTION_LABEL}
                   </Button>
                   <span className="text-xs text-muted-foreground">
-                    Deze stap is definitief en kan niet worden teruggedraaid.
+                    {beschikbaarheid.withWarnings
+                      ? "Deze stap is definitief. U ziet de openstaande waarschuwingen nog vóór u bevestigt."
+                      : "Deze stap is definitief en kan niet worden teruggedraaid."}
                   </span>
                 </div>
               )}
@@ -544,7 +569,41 @@ export default function Jaarafsluiting() {
             confirmTestId="jaar-bevestig-knop"
             cancelTestId="jaar-annuleer-knop"
             consequencesTestId="jaar-gevolgen"
-          />
+          >
+            {/*
+              De openstaande waarschuwingen, letterlijk zoals de
+              gereedheidscontrole ze heeft vastgesteld. Niets wordt hier
+              opnieuw berekend, samengevat of weggelaten: dit zijn dezelfde
+              titels en zinnen die ook op de pagina staan.
+
+              DIT IS DE OVERRIDE, EN ER IS GEEN ANDERE. Er zit geen verborgen
+              vinkje onder en geen tweede knop naast: afsluiten mét
+              waarschuwingen kan alleen door ze eerst te lezen en dan
+              hetzelfde ene bevestigknopje te gebruiken.
+            */}
+            {openstaandeWaarschuwingen.length > 0 && (
+              <section
+                className="rounded-md border border-[hsl(var(--warning))]/40 bg-[hsl(var(--warning))]/5 px-3 py-2"
+                aria-labelledby="jaar-waarschuwingen-kop"
+                data-testid="jaar-dialoog-waarschuwingen"
+              >
+                <h3 id="jaar-waarschuwingen-kop" className="text-sm font-semibold">
+                  {WARNINGS_HEADING} ({openstaandeWaarschuwingen.length})
+                </h3>
+                <ul className="mt-1 space-y-1">
+                  {openstaandeWaarschuwingen.map((check) => (
+                    <li key={check.id} className="text-sm" data-testid="jaar-dialoog-waarschuwing" data-check={check.id}>
+                      <span className="font-medium">{check.title}</span>
+                      <span className="text-muted-foreground"> — {check.summary}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-muted-foreground" data-testid="jaar-waarschuwingen-uitleg">
+                  {WARNINGS_NOTICE}
+                </p>
+              </section>
+            )}
+          </FinancialActionDialog>
         </div>
       )}
     </>

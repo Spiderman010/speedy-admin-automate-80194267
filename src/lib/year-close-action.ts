@@ -1,6 +1,6 @@
 import { formatTijdstipNL } from "./opening-balance-utils";
 import type { AuditTrailEntry } from "./platform/audit-trail";
-import type { YearCloseReadiness } from "./year-close-readiness";
+import type { ReadinessCheck, YearCloseReadiness } from "./year-close-readiness";
 
 /**
  * Jaarafsluiting PR 2b — de pure laag onder de afsluitknop.
@@ -59,8 +59,13 @@ export type CloseAvailability =
   | { kind: "not_ready"; reason: string }
   /** De rol is bekend en te laag. */
   | { kind: "not_allowed"; reason: string }
-  /** De actie mag worden aangeboden. De RPC blijft de autoriteit. */
-  | { kind: "available" };
+  /**
+   * De actie mag worden aangeboden. De RPC blijft de autoriteit.
+   *
+   * `withWarnings` betekent: er staan nog waarschuwingen open. Afsluiten mag,
+   * maar de gebruiker moet ze éérst onder ogen krijgen.
+   */
+  | { kind: "available"; withWarnings: boolean };
 
 export interface CloseAvailabilityInput {
   fiscalYear: number;
@@ -77,10 +82,28 @@ export interface CloseAvailabilityInput {
   roleUnavailable: boolean;
 }
 
-const NOT_READY_REASON: Record<YearCloseReadiness["status"], string> = {
-  ready: "",
-  warning:
-    "Er staat nog open werk. Dit product kent geen regel die zegt dat een boekjaar met open werk toch mag worden afgesloten, dus afsluiten wordt hier niet aangeboden.",
+/**
+ * De twee statussen waarbij afsluiten niet wordt aangeboden — en dat zijn er
+ * precies twee.
+ *
+ * WAAROM `warning` HIER NIET (MEER) STAAT. PR 2b liet ook een waarschuwing
+ * afsluiten tegenhouden. Een rookproef op productie liet zien dat dat te streng
+ * is: AA-Secure, boekjaar 2023, twaalf controles, tien akkoord, nul blokkades —
+ * en toch geen knop, om twee waarschuwingen die de databaseschrijver zelf
+ * bewust NIET als blokkade behandelt (een ontbrekende beginbalansbewering en
+ * negen rekeningen met een categorie maar nog geen rapportagegroep).
+ *
+ * Daarmee was het scherm niet voorzichtig maar onbruikbaar: een administratie
+ * die volgens elke financiële invariant afsluitbaar is, kon niet worden
+ * afgesloten, en er was geen weg vooruit behalve presentatiewerk dat met de
+ * boekhoudkundige juistheid van het jaar niets te maken heeft.
+ *
+ * De waarschuwing zelf IS nu het geïnformeerde pad: zij wordt vóór de
+ * bevestiging getoond, en de gebruiker sluit er welbewust ómheen. Wat er NIET
+ * is gebeurd: geen enkele controle heeft een andere ernst gekregen, en de
+ * database blokkeert nog exact hetzelfde als eerst.
+ */
+const NOT_READY_REASON: Record<"blocked" | "incomplete", string> = {
   blocked: "Er is een blokkade. Los die eerst op; daarna kan de controle opnieuw.",
   incomplete:
     "De controle is niet volledig uitgevoerd, dus er is niet vastgesteld dát dit jaar afgesloten kan worden.",
@@ -129,7 +152,9 @@ export function closeAvailability(input: CloseAvailabilityInput): CloseAvailabil
   if (input.closurePending) {
     return { kind: "unknown", reason: "Afsluitstatus wordt opgehaald…" };
   }
-  if (input.readiness.status !== "ready") {
+  // Alleen een blokkade en een onvolledige controle houden de actie tegen. Een
+  // waarschuwing niet: zie NOT_READY_REASON hierboven.
+  if (input.readiness.status === "blocked" || input.readiness.status === "incomplete") {
     return { kind: "not_ready", reason: NOT_READY_REASON[input.readiness.status] };
   }
   if (input.roleUnavailable) {
@@ -141,8 +166,31 @@ export function closeAvailability(input: CloseAvailabilityInput): CloseAvailabil
   if (input.canClose !== true) {
     return { kind: "not_allowed", reason: "Alleen een accountant kan een boekjaar definitief afsluiten." };
   }
-  return { kind: "available" };
+  return { kind: "available", withWarnings: input.readiness.status === "warning" };
 }
+
+/**
+ * De waarschuwingen die de gebruiker vóór het bevestigen onder ogen moet krijgen.
+ *
+ * Dit BEREKENT niets. Het leest de vastgezette momentopname en geeft de
+ * bevindingen terug die daar al in staan — dezelfde titels en samenvattingen
+ * die op de pagina zelf staan. Er wordt geen tekst verzonnen en geen enkele
+ * waarschuwing weggelaten.
+ *
+ * Het zijn de bevindingen die de gereedheid van DIT boekjaar bepalen, dus
+ * precies degene die de status op `warning` hebben gezet. De administratiebrede
+ * bevindingen blijven waar ze horen: volledig zichtbaar op de pagina, maar
+ * zonder jaartoerekening — zij hebben de status ook niet bepaald.
+ */
+export function unresolvedWarnings(readiness: YearCloseReadiness): readonly ReadinessCheck[] {
+  return readiness.checks.filter((check) => check.severity === "warning");
+}
+
+export const WARNINGS_HEADING = "Nog openstaande waarschuwingen";
+
+export const WARNINGS_NOTICE =
+  "Deze waarschuwingen blokkeren de jaarafsluiting niet. Bij het bevestigen controleert de administratie " +
+  "opnieuw de financieel noodzakelijke voorwaarden.";
 
 // ── De woorden ──────────────────────────────────────────────────────────────
 
