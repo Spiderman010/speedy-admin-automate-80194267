@@ -328,7 +328,10 @@ export default function Klanten() {
         inkoop_dagboek: toIntOrNull(form.inkoop_dagboek),
         verkoop_dagboek: toIntOrNull(form.verkoop_dagboek),
         bank_dagboek: toIntOrNull(form.bank_dagboek),
-        afgesloten_boekjaar: toIntOrNull(form.afgesloten_boekjaar),
+        // afgesloten_boekjaar staat hier bewust NIET in: het watermerk wordt
+        // uitsluitend gezet door public.close_fiscal_year() (6C-b10). Zou het
+        // hier meeliften, dan zou elke klantwijziging het opnieuw proberen te
+        // schrijven en door de databasegrendel worden geweigerd.
         snelstart_inkoop_mailbox: form.snelstart_inkoop_mailbox.trim() || null,
         debiteuren_rekening_id: form.debiteuren_rekening_id || null,
         crediteuren_rekening_id: form.crediteuren_rekening_id || null,
@@ -794,8 +797,27 @@ export default function Klanten() {
               </div>
 
               <div className="grid gap-2">
-                <Label htmlFor="afgesloten_boekjaar" className="text-xs font-normal">Afgesloten boekjaar</Label>
-                <Input id="afgesloten_boekjaar" inputMode="numeric" value={form.afgesloten_boekjaar} onChange={(e) => setForm({ ...form, afgesloten_boekjaar: e.target.value.replace(/[^0-9]/g, "") })} placeholder="bv. 2024" className="max-w-[160px]" />
+                <Label className="text-xs font-normal">Afgesloten boekjaar</Label>
+                {/*
+                 * ALLEEN LEZEN, EN DAT IS HET HELE PUNT.
+                 *
+                 * Dit veld was een gewoon invoerveld, en daarmee kon elk boekjaar
+                 * worden afgesloten zonder één controle — en ook weer heropend,
+                 * waarmee een append-only grootboek achteraf opnieuw beschrijfbaar
+                 * werd in een jaar dat al als afgesloten was gepresenteerd.
+                 *
+                 * Afsluiten loopt sinds 6C-b10 via public.close_fiscal_year(), die
+                 * de invarianten herkeurt en een onuitwisbaar bewijs vastlegt. De
+                 * database dwingt dat inmiddels zelf af: het watermerk mag alleen
+                 * naar een jaar waarvoor zo'n bewijs bestaat, en nooit omlaag. Dit
+                 * veld bewerkbaar laten zou dus alleen nog een foutmelding opleveren.
+                 */}
+                <p className="text-sm tabular-nums" data-testid="afgesloten-boekjaar">
+                  {form.afgesloten_boekjaar || "Nog niets afgesloten"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Een boekjaar wordt afgesloten via de jaarafsluiting, niet hier.
+                </p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="snelstart_inkoop_mailbox" className="text-xs font-normal">SnelStart inkoopmailbox</Label>
