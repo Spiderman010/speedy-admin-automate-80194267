@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { CalendarCheck, ChevronRight } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { CalendarCheck, ChevronRight, History, LockKeyhole, RotateCcw } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { NoClientBanner } from "@/components/NoClientBanner";
 import { EmptyState } from "@/components/EmptyState";
@@ -271,6 +273,140 @@ function Afsluitbewijs({
   );
 }
 
+const REOPEN_EXPLANATION =
+  "Heropen dit boekjaar alleen als er nog een correctie moet worden verwerkt. De eerdere afsluiting blijft zichtbaar in de audittrail.";
+
+const REOPEN_CONSEQUENCES = [
+  "De eerdere afsluiting blijft in de historie staan.",
+  "Correcties kunnen daarna worden verwerkt als de boekingsblokkade dit toestaat.",
+  "Het boekjaar moet na de correctie opnieuw worden gecontroleerd en afgesloten.",
+] as const;
+
+function BoekjaarstatusCard({
+  fiscalYear,
+  bewijs,
+  clientName,
+  currentUserId,
+  beschikbaarheid,
+  closePending,
+  onClose,
+  onReopenPreview,
+}: {
+  fiscalYear: number;
+  bewijs: YearClosure | null;
+  clientName: string;
+  currentUserId: string | undefined;
+  beschikbaarheid: ReturnType<typeof closeAvailability>;
+  closePending: boolean;
+  onClose: () => void;
+  onReopenPreview: () => void;
+}) {
+  const isClosed = bewijs !== null;
+  const statusEntries = bewijs === null
+    ? []
+    : closureReceiptEntries({ closure: bewijs, clientName, currentUserId })
+        .filter((entry) => entry.label === "Afgesloten op" || entry.label === "Afgesloten door")
+        .map((entry) => ({
+          label: entry.label,
+          value: entry.value,
+          valueClassName: entry.valueClassName,
+        }));
+
+  return (
+    <Card data-testid="jaar-status-card">
+      <CardContent className="space-y-4 p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold">Boekjaarstatus</h2>
+            <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{fiscalYear}</p>
+          </div>
+          <Badge variant={isClosed ? "success" : "info"} data-testid="jaar-status-badge">
+            {isClosed ? "Afgesloten" : "Open"}
+          </Badge>
+        </div>
+
+        {statusEntries.length > 0 && (
+          <AuditTrailBlock entries={statusEntries} className="border-t pt-3" />
+        )}
+
+        {isClosed ? (
+          <div className="space-y-2 border-t pt-3">
+            <Button type="button" variant="outline" className="w-full sm:w-auto" disabled>
+              <RotateCcw className="mr-2 h-4 w-4" aria-hidden="true" />
+              Boekjaar heropenen
+            </Button>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <p className="text-xs text-muted-foreground">Heropenen is nog niet beschikbaar.</p>
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={onReopenPreview}>
+                Bekijk toekomstige werkwijze
+              </Button>
+            </div>
+          </div>
+        ) : beschikbaarheid.kind === "available" ? (
+          <div className="space-y-3 border-t pt-3">
+            <AccountingNotice severity="warning" title="Huidige technische beperking">
+              Let op: de huidige technische jaarafsluiting kan nog niet worden heropend. Heropenen wordt
+              toegevoegd zodra de nieuwe jaarcyclus is geïmplementeerd.
+            </AccountingNotice>
+            <Button
+              type="button"
+              onClick={onClose}
+              disabled={closePending}
+              data-testid="jaar-afsluiten"
+            >
+              Boekjaar afsluiten
+            </Button>
+          </div>
+        ) : (
+          <div className="border-t pt-3">
+            <Button type="button" disabled className="w-full sm:w-auto">
+              Boekjaar afsluiten
+            </Button>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {beschikbaarheid.kind === "no_snapshot"
+                ? "Voer eerst de gereedheidscontrole uit."
+                : "Afsluiten is pas beschikbaar zodra de gereedheidscontrole akkoord is."}
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BoekingsblokkadeCard() {
+  return (
+    <Card data-testid="boekingsblokkade-card">
+      <CardContent className="space-y-4 p-4 sm:p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <LockKeyhole className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            <h2 className="text-sm font-semibold">Boekingsblokkade</h2>
+          </div>
+          <Badge variant="secondary">Nog niet afzonderlijk ingesteld</Badge>
+        </div>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          BoekAssist krijgt hiervoor een aparte boekingsblokkade. Deze staat los van de boekjaarstatus.
+        </p>
+        <div className="border-t pt-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <Button type="button" variant="outline" disabled className="w-full sm:w-auto">
+              Boekingsblokkade instellen
+            </Button>
+            <Button type="button" variant="outline" disabled className="w-full sm:w-auto">
+              Blokkade wijzigen
+            </Button>
+            <Button type="button" variant="ghost" disabled className="w-full sm:w-auto">
+              Blokkade opheffen
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">Nog niet beschikbaar</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Jaarafsluiting() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const { activeOrganizationId, isReady } = useActiveOrganization();
@@ -322,6 +458,8 @@ export default function Jaarafsluiting() {
     { clientId: string; fiscalYear: number; classified: ClassifiedYearCloseError } | null
   >(null);
   const [bevestigen, setBevestigen] = useState(false);
+  const [heropenVoorbeeld, setHeropenVoorbeeld] = useState(false);
+  const [heropenReden, setHeropenReden] = useState("");
 
   const past = (s: { clientId: string; fiscalYear: number } | null) =>
     s !== null && s.clientId === clientId && s.fiscalYear === fiscalYear;
@@ -399,7 +537,7 @@ export default function Jaarafsluiting() {
     <>
       <PageHeader
         title="Jaarafsluiting"
-        description="Vaststellen of een boekjaar verantwoord kan worden afgesloten, en het daarna definitief afsluiten. De controle draait pas wanneer u erom vraagt."
+        description="Beoordeel de gereedheid, bekijk de boekjaarstatus en beheer straks de afzonderlijke boekingsblokkade."
       />
 
       {!hasSpecificClient ? (
@@ -440,8 +578,29 @@ export default function Jaarafsluiting() {
             </div>
           </section>
 
+          <div className="grid gap-4 lg:grid-cols-2">
+            <BoekjaarstatusCard
+              fiscalYear={fiscalYear}
+              bewijs={bewijs}
+              clientName={clientNaam}
+              currentUserId={user?.id}
+              beschikbaarheid={beschikbaarheid}
+              closePending={close.isPending}
+              onClose={() => setBevestigen(true)}
+              onReopenPreview={() => setHeropenVoorbeeld(true)}
+            />
+            <BoekingsblokkadeCard />
+          </div>
+
           <Card>
             <CardContent className="space-y-4 p-4 sm:p-6">
+              <div>
+                <h2 className="text-sm font-semibold">Gereedheid voor afsluiten</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Controleer het open werk en de boekhoudkundige aandachtspunten voor dit boekjaar.
+                </p>
+              </div>
+
               {huidigeSnapshot === null && bewijs === null && huidigeFout === null ? (
                 <EmptyState
                   icon={CalendarCheck}
@@ -471,15 +630,6 @@ export default function Jaarafsluiting() {
                 </AccountingNotice>
               )}
 
-              {bewijs !== null && (
-                <Afsluitbewijs
-                  closure={bewijs}
-                  clientName={clientNaam}
-                  currentUserId={user?.id}
-                  hergebruikt={huidigeUitkomst?.result.created === false}
-                />
-              )}
-
               {beschikbaarheid.kind === "inconsistent" && (
                 <AccountingNotice
                   severity="blocking"
@@ -491,22 +641,6 @@ export default function Jaarafsluiting() {
                 </AccountingNotice>
               )}
 
-              {beschikbaarheid.kind === "available" && (
-                <div className="flex flex-wrap items-center gap-2 border-t pt-4">
-                  <Button
-                    type="button"
-                    onClick={() => setBevestigen(true)}
-                    disabled={close.isPending}
-                    data-testid="jaar-afsluiten"
-                  >
-                    {CLOSE_ACTION_LABEL}
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    Deze stap is definitief en kan niet worden teruggedraaid.
-                  </span>
-                </div>
-              )}
-
               {(beschikbaarheid.kind === "not_ready" ||
                 beschikbaarheid.kind === "not_allowed" ||
                 beschikbaarheid.kind === "unknown") && (
@@ -516,6 +650,27 @@ export default function Jaarafsluiting() {
                   data-kind={beschikbaarheid.kind}
                 >
                   {beschikbaarheid.reason}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card data-testid="jaar-historie">
+            <CardContent className="space-y-4 p-4 sm:p-5">
+              <div className="flex items-center gap-2">
+                <History className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                <h2 className="text-sm font-semibold">Historie</h2>
+              </div>
+              {bewijs !== null ? (
+                <Afsluitbewijs
+                  closure={bewijs}
+                  clientName={clientNaam}
+                  currentUserId={user?.id}
+                  hergebruikt={huidigeUitkomst?.result.created === false}
+                />
+              ) : (
+                <p className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                  Voor dit boekjaar is nog geen afsluiting vastgelegd.
                 </p>
               )}
             </CardContent>
@@ -545,6 +700,38 @@ export default function Jaarafsluiting() {
             cancelTestId="jaar-annuleer-knop"
             consequencesTestId="jaar-gevolgen"
           />
+
+          <FinancialActionDialog
+            open={heropenVoorbeeld}
+            onOpenChange={(open) => {
+              setHeropenVoorbeeld(open);
+              if (!open) setHeropenReden("");
+            }}
+            title="Boekjaar heropenen"
+            explanation={REOPEN_EXPLANATION}
+            consequences={REOPEN_CONSEQUENCES}
+            confirmLabel="Boekjaar heropenen"
+            isPending={false}
+            confirmDisabled
+            onConfirm={() => undefined}
+            data-testid="jaar-heropenen-dialoog"
+            confirmTestId="jaar-heropenen-bevestigen"
+            cancelTestId="jaar-heropenen-annuleren"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="jaar-heropenen-reden">Reden voor heropening</Label>
+              <Textarea
+                id="jaar-heropenen-reden"
+                value={heropenReden}
+                onChange={(event) => setHeropenReden(event.target.value)}
+                placeholder="Nagekomen inkoopfactuur"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                Prototype: heropenen wordt pas actief wanneer de nieuwe jaarcyclus beschikbaar is.
+              </p>
+            </div>
+          </FinancialActionDialog>
         </div>
       )}
     </>

@@ -472,8 +472,9 @@ describe("de grenzen van de gereedheidslaag", () => {
     expect(bron).toMatch(/const \[snapshot, setSnapshot\]/);
     expect(bron).toMatch(/onClick=\{voerUit\}/);
     expect(bron).toContain("Gereedheid controleren");
-    // Geen actieve afsluitknop in PR 1.
-    expect(bron).not.toMatch(/Boekjaar afsluiten|Definitief afsluiten<|onClick=\{.*afsluit/i);
+    // De echte afsluitactie blijft afhankelijk van die vastgelegde uitkomst.
+    expect(bron).toMatch(/beschikbaarheid\.kind === "available"/);
+    expect(bron).toMatch(/onClick=\{onClose\}/);
   });
 
   it("19. de momentopname verandert niet mee met de bronnen", () => {
