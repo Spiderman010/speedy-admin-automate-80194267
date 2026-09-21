@@ -559,7 +559,7 @@ describe("De nieuwe pagina-opbouw", () => {
     expect(screen.getByTestId("jaar-status-card")).toHaveTextContent(
       "de huidige technische jaarafsluiting kan nog niet worden heropend",
     );
-    expect(screen.getByTestId("jaar-afsluiten")).toHaveTextContent("Boekjaar afsluiten");
+    expect(screen.getByTestId("jaar-afsluiten")).toHaveTextContent("Boekjaar definitief afsluiten");
   });
 });
 

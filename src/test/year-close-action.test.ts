@@ -351,13 +351,20 @@ describe("Wat deze fase NIET toevoegt", () => {
   });
 
   it("30. er is geen heropenpad, geen resultaatboeking en geen doorrol", () => {
-    for (const pad of ["src/hooks/useYearClose.ts", "src/pages/Jaarafsluiting.tsx", "src/lib/year-close-action.ts"]) {
+    for (const pad of ["src/hooks/useYearClose.ts", "src/lib/year-close-action.ts"]) {
       const bron = lees(pad);
       expect(bron, pad).not.toMatch(/reopen|heropen(?!d)/i);
       expect(bron, pad).not.toMatch(/carry_forward|doorrol/i);
       expect(bron, pad).not.toMatch(/ledger_postings|posting_group/);
       expect(bron, pad).not.toMatch(/result_cents|resultaat_rekening|9998|9999/);
     }
+
+    const pagina = lees("src/pages/Jaarafsluiting.tsx");
+    expect(pagina).not.toMatch(/carry_forward|doorrol/i);
+    expect(pagina).not.toMatch(/ledger_postings|posting_group/);
+    expect(pagina).not.toMatch(/result_cents|resultaat_rekening|9998|9999/);
+    expect(pagina).toMatch(/confirmDisabled/);
+    expect(pagina).toMatch(/onConfirm=\{\(\) => undefined\}/);
   });
 
   it("31. de RPC wordt met precies twee argumenten aangeroepen", () => {

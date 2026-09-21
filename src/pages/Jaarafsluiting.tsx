@@ -354,7 +354,7 @@ function BoekjaarstatusCard({
               disabled={closePending}
               data-testid="jaar-afsluiten"
             >
-              Boekjaar afsluiten
+              {CLOSE_ACTION_LABEL}
             </Button>
           </div>
         ) : (
