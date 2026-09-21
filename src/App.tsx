@@ -26,6 +26,7 @@ import Balans from "./pages/Balans";
 import WinstVerlies from "./pages/WinstVerlies";
 import ProefSaldibalans from "./pages/ProefSaldibalans";
 import Controle from "./pages/Controle";
+import Jaarafsluiting from "./pages/Jaarafsluiting";
 import Vraagposten from "./pages/Vraagposten";
 import Leveranciers from "./pages/Leveranciers";
 import Instellingen from "./pages/Instellingen";
@@ -89,6 +90,7 @@ const App = () => (
               <Route path="/overzichten" element={<Overzichten />} />
               <Route path="/overzichten/proef-saldibalans" element={<ProefSaldibalans />} />
               <Route path="/overzichten/controle" element={<Controle />} />
+              <Route path="/overzichten/jaarafsluiting" element={<Jaarafsluiting />} />
               <Route path="/grootboek" element={<Grootboek />} />
               <Route path="/grootboek/mutaties" element={<GrootboekMutaties />} />
               <Route path="/grootboek/memoriaal" element={<Memoriaal />} />

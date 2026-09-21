@@ -79,6 +79,7 @@ describe("Rapportages pagina", () => {
       "Balans": "Beschikbaar",
       "Winst-en-verliesrekening": "Beschikbaar",
       "Controle": "Beschikbaar",
+      "Jaarafsluiting": "Beschikbaar",
       "Grootboek": "Nog niet beschikbaar",
       "BTW-overzicht": "Nog niet beschikbaar",
     };

@@ -1054,6 +1054,32 @@ Nog steeds door de gebruiker gestart en uitsluitend lezend. Geen migratie, geen 
 
 ---
 
+### Year Close — Readiness (PR 1)
+
+**Uitsluitend lezen.** Geen migratie, geen SQL, geen RPC, geen schemawijziging, geen afsluitmutatie, geen resultaatboeking, geen doorrol. Route `/overzichten/jaarafsluiting`, via de rapportagehub, zonder nieuw nav-item.
+
+```
+src/lib/year-close-readiness.ts     puur: bestaande oordelen + drie boekjaarvragen
+src/hooks/useYearCloseSources.ts    de bronnen, uitsluitend via bestaande hooks
+src/pages/Jaarafsluiting.tsx        /overzichten/jaarafsluiting
+```
+
+- **Hergebruikt, niet nagebouwd.** Het leeuwendeel van de gereedheid is de bestaande controle (`runDiagnostics`) over `yearPeriod(boekjaar)`: zelfcontrole van de kern, kolommenbalans, boekingsgroepen, brondocumenten, tegenboekingslineage, jaarrekeningmotor, classificatie, groepsindeling, beginbalans en openstaand werk. Daar komen alleen drie vragen bij die uitsluitend over een BOEKJAAR gaan: `year_already_closed`, `year_order`, `year_activity`. Eén ernstladder, de bestaande.
+- **`afgesloten_boekjaar` is een WATERMERK, geen los jaar.** Alle zeven schrijvers toetsen met `v_boekjaar <= v_client.afgesloten_boekjaar`; `NULL` betekent dat er nog niets is afgesloten. Het veld wordt vandaag met de hand gezet op `/klanten`; er bestaat geen afsluitactie.
+- **Volgorde is daarom een echte blokkade.** Omdat het veld één jaartal is en met `<=` wordt getoetst, sluit het watermerk op 2026 zetten ook 2024 en 2025 — stilzwijgend, op een append-only grootboek. Liggen er vóór het gekozen jaar nog niet-afgesloten boekjaren **met boekingen**, dan blokkeert dat. Een leeg tussenliggend jaar niet: daar valt niets af te sluiten.
+- **Boekjaar = kalenderjaar, bewezen.** De kolom `ledger_postings.boekjaar` bestaat juist om een gebroken boekjaar mogelijk te maken, maar élke schrijver leidt hem af als `EXTRACT(YEAR FROM <datum>)`, `clients` kent geen begin van een boekjaar, en `20260919120000` stelt het expliciet: *"Broken fiscal years are NOT supported in v1."* De gereedheidslaag rekent daarom met kalenderjaren en beweert niets anders; een test pint beide helften vast.
+- **"Geen boekingen" ≠ "gecontroleerd en compleet".** Een boekjaar zonder grootboekregels levert een waarschuwing op, geen geruststelling.
+- **Waarschuwingen zijn bewust géén gereedheid.** Er bestaat in dit product geen regel die zegt dat open werk of een onvolledige beginbalans afsluiten toestaat, dus die regel is hier niet verzonnen: de status is dan `warning`, niet `ready`.
+- **Fail closed.** Kon één bron niet worden gelezen — of was de onderliggende controle zelf al onvolledig — dan is de status `incomplete` en kan er per constructie nooit "gereed voor afsluiten" uit komen. Twee opzettelijke mutaties bewijzen dat.
+
+**Wat PR 2 nog moet beslissen (nu vastgesteld, niet opgelost):**
+
+- **Er is geen resultaatrekening-autoriteit.** Het resultaat zélf is wél deterministisch beschikbaar: `profitLoss.netResultCents = revenueCents − expenseCents`, winst positief, met de invariant `netResultCents === -pnlMovementCents`. Maar `clients` kent geen resultaat- of eigenvermogenrekening, en de balans toont de resultaatbestemming als **presentatieregel** (`current_year_result`, "Resultaat lopend boekjaar"), niet als boeking. Rekening **9998 'Resultaat'** bestaat slechts als ingezaaide rekening in het standaardschema — dat is géén configuratie en mag nooit als autoriteit worden gebruikt. Een expliciet configuratieveld is een ontwerpvereiste voor de afsluitactie.
+- **De beginbalansmotor kan géén doorrol doen.** `post_opening_balance()` weigert zodra de administratie al énige grootboekregel vóór `opening_date` heeft (de "earliest fact"-regel, met een spiegeltrigger en een advisory lock). Bij het afsluiten van jaar N bestaan die regels per definitie, dus jaar N+1 openen kan niet via deze weg. Een doorrol vraagt een eigen bronsoort met een eigen marker, een eigen idempotentie en een audit-verwijzing naar het afgesloten jaar.
+- **Er bestaat nog geen afsluitmutatie**, geen doorrol en geen resultaatboeking; `afgesloten_boekjaar` wordt nergens in code gezet.
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**
