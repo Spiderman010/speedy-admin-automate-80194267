@@ -19,6 +19,8 @@ import { computeLedgerCompleteness, type OpeningBalanceCompleteness } from "@/li
 import type { LedgerIntegrityReport } from "@/lib/ledger-integrity";
 import {
   available,
+  integrityChecks,
+  integrityChecksCoverAll,
   runDiagnostics,
   unavailable,
   type DiagnosticRunInput,
@@ -191,6 +193,24 @@ describe("een gezonde administratie", () => {
     expect(check(run, "trial_balance")?.summary).toBe("Kolommenbalans sluit.");
   });
 
+  it("1c. openstaand boekwerk is een waarschuwing en zegt dat het niet periodegebonden is", () => {
+    const { rows, accounts } = gezond();
+    const run = runDiagnostics(inputFor(rows, accounts, { completeness: available(OPENSTAAND) }));
+    const c = check(run, "bank_outstanding");
+    expect(c?.severity).toBe("warning");
+    expect(c?.count).toBe(1);
+    expect(c?.summary).toContain("hele administratie");
+    expect(run.summary.blocking).toBe(0);
+  });
+
+  it("1b. een lege administratie leest niet als een geslaagde controle", () => {
+    const run = runDiagnostics(inputFor([], [BANK, KAPITAAL, OMZET]));
+    // Niets geboekt is geen bevinding, maar ook geen geruststelling.
+    expect(check(run, "trial_balance")?.severity).toBe("ok");
+    expect(check(run, "trial_balance")?.summary).toContain("niets geboekt");
+    expect(check(run, "trial_balance")?.summary).not.toBe("Kolommenbalans sluit.");
+  });
+
   it("10. een rekening zonder enige beweging levert geen bevinding op", () => {
     const { rows } = gezond();
     const accounts = [BANK, KAPITAAL, OMZET, SLAPEND];
@@ -252,6 +272,75 @@ describe("een grootboek dat niet sluit", () => {
     const run = runDiagnostics(inputFor(rows, accounts, { integrity: available(rapport) }));
     expect(check(run, "posting_groups")?.severity).toBe("error");
     expect(check(run, "posting_groups")?.count).toBe(1);
+  });
+});
+
+// ── Regressie: geen enkele bevinding mag wegvallen ─────────────────────────
+
+/**
+ * De P1 uit de review. De eerste versie filterde de integriteitsbevindingen op
+ * `reference.soort === "boekingsgroep"` en liet daarmee `factuur_zonder_regels`
+ * vallen — een BLOKKERENDE bevinding die /grootboek/integriteit wél toont.
+ * Resultaat: dit rapport zei "alles akkoord" terwijl er een gebroken invariant
+ * open stond. Deze tests vallen om zodra dat terugkomt.
+ */
+describe("elke integriteitsbevinding telt mee", () => {
+  const rapportMet = (findings: LedgerIntegrityReport["findings"]): LedgerIntegrityReport => ({
+    findings,
+    errorCount: findings.filter((f) => f.severity === "error").length,
+    warningCount: findings.filter((f) => f.severity === "waarschuwing").length,
+    byKind: { ...SCHOON_INTEGRITY.byKind },
+  });
+
+  const FACTUUR_ZONDER_REGELS: LedgerIntegrityReport["findings"][number] = {
+    kind: "factuur_zonder_regels", severity: "error",
+    subject: "INV-001", detail: "geen boekingsregels",
+    reference: { soort: "inkoopfactuur", id: "i1" },
+  };
+  const LEGACY_TEKST: LedgerIntegrityReport["findings"][number] = {
+    kind: "legacy_tekst_zonder_rekening", severity: "waarschuwing",
+    subject: "INV-002", detail: "tekst is geen rekening",
+    reference: { soort: "inkoopfactuur", id: "i2" },
+  };
+
+  it("2d. een blokkerende factuur_zonder_regels maakt de uitkomst NIET groen", () => {
+    const { rows, accounts } = gezond();
+    const run = runDiagnostics(
+      inputFor(rows, accounts, { integrity: available(rapportMet([FACTUUR_ZONDER_REGELS])) }),
+    );
+    expect(run.summary.blocking).toBeGreaterThan(0);
+    expect(check(run, "source_documents")?.severity).toBe("error");
+    expect(check(run, "source_documents")?.count).toBe(1);
+  });
+
+  it("2e. een documentwaarschuwing komt als waarschuwing door, niet als blokkade", () => {
+    const { rows, accounts } = gezond();
+    const run = runDiagnostics(
+      inputFor(rows, accounts, { integrity: available(rapportMet([LEGACY_TEKST])) }),
+    );
+    expect(check(run, "source_documents")?.severity).toBe("warning");
+    expect(run.summary.blocking).toBe(0);
+    expect(run.summary.warnings).toBeGreaterThan(0);
+  });
+
+  it("2f. elke bevinding wordt precies één keer geteld, ook een onbekende soort", () => {
+    const vreemd = {
+      kind: "boekingsgroep_niet_in_balans", severity: "error",
+      subject: "x", detail: "x",
+      reference: { soort: "iets_nieuws", id: "x1" },
+    } as unknown as LedgerIntegrityReport["findings"][number];
+    const rapport = rapportMet([FACTUUR_ZONDER_REGELS, LEGACY_TEKST, vreemd]);
+    expect(integrityChecksCoverAll(rapport)).toBe(true);
+    const geteld = integrityChecks(rapport).reduce((n, c) => n + (c.count ?? 0), 0);
+    expect(geteld).toBe(3);
+  });
+
+  it("2g. de integriteitscontrole zegt erbij dat zij niet periodegebonden is", () => {
+    const { rows, accounts } = gezond();
+    const run = runDiagnostics(
+      inputFor(rows, accounts, { integrity: available(rapportMet([FACTUUR_ZONDER_REGELS])) }),
+    );
+    expect(check(run, "source_documents")?.summary).toContain("hele administratie");
   });
 });
 
@@ -357,6 +446,33 @@ describe("fail closed", () => {
     expect(check(run, "statements")?.severity).toBe("error");
     // Geen uitspraak over iets waarvan de bron niet kon rekenen.
     expect(check(run, "classification")).toBeUndefined();
+  });
+
+  it("5e. een INHOUDELIJKE motorfout wordt niet als technische storing gemeld", () => {
+    const { rows, accounts } = gezond();
+    const gefaald: FinancialStatementsResult = {
+      ok: false, failures: ["coverage_mismatch"], completeness: "unknown",
+      diagnostics: {} as never,
+    };
+    const run = runDiagnostics(inputFor(rows, accounts, {
+      statements: available(gefaald),
+      // De groepsindeling is dan niet te bepalen — maar dát is boekhoudkundig,
+      // geen storing, en mag de run niet als "onvolledig" bestempelen.
+      subgroupSections: unavailable("Groepsindeling"),
+    }));
+    expect(run.ok).toBe(true);
+    expect(check(run, "statements")?.severity).toBe("error");
+    expect(check(run, "subgroups")).toBeUndefined();
+  });
+
+  it("5f. valt de kern om, dan is dat wél een storing", () => {
+    const { rows, accounts } = gezond();
+    const run = runDiagnostics(inputFor(rows, accounts, {
+      subgroupSections: unavailable("Groepsindeling"),
+    }));
+    expect(run.ok).toBe(false);
+    if (run.ok !== false) throw new Error("onbereikbaar");
+    expect(run.unavailable).toContain("Groepsindeling");
   });
 
   it("5d. elke ontbrekende bron wordt bij naam genoemd", () => {

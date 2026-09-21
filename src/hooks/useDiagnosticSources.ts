@@ -55,12 +55,25 @@ export function useDiagnosticSources({
     [accountsQuery.data, clientId],
   );
 
-  /** Kolommenbalans: exact dezelfde twee aanroepen als de rapportpagina. */
+  /**
+   * Kolommenbalans: exact dezelfde twee aanroepen als de rapportpagina.
+   *
+   * De kern GOOIT bij een geschonden grens — rijen van een andere
+   * administratie, een vreemde valuta, een onmogelijke periode. Dat gebeurt
+   * hier tijdens het renderen, en de app heeft geen ErrorBoundary: zonder deze
+   * `try` zou zo'n fout een wit scherm opleveren in plaats van een controle
+   * die netjes zegt dat zij niet volledig kon draaien. Fail closed betekent
+   * ook: niet omvallen.
+   */
   const trialBalance = useMemo<Source<ReturnType<typeof buildTrialBalance>>>(() => {
     if (accountsQuery.isError || postingsQuery.isError) return unavailable("Grootboekmutaties");
     if (!clientId || !postingsQuery.data) return unavailable("Grootboekmutaties");
-    const report = buildAccountReport({ rows: postingsQuery.data, clientId, period, accounts });
-    return available(buildTrialBalance({ report, accounts, clientId }));
+    try {
+      const report = buildAccountReport({ rows: postingsQuery.data, clientId, period, accounts });
+      return available(buildTrialBalance({ report, accounts, clientId }));
+    } catch {
+      return unavailable("Grootboekmutaties");
+    }
   }, [accountsQuery.isError, postingsQuery.isError, postingsQuery.data, clientId, period, accounts]);
 
   const integrity = useMemo(() => {

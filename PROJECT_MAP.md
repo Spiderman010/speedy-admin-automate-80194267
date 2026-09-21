@@ -1034,7 +1034,12 @@ src/pages/Controle.tsx              /overzichten/controle
 - **Geen schrijfpad.** Statische grenstests over alle drie de bestanden weigeren `insert`/`update`/`delete`/`upsert`, `useMutation`, élke `.rpc(`, de Supabase-client, een achtergrondtaak en AI. Een UI-test telt nul schrijfacties na twee klikken.
 - **De gebruiker start zelf.** Bij openen draait er geen controle en staat er geen enkele uitspraak op het scherm; de bronnen laden wel vast, zodat de klik direct antwoord geeft. De uitkomst is een momentopname die daarna niet meer meebeweegt met de cache.
 - **Eén scope-uitspraak vervangen door haar invariant.** `rapportages-ui.test.tsx` legde "alle vijf rapportkaarten" vast met een telling van hoe vaak "Beschikbaar" voorkomt. Elk nieuw opgeleverd rapport laat zo'n telling omvallen; vervangen door een assertie per kaart, wat sterker is dan een totaal.
-- **Tests:** `src/test/diagnostic-report.test.ts` (25, door de échte kern en motoren) en `src/test/controle-page.test.tsx` (9).
+- **De integriteitscontrole wordt gepartitioneerd, niet gefilterd.** Een eerste versie hield alleen bevindingen met `reference.soort === "boekingsgroep"` over en liet daarmee `factuur_zonder_regels` vallen — een BLOKKERENDE bevinding die `/grootboek/integriteit` wél toont. Het rapport zei dan "alles akkoord" terwijl er een gebroken invariant open stond. Nu landt elke bevinding in precies één controle (`posting_groups`, `source_documents`, en een vangnet voor een onbekende soort); `integrityChecksCoverAll()` legt dat vast en vier tests vallen om zodra het terugkomt.
+- **Een inhoudelijke motorfout is geen technische storing.** Faalt `buildFinancialStatements()` om een boekhoudkundige reden, dan is de groepsindeling niet te bepalen — maar de run wordt daar niet "onvolledig" van, want de motorcontrole draagt die blokkade al. Alleen een échte laadfout maakt `ok: false`.
+- **De kern gooit; de controle vangt.** `buildAccountReport()` draait in een render-`useMemo` en de app heeft geen ErrorBoundary, dus een `LedgerReportingError` (vreemde administratie, vreemde valuta) zou een wit scherm geven in plaats van een nette melding. Die aanroep staat nu in een `try`: fail closed betekent ook niet omvallen.
+- **"Niets te controleren" ≠ "gecontroleerd en in orde".** Een periode zonder boekingen meldt dat met zoveel woorden in plaats van "Kolommenbalans sluit".
+- **De doorklik van de zelfcontrole wijst naar de kolommenbalans**, niet naar `/grootboek/integriteit`: die pagina toont de vier integriteitsregels en kan een gefaalde kernzelfcontrole niet laten zien.
+- **Tests:** `src/test/diagnostic-report.test.ts` (33, door de échte kern en motoren) en `src/test/controle-page.test.tsx` (9).
 
 ---
 

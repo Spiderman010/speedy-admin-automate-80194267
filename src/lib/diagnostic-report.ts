@@ -51,6 +51,8 @@ export type DiagnosticCheckId =
   | "opening_balance_totals"
   | "trial_balance"
   | "posting_groups"
+  | "source_documents"
+  | "integrity_other"
   | "opening_balance_status"
   | "statements"
   | "classification"
@@ -154,7 +156,10 @@ export function ledgerSelfCheck(tb: TrialBalance): DiagnosticCheck {
     severity: "error",
     count: aantal,
     summary: `De zelfcontrole van de rapportagekern is niet doorstaan (${telwoord(aantal, "bevinding", "bevindingen")}). Zolang dit speelt zijn de cijfers niet betrouwbaar.`,
-    drilldown: { label: "Naar de integriteitscontrole", to: "/grootboek/integriteit" },
+    // NIET naar /grootboek/integriteit: die pagina toont de vier
+    // integriteitsregels en kan een gefaalde kernzelfcontrole niet laten zien.
+    // De kolommenbalans doet dat wel.
+    drilldown: { label: "Naar de kolommenbalans", to: "/overzichten/proef-saldibalans" },
   };
 }
 
@@ -232,11 +237,16 @@ export function trialBalanceCloses(tb: TrialBalance): DiagnosticCheck {
     };
   }
   if (!onbalans) {
+    // "Er viel niets te controleren" is iets anders dan "gecontroleerd en in
+    // orde". Een lege administratie mag niet als geruststelling lezen.
+    const leeg = tb.ok === true && tb.rows.length === 0;
     return {
       id: "trial_balance",
       title: "Kolommenbalans",
       severity: "ok",
-      summary: "Kolommenbalans sluit.",
+      summary: leeg
+        ? "Er is in deze periode niets geboekt; er viel op de kolommenbalans niets te controleren."
+        : "Kolommenbalans sluit.",
       drilldown: { label: "Naar de kolommenbalans", to: "/overzichten/proef-saldibalans" },
     };
   }
@@ -251,32 +261,84 @@ export function trialBalanceCloses(tb: TrialBalance): DiagnosticCheck {
 }
 
 /**
- * A5. Boekingsgroepen. De ernst komt ongewijzigd uit `INTEGRITY_SEVERITY` via
- * `severityForIntegrityFinding()`; hier wordt alleen geteld.
+ * A5. De integriteitscontrole — ALLE bevindingen, niet een deelverzameling.
+ *
+ * `evaluateLedgerIntegrity()` levert vier soorten in twee families: die over
+ * een boekingsgroep (grootboek) en die over een brondocument (inkoopfactuur).
+ * Een eerdere versie filterde hier alleen op `soort === "boekingsgroep"` en
+ * liet daarmee `factuur_zonder_regels` vallen — een BLOKKERENDE bevinding die
+ * /grootboek/integriteit wél toont. Gevolg: dit rapport zei "alles akkoord"
+ * terwijl er een gebroken invariant open stond. Precies wat een controle moet
+ * voorkomen.
+ *
+ * Daarom wordt er nu PARTITIONEERD en niet gefilterd: elke bevinding landt in
+ * precies één controle, en wat in geen familie past komt in de restcontrole
+ * terecht. Verdwijnen kan niet meer. `integrityChecksCoverAll()` legt dat vast.
  */
-export function postingGroups(report: LedgerIntegrityReport): DiagnosticCheck {
-  const groepen = report.findings.filter((f) => f.reference.soort === "boekingsgroep");
-  const fouten = groepen.filter((f) => severityForIntegrityFinding(f) === "error");
-  const waarschuwingen = groepen.filter((f) => severityForIntegrityFinding(f) === "warning");
-  if (groepen.length === 0) {
-    return {
-      id: "posting_groups",
-      title: "Boekingsgroepen",
-      severity: "ok",
-      summary: "Elke boekingsgroep is sluitend en heeft grootboekregels.",
-    };
-  }
-  return {
-    id: "posting_groups",
+const INTEGRITY_FAMILIES = [
+  {
+    id: "posting_groups" as const,
     title: "Boekingsgroepen",
+    soort: "boekingsgroep" as const,
+    schoon: "Elke boekingsgroep is sluitend en heeft grootboekregels.",
+    onderwerp: { enkel: "boekingsgroep", meervoud: "boekingsgroepen" },
+  },
+  {
+    id: "source_documents" as const,
+    title: "Brondocumenten",
+    soort: "inkoopfactuur" as const,
+    schoon: "Elk goedgekeurd brondocument heeft boekingsregels met een echte grootboekrekening.",
+    onderwerp: { enkel: "brondocument", meervoud: "brondocumenten" },
+  },
+];
+
+function integrityCheck(
+  familie: (typeof INTEGRITY_FAMILIES)[number],
+  findings: readonly LedgerIntegrityReport["findings"][number][],
+): DiagnosticCheck {
+  const basis = { id: familie.id, title: familie.title };
+  if (findings.length === 0) {
+    return { ...basis, severity: "ok", summary: familie.schoon };
+  }
+  const fouten = findings.filter((f) => severityForIntegrityFinding(f) === "error");
+  return {
+    ...basis,
     severity: fouten.length > 0 ? "error" : "warning",
-    count: groepen.length,
+    count: findings.length,
     summary:
-      fouten.length > 0
-        ? `${telwoord(fouten.length, "boekingsgroep", "boekingsgroepen")} met een gebroken invariant.`
-        : `${telwoord(waarschuwingen.length, "aandachtspunt", "aandachtspunten")} bij de boekingsgroepen.`,
+      (fouten.length > 0
+        ? `${telwoord(fouten.length, familie.onderwerp.enkel, familie.onderwerp.meervoud)} met een gebroken invariant.`
+        : `${telwoord(findings.length, "aandachtspunt", "aandachtspunten")} bij de ${familie.onderwerp.meervoud}.`) +
+      " Deze controle geldt voor de hele administratie, niet alleen voor deze periode.",
     drilldown: { label: "Naar de integriteitscontrole", to: "/grootboek/integriteit" },
   };
+}
+
+export function integrityChecks(report: LedgerIntegrityReport): DiagnosticCheck[] {
+  const checks = INTEGRITY_FAMILIES.map((familie) =>
+    integrityCheck(familie, report.findings.filter((f) => f.reference.soort === familie.soort)),
+  );
+  // Het vangnet: een bevinding met een onbekende soort mag nooit wegvallen.
+  const bekend = new Set(INTEGRITY_FAMILIES.map((f) => f.soort as string));
+  const overig = report.findings.filter((f) => !bekend.has(f.reference.soort));
+  if (overig.length > 0) {
+    const fouten = overig.filter((f) => severityForIntegrityFinding(f) === "error");
+    checks.push({
+      id: "integrity_other",
+      title: "Overige integriteitsbevindingen",
+      severity: fouten.length > 0 ? "error" : "warning",
+      count: overig.length,
+      summary: `${telwoord(overig.length, "bevinding", "bevindingen")} die niet in een bekende categorie valt.`,
+      drilldown: { label: "Naar de integriteitscontrole", to: "/grootboek/integriteit" },
+    });
+  }
+  return checks;
+}
+
+/** Elke bevinding is precies één keer geteld. Bewijs voor de test. */
+export function integrityChecksCoverAll(report: LedgerIntegrityReport): boolean {
+  const geteld = integrityChecks(report).reduce((n, c) => n + (c.count ?? 0), 0);
+  return geteld === report.findings.length;
 }
 
 /**
@@ -444,7 +506,7 @@ export function runDiagnostics(input: DiagnosticRunInput): DiagnosticRun {
     ontbreekt.push(input.trialBalance.label);
   }
 
-  if (input.integrity.available === true) checks.push(postingGroups(input.integrity.value));
+  if (input.integrity.available === true) checks.push(...integrityChecks(input.integrity.value));
   else ontbreekt.push(input.integrity.label);
 
   if (input.openingBalance.available === true) checks.push(openingBalanceStatus(input.openingBalance.value));
@@ -460,8 +522,17 @@ export function runDiagnostics(input: DiagnosticRunInput): DiagnosticRun {
     ontbreekt.push(input.statements.label);
   }
 
+  /*
+   * De groepsindeling hangt aan de uitkomst van de motor. Faalde die om een
+   * BOEKHOUDKUNDIGE reden, dan is de indeling niet te bepalen — maar dat is
+   * geen technische storing, en het zou onjuist zijn om hem zo te melden. De
+   * motorcontrole hierboven draagt die blokkade al. Er wordt dan dus niets
+   * over de indeling beweerd, en de run wordt er niet onvolledig van.
+   */
+  const motorFaaldeInhoudelijk =
+    input.statements.available === true && input.statements.value.ok !== true;
   if (input.subgroupSections.available === true) checks.push(subgroups(input.subgroupSections.value));
-  else ontbreekt.push(input.subgroupSections.label);
+  else if (!motorFaaldeInhoudelijk) ontbreekt.push(input.subgroupSections.label);
 
   if (input.completeness.available === true) checks.push(outstandingWork(input.completeness.value));
   else ontbreekt.push(input.completeness.label);
