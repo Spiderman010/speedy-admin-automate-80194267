@@ -15,6 +15,8 @@ import { NoClientBanner } from "@/components/NoClientBanner";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterChip } from "@/components/FilterChip";
 import { ProefSaldibalansTable } from "@/components/overzichten/ProefSaldibalansTable";
+import { ReportDrilldownSheet } from "@/components/overzichten/ReportDrilldownSheet";
+import type { DrilldownTarget } from "@/lib/report-drilldown";
 import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
@@ -124,6 +126,70 @@ export default function ProefSaldibalans() {
   }, [built, accounts, clientId, toonNul]);
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
+
+  /*
+   * De kolommenbalans heeft al rekeningregels; wat ontbrak was de stap naar de
+   * mutaties eronder. Er komt geen categorie- of groepsniveau bij — dat kent
+   * dit rapport niet. De doorklik draagt alleen de rekening.
+   */
+  const [drilldownAccountId, setDrilldownAccountId] = useState<string | null>(null);
+
+  /**
+   * De kolommenbalans heeft geen categorieën, dus is er één naamloze "groep"
+   * met precies de aangeklikte rekening erin. Het bedrag komt uit de rij die
+   * op het scherm staat; er wordt niets herrekend.
+   */
+  const drilldownView = useMemo(() => {
+    if (!drilldownAccountId || balans === null || !balans.ok) return null;
+    const rij = balans.rows.find((r) => r.account.id === drilldownAccountId);
+    if (!rij) return null;
+    // Het getekende eindsaldo zoals de kolommenbalans het toont: precies de
+    // twee kolommen die op het scherm staan, weer bij elkaar. `splitBalanceCents`
+    // deed het omgekeerde; hier wordt niets nieuws berekend.
+    const eindsaldoCents = rij.closingDebitCents - rij.closingCreditCents;
+    const label = rij.account.nummer === null
+      ? rij.account.omschrijving
+      : `${rij.account.nummer} - ${rij.account.omschrijving}`;
+    return {
+      groupKey: "kolommenbalans",
+      label,
+      totalCents: eindsaldoCents,
+      subgroups: [
+        {
+          key: "kolommenbalans",
+          label,
+          isFallback: false,
+          subtotalCents: eindsaldoCents,
+          accounts: [
+            {
+              accountId: rij.account.id,
+              accountNumber: rij.account.nummer,
+              accountName: rij.account.omschrijving,
+              displayedCents: eindsaldoCents,
+              // De kolommenbalans toont debet-positief, net als de kern; er is
+              // dus geen oriëntatieverschil om uit te leggen.
+              rawSignedCents: eindsaldoCents,
+              presentationSide: "debet" as const,
+              isContra: false,
+            },
+          ],
+        },
+      ],
+      reconciles: true,
+    };
+  }, [drilldownAccountId, balans]);
+
+  const drilldownTarget: DrilldownTarget | null = drilldownAccountId
+    ? { level: "account", groupKey: "kolommenbalans", subgroupKey: "kolommenbalans", accountId: drilldownAccountId }
+    : null;
+
+  const drilldownAccountsById = useMemo(
+    () =>
+      new Map(
+        (accounts ?? []).map((r) => [r.id, { id: r.id, nummer: r.nummer, omschrijving: r.omschrijving }]),
+      ),
+    [accounts],
+  );
   const years = recentYears();
 
   // De exportpoort moet PRECIES dezelfde toestand volgen als het scherm.
@@ -251,7 +317,13 @@ export default function ProefSaldibalans() {
         />
       );
     }
-    return <ProefSaldibalansTable rows={balans.rows} totals={balans.totals} />;
+    return (
+      <ProefSaldibalansTable
+        rows={balans.rows}
+        totals={balans.totals}
+        onDrilldown={setDrilldownAccountId}
+      />
+    );
   };
 
   return (
@@ -329,6 +401,22 @@ export default function ProefSaldibalans() {
             <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
           </Card>
         </div>
+      )}
+
+      {clientId && (
+        <ReportDrilldownSheet
+          target={drilldownTarget}
+          onTargetChange={(t) => setDrilldownAccountId(t === null ? null : drilldownAccountId)}
+          view={drilldownView}
+          clientId={clientId}
+          period={period}
+          periodLabel={periodLabel(selection)}
+          clientName={selectedClient?.name ?? "administratie"}
+          accountsById={drilldownAccountsById}
+          accounts={accounts ?? []}
+          reportKind="trial_balance"
+          reportLabel="Proef- en saldibalans"
+        />
       )}
     </>
   );

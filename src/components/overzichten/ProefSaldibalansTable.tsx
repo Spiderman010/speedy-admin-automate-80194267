@@ -19,12 +19,19 @@ export interface ProefSaldibalansTableProps {
   rows: TrialBalanceRow[];
   totals: TrialBalanceTotals;
   accountPath?: (accountId: string) => string;
+  /**
+   * Doorklikken naar de mutaties van deze rekening, in de periode die nu op
+   * het scherm staat. Ontbreekt de callback, dan blijft de bestaande link naar
+   * /grootboek/saldi/:accountId het enige pad.
+   */
+  onDrilldown?: (accountId: string) => void;
 }
 
 export function ProefSaldibalansTable({
   rows,
   totals,
   accountPath = (id) => `/grootboek/saldi/${id}`,
+  onDrilldown,
 }: ProefSaldibalansTableProps) {
   return (
     // Horizontaal scrollen binnen de container, nooit de hele pagina.
@@ -53,7 +60,22 @@ export function ProefSaldibalansTable({
             const label = a.nummer === null ? a.omschrijving : `${a.nummer} - ${a.omschrijving}`;
             return (
               <TableRow key={a.id} data-testid="psb-row" data-account-id={a.id}>
-                <TableCell className="font-mono tabular-nums">{a.nummer ?? "—"}</TableCell>
+                <TableCell className="font-mono tabular-nums">
+                  {onDrilldown ? (
+                    <button
+                      type="button"
+                      className="rounded-sm underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => onDrilldown(a.id)}
+                      data-testid="psb-drilldown"
+                      data-account-id={a.id}
+                      aria-label={`Toelichting bij ${label}`}
+                    >
+                      {a.nummer ?? "—"}
+                    </button>
+                  ) : (
+                    (a.nummer ?? "—")
+                  )}
+                </TableCell>
                 <TableCell className="max-w-[280px]">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <Link

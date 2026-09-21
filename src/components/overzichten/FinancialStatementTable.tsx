@@ -12,6 +12,7 @@ import type {
   FinancialStatementSystemLine,
 } from "@/lib/financial-statements";
 import type { StatementGroupSections } from "@/lib/financial-statements-subgroups";
+import type { DrilldownTarget } from "@/lib/report-drilldown";
 
 /**
  * Balans/W&V PR 4 — een gegroepeerd jaarrekeningoverzicht als tabel.
@@ -45,6 +46,11 @@ export interface FinancialStatementTableProps {
    * opgeteld en niets gefilterd: de secties komen af.
    */
   sections?: readonly StatementGroupSections[];
+  /**
+   * Doorklikken op een bedrag. Ontbreekt de callback, dan blijft de tabel
+   * precies zoals zij was: gewone tekst, geen knop.
+   */
+  onDrilldown?: (target: DrilldownTarget) => void;
   /** Presentatieregels die onder de groepen horen (alleen de balans heeft die). */
   systemLines?: readonly FinancialStatementSystemLine[];
   totalLabel: string;
@@ -57,6 +63,7 @@ export function FinancialStatementTable({
   caption,
   groups,
   sections,
+  onDrilldown,
   systemLines = [],
   totalLabel,
   totalCents,
@@ -83,6 +90,7 @@ export function FinancialStatementTable({
             group={group}
             sections={sections?.[index]}
             accountPath={accountPath}
+            onDrilldown={onDrilldown}
           />
         ))}
 
@@ -132,10 +140,12 @@ function GroupRows({
   group,
   sections,
   accountPath,
+  onDrilldown,
 }: {
   group: FinancialStatementGroup;
   sections?: StatementGroupSections;
   accountPath: (accountId: string) => string;
+  onDrilldown?: (target: DrilldownTarget) => void;
 }) {
   /*
    * Het tweede niveau verschijnt alleen wanneer er werkelijk iets is
@@ -197,7 +207,22 @@ function GroupRows({
                   section.isFallback ? "italic text-muted-foreground" : "text-foreground",
                 )}
               >
-                {section.label}
+                {onDrilldown ? (
+                  <button
+                    type="button"
+                    className="rounded-sm underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() =>
+                      onDrilldown({ level: "subgroup", groupKey: group.key, subgroupKey: section.key })
+                    }
+                    data-testid="drilldown-subgroup"
+                    data-subgroup={section.key}
+                    aria-label={`Toelichting bij ${section.label}`}
+                  >
+                    {section.label}
+                  </button>
+                ) : (
+                  section.label
+                )}
               </TableCell>
             </TableRow>
 
@@ -229,7 +254,22 @@ function GroupRows({
         data-group={group.key}
       >
         <TableCell className={CELL} />
-        <TableCell className={cn(CELL, "text-sm font-medium")}>Subtotaal {group.label}</TableCell>
+        <TableCell className={cn(CELL, "text-sm font-medium")}>
+          {onDrilldown ? (
+            <button
+              type="button"
+              className="rounded-sm underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => onDrilldown({ level: "group", groupKey: group.key })}
+              data-testid="drilldown-group"
+              data-group={group.key}
+              aria-label={`Toelichting bij ${group.label}`}
+            >
+              Subtotaal {group.label}
+            </button>
+          ) : (
+            <>Subtotaal {group.label}</>
+          )}
+        </TableCell>
         <Bedrag cents={group.totalCents} emphasis />
       </TableRow>
     </TableBody>

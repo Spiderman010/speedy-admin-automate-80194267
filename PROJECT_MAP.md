@@ -963,6 +963,30 @@ De motor van 6C-b9 was af en de UI werkte, maar zij liet de correctie er te veel
 
 ---
 
+### Doorklikken vanuit de rapporten naar de boeking
+
+**Lezen, presentatie en navigatie.** Geen migratie, geen SQL, geen schemawijziging, geen typewijziging, geen afhankelijkheid, geen nieuwe route. Negen reken- en motorbestanden zijn byte-voor-byte gelijk aan `origin/main` — de kern, de engine, de subgroepenlaag, de proef- en saldibalans, de classificatie, `useFinancialStatements`, `useLedgerReversal` en het boekingspaneel zelf; een test bewaakt dat.
+
+```
+src/lib/report-drilldown.ts                              puur: het pad en de aansluiting
+src/components/overzichten/ReportDrilldownSheet.tsx      één paneel voor alle drie de rapporten
+```
+
+- **Van bedrag naar boeking, in één paneel.** Categorie → groep → rekening → mutaties → boekingsdetail, zonder het rapport te verlaten. Het laatste niveau is het bestaande `GrootboekAccountMutations`, dat op zijn beurt het bestaande `LedgerPostingGroupSheet` opent — inclusief de tegenboekingsflow van PR #185. Er is dus geen tweede mutatie- of boekingsimplementatie bijgekomen.
+- **Waarom in het paneel en niet via `/grootboek/saldi/:accountId`:** die route houdt haar eigen periodekeuze bij en leest niets uit de URL, dus een klik vanuit een kwartaalrapport zou stilletjes in een jaarweergave landen. Het paneel gebruikt letterlijk de `period` van het rapport. De bestaande link blijft gewoon bestaan.
+- **De aansluiting is het punt.** Elk bedrag in het paneel is een veld van de engine (`group.totalCents`, `section.subtotalCents`, `line.displayedCents`) of van de kern; er wordt niets herrekend. `report-drilldown.ts` levert per niveau een expliciete `reconciles`-uitspraak, en wijkt die af, dan zegt het paneel dat in plaats van te doen alsof. Rekeningen komen hoogstens één keer voor (`accountsAreUnique`), en de sectie "Nog niet ingedeeld" is gewoon doorklikbaar.
+- **Elk rapport krijgt zijn eigen uitleg, via een expliciete discriminant** (`profit_loss` | `balance_sheet` | `trial_balance`) — nooit afgeleid uit een label, een rekeningnummer of een categorie. Dat onderscheid is niet cosmetisch: `buildRunningBalance()` is debet-positief en telt álles vóór de periode mee in `openingCents`, dus een beginsaldo/eindsaldo-opstelling zou bij een omzetrekening met jaren historie 100.000 cumulatief presenteren als verklaring van een rapportregel van 20.000.
+- **W&V: alleen de gekozen periode.** Debet in de periode, credit in de periode, netto mutatie (debet-positief) en het bedrag in de W&V. Géén beginsaldo en géén cumulatief eindsaldo. De engine rekent voor een resultaatregel zelf met `periodDebit − periodCredit` (`rawSignedCents`), en de oriëntatie komt uit de **exportfunctie van de engine** (`displayedCents(raw, side)`) met de `presentationSide` die op de regel staat — er is dus geen tweede tekenmotor en geen herafgeleide classificatie.
+- **Oriëntatie wordt benoemd, nooit verzwegen.** Een creditzijde (omzet, eigen vermogen, schulden) laat het grootboeksaldo en het rapportbedrag tegengesteld lopen. Het paneel toont dan beide — "Grootboeksaldo (debet-positief)" naast "Bedrag in Balans" — met één zin uitleg, en alléén wanneer ze verschillen; bij een debetzijde blijft er één getal staan.
+- **Balans: beginsaldo apart.** Een balanspost bevat vaak een overloop uit eerdere perioden. Het paneel toont daarom **Beginsaldo + Mutaties periode = Eindsaldo**, alle drie uit `buildRunningBalance()` — dezelfde kern die het rapport voedt. Is er een overloop, dan staat er expliciet bij dat de getoonde mutaties alleen het deel van deze periode verklaren. Is er niets vóór de periode geboekt, dan is het beginsaldo 0 — een uitkomst, geen aanname. Er wordt geen beginbalans verzonnen en aan de beginbalanslogica is niets veranderd.
+- **Kolommenbalans:** alleen de stap rekening → mutaties, want dat rapport kent geen categorieën en die zijn er ook niet bijgekomen. Het rekeningnummer opent het paneel, en de opstelling volgt de kolommen die al op het scherm staan: beginsaldo, **periode debet en periode credit apart** (niet alleen hun saldo) en het eindsaldo — alle vier gelijk aan de rollup die de tabel zelf gebruikt.
+- **Periode- en administratiegrens.** Het paneel krijgt de `period` en de `clientId` van het rapport door en kiest er nooit zelf een. De tenantgrens zit bovendien in de kern: `buildRunningBalance()` **weigert** rijen van een andere administratie met een harde fout, en een test toont dat.
+- **Geen extra netwerkverzoek.** `useLedgerPostings({clientId, period})` gebruikt dezelfde query key als het rapport al gebruikt, dus react-query deelt de cache. De query staat bovendien uit zolang er geen rekening is aangewezen.
+- **Lege en foutsituaties** zijn apart: geen onderliggende rekeningen, een rekening zonder mutaties in de periode maar mét saldo, een mislukte query, en een categorie die niet in dit rapport bestaat.
+- **Tests:** `src/test/report-drilldown.test.tsx` (33; de fixtures lopen door de échte kern en engine). Dekt de drie rapporten, de aansluiting per niveau, de scheiding beginsaldo/mutaties, de periode- en administratiegrens, de unieke rekeningen, het vangnet, het openen van het boekingspaneel met de tegenboekingsactie erin, de W&V-uitleg met 80.000 historie tegenover 20.000 in de periode, beide oriëntaties (creditnormale omzet en debetnormale kosten), de balansoriëntatie met en zonder spiegeling, de losse debet- en creditkolommen van de kolommenbalans, en de statische grenzen (geen schrijfpad, geen afleiding uit nummer of naam, geen migratie, rekenlagen byte-identiek).
+
+---
+
 ## Emergency rule
 
 > **If the project ref is unclear, stop. Do not run SQL.**
