@@ -5,6 +5,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { DiagnosticCheck, DiagnosticCheckId, DiagnosticRun } from "@/lib/diagnostic-report";
 import { available } from "@/lib/diagnostic-report";
 
+// Radix Select gebruikt deze browser-API; jsdom implementeert haar niet.
+Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
+
 /**
  * Jaarafsluiting — definitief afsluiten (PR 2b).
  *
@@ -490,6 +493,73 @@ describe("Een jaar dat al dicht is", () => {
     expect(melding).toHaveTextContent(/ontbreekt een afsluitbewijs uit de nieuwe jaarafsluiting/i);
     expect(melding).toHaveTextContent("Controleer deze administratie voordat u verdergaat.");
     expect(screen.queryByTestId("jaar-afsluiten")).toBeNull();
+  });
+
+  it("25a. toont boekjaarstatus en boekingsblokkade als twee onafhankelijke concepten", async () => {
+    state.closure = CLOSURE;
+    state.watermark = JAAR;
+    toon();
+
+    const status = await screen.findByTestId("jaar-status-card");
+    expect(status).toHaveTextContent("Boekjaarstatus");
+    await waitFor(() => expect(screen.getByTestId("jaar-status-badge")).toHaveTextContent("Afgesloten"));
+
+    const blokkade = screen.getByTestId("boekingsblokkade-card");
+    expect(blokkade).toHaveTextContent("Nog niet afzonderlijk ingesteld");
+    expect(blokkade).toHaveTextContent("Deze staat los van de boekjaarstatus");
+    expect(blokkade).not.toHaveTextContent(`31-12-${JAAR}`);
+  });
+
+  it("25b. de heropeningsdialoog is een niet-schrijvend prototype met verplichte reden", async () => {
+    state.closure = CLOSURE;
+    toon();
+    await screen.findByTestId("jaar-afsluitbewijs");
+
+    expect(screen.getByRole("button", { name: "Boekjaar heropenen" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Bekijk toekomstige werkwijze" }));
+    const dialoog = await screen.findByTestId("jaar-heropenen-dialoog");
+    expect(dialoog).toHaveTextContent(/eerdere afsluiting blijft zichtbaar in de audittrail/i);
+    expect(screen.getByLabelText("Reden voor heropening")).toHaveAttribute("required");
+    expect(screen.getByPlaceholderText("Nagekomen inkoopfactuur")).toBeInTheDocument();
+    expect(screen.getByTestId("jaar-heropenen-bevestigen")).toBeDisabled();
+    expect(closeCalls()).toHaveLength(0);
+    expect(writeCalls).toEqual([]);
+  });
+
+  it("25c. Historie toont alleen werkelijk afsluitbewijs en geen verzonnen heropening", async () => {
+    state.closure = CLOSURE;
+    toon();
+    await screen.findByTestId("jaar-afsluitbewijs");
+    const historie = screen.getByTestId("jaar-historie");
+    expect(historie).toHaveTextContent(`Boekjaar afgesloten ${JAAR}`);
+    expect(historie).toHaveTextContent("15-01-2027");
+    expect(historie).not.toHaveTextContent("Nagekomen inkoopfactuur");
+    expect(historie).not.toHaveTextContent("opnieuw afgesloten");
+  });
+});
+
+describe("De nieuwe pagina-opbouw", () => {
+  it("28. een open jaar toont de gescheiden kaarten, gereedheid en lege echte historie", async () => {
+    toon();
+    await screen.findByTestId("jaar-uitvoeren");
+
+    expect(screen.getByTestId("jaar-status-badge")).toHaveTextContent("Open");
+    expect(screen.getByTestId("boekingsblokkade-card")).toHaveTextContent("Nog niet afzonderlijk ingesteld");
+    expect(screen.getByText("Gereedheid voor afsluiten")).toBeInTheDocument();
+    expect(screen.getByTestId("jaar-historie")).toHaveTextContent(
+      "Voor dit boekjaar is nog geen afsluiting vastgelegd.",
+    );
+  });
+
+  it("29. de echte afsluitactie houdt de huidige technische waarschuwing", async () => {
+    toon();
+    await controleer();
+
+    await screen.findByTestId("jaar-afsluiten");
+    expect(screen.getByTestId("jaar-status-card")).toHaveTextContent(
+      "de huidige technische jaarafsluiting kan nog niet worden heropend",
+    );
+    expect(screen.getByTestId("jaar-afsluiten")).toHaveTextContent("Boekjaar definitief afsluiten");
   });
 });
 
