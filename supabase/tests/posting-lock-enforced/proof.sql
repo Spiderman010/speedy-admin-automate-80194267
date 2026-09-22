@@ -11,6 +11,10 @@
 \set QUIET on
 SET client_min_messages = warning;
 
+-- Alles hieronder gebeurt als de accountant van Agio Finance; de rolcontroles
+-- in de schrijvers lezen deze GUC via de auth.uid()-dubbel.
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
+
 -- ═══ 1-2. ZONDER BLOKKADE VERANDERT ER NIETS ════════════════════════════════
 
 DO $$
