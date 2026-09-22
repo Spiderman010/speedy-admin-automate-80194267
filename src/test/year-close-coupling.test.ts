@@ -211,16 +211,37 @@ describe("Afgesloten boekjaar = schrijfverbod, zoals het vandaag is", () => {
     expect(sql).not.toMatch(/CREATE OR REPLACE FUNCTION public\.\w*(reopen|heropen)\w*/i);
   });
 
-  it("7. de bulk-preflight herhaalt de regel zelf, buiten de schrijver om", () => {
+  it("7. de bulk-preflight herhaalt BEIDE regels zelf, buiten de schrijver om", () => {
     /*
-     * Risico 6 uit het ontwerpdocument, hier vastgelegd zodat het niet wordt
-     * vergeten: deze read-only kandidatenlijst toetst het watermerk met eigen
-     * SQL in plaats van via de schrijver. Verhuist de regel, dan moet deze
-     * plek apart mee.
+     * Risico 6 uit het ontwerpdocument: deze read-only kandidatenlijst toetst
+     * met eigen SQL in plaats van via de schrijver. Sinds PR D geldt dat voor
+     * twee regels — het jaarwatermerk én de boekingsblokkade — en de preflight
+     * mag geen regel als `ready` tonen die de schrijver zeker weigert.
      */
-    const sql = uitvoerbaar("20260922120000_add_bank_bulk_posting.sql").replace(/\s+/g, " ");
-    expect(sql).toContain(
-      "EXTRACT(YEAR FROM t.transaction_date)::integer <= c.afgesloten_boekjaar",
+    const prc = uitvoerbaar("20260922120000_add_bank_bulk_posting.sql").replace(/\s+/g, " ");
+    expect(prc).toContain("EXTRACT(YEAR FROM t.transaction_date)::integer <= c.afgesloten_boekjaar");
+
+    const prd = uitvoerbaar("20260928120000_enforce_posting_lock.sql");
+    const preflight = prd.slice(prd.indexOf("CREATE OR REPLACE FUNCTION public.bank_bulk_posting_candidates"));
+    expect(preflight, "de preflight is in PR D herdefinieerd").not.toBe("");
+    const compact = preflight.replace(/\s+/g, " ");
+    // Het jaarwatermerk blijft staan …
+    expect(compact).toContain("EXTRACT(YEAR FROM t.transaction_date)::integer <= c.afgesloten_boekjaar");
+    // … en de blokkade komt erbij, als 'blocked' mét reden.
+    expect(compact).toContain(
+      "WHEN c.posting_locked_through IS NOT NULL AND t.transaction_date <= c.posting_locked_through THEN 'blocked'",
     );
+    expect(compact).toContain("valt binnen de boekingsblokkade t/m %s voor deze administratie.");
+  });
+
+  it("8. de bulk-uitvoering blijft via de echte schrijver lopen", () => {
+    // De partij mag de handhaving niet omzeilen: er staat geen eigen
+    // ledger-INSERT en geen eigen blokkadeoordeel in de orkestratie.
+    const bulk = uitvoerbaar("20260922120000_add_bank_bulk_posting.sql");
+    const body = functieBody(bulk, "post_bank_transactions_bulk");
+    expect(body).toContain("public.post_bank_transaction(");
+    expect(body).not.toMatch(/INSERT INTO public\.ledger_postings/);
+    expect(body).not.toMatch(/posting_locked_through/);
   });
 });
+
