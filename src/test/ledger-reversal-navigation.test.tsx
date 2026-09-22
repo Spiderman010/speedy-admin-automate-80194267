@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { assertBranchSqlLeavesReportingAlone } from "./support/branch-sql-scope";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LedgerPostingLike } from "@/lib/ledger-reporting";

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { assertBranchSqlLeavesReportingAlone } from "./support/branch-sql-scope";
 
 /**
  * Van een gerapporteerd bedrag naar de boeking eronder.
