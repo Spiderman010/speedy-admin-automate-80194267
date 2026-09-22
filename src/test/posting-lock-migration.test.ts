@@ -293,7 +293,7 @@ describe("PR C raakt het bestaande gedrag niet aan", () => {
      * hun EIGEN migratiebestand — een nieuwe, voorwaartse migratie mag dat
      * wel.
      */
-    expect(changed, "PR C zelf blijft ongewijzigd of is deze branch").toContain(MIGRATION);
+    expect(changed, "PR C zelf wordt niet achteraf bijgesteld").not.toContain(MIGRATION);
     changed
       .filter((f) => f.startsWith("supabase/migrations/") && f !== MIGRATION)
       .forEach((f) => expect(f > MIGRATION, `${f} is voorwaarts`).toBe(true));
