@@ -286,12 +286,21 @@ describe("PR C raakt het bestaande gedrag niet aan", () => {
   });
 
   it("22. de eerdere migraties en de bestaande schrijvers blijven onaangeroerd", () => {
+    /*
+     * Was: "de enige migratie in deze branch is PR C". PR D voegt er terecht
+     * één bij. Wat de assertie beschermde: de migratie van PR C wordt niet
+     * achteraf bijgesteld, en niemand herschrijft de bestaande schrijvers in
+     * hun EIGEN migratiebestand — een nieuwe, voorwaartse migratie mag dat
+     * wel.
+     */
+    expect(changed, "PR C zelf blijft ongewijzigd of is deze branch").toContain(MIGRATION);
     changed
-      .filter((f) => f.startsWith("supabase/migrations/"))
-      .forEach((f) => expect(f).toBe(MIGRATION));
+      .filter((f) => f.startsWith("supabase/migrations/") && f !== MIGRATION)
+      .forEach((f) => expect(f > MIGRATION, `${f} is voorwaarts`).toBe(true));
     assertBranchTouchesNoExistingWriter(changed);
     assertBranchSqlKeepsLedgerFoundation(changed);
   });
+
 
   it("23. de app is niet aangeraakt en de gegenereerde types evenmin", () => {
     expect(changed.filter((f) => f.startsWith("src/") && !f.startsWith("src/test/"))).toEqual([]);
