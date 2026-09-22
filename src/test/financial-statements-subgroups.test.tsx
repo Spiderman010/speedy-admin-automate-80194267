@@ -506,7 +506,7 @@ describe("scope", () => {
     ]) {
       expect(readFileSync(p, "utf8"), p).toBe(toon(p));
     }
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
+    assertBranchSqlLeavesReportingAlone(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     expect(changed).not.toContain("package-lock.json");
