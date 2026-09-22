@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { assertBranchSqlKeepsLedgerFoundation } from "./support/branch-sql-scope";
 import {
   ALREADY_CLOSED_NOTICE,
   INCONSISTENT_CLOSURE_ADVICE,
