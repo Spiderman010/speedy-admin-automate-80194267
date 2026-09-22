@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { assertBranchSqlLeavesReportingAlone } from "./support/branch-sql-scope";
 
 /**
  * Het tweede taxonomieniveau in Balans en W&V.
