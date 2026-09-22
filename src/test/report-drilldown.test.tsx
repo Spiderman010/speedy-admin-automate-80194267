@@ -486,7 +486,7 @@ describe("scope", () => {
       ctx.skip();
       return;
     }
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
+    assertBranchSqlLeavesReportingAlone(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     for (const p of [
