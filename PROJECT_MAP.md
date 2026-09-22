@@ -1111,6 +1111,24 @@ Eerste stap van de herziening uit `docs/BOEKASSIST_YEAR_CLOSE_LIFECYCLE.md`. **A
 - **Nog niemand leest of schrijft deze tabel.** `close_fiscal_year()` is niet aangeraakt, `clients.afgesloten_boekjaar` blijft het technische watermerk, alle acht schrijvers houden hun eigen afgesloten-jaar-toets, de bulk-preflight is ongewijzigd, er kan niets worden heropend en er bestaat geen boekingsblokkade. De UI is niet aangeraakt en de gegenereerde types evenmin.
 - **De bestaande onuitwisbaarheid is niet versoepeld.** `prevent_year_closure_mutation()` weigert nog steeds élke UPDATE, dus `status` ligt vandaag feitelijk vast op `closed` — correct, want heropenen bestaat niet. **PR E versmalt die trigger bewust tot uitsluitend die kolom**, met een eigen bewijs en een eigen review.
 
+### 6C-b11 — de boekingsblokkade (PR C)
+
+```
+supabase/migrations/20260927120000_add_posting_lock_foundation.sql
+supabase/tests/posting-lock/run-proof.sh            41 bewijzen tegen een echte PostgreSQL
+src/test/posting-lock-migration.test.ts             contract over de migratie
+```
+
+Derde stap: het **tweede** besturingselement bestaat nu, los van de jaarafsluiting. **Nog door geen enkele schrijver getoetst.**
+
+- **`clients.posting_locked_through date NULL`** — een datum, geen jaartal, want "dicht t/m 31-12-2024" is wat kantoren gebruiken en het type onderscheidt zich zichtbaar van `afgesloten_boekjaar`. `NULL` = geen blokkade.
+- **Geen backfill, in geen enkele vorm.** Niet uit `afgesloten_boekjaar`, niet uit `year_closures`, en `close_fiscal_year()` zet hem evenmin. Elke bestaande administratie begint op `NULL`. De proef laat beide helften van de onafhankelijkheid zien: een net afgesloten boekjaar zónder blokkade, en een afsluiting die nú gebeurt en nog steeds geen blokkade zet.
+- **`public.posting_lock_events`** — eigen auditdomein, bewust niet `fiscal_year_events`: dat gaat over de levensloop van één boekjaar, dit over een instelling van de hele administratie, mét een oude én een nieuwe waarde. Append-only (UPDATE, DELETE, TRUNCATE, `ENABLE ALWAYS`), tenantintegriteit via `posting_client_org_ok()`, lezen met `read_only`, geen directe schrijfrechten. **Reden verplicht**, trim-bewust, ≤ 500 tekens. Een CHECK maakt een gebeurtenis zónder wijziging onmogelijk — "geen auditruis" is daarmee een databaseregel.
+- **`posting_allowed(client, date)`** — `NULL`-blokkade of een datum **ná** de blokkade: `true`; de blokkadedatum zelf en alles ervóór: `false`. Fail closed op een onbekende administratie, een `NULL`-id of een `NULL`-datum. Eén gedeelde helper, juist om de acht byte-identieke kopieën te vermijden die bij `afgesloten_boekjaar` zijn ontstaan.
+- **`set_posting_lock(client, date, reason)`** — rolvloer **accountant** voor élke richting (zetten, vooruit, terug, opheffen); bewust geen owner-only, want elke financiële schrijver staat op accountant. Onder `lock_ledger_client()` + `SELECT … FOR UPDATE`, gebeurtenis vóór kolom, één tijdstip en één actor uit de weggeschreven rij. Dezelfde waarde opnieuw vragen is een no-op zonder gebeurtenis (`changed = false`), waarbij `NULL` als waarde meetelt.
+- **De kolom kan alleen via die schrijver bewegen.** `authenticated` heeft vanaf **assistent** gewoon UPDATE op `clients` (`role_clients_update`), dus een trigger is de enige werkbare grendel. Hij eist een `posting_lock_events`-rij **uit dezelfde transactie** die precies die stap beschrijft; het `created_xact_id`-zegel voorkomt dat een oude gebeurtenis (na A → B → A) een latere handmatige update dekt.
+- **Nog geen enkele schrijver toetst de blokkade** — dat is PR D. De acht schrijvers, de bulk-preflight en de tegenboekingsmotor houden exact hun `afgesloten_boekjaar`-toets, en het oude harde watermerk blokkeert onverminderd.
+
 ### 6C-b11 — de afsluiting schrijft haar gebeurtenis (PR B)
 
 ```

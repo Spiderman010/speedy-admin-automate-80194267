@@ -125,13 +125,34 @@ describe("Afgesloten boekjaar = schrijfverbod, zoals het vandaag is", () => {
     }
   });
 
-  it("5. er bestaat vandaag GEEN gedeelde helper voor deze toets", () => {
-    // De waarneming die de refactor rechtvaardigt: acht kopieën, nul helpers.
-    // Zodra die helper er komt, hoort deze test te worden herschreven.
+  it("5. de gedeelde helper bestaat inmiddels, maar GEEN schrijver gebruikt hem", () => {
+    /*
+     * HERSCHREVEN BIJ PR C, precies zoals de oorspronkelijke versie voorschreef.
+     *
+     * Die luidde: "acht kopieën, nul helpers — zodra die helper er komt, hoort
+     * deze test te worden herschreven." PR C heeft `posting_allowed()`
+     * aangemaakt, dus die waarneming klopt niet meer.
+     *
+     * Wat ervoor in de plaats komt is de invariant die PR C onderscheidt van
+     * PR D, en die is scherper dan de oude: de helper bestaat, maar geen van de
+     * acht schrijvers roept hem aan. Valt deze test om, dan is de handhaving
+     * begonnen — en dat hoort een bewuste, aparte PR te zijn.
+     */
     const { readdirSync } = require("node:fs") as typeof import("node:fs");
-    for (const bestand of readdirSync(resolve(process.cwd(), MIGRATIES)).filter((f) => f.endsWith(".sql"))) {
-      expect(uitvoerbaar(bestand), bestand).not.toMatch(
-        /CREATE OR REPLACE FUNCTION public\.(posting_allowed|year_is_closed|posting_lock\w*)/,
+    const bestanden = readdirSync(resolve(process.cwd(), MIGRATIES)).filter((f) => f.endsWith(".sql"));
+
+    const helpers = bestanden.filter((bestand) =>
+      /CREATE OR REPLACE FUNCTION public\.posting_allowed\(/.test(uitvoerbaar(bestand)),
+    );
+    expect(helpers, "posting_allowed() is precies één keer gedefinieerd").toHaveLength(1);
+
+    // En geen enkele van de acht draagt hem — niet als aanroep, en ook niet
+    // door zelf de blokkadekolom te lezen.
+    for (const { migratie, functie } of SCHRIJVERS) {
+      const body = functieBody(uitvoerbaar(migratie), functie);
+      expect(body, `${functie} toetst posting_allowed() nog niet`).not.toMatch(/posting_allowed/);
+      expect(body, `${functie} leest posting_locked_through nog niet`).not.toMatch(
+        /posting_locked_through/,
       );
     }
   });
