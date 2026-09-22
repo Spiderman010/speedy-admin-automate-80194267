@@ -337,9 +337,26 @@ describe("Wat deze fase NIET toevoegt", () => {
       .filter((r) => !r.trimStart().startsWith("//") && !r.trimStart().startsWith("*"))
       .join("\n");
 
-  it("28. geen migratie en geen SQL in deze branch", () => {
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
+  it("28. deze fase voegt zelf geen schrijfgedrag toe aan de app", () => {
+    /*
+     * Was: "geen migratie en geen SQL in deze branch". Dat was waar over de
+     * UI-fase, maar het is geen invariant — PR D brengt terecht een migratie
+     * mee. Wat deze assertie beschermde: de UI-fase mag geen afsluit- of
+     * blokkadegedrag in de app zelf leggen, en geen migratie mag de oude
+     * jaargrendel weghalen.
+     */
+    assertBranchSqlKeepsLedgerFoundation(changed);
+    for (const f of changed.filter((x) => x.endsWith(".sql"))) {
+      const sql = readFileSync(resolve(process.cwd(), f), "utf8");
+      expect(sql, `${f}: het jaarwatermerk blijft staan`).not.toMatch(
+        /DROP\s+(COLUMN\s+)?(IF EXISTS\s+)?afgesloten_boekjaar/i,
+      );
+      expect(sql, `${f}: heropenen bestaat nog niet`).not.toMatch(
+        /CREATE(?: OR REPLACE)? FUNCTION public\.\w*(reopen|heropen)\w*/i,
+      );
+    }
   });
+
 
   it("29. de app schrijft nergens rechtstreeks in year_closures of het watermerk", () => {
     for (const pad of ["src/hooks/useYearClose.ts", "src/pages/Jaarafsluiting.tsx", "src/lib/year-close-action.ts"]) {
