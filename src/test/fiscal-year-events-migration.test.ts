@@ -219,12 +219,21 @@ describe("PR A verandert geen enkel gedrag", () => {
   });
 
   it("19. de koppeling van vandaag staat er nog — die test moet gewoon blijven slagen", () => {
-    // `src/test/year-close-coupling.test.ts` pint de acht schrijvers en hun
-    // identieke toets. Zou PR A daar iets aan veranderd hebben, dan viel die
-    // test om. Hier alleen vastgelegd dat hij nog bestaat, zodat een latere PR
-    // hem niet ongemerkt kan weghalen.
-    expect(changed).not.toContain("src/test/year-close-coupling.test.ts");
+    /*
+     * `src/test/year-close-coupling.test.ts` pint de acht schrijvers en hun
+     * toets. Eerder stond hier "dit bestand is niet gewijzigd"; PR D schrijft
+     * die test zelf voor te verscherpen, dus vastgelegd is nu wat de assertie
+     * werkelijk beschermde: de test bestaat nog en laat de oude jaargrendel
+     * niet los.
+     */
+    const koppeling = readFileSync(
+      resolve(process.cwd(), "src/test/year-close-coupling.test.ts"),
+      "utf8",
+    );
+    expect(koppeling).toContain("afgesloten_boekjaar IS NOT NULL");
+    expect(koppeling).toContain("declare_opening_balance_nil");
   });
+
 
   it("20. de app leest de nieuwe tabel nog niet, en de gegenereerde types zijn niet bijgewerkt", () => {
     // PR A is fundering. Frontendgebruik komt in PR F.
