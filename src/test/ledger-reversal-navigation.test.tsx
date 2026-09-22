@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { assertBranchSqlLeavesReportingAlone } from "./support/branch-sql-scope";
 import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { LedgerPostingLike } from "@/lib/ledger-reporting";
@@ -410,8 +411,22 @@ describe("scope", () => {
       ctx.skip();
       return;
     }
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed.filter((f) => f.endsWith(".sql"))).toEqual([]);
+    /*
+     * Geen "geen SQL in deze branch" meer: PR D (de handhaving van de
+     * boekingsblokkade) herdefinieert `reverse_posting_group()` terecht. Wat
+     * deze weergave-PR werkelijk beschermt, is de tegenboekingsmotor zelf:
+     * strenger mag, maar het bewijsspoor mag niet verdwijnen.
+     */
+    assertBranchSqlLeavesReportingAlone(changed);
+    for (const f of changed.filter((x) => x.endsWith(".sql"))) {
+      const sql = readFileSync(f, "utf8");
+      expect(sql, f).not.toMatch(/DROP FUNCTION[^;]*reverse_posting_group/i);
+      if (/FUNCTION public\.reverse_posting_group/.test(sql)) {
+        expect(sql, `${f}: de tegenboeking blijft haar bewijsspoor schrijven`).toContain(
+          "ledger_reversal_postings",
+        );
+      }
+    }
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     // Elke rekenlaag blijft byte-voor-byte gelijk; deze PR is presentatie.

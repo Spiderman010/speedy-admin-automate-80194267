@@ -92,3 +92,28 @@ export function assertBranchTouchesNoExistingWriter(changed: readonly string[]):
     expect(changed, writer).not.toContain(writer);
   }
 }
+
+/**
+ * Presentatie-PR's legden vast: "deze branch bevat geen SQL". Zelfde afweging
+ * als hierboven — dat was waar over die PR, maar het is geen invariant: een
+ * latere fase die terecht een migratie meebrengt (PR D, de handhaving van de
+ * boekingsblokkade) laat zo'n assertie omvallen terwijl er niets mis is.
+ *
+ * Wat zij werkelijk beschermden: de LEESKANT van de rapportages. Die leest de
+ * grootboekfundering en de classificatiekolommen op `grootboekrekeningen`. SQL
+ * in een branch mag daar niets aan veranderen; een schrijver strenger maken
+ * kan de rapportage per definitie niet anders laten rekenen.
+ */
+export function assertBranchSqlLeavesReportingAlone(changed: readonly string[]): void {
+  assertBranchSqlKeepsLedgerFoundation(changed);
+
+  for (const file of changed.filter((f) => f.endsWith(".sql"))) {
+    const sql = executableSql(file);
+    expect(sql, `${file}: de classificatiekolommen blijven ongemoeid`).not.toMatch(
+      /ALTER TABLE(?: IF EXISTS)? public\.grootboekrekeningen[^;]*(DROP|RENAME|ALTER COLUMN)/i,
+    );
+    expect(sql, `${file}: de rapportagekolommen worden niet herschreven`).not.toMatch(
+      /UPDATE public\.grootboekrekeningen[^;]*(statement_type|report_group|report_subgroup|normal_side)/i,
+    );
+  }
+}

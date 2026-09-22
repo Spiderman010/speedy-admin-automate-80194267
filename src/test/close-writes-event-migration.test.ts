@@ -211,7 +211,19 @@ describe("PR B raakt verder niets aan", () => {
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
   });
 
-  it("15. de koppelingstest van vandaag staat er nog", () => {
-    expect(changed).not.toContain("src/test/year-close-coupling.test.ts");
+  it("15. de koppelingstest bestaat nog en pint de schrijvers nog steeds", () => {
+    /*
+     * Was: "dit bestand is niet gewijzigd". Dat was waar over PR B, maar het
+     * is geen invariant — PR D schrijft die test zelf voor te verscherpen.
+     * Wat de assertie beschermde: de koppelingstest mag niet verdwijnen en
+     * mag de oude jaargrendel niet loslaten.
+     */
+    const koppeling = readFileSync(
+      resolve(process.cwd(), "src/test/year-close-coupling.test.ts"),
+      "utf8",
+    );
+    expect(koppeling).toContain("afgesloten_boekjaar IS NOT NULL");
+    expect(koppeling).toContain("declare_opening_balance_nil");
   });
+
 });

@@ -125,37 +125,81 @@ describe("Afgesloten boekjaar = schrijfverbod, zoals het vandaag is", () => {
     }
   });
 
-  it("5. de gedeelde helper bestaat inmiddels, maar GEEN schrijver gebruikt hem", () => {
+  it("5. PR D: elke gedateerde schrijver handhaaft de boekingsblokkade, de nihil-verklaring niet", () => {
     /*
-     * HERSCHREVEN BIJ PR C, precies zoals de oorspronkelijke versie voorschreef.
+     * HERSCHREVEN BIJ PR D. De invariant van PR C luidde: "de helper bestaat,
+     * maar geen schrijver gebruikt hem". PR D heeft de handhaving aangezet, en
+     * daarmee wordt de bewering scherper in plaats van zwakker:
      *
-     * Die luidde: "acht kopieën, nul helpers — zodra die helper er komt, hoort
-     * deze test te worden herschreven." PR C heeft `posting_allowed()`
-     * aangemaakt, dus die waarneming klopt niet meer.
-     *
-     * Wat ervoor in de plaats komt is de invariant die PR C onderscheidt van
-     * PR D, en die is scherper dan de oude: de helper bestaat, maar geen van de
-     * acht schrijvers roept hem aan. Valt deze test om, dan is de handhaving
-     * begonnen — en dat hoort een bewuste, aparte PR te zijn.
+     *   - de zeven GEDATEERDE schrijvers toetsen de blokkade;
+     *   - declare_opening_balance_nil doet dat met opzet NIET (zij schrijft
+     *     geen grootboekregel en doet een uitspraak over een boekjaar);
+     *   - en alle acht dragen nog steeds hun oude afgesloten-jaar-toets.
      */
+    const PRD = "20260928120000_enforce_posting_lock.sql";
+    const sql = uitvoerbaar(PRD);
+
+    // De helper is er precies één keer, en de assertie ook.
     const { readdirSync } = require("node:fs") as typeof import("node:fs");
     const bestanden = readdirSync(resolve(process.cwd(), MIGRATIES)).filter((f) => f.endsWith(".sql"));
+    expect(
+      bestanden.filter((b) => /CREATE OR REPLACE FUNCTION public\.posting_allowed\(/.test(uitvoerbaar(b))),
+      "posting_allowed() is precies één keer gedefinieerd",
+    ).toHaveLength(1);
+    expect(
+      bestanden.filter((b) =>
+        /CREATE OR REPLACE FUNCTION public\.assert_posting_allowed\(/.test(uitvoerbaar(b)),
+      ),
+      "assert_posting_allowed() is precies één keer gedefinieerd",
+    ).toEqual([PRD]);
 
-    const helpers = bestanden.filter((bestand) =>
-      /CREATE OR REPLACE FUNCTION public\.posting_allowed\(/.test(uitvoerbaar(bestand)),
+    // Eén tekst, één SQLSTATE, en de grendel vóór het oordeel.
+    const helper = functieBody(sql, "assert_posting_allowed").replace(/\s+/g, " ");
+    expect(helper).toContain(
+      "'Boekingsdatum % valt binnen de boekingsblokkade t/m % voor deze administratie'",
     );
-    expect(helpers, "posting_allowed() is precies één keer gedefinieerd").toHaveLength(1);
+    expect(helper).toMatch(/valt binnen de boekingsblokkade[^;]*ERRCODE = '22023'/);
+    expect(helper.indexOf("lock_ledger_client")).toBeGreaterThan(-1);
+    expect(helper.indexOf("lock_ledger_client")).toBeLessThan(helper.indexOf("posting_allowed(_client_id"));
 
-    // En geen enkele van de acht draagt hem — niet als aanroep, en ook niet
-    // door zelf de blokkadekolom te lezen.
-    for (const { migratie, functie } of SCHRIJVERS) {
-      const body = functieBody(uitvoerbaar(migratie), functie);
-      expect(body, `${functie} toetst posting_allowed() nog niet`).not.toMatch(/posting_allowed/);
-      expect(body, `${functie} leest posting_locked_through nog niet`).not.toMatch(
-        /posting_locked_through/,
+    // De zeven gedateerde schrijvers, met de datum waarop zij toetsen.
+    const GEDATEERD: Record<string, string> = {
+      post_purchase_invoice: "v_inv.client_id, v_inv.invoice_date",
+      post_sales_invoice: "v_inv.client_id, v_inv.invoice_date",
+      post_bank_allocation: "v_alloc.client_id, v_tx.transaction_date",
+      post_manual_journal: "v_journal.client_id, v_journal.posting_date",
+      post_opening_balance: "v_header.client_id, v_header.opening_date",
+      // De tegenboeking toetst haar EIGEN datum, niet die van het origineel.
+      reverse_posting_group: "v_client_id, _posting_date",
+      post_bank_transaction: "v_tx.client_id, v_tx.transaction_date",
+    };
+    for (const [functie, argumenten] of Object.entries(GEDATEERD)) {
+      const body = functieBody(sql, functie);
+      expect(body, `${functie} is in PR D herdefinieerd`).not.toBe("");
+      expect(body.replace(/\s+/g, " "), functie).toContain(
+        `PERFORM public.assert_posting_allowed(${argumenten});`,
+      );
+      // En de oude grendel staat er nog, ongewijzigd.
+      expect(body.replace(/\s+/g, " "), `${functie} houdt het jaarwatermerk`).toMatch(
+        /v_client\.afgesloten_boekjaar IS NOT NULL AND [\w.]+ <= v_client\.afgesloten_boekjaar/,
+      );
+      expect(body, functie).toContain("'Boekjaar % is afgesloten voor deze administratie'");
+    }
+
+    // De uitzondering: nergens in de migraties raakt de nihil-verklaring de
+    // blokkade aan.
+    for (const bestand of bestanden) {
+      const nil = functieBody(uitvoerbaar(bestand), "declare_opening_balance_nil");
+      if (nil === "") continue;
+      expect(nil, "declare_opening_balance_nil blijft buiten de boekingsblokkade").not.toMatch(
+        /posting_allowed|posting_locked_through/,
+      );
+      expect(nil.replace(/\s+/g, " ")).toContain(
+        "v_client.afgesloten_boekjaar IS NOT NULL AND v_header.boekjaar <= v_client.afgesloten_boekjaar",
       );
     }
   });
+
 
   it("6. het watermerk kan vandaag niet omlaag — heropenen bestaat niet", () => {
     const sql = uitvoerbaar("20260924120000_add_year_close_writer.sql");
@@ -167,16 +211,37 @@ describe("Afgesloten boekjaar = schrijfverbod, zoals het vandaag is", () => {
     expect(sql).not.toMatch(/CREATE OR REPLACE FUNCTION public\.\w*(reopen|heropen)\w*/i);
   });
 
-  it("7. de bulk-preflight herhaalt de regel zelf, buiten de schrijver om", () => {
+  it("7. de bulk-preflight herhaalt BEIDE regels zelf, buiten de schrijver om", () => {
     /*
-     * Risico 6 uit het ontwerpdocument, hier vastgelegd zodat het niet wordt
-     * vergeten: deze read-only kandidatenlijst toetst het watermerk met eigen
-     * SQL in plaats van via de schrijver. Verhuist de regel, dan moet deze
-     * plek apart mee.
+     * Risico 6 uit het ontwerpdocument: deze read-only kandidatenlijst toetst
+     * met eigen SQL in plaats van via de schrijver. Sinds PR D geldt dat voor
+     * twee regels — het jaarwatermerk én de boekingsblokkade — en de preflight
+     * mag geen regel als `ready` tonen die de schrijver zeker weigert.
      */
-    const sql = uitvoerbaar("20260922120000_add_bank_bulk_posting.sql").replace(/\s+/g, " ");
-    expect(sql).toContain(
-      "EXTRACT(YEAR FROM t.transaction_date)::integer <= c.afgesloten_boekjaar",
+    const prc = uitvoerbaar("20260922120000_add_bank_bulk_posting.sql").replace(/\s+/g, " ");
+    expect(prc).toContain("EXTRACT(YEAR FROM t.transaction_date)::integer <= c.afgesloten_boekjaar");
+
+    const prd = uitvoerbaar("20260928120000_enforce_posting_lock.sql");
+    const preflight = prd.slice(prd.indexOf("CREATE OR REPLACE FUNCTION public.bank_bulk_posting_candidates"));
+    expect(preflight, "de preflight is in PR D herdefinieerd").not.toBe("");
+    const compact = preflight.replace(/\s+/g, " ");
+    // Het jaarwatermerk blijft staan …
+    expect(compact).toContain("EXTRACT(YEAR FROM t.transaction_date)::integer <= c.afgesloten_boekjaar");
+    // … en de blokkade komt erbij, als 'blocked' mét reden.
+    expect(compact).toContain(
+      "WHEN c.posting_locked_through IS NOT NULL AND t.transaction_date <= c.posting_locked_through THEN 'blocked'",
     );
+    expect(compact).toContain("valt binnen de boekingsblokkade t/m %s voor deze administratie.");
+  });
+
+  it("8. de bulk-uitvoering blijft via de echte schrijver lopen", () => {
+    // De partij mag de handhaving niet omzeilen: er staat geen eigen
+    // ledger-INSERT en geen eigen blokkadeoordeel in de orkestratie.
+    const bulk = uitvoerbaar("20260922120000_add_bank_bulk_posting.sql");
+    const body = functieBody(bulk, "post_bank_transactions_bulk");
+    expect(body).toContain("public.post_bank_transaction(");
+    expect(body).not.toMatch(/INSERT INTO public\.ledger_postings/);
+    expect(body).not.toMatch(/posting_locked_through/);
   });
 });
+

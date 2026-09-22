@@ -3,6 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { assertBranchSqlLeavesReportingAlone } from "./support/branch-sql-scope";
 
 /**
  * Het tweede taxonomieniveau in Balans en W&V.
@@ -506,7 +507,7 @@ describe("scope", () => {
     ]) {
       expect(readFileSync(p, "utf8"), p).toBe(toon(p));
     }
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
+    assertBranchSqlLeavesReportingAlone(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     expect(changed).not.toContain("package-lock.json");

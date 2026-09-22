@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { assertBranchSqlLeavesReportingAlone } from "./support/branch-sql-scope";
 
 /**
  * Van een gerapporteerd bedrag naar de boeking eronder.
@@ -486,7 +487,7 @@ describe("scope", () => {
       ctx.skip();
       return;
     }
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
+    assertBranchSqlLeavesReportingAlone(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
     for (const p of [

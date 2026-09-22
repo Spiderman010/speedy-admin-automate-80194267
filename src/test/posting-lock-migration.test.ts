@@ -286,12 +286,21 @@ describe("PR C raakt het bestaande gedrag niet aan", () => {
   });
 
   it("22. de eerdere migraties en de bestaande schrijvers blijven onaangeroerd", () => {
+    /*
+     * Was: "de enige migratie in deze branch is PR C". PR D voegt er terecht
+     * één bij. Wat de assertie beschermde: de migratie van PR C wordt niet
+     * achteraf bijgesteld, en niemand herschrijft de bestaande schrijvers in
+     * hun EIGEN migratiebestand — een nieuwe, voorwaartse migratie mag dat
+     * wel.
+     */
+    expect(changed, "PR C zelf wordt niet achteraf bijgesteld").not.toContain(MIGRATION);
     changed
-      .filter((f) => f.startsWith("supabase/migrations/"))
-      .forEach((f) => expect(f).toBe(MIGRATION));
+      .filter((f) => f.startsWith("supabase/migrations/") && f !== MIGRATION)
+      .forEach((f) => expect(f > MIGRATION, `${f} is voorwaarts`).toBe(true));
     assertBranchTouchesNoExistingWriter(changed);
     assertBranchSqlKeepsLedgerFoundation(changed);
   });
+
 
   it("23. de app is niet aangeraakt en de gegenereerde types evenmin", () => {
     expect(changed.filter((f) => f.startsWith("src/") && !f.startsWith("src/test/"))).toEqual([]);
@@ -302,19 +311,22 @@ describe("PR C raakt het bestaande gedrag niet aan", () => {
     /*
      * `year-close-coupling.test.ts` legde vast: "acht kopieën, nul helpers —
      * zodra die helper er komt, hoort deze test te worden herschreven." PR C
-     * maakt die helper, dus die ene assertie IS herschreven, naar de scherpere
-     * invariant die PR C van PR D scheidt: de helper bestaat, maar geen
-     * schrijver gebruikt hem.
-     *
-     * De acht schrijvers en hun toets blijven daar onveranderd vastgepind.
+     * maakte die helper; PR D zet de handhaving aan. De invariant van PR C
+     * ("de helper bestaat, maar geen schrijver gebruikt hem") is daarmee
+     * vervangen door de STERKERE: alle gedateerde schrijvers handhaven, de
+     * nihilverklaring met opzet niet, en de oude jaargrendel staat er nog.
      */
     const koppeling = readFileSync(
       resolve(process.cwd(), "src/test/year-close-coupling.test.ts"),
       "utf8",
     );
-    expect(koppeling).toContain("GEEN schrijver gebruikt hem");
     expect(koppeling).toContain("posting_allowed() is precies één keer gedefinieerd");
-    // De oude waarneming mag niet blijven staan naast de nieuwe.
+    expect(koppeling).toContain("assert_posting_allowed");
+    expect(koppeling).toContain("declare_opening_balance_nil blijft buiten de boekingsblokkade");
+    expect(koppeling).toContain("afgesloten_boekjaar IS NOT NULL");
+    // De oude, zwakkere waarnemingen mogen niet blijven staan naast de nieuwe.
     expect(koppeling).not.toContain("er bestaat vandaag GEEN gedeelde helper");
+    expect(koppeling).not.toContain("GEEN schrijver gebruikt hem");
   });
+
 });
