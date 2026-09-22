@@ -1111,6 +1111,24 @@ Eerste stap van de herziening uit `docs/BOEKASSIST_YEAR_CLOSE_LIFECYCLE.md`. **A
 - **Nog niemand leest of schrijft deze tabel.** `close_fiscal_year()` is niet aangeraakt, `clients.afgesloten_boekjaar` blijft het technische watermerk, alle acht schrijvers houden hun eigen afgesloten-jaar-toets, de bulk-preflight is ongewijzigd, er kan niets worden heropend en er bestaat geen boekingsblokkade. De UI is niet aangeraakt en de gegenereerde types evenmin.
 - **De bestaande onuitwisbaarheid is niet versoepeld.** `prevent_year_closure_mutation()` weigert nog steeds élke UPDATE, dus `status` ligt vandaag feitelijk vast op `closed` — correct, want heropenen bestaat niet. **PR E versmalt die trigger bewust tot uitsluitend die kolom**, met een eigen bewijs en een eigen review.
 
+### 6C-b11 — de afsluiting schrijft haar gebeurtenis (PR B)
+
+```
+supabase/migrations/20260926120000_close_writes_fiscal_year_event.sql
+supabase/tests/close-writes-event/run-proof.sh      36 bewijzen tegen een echte PostgreSQL
+src/test/close-writes-event-migration.test.ts       contract over de migratie
+```
+
+Tweede stap van de herziening. **Eén toevoeging, verder niets.**
+
+- **Een NIEUWE afsluiting legt één `closed`-gebeurtenis vast**, in dezelfde transactie als het bewijs en het watermerk.
+- **Eén tijdstip, één actor.** Beide komen uit `RETURNING * INTO v_row` — de rij zoals zij zojuist ís weggeschreven. Geen tweede `now()`, geen tweede `auth.uid()`. Daarmee is `occurred_at = closed_at` en `actor_id = closed_by` structureel in plaats van afgesproken; de proef toetst exacte gelijkheid.
+- **Een herhaling voegt niets toe.** De idempotente weg (`created = false`) keert terug vóór het schrijfblok, dus die tak kan de INSERT per constructie niet bereiken — geen `IF` die vergeten kan worden. Drie pogingen leveren één bewijs en één gebeurtenis op, met onverschoven tijdstippen.
+- **Alles of niets.** Faalt de gebeurtenis, dan blijft er geen bewijs achter en gaat het watermerk niet vooruit; bewezen met een weigerende trigger op de gebeurtenissen.
+- **`backfilled = false`** houdt deze rij buiten de partiële unieke index van PR A, zodat `closed → reopened → closed` mogelijk blijft. Het bewijs krijgt `status = 'closed'` expliciet mee.
+- **Verder ongewijzigd:** handtekening, retourvorm, gereedheidsregels, jaarvolgorde, herkeuring van grootboek en bronwerk, rolvloer, tenantregels, grendels, watermerkgedrag, de acht schrijvers, de bulk-preflight, de UI en de gegenereerde types. Een test vergelijkt de herdefinieerde schrijver byte-voor-byte met die van 6C-b10, op het toegevoegde blok na.
+- **Nog steeds geen heropening en geen boekingsblokkade**, en `prevent_year_closure_mutation()` is niet versoepeld — het oude harde watermerk is onverminderd van kracht.
+
 ### 6C-b10 — de jaarafsluiting (scherm, PR 2b)
 
 ```
