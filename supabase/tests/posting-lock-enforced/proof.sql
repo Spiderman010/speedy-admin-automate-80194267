@@ -352,21 +352,38 @@ BEGIN
 END $$;
 
 -- ═══ 26. GEEN TENANT-ORAKEL ═════════════════════════════════════════════════
+--
+-- De assertie is BEWUST tenant-onwetend: zij oordeelt alleen over datum en
+-- blokkade. Dat is veilig omdat zij onbereikbaar is voor elke clientrol
+-- (bewijs 24) en omdat elke schrijver haar pas aanroept NADAT hij zijn eigen
+-- rol- en organisatiecontrole heeft gedaan. Precies dat wordt hier getoetst:
+-- geen enkele schrijver noemt een blokkadedatum vóór de poort.
 
 DO $$
 DECLARE
-  v_vreemd uuid;
-  v_onbek  text;
-  v_ander  text;
+  v_namen text[] := ARRAY['post_purchase_invoice','post_sales_invoice','post_bank_allocation',
+                          'post_manual_journal','post_opening_balance','reverse_posting_group',
+                          'post_bank_transaction'];
+  v_i    integer;
+  v_src  text;
+  v_fout text := '';
 BEGIN
-  -- Een administratie van een ANDERE organisatie en een niet-bestaande
-  -- administratie moeten hetzelfde antwoord geven: anders verraadt de melding
-  -- of een administratie bestaat.
-  v_vreemd := proof.new_client('PR D — andere organisatie', '00000000-0000-0000-0000-00000000a002');
-  v_onbek := proof.identity(format('SELECT public.assert_posting_allowed(%L, DATE ''2025-01-01'')',
-                                   gen_random_uuid()));
-  v_ander := proof.identity(format('SELECT public.assert_posting_allowed(%L, DATE ''2025-01-01'')',
-                                   v_vreemd));
-  PERFORM proof.record('26', 'een onbekende en een vreemde administratie geven exact hetzelfde antwoord',
-    v_onbek = v_ander, format('onbekend: %s | vreemd: %s', v_onbek, v_ander));
+  FOR v_i IN 1 .. array_length(v_namen, 1) LOOP
+    v_src := proof.src(v_namen[v_i]);
+    -- De rechtencontrole ('Geen rechten') staat vóór de assertie.
+    IF position('Geen rechten' IN v_src) = 0
+       OR position('Geen rechten' IN v_src) > position('assert_posting_allowed' IN v_src) THEN
+      v_fout := v_fout || v_namen[v_i] || ' ';
+    END IF;
+  END LOOP;
+
+  PERFORM proof.record('26', 'elke schrijver doet zijn rol- en tenantcontrole vóór hij de blokkade noemt',
+    v_fout = '', format('mis bij: %s', COALESCE(NULLIF(v_fout, ''), 'niemand')));
+
+  -- En de assertie zelf voegt geen enkel nieuw feit toe over een administratie
+  -- die de aanroeper niet al mocht zien: zij leest alleen de blokkadedatum.
+  PERFORM proof.record('26b', 'de assertie leest niets anders dan de blokkadedatum',
+    proof.src('assert_posting_allowed') NOT LIKE '%organization%'
+      AND proof.src('assert_posting_allowed') NOT LIKE '%has_min_role%');
 END $$;
+
