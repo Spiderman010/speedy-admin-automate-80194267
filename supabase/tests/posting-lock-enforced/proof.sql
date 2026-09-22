@@ -115,18 +115,28 @@ BEGIN
     format('SELECT public.post_bank_transaction(%L)', proof.tx_draft(v_c, DATE '2025-07-01')));
 END $$;
 
--- (c) tegenboeking — de datum van de TEGENBOEKING telt, niet die van het origineel
+-- (c) tegenboeking — de datum van de TEGENBOEKING telt, niet die van het
+--     origineel. In EEN EIGEN transactie geboekt, want een groep die in
+--     dezelfde transactie ontstond mag (terecht) nog niet worden tegengeboekt.
 DO $$
-DECLARE
-  v_c     uuid := proof.pl_client('PR D — tegenboeking');
-  v_grp   uuid;
-  v_grp2  uuid;
+DECLARE v_c uuid := proof.pl_client('PR D — tegenboeking');
 BEGIN
   INSERT INTO proof.subject VALUES ('tegenboeking', v_c);
+  -- Origineel in december 2024, geboekt vóórdat de blokkade bestaat.
+  INSERT INTO proof.subject VALUES
+    ('tegenboeking_groep1', public.post_manual_journal(proof.mj_draft(v_c, DATE '2024-12-01'))),
+    ('tegenboeking_groep2', public.post_manual_journal(proof.mj_draft(v_c, DATE '2024-12-02')));
+END $$;
 
-  -- Origineel op 2024-12-01, geboekt vóórdat de blokkade bestaat.
-  v_grp := public.post_manual_journal(proof.mj_draft(v_c, DATE '2024-12-01'));
-  v_grp2 := public.post_manual_journal(proof.mj_draft(v_c, DATE '2024-12-02'));
+DO $$
+DECLARE
+  v_c    uuid;
+  v_grp  uuid;
+  v_grp2 uuid;
+BEGIN
+  SELECT client_id INTO v_c    FROM proof.subject WHERE rol = 'tegenboeking';
+  SELECT client_id INTO v_grp  FROM proof.subject WHERE rol = 'tegenboeking_groep1';
+  SELECT client_id INTO v_grp2 FROM proof.subject WHERE rol = 'tegenboeking_groep2';
 
   PERFORM proof.lock_as('00000000-0000-0000-0000-0000000000e1', v_c, DATE '2024-12-31', 'Dicht t/m 2024');
 
@@ -143,6 +153,7 @@ BEGIN
     (SELECT count(*) FROM public.ledger_reversal_postings
       WHERE original_posting_group_id = v_grp2) = 0);
 END $$;
+
 
 -- ═══ 12-14. BULK: PREFLIGHT EN UITVOERING ZEGGEN HETZELFDE ══════════════════
 
