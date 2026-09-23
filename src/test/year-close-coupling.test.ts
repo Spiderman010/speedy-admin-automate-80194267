@@ -125,34 +125,81 @@ describe("Afgesloten boekjaar = schrijfverbod, zoals het vandaag is", () => {
     }
   });
 
-  it("5. de gedeelde helper bestaat inmiddels, maar GEEN schrijver gebruikt hem", () => {
+  it("5. élke gedateerde schrijver gebruikt de gedeelde bewering — behalve de nihil-verklaring", () => {
     /*
-     * HERSCHREVEN BIJ PR C, precies zoals de oorspronkelijke versie voorschreef.
+     * HERSCHREVEN BIJ PR D, net als bij PR C, en om dezelfde reden: de vorige
+     * formulering was een waarneming over een toestand die de uitrol juist zou
+     * opheffen.
      *
-     * Die luidde: "acht kopieën, nul helpers — zodra die helper er komt, hoort
-     * deze test te worden herschreven." PR C heeft `posting_allowed()`
-     * aangemaakt, dus die waarneming klopt niet meer.
+     *   oorspronkelijk : "acht kopieën, nul helpers"
+     *   bij PR C       : "de helper bestaat, maar geen schrijver gebruikt hem"
+     *   nu (PR D)      : "elke gedateerde schrijver gebruikt de bewering, en
+     *                     declare_opening_balance_nil() bewust niet"
      *
-     * Wat ervoor in de plaats komt is de invariant die PR C onderscheidt van
-     * PR D, en die is scherper dan de oude: de helper bestaat, maar geen van de
-     * acht schrijvers roept hem aan. Valt deze test om, dan is de handhaving
-     * begonnen — en dat hoort een bewuste, aparte PR te zijn.
+     * Die laatste uitzondering is het gevoelige deel. Zij schrijft geen
+     * grootboekregel en doet een uitspraak over een boekjaar, niet over een
+     * datum — een datumgebonden blokkade hoort haar dus niet te beheersen.
+     * Zonder deze test is dat precies het soort onderscheid dat een latere PR
+     * "opruimt" omdat het op een vergeten geval lijkt.
      */
     const { readdirSync } = require("node:fs") as typeof import("node:fs");
-    const bestanden = readdirSync(resolve(process.cwd(), MIGRATIES)).filter((f) => f.endsWith(".sql"));
+    const bestanden = readdirSync(resolve(process.cwd(), MIGRATIES)).filter((f) => f.endsWith(".sql")).sort();
+
+    /** De LAATSTE definitie telt: migraties herdefiniëren elkaars functies. */
+    const laatsteBody = (functie: string): string => {
+      let gevonden = "";
+      for (const bestand of bestanden) {
+        const body = functieBody(uitvoerbaar(bestand), functie);
+        if (body !== "") gevonden = body;
+      }
+      return gevonden;
+    };
 
     const helpers = bestanden.filter((bestand) =>
-      /CREATE OR REPLACE FUNCTION public\.posting_allowed\(/.test(uitvoerbaar(bestand)),
+      /CREATE OR REPLACE FUNCTION public\.assert_posting_allowed\(/.test(uitvoerbaar(bestand)),
     );
-    expect(helpers, "posting_allowed() is precies één keer gedefinieerd").toHaveLength(1);
+    expect(helpers, "assert_posting_allowed() is precies één keer gedefinieerd").toHaveLength(1);
 
-    // En geen enkele van de acht draagt hem — niet als aanroep, en ook niet
-    // door zelf de blokkadekolom te lezen.
-    for (const { migratie, functie } of SCHRIJVERS) {
-      const body = functieBody(uitvoerbaar(migratie), functie);
-      expect(body, `${functie} toetst posting_allowed() nog niet`).not.toMatch(/posting_allowed/);
-      expect(body, `${functie} leest posting_locked_through nog niet`).not.toMatch(
-        /posting_locked_through/,
+    for (const { functie } of SCHRIJVERS) {
+      const body = laatsteBody(functie);
+      expect(body, `${functie} bestaat`).not.toBe("");
+
+      if (functie === "declare_opening_balance_nil") {
+        expect(body, "de nihil-verklaring blijft buiten de boekingsblokkade").not.toMatch(
+          /assert_posting_allowed|posting_allowed|posting_locked_through/,
+        );
+        continue;
+      }
+
+      expect(body, `${functie} toetst de boekingsblokkade`).toMatch(
+        /PERFORM public\.assert_posting_allowed\(/,
+      );
+      // En onder dezelfde administratiegrendel die set_posting_lock() neemt.
+      expect(
+        body.indexOf("lock_ledger_client"),
+        `${functie} neemt de grendel vóór de toets`,
+      ).toBeLessThan(body.indexOf("assert_posting_allowed"));
+      expect(body.indexOf("lock_ledger_client"), `${functie} neemt de grendel`).toBeGreaterThan(-1);
+    }
+  });
+
+  it("5b. en alle ACHT houden daarbij hun afgesloten-jaar-toets", () => {
+    /*
+     * Dit is de kern van de dubbel bewaakte fase: PR D is STRIKT STRENGER dan
+     * wat ervoor stond. Zodra deze test omvalt is de ontkoppeling begonnen, en
+     * dat hoort een eigen PR met een eigen rookproef te zijn.
+     */
+    const { readdirSync } = require("node:fs") as typeof import("node:fs");
+    const bestanden = readdirSync(resolve(process.cwd(), MIGRATIES)).filter((f) => f.endsWith(".sql")).sort();
+
+    for (const { functie, jaarVariabele } of SCHRIJVERS) {
+      let body = "";
+      for (const bestand of bestanden) {
+        const gevonden = functieBody(uitvoerbaar(bestand), functie);
+        if (gevonden !== "") body = gevonden;
+      }
+      expect(body.replace(/\s+/g, " "), functie).toContain(
+        `v_client.afgesloten_boekjaar IS NOT NULL AND ${jaarVariabele} <= v_client.afgesloten_boekjaar`,
       );
     }
   });

@@ -1111,6 +1111,24 @@ Eerste stap van de herziening uit `docs/BOEKASSIST_YEAR_CLOSE_LIFECYCLE.md`. **A
 - **Nog niemand leest of schrijft deze tabel.** `close_fiscal_year()` is niet aangeraakt, `clients.afgesloten_boekjaar` blijft het technische watermerk, alle acht schrijvers houden hun eigen afgesloten-jaar-toets, de bulk-preflight is ongewijzigd, er kan niets worden heropend en er bestaat geen boekingsblokkade. De UI is niet aangeraakt en de gegenereerde types evenmin.
 - **De bestaande onuitwisbaarheid is niet versoepeld.** `prevent_year_closure_mutation()` weigert nog steeds élke UPDATE, dus `status` ligt vandaag feitelijk vast op `closed` — correct, want heropenen bestaat niet. **PR E versmalt die trigger bewust tot uitsluitend die kolom**, met een eigen bewijs en een eigen review.
 
+### 6C-b11 — de schrijvers toetsen de blokkade (PR D)
+
+```
+supabase/migrations/20260928120000_writers_respect_posting_lock.sql
+supabase/tests/writers-posting-lock/run-proof.sh    37 bewijzen tegen een echte PostgreSQL
+src/test/writers-posting-lock-migration.test.ts     contract over de migratie
+```
+
+Vierde stap: de boekingsblokkade wordt **gehandhaafd**. Het systeem is vanaf nu **tijdelijk dubbel bewaakt**.
+
+- **Zeven gedateerde schrijvers** roepen `assert_posting_allowed(client, datum)` aan, elk op zijn eigen autoritatieve datum: `invoice_date` (inkoop, verkoop), `transaction_date` (bankaflettering en banktransactie), `posting_date` (memoriaal), `opening_date` (beginbalans) en — belangrijk — de datum van de **tegenboeking zelf**, niet die van het origineel.
+- **Eén gedeelde bewering** in plaats van zeven kopieën. Dat is precies de helper die er bij `afgesloten_boekjaar` nooit kwam, met acht byte-identieke kopieën als gevolg. Melding: *"Boekingsdatum % valt binnen de boekingsblokkade t/m % voor deze administratie"*, SQLSTATE **22023** — dezelfde code als de afsluitweigering, omdat de app die al als toonbare validatiefout behandelt (`VALIDATION_CODES`, `classifyReversalError`); een nieuwe code zou hiervan "onbekende fout" maken.
+- **De grendel vóór de toets.** Elke schrijver neemt `lock_ledger_client()` voordat hij de blokkade leest — dezelfde grendel die `set_posting_lock()` neemt. Zonder dat zit er een gat tussen toetsen en boeken.
+- **`declare_opening_balance_nil()` doet bewust NIET mee.** Zij schrijft geen grootboekregel en doet een uitspraak over een **boekjaar**, niet over een datum; een datumgebonden blokkade hoort haar niet te beheersen. Zij blijft onder de jaarstatus vallen. Twee tests pinnen die uitzondering vast, juist omdat zij op een vergeten geval lijkt.
+- **Strikt strenger dan ervoor.** De `afgesloten_boekjaar`-toets blijft in alle acht staan en wordt als **eerste** gecontroleerd, zodat elke bestaande weigering haar bestaande melding houdt. Een heropend boekjaar wordt hier niet beboekbaar.
+- **De bulk-preflight is het eens met de schrijver**: `bank_bulk_posting_candidates()` merkt een geblokkeerde regel als `blocked` met dezelfde formulering en dezelfde grens; `post_bank_transactions_bulk()` erft de handhaving omdat zij per regel de echte schrijver aanroept.
+- **Nog geen heropening, en de ontkoppeling volgt later.** Het oude harde watermerk is onverminderd van kracht.
+
 ### 6C-b11 — de boekingsblokkade (PR C)
 
 ```

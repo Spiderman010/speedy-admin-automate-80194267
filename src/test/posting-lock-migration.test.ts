@@ -312,9 +312,13 @@ describe("PR C raakt het bestaande gedrag niet aan", () => {
       resolve(process.cwd(), "src/test/year-close-coupling.test.ts"),
       "utf8",
     );
-    expect(koppeling).toContain("GEEN schrijver gebruikt hem");
-    expect(koppeling).toContain("posting_allowed() is precies één keer gedefinieerd");
-    // De oude waarneming mag niet blijven staan naast de nieuwe.
+    // Bij PR D is diezelfde assertie nóg een keer meegegroeid — van "geen
+    // schrijver gebruikt hem" naar "elke gedateerde schrijver gebruikt hem,
+    // behalve de nihil-verklaring". Wat hier telt is dat de test MEEBEWEEGT en
+    // dat de achterhaalde formuleringen verdwijnen in plaats van te blijven
+    // staan naast de nieuwe.
+    expect(koppeling).toMatch(/gedeelde bewering|gedeelde helper/);
     expect(koppeling).not.toContain("er bestaat vandaag GEEN gedeelde helper");
+    expect(koppeling).not.toContain("maar GEEN schrijver gebruikt hem");
   });
 });
