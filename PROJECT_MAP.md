@@ -1176,3 +1176,98 @@ src/pages/Jaarafsluiting.tsx        /overzichten/jaarafsluiting — nu ook de af
 
 > **If the project ref is unclear, stop. Do not run SQL.**
 > Open the Lovable Cloud SQL editor and confirm the project ref is `alxlbdhpbwlehbdbfejw` before proceeding.
+
+
+---
+
+## Werkvolgorde na nulmeting — 2026-09-28
+
+Deze volgorde is de actuele uitvoeringsvolgorde na de read-only nulmeting op `main`. Nieuwe featureontwikkeling start pas nadat de eerdere opruim- en verificatiestappen aantoonbaar zijn afgerond.
+
+### Taakverdeling
+
+- **Claude Code = hoofdengineer** voor backendarchitectuur, databasefuncties, migraties, financiële invarianten, concurrency, security, tests en PR-review.
+- **Lovable = UI/UX-specialist** voor visuele flows, Shadcn/Admin Kit-patronen, Platform Kit-integratie en schermimplementatie bovenop reeds bewezen backendcontracten.
+- Lovable ontwerpt geen financiële database-waarheid of nieuwe productie-SQL zonder een vooraf vastgesteld contract.
+
+### Verplichte volgorde
+
+1. **Repo-hygiëne en open PR's**
+   - actuele `main` vaststellen;
+   - open PR's beoordelen;
+   - PR #147 niet direct mergen: opnieuw opbouwen tegen actuele architectuur;
+   - PR #128 niet rebasen als oude implementatie: functionele intentie bewaren en later opnieuw bouwen tegen de huidige bankarchitectuur;
+   - directe Lovable-commits op `main` achteraf reviewen op functionele/security-impact.
+
+2. **Productiemigraties reconciliëren**
+   - repo-state en productie-state expliciet scheiden;
+   - productie alleen read-only inspecteren via Lovable Cloud-managed Supabase, ref `alxlbdhpbwlehbdbfejw`;
+   - per relevante migratie vastleggen: aanwezig in repo / bewezen op productie / niet bewezen op productie;
+   - geen volgende lifecycle-migratie uitvoeren zolang afhankelijkheden niet aantoonbaar aanwezig zijn.
+
+3. **Legacy `journal_entries` / Snelle invoer oplossen**
+   - geen tweede financiële waarheid naast `ledger_postings` laten bestaan;
+   - eerst exact inventariseren welke app-routes/hooks nog rechtstreeks schrijven;
+   - voorkeur: Snelle invoer omleiden naar de bestaande memoriaal/posting-engine;
+   - daarna directe writes naar de legacy-tabel blokkeren of de functie alleen-lezen maken;
+   - eigen PR, los van jaarafsluiting.
+
+4. **Documentatie synchroniseren**
+   - `PROJECT_MAP.md` en ontwikkelrunbook pas bijwerken nadat stappen 1–3 feitelijk zijn vastgesteld;
+   - oude fasevolgordes en historische PR-aannames verwijderen of expliciet als historisch markeren;
+   - docs-only PR.
+
+5. **PR E — fiscal-year reopen backend**
+   - `closed -> reopened -> closed` ondersteunen;
+   - immutable lifecycle-events;
+   - same-transaction databasebewijs voor toegestane status/watermark-mutaties;
+   - legacy watermark zonder bewijs fail-closed;
+   - `posting_locked_through` nooit automatisch wijzigen bij reopen;
+   - geen UI in deze PR.
+
+6. **PR F — Jaarafsluiting UI in Lovable**
+   - heropenen met verplichte reden;
+   - historie tonen;
+   - confirmation en foutafhandeling;
+   - bestaande Platform Kit-componenten hergebruiken;
+   - uitsluitend bovenop bewezen backend-RPC's.
+
+7. **Posting-lock UI afronden**
+   - backend eerst opnieuw door Claude laten verifiëren;
+   - daarna Lovable-scherm voor blokkeren t/m datum, reden, wijzigen/opheffen en historie;
+   - afsluitstatus en posting lock visueel en semantisch strikt scheiden.
+
+8. **Definitieve ontkoppeling**
+   - pas wanneer reopen en posting-lock UI veilig werken;
+   - oude `afgesloten_boekjaar`-guard uit gedateerde schrijvers verwijderen;
+   - `posting_locked_through` wordt technische write guard;
+   - fiscal-year status blijft administratieve lifecycle-status;
+   - afzonderlijke risicovolle PR met echte PostgreSQL-proofs en rookproef.
+
+9. **Bank rejection feedback opnieuw bouwen**
+   - intentie van PR #128 behouden: expliciet afgewezen match mag niet direct opnieuw worden voorgesteld;
+   - nieuwe forward-only migratie op huidige architectuur;
+   - integreren met huidige bankpagina, bulkpreflight en audit/feedbackmodel.
+
+10. **Review Workspace / Autoboeker-inspiratie**
+    - pas na bovenstaande kernstappen;
+    - **REUSE:** brondocumenten, factuurvelden, vraagposten, audit trail, diagnostics, Platform Kit;
+    - **EXTEND:** document-level findings, bankmatch-/supplier rules, office metrics;
+    - **NEW:** confidence breakdown, correctiegeschiedenis per veld, keyboard workflow, rule reliability;
+    - AI levert classificatie/uitleg; deterministische code blijft autoriteit voor bedragen, btw, debet/credit en reconciliatie.
+
+### Beslisregel voor nieuw werk
+
+Geen nieuwe productmodule starten voordat deze vragen met **BEWEZEN** zijn beantwoord:
+
+- Welke relevante migraties staan daadwerkelijk op productie?
+- Is `journal_entries` geen actieve alternatieve write-path meer?
+- Zijn #147 en #128 afgehandeld als stale/rebuild?
+- Zijn directe Lovable-commits op `main` gereviewd?
+- Start de nieuwe PR vanaf de op dat moment nieuwste `main` op een echte feature branch?
+
+### Toolkeuze
+
+- **Claude Code:** database, SQL, migrations, financial core, concurrency, security, architecture, tests, PR review.
+- **Lovable:** UI, UX, Shadcn/Admin Kit-patronen, Platform Kit-compositie, visuele flows, prototypes zonder eigen financiële waarheidslogica.
+- **Productie-SQL:** uitsluitend Lovable Cloud SQL editor op `alxlbdhpbwlehbdbfejw`, read-only verificatie vóór elke mutatie, één migratie per keer.
