@@ -335,14 +335,25 @@ describe("boeken — writer-uitgelijnde boekbaarheid", () => {
     expect(postBtn()).toBeEnabled();
   });
 
-  it("12c. een onleesbare blokkade is 'niet te bepalen': geen knop, geen verzonnen reden", async () => {
+  it("12c. een onleesbare blokkade is 'onbekend', niet 'geblokkeerd': knop uit, neutrale tekst, zichtbare herstelweg", async () => {
     state.lockError = true;
     await renderReady();
 
-    expect(readiness().querySelector("[data-block-code='boekingsblokkade_onbekend']")).not.toBeNull();
-    expect(readiness()).toHaveTextContent(/kon niet worden bepaald/);
-    expect(readiness()).not.toHaveTextContent(/afgesloten/);
+    await waitFor(() => expect(readiness()).toHaveAttribute("data-readiness", "onbekend"));
+    expect(readiness()).toHaveTextContent("Boekbaarheid niet te bepalen");
+    expect(readiness()).toHaveTextContent(/niet dat zij geblokkeerd is/);
+    expect(readiness()).not.toHaveTextContent(/Nog niet boekbaar|afgesloten/);
+    expect(readiness().className).not.toMatch(/destructive/);
     expect(postBtn()).toBeDisabled();
+
+    // De retries zijn uitgeput (retry: false in deze suite): de herstelweg staat er.
+    const retry = await screen.findByTestId("posting-readiness-retry-lock");
+    state.lockError = false;
+    fireEvent.click(retry);
+    await waitFor(() => expect(readiness()).toHaveAttribute("data-readiness", "klaar"));
+    expect(postBtn()).toBeEnabled();
+    // Herstel is een LEZING; er is niets geboekt.
+    expect(postMutateAsync).not.toHaveBeenCalled();
   });
 
   it("13. een complete factuur meldt 'Klaar om te boeken' en de knop staat aan", async () => {

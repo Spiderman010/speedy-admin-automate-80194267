@@ -440,7 +440,9 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
     });
   }, [invoice, client, storedLines, posting, lockedThrough]);
 
-  const readinessBlocked = !!postingReadiness && postingReadiness.state === "geblokkeerd";
+  // Geblokkeerd én onbekend houden de knop uit: onbekend is geen "klaar".
+  const readinessBlocked =
+    !!postingReadiness && (postingReadiness.state === "geblokkeerd" || postingReadiness.state === "onbekend");
 
   // Totals color state
   const totalsState: "green" | "amber" | "red" =
@@ -926,6 +928,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                 <PurchaseInvoicePostingReadiness
                   record={postingReadiness}
                   onOpenSettings={() => navigate("/klanten")}
+                  lockReadPending={postingLock.isFetching}
+                  onRetryLock={postingLock.isError ? () => postingLock.refetch() : undefined}
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   {!isPostableStatus && (

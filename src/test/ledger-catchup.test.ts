@@ -11,6 +11,7 @@ import {
   type CatchupLineAggregate,
   type CatchupPurchaseInvoice,
   type CatchupSalesInvoice,
+  resolveCatchupState,
 } from "@/lib/ledger-catchup";
 import { postingLockVerdict } from "@/lib/posting-lock";
 
@@ -239,13 +240,30 @@ describe("inkoop — configuratie en documentgebreken", () => {
     expect(evalInkoop(inkoop({ invoice_date: "2026-01-01" }), config({ posting_locked_through: "2025-12-31" })).state).toBe("klaar");
   });
 
-  it("13c. een onbekende blokkade is geen 'klaar' en geen verzonnen 'geblokkeerd'", () => {
+  it("13c. een onbekende blokkade alléén is 'onbekend': geen 'klaar' en geen verzonnen 'geblokkeerd'", () => {
     const r = evalInkoop(inkoop({ invoice_date: "2026-03-01" }), config({ posting_locked_through: undefined }));
-    expect(r.state).toBe("geblokkeerd");
+    expect(r.state).toBe("onbekend");
     expect(codes(r)).toEqual(["boekingsblokkade_onbekend"]);
     expect(r.blocks[0].label).toMatch(/kon niet worden bepaald/);
     expect(r.blocks[0].label).toMatch(/database controleert/i);
     expect(r.blocks[0].label).not.toMatch(/afgesloten/i);
+  });
+
+  it("13e. PRECEDENTIE: een concreet beletsel wint van een onbekende blokkade — geblokkeerd, met de onbekendheid zichtbaar", () => {
+    // Status niet postbaar + blokkade onleesbaar: het document is hoe dan ook
+    // niet boekbaar, dus 'geblokkeerd'; de onbekende blokkade blijft als item
+    // staan zodat de gebruiker ziet dat ook dát nog niet is vastgesteld.
+    const r = evalInkoop(inkoop({ status: "te_controleren", invoice_date: "2026-03-01" }), config({ posting_locked_through: undefined }));
+    expect(r.state).toBe("geblokkeerd");
+    expect(codes(r)).toEqual(["status_niet_postbaar", "boekingsblokkade_onbekend"]);
+    // Ook met ontbrekende bedragen, en voor verkoop.
+    expect(evalInkoop(inkoop({ amount_excl: null, invoice_date: "2026-03-01" }), config({ posting_locked_through: undefined })).state).toBe("geblokkeerd");
+    expect(evalVerkoop(verkoop({ btw_verlegd: true }), config({ posting_locked_through: undefined })).state).toBe("geblokkeerd");
+    // En de regel zelf, los van een document.
+    expect(resolveCatchupState([])).toBe("klaar");
+    expect(resolveCatchupState([{ code: "boekingsblokkade_onbekend", label: "x" }])).toBe("onbekend");
+    expect(resolveCatchupState([{ code: "boekingsblokkade", label: "x" }])).toBe("geblokkeerd");
+    expect(resolveCatchupState([{ code: "boekingsblokkade_onbekend", label: "x" }, { code: "geen_boekingsregels", label: "y" }])).toBe("geblokkeerd");
   });
 
   it("13d. de blokkadetoets komt uit één helper: dezelfde uitkomst als postingLockVerdict()", () => {
@@ -311,8 +329,9 @@ describe("verkoop — dezelfde regels, de verkoopvariant", () => {
     expect(codes(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: "2024-12-31" }))))
       .toContain("boekingsblokkade");
     expect(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: null })).state).toBe("klaar");
-    expect(codes(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: undefined }))))
-      .toEqual(["boekingsblokkade_onbekend"]);
+    const onbekend = evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: undefined }));
+    expect(codes(onbekend)).toEqual(["boekingsblokkade_onbekend"]);
+    expect(onbekend.state).toBe("onbekend");
   });
 });
 
@@ -321,14 +340,16 @@ describe("samenvatting, selectie en volgorde", () => {
   const geboekt = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, GOEDE_REGELS, "pg-1");
   const klaar = evalInkoop(inkoop({ id: "pi-2" }));
   const geblokkeerd = evalInkoop(inkoop({ id: "pi-3", status: "te_controleren" }));
+  const onbekend = evalInkoop(inkoop({ id: "pi-4" }), config({ posting_locked_through: undefined }));
 
-  it("22. de telling is per toestand en telt alles precies één keer", () => {
-    const s = summarize([geboekt, klaar, geblokkeerd]);
-    expect(s).toEqual({ totaal: 3, geboekt: 1, klaar: 1, geblokkeerd: 1 });
+  it("22. de telling is per toestand en telt alles precies één keer — onbekend apart, nooit bij geblokkeerd", () => {
+    expect(onbekend.state).toBe("onbekend");
+    const s = summarize([geboekt, klaar, geblokkeerd, onbekend]);
+    expect(s).toEqual({ totaal: 4, geboekt: 1, klaar: 1, geblokkeerd: 1, onbekend: 1 });
   });
 
-  it("23. alleen 'klaar' wordt aan de writer aangeboden", () => {
-    expect(postableRecords([geboekt, klaar, geblokkeerd]).map((r) => r.id)).toEqual(["pi-2"]);
+  it("23. alleen 'klaar' wordt aan de writer aangeboden — onbekend dus nooit", () => {
+    expect(postableRecords([geboekt, klaar, geblokkeerd, onbekend]).map((r) => r.id)).toEqual(["pi-2"]);
   });
 
   it("24. inkoop gaat vóór verkoop, daarbinnen op brondatum", () => {

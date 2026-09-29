@@ -84,17 +84,26 @@ describe("De boekjaarstatus voorspelt niets meer over boekbaarheid", () => {
     expect(code("src/lib/ledger-catchup.ts")).toContain("postingLockVerdict(");
   });
 
-  it("5. onbekend is onbekend: de inhaalslag en de werkbank zetten een onleesbare blokkade nooit op 'geen blokkade'", () => {
+  it("5. onbekend is onbekend, en een leesfout blijft een queryfout (ontwerp A)", () => {
     const hook = code("src/hooks/usePostingLock.ts");
-    expect(hook).toContain("export async function readPostingLockStateOrUnknown(");
-    expect(hook).toMatch(/catch \(error\) \{[\s\S]*return undefined;/);
+    // Geen slikkende lezing: een fout hoort de omsluitende query te laten falen,
+    // zodat React Query herkanst en de pagina "Opnieuw proberen" toont.
+    expect(hook).not.toMatch(/readPostingLockStateOrUnknown|catch \(error\) \{[\s\S]*return undefined;/);
+    expect(appFilesMatching(/readPostingLockStateOrUnknown/)).toEqual([]);
     for (const pad of ["src/hooks/useLedgerCatchup.ts", "src/hooks/useAccountingDiagnostics.ts"]) {
-      expect(code(pad), pad).toContain("posting_locked_through: await readPostingLockStateOrUnknown(clientId)");
+      expect(code(pad), pad).toContain("posting_locked_through: await fetchPostingLockState(clientId)");
     }
+    // Onbekend ontstaat alleen waar de lezing haar eigen query heeft, en dan
+    // mét herstelweg: de werkbank.
     const ws = code("src/pages/PurchaseInvoiceWorkspace.tsx");
     expect(ws).toMatch(/lockedThrough = postingLock\.isSuccess \? postingLock\.data : undefined/);
+    expect(ws).toMatch(/onRetryLock=\{postingLock\.isError \? \(\) => postingLock\.refetch\(\) : undefined\}/);
     // Geen `?? null` op de blokkade: dat zou onbekend tot "toegestaan" maken.
     expect(ws).not.toMatch(/posting_locked_through: [^,\n]*\?\? null/);
+    // En onbekend is een eigen toestand die nooit wordt aangeboden.
+    const catchup = code("src/lib/ledger-catchup.ts");
+    expect(catchup).toContain('export type CatchupState = "geboekt" | "klaar" | "geblokkeerd" | "onbekend"');
+    expect(catchup).toMatch(/return records\.filter\(\(r\) => r\.state === "klaar"\)/);
   });
 });
 

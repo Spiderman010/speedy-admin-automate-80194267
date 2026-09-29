@@ -382,6 +382,8 @@ export interface DomainSummary {
   posted: number;
   ready: number;
   blocked: number;
+  /** Niet te bepalen (blokkade onleesbaar): apart, nooit bij `blocked`. */
+  unknown: number;
   errors: number;
   warnings: number;
   /** Per code, zodat het overzicht exact hetzelfde telt als de detailtabs. */
@@ -408,12 +410,14 @@ export function summarizeDiagnostics(
   let posted = 0;
   let ready = 0;
   let blocked = 0;
+  let unknown = 0;
   for (const r of records) {
     if (r.state === "geboekt") posted++;
     else if (r.state === "klaar") ready++;
+    else if (r.state === "onbekend") unknown++;
     else blocked++;
   }
-  return { total: records.length, posted, ready, blocked, errors, warnings, byCode };
+  return { total: records.length, posted, ready, blocked, unknown, errors, warnings, byCode };
 }
 
 export interface LedgerSummary {

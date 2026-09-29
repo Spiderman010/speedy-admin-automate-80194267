@@ -154,6 +154,15 @@ describe("inkoopdiagnostiek", () => {
     );
     expect(bij(items, "boekingsblokkade_onbekend").severity).toBe("warning");
     expect(items.some((i) => i.code === "klaar_niet_geboekt")).toBe(false);
+    expect(items.some((i) => i.severity === "error")).toBe(false);
+  });
+
+  it("8d. de samenvatting telt onbekend apart en nooit als geblokkeerd", () => {
+    const onbekend = pi(inkoop({ status: "gecontroleerd", invoice_date: "2025-03-15" }), { ...volledigeConfig, posting_locked_through: undefined });
+    expect(onbekend.state).toBe("onbekend");
+    const items = diagnosticsForDocument(onbekend, GEEN_GROEPEN);
+    const summary = summarizeDiagnostics(items, [onbekend]);
+    expect(summary).toMatchObject({ total: 1, posted: 0, ready: 0, blocked: 0, unknown: 1, errors: 0 });
   });
 
   it("9. klaar maar niet geboekt is werk, geen bederf", () => {

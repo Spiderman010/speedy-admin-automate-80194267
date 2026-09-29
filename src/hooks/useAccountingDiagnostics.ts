@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { readPostingLockStateOrUnknown } from "./usePostingLock";
+import { fetchPostingLockState } from "./usePostingLock";
 import { useAuth } from "./useAuth";
 import { fetchLedgerPostings } from "./useLedgerPostings";
 import { fetchLedgerIntegrity } from "./useLedgerIntegrity";
@@ -158,10 +158,11 @@ export async function fetchAccountingDiagnostics(clientId: string): Promise<Acco
     .maybeSingle();
   if (clientError) throw clientError;
   if (!clientRow) throw new Error("Administratie niet gevonden");
-  // De boekingsblokkade is de enige datumgrendel (PR H); onleesbaar = onbekend.
+  // De boekingsblokkade is de enige datumgrendel (PR H). Faalt de lezing, dan
+  // faalt deze query: React Query herkanst en de pagina biedt "Opnieuw proberen".
   const config: CatchupClientConfig = {
     ...clientRow,
-    posting_locked_through: await readPostingLockStateOrUnknown(clientId),
+    posting_locked_through: await fetchPostingLockState(clientId),
   };
 
   const [purchaseInvoices, salesInvoices, purchaseMarkers, salesMarkers, bankMarkers, manualMarkers, postings, accounts, integrity, reversalMarkers] =

@@ -430,10 +430,15 @@ describe("statische grenzen", () => {
     // diagnoseconsole zelf blijft er hoe dan ook af — dat wordt hierboven al
     // bewaakt doordat geen enkel diagnosebestand rekenwerk mag bevatten.
     for (const f of [
-      "src/lib/ledger-catchup.ts", "src/lib/ledger-integrity.ts", "src/lib/ledger-reporting.ts",
+      "src/lib/ledger-integrity.ts", "src/lib/ledger-reporting.ts",
       "src/pages/GrootboekIntegriteit.tsx",
     ]) {
       expect(changed, f).not.toContain(f);
     }
+    // `ledger-catchup.ts` stond hier ook. Dat was een scope-uitspraak: het is
+    // een voorspelling van boekbaarheid en beweegt terecht mee met de
+    // schrijvers (PR H). Wat blijft: zij rekent niets uit en schrijft niets.
+    const catchup = readFileSync("src/lib/ledger-catchup.ts", "utf8");
+    expect(catchup).not.toMatch(/supabase|\.rpc\(|ledger_postings|useMutation/);
   });
 });

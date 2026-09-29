@@ -286,9 +286,12 @@ describe("statische grenzen", () => {
       "src/lib/proef-saldibalans.ts",
       "src/lib/financial-statements.ts",
       "src/hooks/usePurchaseInvoicePosting.ts",
-      "src/lib/ledger-catchup.ts",
     ]) {
       expect(changed, f).not.toContain(f);
     }
+    // `ledger-catchup.ts` is een voorspelling, geen rekenkern of schrijver;
+    // zij mag mee met de schrijvers (PR H) zolang zij zelf niets schrijft.
+    const { readFileSync: lees } = require("node:fs") as typeof import("node:fs");
+    expect(lees("src/lib/ledger-catchup.ts", "utf8")).not.toMatch(/supabase|\.rpc\(|ledger_postings|useMutation/);
   });
 });

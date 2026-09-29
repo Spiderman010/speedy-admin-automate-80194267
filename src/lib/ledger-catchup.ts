@@ -43,8 +43,35 @@ export const CATCHUP_SALES_POSTABLE_STATUSES = ["gecontroleerd", "betaald"] as c
 
 export type CatchupSource = "inkoop" | "verkoop";
 
-/** Drie toestanden, meer zijn er niet: geboekt, boekbaar, of geblokkeerd. */
-export type CatchupState = "geboekt" | "klaar" | "geblokkeerd";
+/**
+ * Vier toestanden.
+ *   geboekt     — de marker zegt dat het al is gebeurd;
+ *   klaar       — de voorspelling zegt: aanbieden aan de schrijver mag;
+ *   geblokkeerd — er is een CONCREET, bekend beletsel;
+ *   onbekend    — de boekbaarheid is niet te bepalen omdat een vereiste stand
+ *                 (de boekingsblokkade) niet gelezen kon worden. Geen "klaar",
+ *                 maar ook geen verzonnen beletsel.
+ */
+export type CatchupState = "geboekt" | "klaar" | "geblokkeerd" | "onbekend";
+
+/** De enige code die geen beletsel is maar een gebrek aan kennis. */
+export const UNKNOWN_BLOCK_CODE = "boekingsblokkade_onbekend" as const;
+
+/**
+ * De toestand uit de blokkades — de PRECEDENTIE staat hier, één keer.
+ *
+ * Een concreet beletsel (status, bedragen, rekeningen, of een blokkade die de
+ * datum aantoonbaar dekt) wint: het document is dan hoe dan ook niet boekbaar
+ * en heet `geblokkeerd`, ook al is de blokkadestand daarnaast onbekend — die
+ * onbekendheid blijft als blokkade-item zichtbaar. Is het ENIGE item de
+ * onbekende blokkade, dan is er geen beletsel bekend en geen vrijbrief:
+ * `onbekend`. Zonder items: `klaar`.
+ */
+export function resolveCatchupState(blocks: readonly CatchupBlock[]): Exclude<CatchupState, "geboekt"> {
+  if (blocks.some((b) => b.code !== UNKNOWN_BLOCK_CODE)) return "geblokkeerd";
+  if (blocks.length > 0) return "onbekend";
+  return "klaar";
+}
 
 export type CatchupBlockCode =
   | "status_niet_postbaar"
@@ -90,7 +117,7 @@ export interface CatchupRecord {
   /** De status van het brondocument zelf, ongewijzigd. */
   documentStatus: string;
   state: CatchupState;
-  /** Leeg tenzij `state === "geblokkeerd"`. */
+  /** Leeg bij `geboekt` en `klaar`; bij `onbekend` uitsluitend de onbekende blokkade. */
   blocks: CatchupBlock[];
   /** Gevuld zodra het record geboekt is: de boekingsgroep van de writer. */
   postingGroupId: string | null;
@@ -217,7 +244,7 @@ function blokkadeVoor(date: string, config: CatchupClientConfig): CatchupBlock |
     return { code: "boekingsblokkade", label: oordeel.message };
   }
   if (oordeel.kind === "unknown") {
-    return { code: "boekingsblokkade_onbekend", label: oordeel.message };
+    return { code: UNKNOWN_BLOCK_CODE, label: oordeel.message };
   }
   return null;
 }
@@ -334,7 +361,7 @@ export function evaluatePurchaseInvoice(input: {
 
   return {
     ...basis,
-    state: blocks.length === 0 ? "klaar" : "geblokkeerd",
+    state: resolveCatchupState(blocks),
     blocks,
     postingGroupId: null,
   };
@@ -425,7 +452,7 @@ export function evaluateSalesInvoice(input: {
 
   return {
     ...basis,
-    state: blocks.length === 0 ? "klaar" : "geblokkeerd",
+    state: resolveCatchupState(blocks),
     blocks,
     postingGroupId: null,
   };
@@ -436,18 +463,22 @@ export interface CatchupSummary {
   geboekt: number;
   klaar: number;
   geblokkeerd: number;
+  /** Niet te bepalen: apart geteld, nooit bij `geblokkeerd` opgeteld. */
+  onbekend: number;
 }
 
 export function summarize(records: readonly CatchupRecord[]): CatchupSummary {
   let geboekt = 0;
   let klaar = 0;
   let geblokkeerd = 0;
+  let onbekend = 0;
   for (const r of records) {
     if (r.state === "geboekt") geboekt++;
     else if (r.state === "klaar") klaar++;
+    else if (r.state === "onbekend") onbekend++;
     else geblokkeerd++;
   }
-  return { totaal: records.length, geboekt, klaar, geblokkeerd };
+  return { totaal: records.length, geboekt, klaar, geblokkeerd, onbekend };
 }
 
 /** Alleen de records die aan de writer mogen worden aangeboden. */

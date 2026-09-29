@@ -187,7 +187,7 @@ describe("overzicht en telling", () => {
     ];
 
     const { result } = await laad();
-    expect(result.current.data!.purchase).toEqual({ totaal: 3, geboekt: 1, klaar: 1, geblokkeerd: 1 });
+    expect(result.current.data!.purchase).toEqual({ totaal: 3, geboekt: 1, klaar: 1, geblokkeerd: 1, onbekend: 0 });
     const blok = result.current.data!.records.find((r) => r.id === "pi-blok")!;
     expect(blok.blocks.map((b) => b.code)).toContain("status_niet_postbaar");
   });

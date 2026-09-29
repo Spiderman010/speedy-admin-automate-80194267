@@ -1,7 +1,7 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, HelpCircle } from "lucide-react";
 import type { CatchupRecord } from "@/lib/ledger-catchup";
 
 /**
@@ -22,6 +22,8 @@ import type { CatchupRecord } from "@/lib/ledger-catchup";
 export function PurchaseInvoicePostingReadiness({
   record,
   onOpenSettings,
+  lockReadPending,
+  onRetryLock,
 }: {
   /** `undefined` zolang de factuur of de administratie nog laadt. */
   record: CatchupRecord | undefined;
@@ -30,10 +32,41 @@ export function PurchaseInvoicePostingReadiness({
    * dit paneel geen router nodig heeft en overal inzetbaar blijft.
    */
   onOpenSettings?: () => void;
+  /** De blokkadelezing loopt (nog, of opnieuw). */
+  lockReadPending?: boolean;
+  /**
+   * Alleen aanwezig als de blokkadelezing definitief is mislukt (retries
+   * uitgeput): de zichtbare herstelweg. Nooit een automatische herhaling van
+   * een financiële mutatie — dit leest alleen.
+   */
+  onRetryLock?: () => void;
 }) {
   if (!record) return null;
 
   if (record.state === "geboekt") return null;
+
+  // Onbekend is geen beletsel en geen vrijbrief: neutraal, met een herstelweg.
+  if (record.state === "onbekend") {
+    return (
+      <Alert data-testid="posting-readiness" data-readiness="onbekend" className="border-warning/50 py-3 text-warning [&>svg]:text-warning">
+        <HelpCircle className="h-4 w-4" />
+        <AlertTitle>Boekbaarheid niet te bepalen</AlertTitle>
+        <AlertDescription>
+          <p>
+            {lockReadPending
+              ? "De boekingsblokkade van deze administratie wordt opgehaald…"
+              : "De boekingsblokkade van deze administratie kon niet worden gelezen. Er is dus niet vastgesteld of deze factuur boekbaar is — niet dat zij geblokkeerd is."}
+          </p>
+          <p className="mt-1">Boeken blijft uit tot dat bekend is; de database controleert de boeking hoe dan ook opnieuw bij uitvoeren.</p>
+          {onRetryLock && !lockReadPending && (
+            <Button variant="outline" size="sm" className="mt-3" onClick={onRetryLock} data-testid="posting-readiness-retry-lock">
+              Blokkade opnieuw ophalen
+            </Button>
+          )}
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   if (record.state === "klaar") {
     return (
