@@ -223,13 +223,21 @@ describe("De aanname onder de migratie — wie roept deze hulpfuncties aan?", ()
   });
 });
 
-describe("Scope van deze branch", () => {
-  it("14. raakt geen bestaande migratie, geen schrijver, geen fundering en geen gegenereerde types", () => {
-    const migrations = changed.filter((f) => f.startsWith("supabase/migrations/"));
-    expect(migrations.filter((f) => f !== MIGRATION), "bestaande migraties blijven ongemoeid").toEqual([]);
+describe("Scope van elke latere branch", () => {
+  /*
+   * Bewust GEEN "deze branch wijzigt geen src/"-uitspraak: dat was waar over de
+   * PR die deze migratie invoerde, maar is geen invariant en laat elke latere,
+   * terechte wijziging omvallen (zie branch-sql-scope.ts). Wat wél altijd moet
+   * gelden: deze migratie wordt nooit achteraf herschreven, de bestaande
+   * schrijvers en de grootboekfundering blijven ongemoeid.
+   */
+  it("14. herschrijft deze migratie niet achteraf en raakt geen schrijver of fundering", () => {
+    const touched = changed.filter((f) => f.startsWith("supabase/migrations/"));
+    const introducedHere = execFileSync("git", ["diff", "--name-only", "--diff-filter=A", "origin/main...HEAD"], { encoding: "utf8" })
+      .split("\n")
+      .includes(MIGRATION);
+    if (!introducedHere) expect(touched, "20260929120000 wordt niet achteraf bijgesteld").not.toContain(MIGRATION);
     assertBranchTouchesNoExistingWriter(changed);
     assertBranchSqlKeepsLedgerFoundation(changed);
-    expect(changed.filter((f) => f.startsWith("src/") && !f.startsWith("src/test/"))).toEqual([]);
-    expect(changed).not.toContain("src/integrations/supabase/types.ts");
   });
 });

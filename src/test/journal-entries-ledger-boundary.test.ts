@@ -197,10 +197,10 @@ describe("4. De historische regels blijven bestaan", () => {
   });
 });
 
-describe("Scope van deze branch", () => {
-  it("geen migratie, geen SQL-wijziging, geen gegenereerde types", () => {
-    expect(changed.filter((f) => f.startsWith("supabase/"))).toEqual([]);
-    expect(changed).not.toContain("src/integrations/supabase/types.ts");
+describe("Scope van elke latere branch", () => {
+  it("geen gewijzigde migratie tast de grootboekfundering of de bestaande schrijvers aan", () => {
+    // Bewust geen "deze branch bevat geen SQL": de vervolgmigratie die directe
+    // writes op journal_entries dichtzet, hoort juist wél SQL te bevatten.
     assertBranchTouchesNoExistingWriter(changed);
     assertBranchSqlKeepsLedgerFoundation(changed);
   });
