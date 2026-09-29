@@ -531,7 +531,15 @@ describe("statische bewaking", () => {
         continue; // verwijderd bestand
       }
       code = code.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
-      expect(code, f).not.toMatch(/journal_entries/);
+      // Was: toegevoegde SQL mocht journal_entries niet eens NOEMEN — waar in
+      // 6C-b8, maar geen invariant: 20260930120000 zet die tabel bewust op
+      // alleen-lezen (rechten en policies). Bewaakt blijft wat ertoe doet: geen
+      // SQL herstructureert de legacy-tabel of verandert haar rijen.
+      // Alleen migraties: een wegwerp-proefharnas mag zijn eigen testrijen maken.
+      if (f.startsWith("supabase/migrations/")) {
+        expect(code, f).not.toMatch(/(?:CREATE|ALTER|DROP)\s+TABLE[^;]*journal_entries/i);
+        expect(code, f).not.toMatch(/(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE)\s+(?:TABLE\s+)?(?:ONLY\s+)?(?:public\.)?journal_entries\b/i);
+      }
       expect(code, f).not.toMatch(/(?:CREATE|ALTER|DROP)\s+(?:TABLE|INDEX|POLICY)[^;]*opening_balance/i);
     }
     assertBranchSqlKeepsLedgerFoundation(changed);
