@@ -88,6 +88,9 @@ const state = {
   events: [] as FiscalYearEvent[],
   /** De leesquery op fiscal_year_events faalt. */
   eventsError: false,
+  /** De boekingsblokkade: een eigen stand en een eigen geschiedenis. */
+  lock: null as string | null,
+  lockEvents: [] as unknown[],
   /** Na een mutatie: wat de verversing daarna teruggeeft. */
   closureNaPoging: undefined as typeof CLOSED | typeof REOPENED | null | undefined,
   eventsNaPoging: undefined as FiscalYearEvent[] | undefined,
@@ -146,6 +149,15 @@ vi.mock("@/integrations/supabase/client", () => ({
     from: (table: string) => ({
       select: () => ({
         eq: () => ({
+          // De boekingsblokkade (eigen kaart, eigen hook): één filter op de
+          // administratie, dan de stand of de geschiedenis.
+          maybeSingle: async () =>
+            table === "clients"
+              ? { data: { id: "client-1", posting_locked_through: state.lock }, error: null }
+              : { data: null, error: null },
+          order: () => ({
+            order: async () => ({ data: table === "posting_lock_events" ? state.lockEvents : [], error: null }),
+          }),
           eq: () => ({
             maybeSingle: async () => {
               if (table !== "year_closures") return { data: null, error: null };
@@ -256,6 +268,8 @@ beforeEach(() => {
     closure: null,
     events: [],
     eventsError: false,
+    lock: null,
+    lockEvents: [],
     closureNaPoging: undefined,
     eventsNaPoging: undefined,
     watermarkNaPoging: undefined,
@@ -553,9 +567,50 @@ describe("De boekingsblokkade staat er los van", () => {
       "close_fiscal_year",
     ]);
     // De blokkadekaart blijft een eigen, ongewijzigd concept.
+    // De blokkadekaart blijft een eigen, ongewijzigd concept: geen blokkade
+    // vóór, geen blokkade na — afsluiten en heropenen raken haar niet.
     const blokkade = screen.getByTestId("boekingsblokkade-card");
-    expect(blokkade).toHaveTextContent("Nog niet afzonderlijk ingesteld");
-    expect(blokkade).toHaveTextContent(/afsluiten of heropenen wijzigt de boekingsblokkade niet/i);
+    expect(screen.getByTestId("blokkade-stand")).toHaveTextContent("Geen boekingsblokkade");
+    expect(blokkade).toHaveTextContent("Een boekjaar heropenen heft deze blokkade niet op.");
+  });
+
+  it("10c. afgesloten jaar + geen blokkade: twee losse standen, geen van beide afgeleid van de ander", async () => {
+    afgesloten();
+    state.lock = null;
+    toon();
+    await waitFor(() => expect(screen.getByTestId("jaar-status-badge")).toHaveAttribute("data-status", "closed"));
+    await waitFor(() => expect(screen.getByTestId("blokkade-status-badge")).toHaveAttribute("data-locked", "false"));
+    expect(screen.getByTestId("blokkade-stand")).toHaveTextContent("Geen boekingsblokkade");
+    // Het jaar is dicht, maar de kaart zegt niet dat er een blokkade is.
+    expect(screen.getByTestId("boekingsblokkade-card")).not.toHaveTextContent(`31-12-${JAAR}`);
+  });
+
+  it("10d. heropend jaar + blokkade nog gezet: beide blijven zichtbaar zoals ze zijn", async () => {
+    heropend();
+    state.lock = `${JAAR}-12-31`;
+    state.lockEvents = [
+      {
+        id: "lock-1",
+        client_id: "client-1",
+        organization_id: "org-1",
+        previous_locked_through: null,
+        new_locked_through: `${JAAR}-12-31`,
+        changed_at: "2027-01-10T08:00:00.000Z",
+        changed_by: "user-1",
+        reason: "Aangifte ingediend",
+      },
+    ];
+    toon();
+    await waitFor(() => expect(screen.getByTestId("jaar-status-badge")).toHaveAttribute("data-status", "reopened"));
+    await waitFor(() => expect(screen.getByTestId("blokkade-status-badge")).toHaveAttribute("data-locked", "true"));
+    expect(screen.getByTestId("blokkade-stand")).toHaveTextContent(`Boekingen geblokkeerd t/m 31-12-${JAAR}`);
+    expect(screen.queryByTestId("blokkade-inconsistent")).toBeNull();
+    expect(screen.getByTestId("boekingsblokkade-card")).toHaveTextContent(
+      "Een boekjaar heropenen heft deze blokkade niet op.",
+    );
+    // De jaarkaart noemt de blokkade niet als onderdeel van haar status.
+    expect(screen.getByTestId("jaar-status-card")).not.toHaveTextContent(/geblokkeerd t\/m/i);
+    expect(lockCalls()).toEqual([]);
   });
 
   it("10b. de heropeningsdialoog belooft niet dat een periode of blokkade opengaat", async () => {
