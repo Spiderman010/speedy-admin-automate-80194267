@@ -1186,6 +1186,21 @@ Uitkomst van de productie-audit van 2026-09-28. **Alleen rechten; geen lichaam, 
 - **`assert_posting_allowed`** stond al op alleen-eigenaar en is niet aangeraakt.
 - **`ALTER DEFAULT PRIVILEGES` bewust niet gewijzigd**: dat raakt élke toekomstige functie, ook die van de Lovable-tooling. **Conventie vanaf nu:** een interne hulpfunctie trekt in haar eigen migratie expliciet in van `PUBLIC, anon, authenticated, service_role`; `FROM PUBLIC` alleen is op dit platform onvoldoende.
 
+### Snelle invoer — alleen-lezen (legacy `journal_entries`, stap 1)
+
+```
+src/pages/Boekingen.tsx                              /boekingen: geen aanmaken of verwijderen meer; verwijst naar het memoriaal
+src/hooks/useJournalEntries.ts                       alleen nog de leeshook
+src/test/journal-entries-ledger-boundary.test.ts     contract: geen app-schrijfpad, memoriaal → post_manual_journal, rapportage leest ledger_postings
+```
+
+Stap 3 van de werkvolgorde. **Geen migratie, geen SQL, geen datawijziging.**
+
+- **Wat `journal_entries` is.** Eén bedrag incl. BTW op één rekening, zonder tegenrekening, zonder debet/credit, zonder groep en zonder jaarafsluiting- of blokkadetoets. Het telde nooit mee in grootboek, balans, W&V, proef- en saldibalans of jaarafsluitgereedheid; wel in Bronmutaties (uitdrukkelijk "niet het officiële grootboek"), de "Boekingen totaal"-kaart op Rapportages en de SnelStart-export. Het was dus een **misleidend boekingspad**: "Boeking opgeslagen", maar niet in het BoekAssist-grootboek.
+- **Nu:** de pagina maakt en verwijdert niets meer; nieuwe boekingen lopen via het memoriaal en uitsluitend via `post_manual_journal()` (jaar- én blokkadetoets). De historische regels blijven zichtbaar, in Bronmutaties en Rapportages, en exporteerbaar naar SnelStart.
+- **Niet omgezet, niet verwijderd.** Een legacy-regel is niet deterministisch naar een gebalanceerde memoriaalboeking te vertalen (tegenrekening en richting ontbreken). Wat ermee gebeurt, volgt pas na een read-only productie-audit.
+- **Nog open (vervolg-PR, na de audit):** RLS staat directe PostgREST-writes (assistent INSERT/UPDATE, accountant DELETE) nog toe; die worden in een aparte migratie dichtgezet. Het memoriaal heeft géén SnelStart-export — als snelle invoer nog als SnelStart-invoer werd gebruikt, is dat een productbeslissing.
+
 ---
 
 ## Emergency rule

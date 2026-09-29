@@ -6,6 +6,7 @@ import {
   assertBranchSqlKeepsLedgerFoundation,
   assertBranchTouchesNoExistingWriter,
 } from "@/test/support/branch-sql-scope";
+import { appFilesMatching } from "@/test/support/app-sources";
 
 /**
  * 6C-b11 PR A — de fundering van de boekjaarlevenscyclus.
@@ -235,9 +236,12 @@ describe("PR A verandert geen enkel gedrag", () => {
   });
 
 
-  it("20. de app leest de nieuwe tabel nog niet, en de gegenereerde types zijn niet bijgewerkt", () => {
-    // PR A is fundering. Frontendgebruik komt in PR F.
-    expect(changed.filter((f) => f.startsWith("src/") && !f.startsWith("src/test/"))).toEqual([]);
-    expect(changed).not.toContain("src/integrations/supabase/types.ts");
+  it("20. de app leest de nieuwe tabel nog niet", () => {
+    /*
+     * PR A is fundering; frontendgebruik komt in PR F, en die PR hoort deze
+     * test dan bewust bij te werken. Was: "deze branch raakt src/ niet" — waar
+     * over PR A, maar geen invariant (zie branch-sql-scope.ts).
+     */
+    expect(appFilesMatching(/fiscal_year_events/)).toEqual([]);
   });
 });

@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildJournalEntryInsertPayload,
-  resolveJournalEntryLedgerLabel,
-  toJournalEntryFormState,
-  type JournalEntryRecord,
-} from "@/lib/journal-entry-utils";
+import * as journalEntryUtils from "@/lib/journal-entry-utils";
+import { resolveJournalEntryLedgerLabel, type JournalEntryRecord } from "@/lib/journal-entry-utils";
 
 const accounts = [
   { id: "gb-4400", nummer: 4400, omschrijving: "Kantoorkosten", organization_id: "org-1" },
@@ -49,32 +45,12 @@ function findSafeBackfillMatch(
 }
 
 describe("journal entry grootboekrekening flow", () => {
-  it("builds a create payload with grootboekrekening_id while keeping ledger text", () => {
-    const payload = buildJournalEntryInsertPayload(
-      {
-        client_id: "client-1",
-        entry_date: "2026-07-19",
-        grootboekrekening_id: "gb-4400",
-        ledger_account_text: "4400 - Kantoorkosten",
-        btw_percentage: 21,
-        amount: "121",
-        invoice_number: "INV-1",
-        description: "Handmatige boeking",
-      },
-      121,
-      21,
-    );
-
-    expect(payload.grootboekrekening_id).toBe("gb-4400");
-    expect(payload.ledger_account_id).toBeNull();
-    expect(payload.ledger_account_text).toBe("4400 - Kantoorkosten");
+  it("the legacy create/edit builders are gone — the app no longer writes journal_entries", () => {
+    // Snelle invoer is alleen-lezen: nieuwe boekingen lopen via het memoriaal.
+    expect(Object.keys(journalEntryUtils).sort()).toEqual(["resolveJournalEntryLedgerLabel"]);
   });
 
-  it("reopens a stored journal entry with the selected account resolved from grootboekrekening_id", () => {
-    const form = toJournalEntryFormState(journalEntry, accounts);
-
-    expect(form.grootboekrekening_id).toBe("gb-4400");
-    expect(form.ledger_account_text).toBe("4400 - Kantoorkosten");
+  it("resolves a stored journal entry's account from grootboekrekening_id", () => {
     expect(resolveJournalEntryLedgerLabel(journalEntry, accounts)).toBe("4400 - Kantoorkosten");
   });
 
@@ -86,7 +62,6 @@ describe("journal entry grootboekrekening flow", () => {
     };
 
     expect(resolveJournalEntryLedgerLabel(textOnlyEntry, accounts)).toBe("7000 - Overige kosten");
-    expect(toJournalEntryFormState(textOnlyEntry, accounts).ledger_account_text).toBe("7000 - Overige kosten");
   });
 
   it("backfill only matches a unique normalized label within the same organization", () => {
