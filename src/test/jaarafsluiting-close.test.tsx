@@ -280,9 +280,10 @@ describe("De bevestiging", () => {
     expect(gevolgen).toHaveTextContent(/geen beginbalans/i);
     // Sinds PR E/F kan een accountant heropenen; de dialoog beweert dus niet
     // meer dat het niet kan, en zegt erbij dat de boekingsblokkade los staat.
-    expect(gevolgen).toHaveTextContent(/alleen door een accountant worden heropend/i);
+    expect(gevolgen).toHaveTextContent(/moet een accountant het eerst heropenen/i);
     expect(gevolgen).toHaveTextContent(/boekingsblokkade .* verandert hierdoor niet/i);
     expect(gevolgen).not.toHaveTextContent(/niet meer worden heropend/i);
+    expect(gevolgen).not.toHaveTextContent(/alleen nog (maken )?in een later/i);
     expect(dialoog).toHaveTextContent(/blokkeert normale boekingen/i);
   });
 
@@ -480,7 +481,13 @@ describe("Een jaar dat al dicht is", () => {
     toon();
     await screen.findByTestId("jaar-afsluitbewijs");
     expect(screen.queryByTestId("jaar-afsluiten")).toBeNull();
-    expect(screen.getByTestId("jaar-afgesloten")).toHaveTextContent(/kan niet ongedaan|vast|later/i);
+    const uitleg = screen.getByTestId("jaar-afgesloten");
+    // Dicht zolang het dicht is; een correctie in dit jaar vraagt heropening
+    // door een accountant — nooit meer "alleen in een later jaar".
+    expect(uitleg).toHaveTextContent(/zolang het afgesloten is, kunnen er geen normale boekingen/i);
+    expect(uitleg).toHaveTextContent(/moet een accountant het eerst heropenen, met een reden/i);
+    expect(uitleg).toHaveTextContent(/boekingsblokkade blijft daarbij gewoon gelden/i);
+    expect(uitleg).not.toHaveTextContent(/horen in een later|alleen (nog )?(maken )?in een later/i);
   });
 
   it("24. de controle opnieuw draaien geeft het jaar geen tweede afsluitknop", async () => {

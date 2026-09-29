@@ -178,8 +178,17 @@ export const CLOSE_PENDING_LABEL = "Bezig met afsluiten…";
 export const CLOSE_DIALOG_TITLE = "Boekjaar definitief afsluiten";
 
 export const CLOSED_HEADING = "Boekjaar afgesloten";
+/**
+ * Sinds PR E/F is "correcties alleen in een later jaar" niet meer waar: een
+ * correctie die in dít boekjaar hoort, kan na heropening door een accountant.
+ * Wat wel waar blijft: zolang het jaar afgesloten is, is het niet direct
+ * beboekbaar, en heropenen heft een aparte boekingsblokkade niet op.
+ */
 export const CLOSED_EXPLANATION =
-  "Dit boekjaar is afgesloten en staat vast. Correcties horen in een later, nog open boekjaar.";
+  "Dit boekjaar is afgesloten. Zolang het afgesloten is, kunnen er geen normale boekingen of tegenboekingen " +
+  "met een datum in dit boekjaar worden gemaakt. Hoort een correctie in dit boekjaar, dan moet een accountant " +
+  "het eerst heropenen, met een reden; een aparte boekingsblokkade blijft daarbij gewoon gelden. Waar dat " +
+  "past, kan een correctie ook in een later boekjaar dat nog open staat.";
 
 export const ALREADY_CLOSED_NOTICE =
   "Dit boekjaar was al afgesloten. Het bestaande afsluitbewijs is geladen.";
@@ -213,9 +222,8 @@ export function closeConsequences(fiscalYear: number): readonly string[] {
     "Alle bestaande boekingen blijven ongewijzigd staan; er wordt niets verwijderd of herschreven.",
     "Er wordt geen resultaatboeking gemaakt: het resultaat blijft zoals de balans het al toont.",
     "Er wordt geen beginbalans voor het volgende boekjaar geboekt; die volgt uit het grootboek zelf.",
-    "Correcties kunt u daarna alleen nog maken in een later boekjaar dat nog open staat.",
-    `Boekjaar ${fiscalYear} kan hierna alleen door een accountant worden heropend, met een verplichte reden die in de historie wordt vastgelegd.`,
-    "De aparte boekingsblokkade van deze administratie verandert hierdoor niet.",
+    `Hoort een correctie later toch in boekjaar ${fiscalYear}, dan moet een accountant het eerst heropenen, met een verplichte reden die in de historie wordt vastgelegd. Waar dat past, kan een correctie ook in een later boekjaar dat nog open staat.`,
+    "De aparte boekingsblokkade van deze administratie verandert hierdoor niet, en heropenen heft haar ook niet op.",
   ];
 }
 

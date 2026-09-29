@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { assertBranchSqlKeepsLedgerFoundation } from "./support/branch-sql-scope";
 import {
   ALREADY_CLOSED_NOTICE,
+  CLOSED_EXPLANATION,
   INCONSISTENT_CLOSURE_ADVICE,
   INCONSISTENT_CLOSURE_REASON,
   UNKNOWN_OUTCOME_MESSAGE,
@@ -315,15 +316,45 @@ describe("De bevestiging zegt wat er gebeurt", () => {
     expect(tekst).toMatch(/bestaande boekingen blijven ongewijzigd/i);
     expect(tekst).toMatch(/geen resultaatboeking/i);
     expect(tekst).toMatch(/geen beginbalans voor het volgende boekjaar/i);
-    expect(tekst).toMatch(/later boekjaar dat nog open staat/i);
     // Was: "kan hierna niet meer worden heropend" — waar tot PR E, geen
     // invariant. Wat blijft: heropenen is geen gewone handeling maar een
     // accountantsbesluit mét vastgelegde reden, en de boekingsblokkade staat
     // los van de afsluiting.
-    expect(tekst).toMatch(/alleen door een accountant worden heropend/i);
+    expect(tekst).toMatch(/moet een accountant het eerst heropenen/i);
     expect(tekst).toMatch(/verplichte reden/i);
     expect(tekst).toMatch(/boekingsblokkade .* verandert hierdoor niet/i);
+    expect(tekst).toMatch(/heropenen heft haar ook niet op/i);
     expect(tekst).not.toMatch(/niet meer worden heropend/i);
+    // Een later jaar blijft een mogelijkheid, niet de enige weg.
+    expect(tekst).toMatch(/kan een correctie ook in een later boekjaar/i);
+  });
+
+  it("26c. nergens meer 'correcties alleen in een later jaar' — dat is sinds PR E/F onwaar", () => {
+    /*
+     * Een correctie die in het afgesloten jaar zelf hoort, kan na heropening
+     * door een accountant. Deze zinnen mogen dus niet terugkomen, noch in de
+     * bevestiging, noch in de uitleg bij een afgesloten jaar.
+     */
+    const OUD = [
+      /alleen nog (maken )?in een later/i,
+      /alleen in een later/i,
+      /horen in een later/i,
+      /correcties horen in/i,
+      /staat vast\./i,
+    ];
+    for (const tekst of [...gevolgen, CLOSED_EXPLANATION]) {
+      for (const oud of OUD) expect(tekst, `${oud}`).not.toMatch(oud);
+    }
+
+    // Wat er wél moet staan: niet direct beboekbaar zolang het dicht is,
+    // heropenen door een accountant met een reden, en de boekingsblokkade
+    // blijft gelden.
+    expect(CLOSED_EXPLANATION).toMatch(/zolang het afgesloten is, kunnen er geen normale boekingen/i);
+    expect(CLOSED_EXPLANATION).toMatch(/moet een accountant het eerst heropenen, met een reden/i);
+    expect(CLOSED_EXPLANATION).toMatch(/aparte boekingsblokkade blijft daarbij gewoon gelden/i);
+    expect(CLOSED_EXPLANATION).toMatch(/later boekjaar dat nog open staat/i);
+    // Geen belofte dat een afgesloten jaar zelf beboekbaar is.
+    expect(CLOSED_EXPLANATION).not.toMatch(/kunt u (nog )?(gewoon )?boeken|blijft beboekbaar/i);
   });
 
   it("26b. de uitleg zegt WAT er dichtgaat en zwijgt niet over heropenen", () => {
