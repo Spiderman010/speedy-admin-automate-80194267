@@ -184,6 +184,7 @@ describe("De aanname onder de migratie — wie roept deze hulpfuncties aan?", ()
       "declare_opening_balance_nil",
       "lock_ledger_client_for_posting",
       "post_opening_balance",
+      "reopen_fiscal_year",
       "reverse_posting_group",
       "set_posting_lock",
     ]);

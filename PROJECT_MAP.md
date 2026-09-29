@@ -1129,6 +1129,22 @@ Derde stap: het **tweede** besturingselement bestaat nu, los van de jaarafsluiti
 - **De kolom kan alleen via die schrijver bewegen.** `authenticated` heeft vanaf **assistent** gewoon UPDATE op `clients` (`role_clients_update`), dus een trigger is de enige werkbare grendel. Hij eist een `posting_lock_events`-rij **uit dezelfde transactie** die precies die stap beschrijft; het `created_xact_id`-zegel voorkomt dat een oude gebeurtenis (na A → B → A) een latere handmatige update dekt.
 - **Nog geen enkele schrijver toetst de blokkade** — dat is PR D. De acht schrijvers, de bulk-preflight en de tegenboekingsmotor houden exact hun `afgesloten_boekjaar`-toets, en het oude harde watermerk blokkeert onverminderd.
 
+### 6C-b11 — heropenen en opnieuw afsluiten (PR E)
+
+```
+supabase/migrations/20261001120000_add_fiscal_year_reopen.sql
+supabase/tests/fiscal-year-reopen/run-proof.sh      67 bewijzen tegen een echte PostgreSQL (incl. gelijktijdigheid en erfenis)
+src/test/fiscal-year-reopen-migration.test.ts       contract over de migratie
+```
+
+Backend only — geen UI (dat is PR F), geen gegenereerde types.
+
+- **`reopen_fiscal_year(client, jaar, reden)`** — `SECURITY DEFINER`, rolvloer accountant, tenant-veilig ("bestaat niet" = "geen toegang"), reden getrimd en 1–500 tekens. Onder `lock_ledger_client()` + de administratierij + het afsluitbewijs `FOR UPDATE`. Alleen `closed → reopened`, alleen het **hoogste** afgesloten jaar; nogmaals heropenen is een no-op (`reopened = false`, dezelfde gebeurtenis). Schrijft een `reopened`-gebeurtenis, zet de stand op `reopened` en verlaagt het watermerk naar het **hoogste jaar dat nog `closed` is** (of `NULL`) — nooit blind `jaar - 1`.
+- **Opnieuw afsluiten** via `close_fiscal_year()`: `reopened → closed` met de **volledige** gereedheidscontrole opnieuw, een nieuwe `closed`-gebeurtenis, en het originele `closed_at`/`closed_by` onaangeroerd. Geeft het moment en de actor van de laatste afsluitgebeurtenis terug. Afsluiten weigert zolang een ouder jaar heropend is.
+- **Bewijs uit dezelfde transactie.** `fiscal_year_events.created_xact_id` (nullable; historische rijen blijven `NULL`, nieuwe rijen gestempeld door een trigger — niet te vervalsen). `prevent_year_closure_mutation()` laat alleen nog `status` bewegen, en alleen mét een gebeurtenis van dat type uit deze transactie; `enforce_year_close_watermark()` eist voor omhoog een `closed`- en voor omlaag een `reopened`-gebeurtenis uit deze transactie, plus exact het hoogste afgesloten jaar. Geen sessie-GUC als bewijs. Eén levenscyclusstap per boekjaar per transactie.
+- **Fail closed bij inconsistente erfenis:** watermerk zonder bewijs, watermerk boven het hoogste bewijs, een bewijsloos jaar met boekingen dat mee zou openen, of een stand die de gebeurtenisgeschiedenis tegenspreekt.
+- **Ongewijzigd:** `posting_locked_through` (afsluiten en heropenen zetten of wissen haar nooit), het grootboek (geen boeking, geen resultaatbestemming, geen doorrol), de acht schrijvers en hun watermerktoets.
+
 ### 6C-b11 — de afsluiting schrijft haar gebeurtenis (PR B)
 
 ```
