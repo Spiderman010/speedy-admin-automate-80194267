@@ -1190,6 +1190,26 @@ src/test/posting-lock-card.test.tsx             19 · de kaart, met de échte ho
 - **Vier placeholder-asserties vervangen door hun invariant** (`jaarafsluiting-close` 25a/28, `jaarafsluiting-lifecycle` 10): "Nog niet afzonderlijk ingesteld" was waar tot deze PR. Wat blijft: twee losse standen, en afsluiten/heropenen raakt de blokkade niet. Nieuw: afgesloten + geen blokkade, en heropend + blokkade nog gezet, elk onafhankelijk getoond.
 - **Geen gebrek in de backend gevonden.** Ook het klantformulier (`useUpdateClient` op `/klanten`) stuurt een expliciete veldenlijst zonder `posting_locked_through`, en kan de blokkade dus niet met een verouderde waarde overschrijven.
 
+### 6C-b11 — de ontkoppeling (PR H)
+
+```
+supabase/migrations/20261002120000_decouple_year_watermark_from_posting.sql
+supabase/tests/posting-decoupled/run-proof.sh       63 bewijzen tegen een echte PostgreSQL (negatieve controle, rollback-rondgang, handoff-hashes)
+src/test/posting-decoupling-migration.test.ts       13 · de migratie is afgeleid uit PR D; de invariant over alle migraties heen
+src/test/year-close-coupling.test.ts                + bewijs 9: de bevestiging waar dat bestand zelf om vroeg
+```
+
+**De enige PR met echt gedragsrisico** (ontwerpdocument, sectie O.1): hierna kan er geboekt worden waar dat eerder niet kon. Daarom eerst bewezen, toen pas gebouwd.
+
+- **Wat er veranderde.** De zeven gedateerde schrijvers (`post_purchase_invoice`, `post_sales_invoice`, `post_bank_allocation`, `post_manual_journal`, `post_opening_balance`, `reverse_posting_group`, `post_bank_transaction`) toetsen `clients.afgesloten_boekjaar` niet meer; de bulk-preflight noemt een afgesloten jaar niet meer `blocked`. Elk lichaam is **byte-voor-byte dat van PR D** met uitsluitend het `IF … END IF`-blok van het watermerk vervangen door een toelichting — de migratie is uit PR D gegenereerd en de contracttest leidt dat opnieuw af. `CREATE OR REPLACE` behoudt eigenaar, `SECURITY DEFINER`, `search_path` en rechten (bewezen per functie).
+- **Waarom dat veilig is — bewezen, niet aangenomen.** Elke gedateerde schrijver roept `assert_posting_allowed(client, datum)` aan op zijn eigen gezaghebbende datum, ná zijn rol- en tenantcontrole en vóór de eerste `INSERT` in `ledger_postings`, in dezelfde functie (dus dezelfde transactie); de assertie neemt eerst `lock_ledger_client()` en faalt gesloten op een ontbrekende datum of administratie. `authenticated` heeft geen INSERT op het grootboek; de catalogus kent geen andere functie die er een regel in schrijft; de bulklaag delegeert aan `post_bank_transaction()`. De migratie **weigert zelf** (fail closed) zodra een schrijver in de doeldatabase de blokkadetoets niet draagt.
+- **Wat het watermerk blijft doen.** `afgesloten_boekjaar` is de administratieve boekjaarstatus: gezet door `close_fiscal_year()`, verlaagd door `reopen_fiscal_year()`, bewaakt door `enforce_year_close_watermark()`, basis van afsluitvolgorde en gereedheid, en getoond in de UI. **Niet langer** een schrijfverbod.
+- **De uitzondering: `declare_opening_balance_nil()`.** Bewust onaangeraakt. Zij schrijft geen grootboekregel; zij is een uitspraak over een boekjaar, en over een afgesloten boekjaar mag die niet meer worden gedaan. Levenscyclusregel, geen datumgrendel — dezelfde uitzondering die PR D al maakte. Bewijs 20 legt beide helften vast.
+- **De zeven scenario's, elk als gedragsbewijs.** A: afgesloten + geen blokkade → memoriaal, bank, beginbalans én tegenboeking boeken (waar dezelfde aanroepen in deel 1, vóór de migratie, met "is afgesloten" werden geweigerd — de negatieve controle). B: heropend + blokkade → geweigerd door de blokkade, met exact haar identiteit. C: heropend + geen blokkade → boekt, en opnieuw afsluiten zet geen blokkade. D: afgesloten + blokkade → geweigerd door de blokkade. E: opheffen → status, watermerk en boekjaargeschiedenis exact gelijk. F: heropenen → `posting_locked_through` exact gelijk, geen blokkadegebeurtenis. G: afsluiten en herafsluiten → geen blokkade gezet.
+- **Wat de migratie aantoonbaar niet raakte.** Hashes en ACL's van levenscyclus-, blokkade-, assertie-, nihil- en bulkfuncties byte-identiek; geen functie bijgekomen of verdwenen; `posting_lock_events`, `fiscal_year_events`, `year_closures`, het grootboek en elk watermerk/elke blokkade digest-gelijk; rechten en triggers op het grootboek gelijk; tenant- en rolweigering letterlijk dezelfde string als vóór.
+- **De rollback is exact en bewezen.** `20260928120000_enforce_posting_lock.sql` opnieuw uitvoeren: idempotent, bevat de vorige lichamen letterlijk en kent geen GRANT/REVOKE op de schrijvers. De harnas draait die rondgang (terug → hashes en ACL's exact die van deel 1; vooruit → exact die van deel 2).
+- **Applicatiekant, bewust niet meegenomen (aparte PR).** `src/lib/ledger-catchup.ts` (`boekjaar_afgesloten`) en `accounting-diagnostics.ts` (`ALTIJD_ERROR`) classificeren een afgesloten jaar nog als onboekbaar en kennen de boekingsblokkade niet. Dat is fail-closed aan de leeskant (te streng, nooit te soepel; de schrijver oordeelt), maar sinds PR H onnauwkeurig in beide richtingen. Sectie B5 van het ontwerpdocument benoemt precies deze bestanden; zij zijn UI/leesmodel en horen niet in een backend-PR met gedragsrisico.
+
 ### 6C-b11 — de afsluiting schrijft haar gebeurtenis (PR B)
 
 ```

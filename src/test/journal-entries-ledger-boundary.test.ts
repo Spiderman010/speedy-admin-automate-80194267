@@ -135,15 +135,31 @@ describe("2. Snelle invoer → memoriaal → post_manual_journal()", () => {
 
   it("het memoriaal boekt via de bestaande RPC post_manual_journal — geen tweede schrijver", () => {
     expect(code("src/hooks/useManualJournalPosting.ts")).toMatch(/\.rpc\(\s*"post_manual_journal"/);
+    // Was: een vaste lijst van twee migraties. Dat was waar tot PR H
+    // (20261002120000), dat de schrijver terecht opnieuw definieert; geen
+    // invariant. Wat blijft: elke definitie is een CREATE OR REPLACE van
+    // dezelfde functie in een migratie — nooit een tweede schrijver onder een
+    // andere naam, en nooit een definitie buiten supabase/migrations.
     const writers = migrations.filter((f) => /^CREATE (?:OR REPLACE )?FUNCTION public\.post_manual_journal\s*\(/im.test(read(`supabase/migrations/${f}`)));
-    expect(writers).toEqual(["20260918120000_add_manual_journal_posting.sql", "20260928120000_enforce_posting_lock.sql"]);
+    expect(writers[0]).toBe("20260918120000_add_manual_journal_posting.sql");
+    expect(writers.length).toBeGreaterThanOrEqual(2);
+    expect(migrations.filter((f) => /FUNCTION public\.\w*(memoriaal|manual_journal)\w*\s*\(/i.test(read(`supabase/migrations/${f}`)))
+      .every((f) => writers.includes(f) || !/CREATE (?:OR REPLACE )?FUNCTION public\.post_\w*manual/i.test(read(`supabase/migrations/${f}`)))).toBe(true);
   });
 
-  it("post_manual_journal is SECURITY DEFINER en toetst zowel het afgesloten jaar als de boekingsblokkade", () => {
+  it("post_manual_journal is SECURITY DEFINER en toetst de rol én de boekingsblokkade", () => {
+    /*
+     * Was: "toetst zowel het afgesloten jaar als de boekingsblokkade", met de
+     * laatste definitie vastgepind op PR D. Sinds PR H (20261002120000) is de
+     * boekingsblokkade de enige datumgrendel en is het watermerk levenscyclus.
+     * Wat blijft: de laatste definitie is SECURITY DEFINER, toetst de rol en
+     * toetst de blokkade op de boekingsdatum van het memoriaal.
+     */
     const fn = finalFunction("post_manual_journal");
-    expect(fn.file).toBe("20260928120000_enforce_posting_lock.sql");
+    expect(fn.file).toBe("20261002120000_decouple_year_watermark_from_posting.sql");
     expect(fn.header).toMatch(/SECURITY DEFINER/);
-    expect(fn.body).toMatch(/v_boekjaar <= v_client\.afgesloten_boekjaar/);
+    // Het lichaam noemt het watermerk nog in een toelichting; de TOETS is weg.
+    expect(fn.body).not.toMatch(/afgesloten_boekjaar IS NOT NULL|<= v_client\.afgesloten_boekjaar/);
     expect(fn.body).toContain("PERFORM public.assert_posting_allowed(v_journal.client_id, v_journal.posting_date);");
     expect(fn.body).toMatch(/has_min_role\(/);
   });
