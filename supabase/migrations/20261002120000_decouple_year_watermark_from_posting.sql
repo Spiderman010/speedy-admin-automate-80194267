@@ -68,6 +68,9 @@ DO $migratie$
 DECLARE
   v_naam text;
   v_src  text;
+  v_hash text;
+  v_voor text;
+  v_na   text;
 BEGIN
   IF to_regprocedure('public.posting_allowed(uuid,date)') IS NULL THEN
     RAISE EXCEPTION 'PR H vereist eerst public.posting_allowed(uuid,date) (PR C, 20260927120000)';
@@ -99,6 +102,54 @@ BEGIN
     END IF;
     IF position('assert_posting_allowed(' IN v_src) = 0 THEN
       RAISE EXCEPTION 'PR H geweigerd: public.%() toetst de boekingsblokkade nog niet (PR D, 20260928120000 ontbreekt of is overschreven); het watermerk blijft staan', v_naam;
+    END IF;
+  END LOOP;
+
+  -- ── Anti-clobber ──────────────────────────────────────────────────────────
+  --
+  --    Deze migratie vervangt acht VOLLEDIGE functielichamen door lichamen die
+  --    uit PR D zijn afgeleid. Dat is alleen veilig als de lichamen in de
+  --    doeldatabase EXACT die van PR D zijn: een latere hotfix die
+  --    assert_posting_allowed() nog steeds aanroept zou anders stilzwijgend
+  --    worden overschreven. Daarom per functie de hash van het huidige lichaam
+  --    (md5(prosrc), dezelfde conventie als de productie-handoff) tegen precies
+  --    twee toegestane waarden: het lichaam van VÓÓR deze migratie (PR D), of
+  --    het lichaam dat deze migratie zelf schrijft (een tweede uitvoering, of
+  --    opnieuw toepassen na de rollback). Elke andere hash — ook één die de
+  --    blokkadetoets wél draagt — is een onbekend lichaam en wordt geweigerd,
+  --    vóórdat ook maar één CREATE OR REPLACE is uitgevoerd.
+  FOREACH v_naam IN ARRAY ARRAY['post_purchase_invoice','post_sales_invoice','post_bank_allocation',
+                                'post_manual_journal','post_opening_balance','reverse_posting_group',
+                                'post_bank_transaction','bank_bulk_posting_candidates'] LOOP
+    SELECT md5(p.prosrc) INTO v_hash
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname = v_naam;
+    v_voor := CASE v_naam
+      WHEN 'post_purchase_invoice'        THEN '3e262aa5d132c481cf37c81097ef8c92'
+      WHEN 'post_sales_invoice'           THEN '915b23e7c21ee28d219d91e0495e268f'
+      WHEN 'post_bank_allocation'         THEN '54fffe6b3c9b877690583b5de94d4e2f'
+      WHEN 'post_manual_journal'          THEN 'b4a9f0fca942a426d59f9544b4c7b715'
+      WHEN 'post_opening_balance'         THEN 'd86f7cb61c99ae532760ac1b0f8d21fe'
+      WHEN 'reverse_posting_group'        THEN '063415e80ffa69fd2a7f20f71b9f608c'
+      WHEN 'post_bank_transaction'        THEN '98305af63c8a76fa3d04b256912167f3'
+      WHEN 'bank_bulk_posting_candidates' THEN '878e966074fd54038140088f4c69a05f'
+    END;
+    v_na := CASE v_naam
+      WHEN 'post_purchase_invoice'        THEN '6366f052209d9a171f197de77eaf477a'
+      WHEN 'post_sales_invoice'           THEN 'cb467b35301239c3051c8b918662ea45'
+      WHEN 'post_bank_allocation'         THEN '863d9e87ef89f7230a9ef020c49b168d'
+      WHEN 'post_manual_journal'          THEN '2668c9ed24ef515b7016be29e8b6ffe5'
+      WHEN 'post_opening_balance'         THEN '98cbf351067c0135943d910f86e792d6'
+      WHEN 'reverse_posting_group'        THEN 'b5db0ca04b5dcfbcec5dea1a7844fe13'
+      WHEN 'post_bank_transaction'        THEN '2369978c713ac78a0c039dd5c3e5eb4c'
+      WHEN 'bank_bulk_posting_candidates' THEN '946bef45005d6e572a7565da6fc12cdb'
+    END;
+    IF v_hash IS NULL THEN
+      RAISE EXCEPTION 'PR H vereist public.%(): de functie ontbreekt', v_naam;
+    END IF;
+    IF v_hash <> v_voor AND v_hash <> v_na THEN
+      RAISE EXCEPTION 'PR H geweigerd: public.%() heeft een onbekend lichaam (md5(prosrc) = %; verwacht vóór PR H: %, of ná PR H: %). Niets is gewijzigd. Onderzoek handmatig welke wijziging dit lichaam draagt voordat u verdergaat.',
+        v_naam, v_hash, v_voor, v_na;
     END IF;
   END LOOP;
 END

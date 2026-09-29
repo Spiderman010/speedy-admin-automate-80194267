@@ -18,8 +18,12 @@
 #   2. pre.sql   — negatieve controle (het watermerk weigert NU) + momentopnamen;
 #   3. de migratie onder test, TWEE keer (idempotent);
 #   4. proof.sql — de scenario's A t/m G en de dekking van elke schrijver;
-#   5. rollback: 20260928120000 opnieuw → rollback.sql (hashes exact terug);
-#   6. de migratie nogmaals → final.sql (hashes exact vooruit) + de handoff-hashes.
+#   5. negatieve controle C: één schrijver onschadelijk gewijzigd (blokkadetoets
+#      blijft) → de migratie MOET weigeren en niets veranderen (negative.sql);
+#   6. rollback: 20260928120000 opnieuw → rollback.sql (hashes exact terug);
+#   7. negatieve controle D: de preflight gewijzigd → weigeren, niets veranderen;
+#      rollback opnieuw;
+#   8. de migratie nogmaals → final.sql (hashes exact vooruit) + de handoff-hashes.
 
 set -euo pipefail
 
@@ -72,9 +76,32 @@ run -f "$UNDER_TEST"                                                        > /d
 # Deel 2: de bewijzen.
 run -f "$HERE/proof.sql"                                                    > /dev/null
 
-# Deel 3: de gedocumenteerde rollback, en of hij exact is.
+# Negatieve controle van de anti-clobber-toets: één doelfunctie onschadelijk
+# wijzigen (blokkadetoets blijft), momentopname, de migratie proberen — zij
+# MOET weigeren en niets veranderen.
+negative() {  # $1 = fase, $2 = functienaam
+  run -c "SELECT proof.mutate('$2');" > /dev/null
+  run -c "SELECT proof.snap_put('mut.hash.' || k, proof.hash(k)), proof.snap_put('mut.acl.' || k, proof.acl(k))
+          FROM unnest(proof.changed_functions() || proof.untouched_functions()) k;
+          SELECT proof.snap_put('mut.functions', proof.function_set());" > /dev/null
+  local rc=0 out
+  out="$(psql -q -v ON_ERROR_STOP=1 -d "$DB" -f "$UNDER_TEST" 2>&1)" || rc=$?
+  local msg
+  msg="$(printf '%s' "$out" | grep -o 'PR H geweigerd.*' | head -1)"
+  run -v phase="$1" -v mutated="$2" -v rejected="$([ "$rc" = "0" ] && echo 0 || echo 1)" -v msg="$msg" \
+      -f "$HERE/negative.sql" > /dev/null
+}
+
+# Deel 3a (C): vanuit de NA-stand — één schrijver gewijzigd, de rest exact "ná".
+negative C post_manual_journal
+
+# Deel 3b: de gedocumenteerde rollback (herstelt óók de gewijzigde schrijver), en of hij exact is.
 run -f "$ROLLBACK"                                                          > /dev/null
 run -f "$HERE/rollback.sql"                                                 > /dev/null
+
+# Deel 3c (D): vanuit de VÓÓR-stand — de preflight gewijzigd, de rest exact "vóór".
+negative D bank_bulk_posting_candidates
+run -f "$ROLLBACK"                                                          > /dev/null
 
 # Deel 4: opnieuw vooruit, en de hashes voor de handoff.
 run -f "$UNDER_TEST"                                                        > /dev/null

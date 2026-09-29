@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { assertBranchSqlKeepsLedgerFoundation, assertBranchTouchesNoExistingWriter } from "./support/branch-sql-scope";
 import { appFilesMatching } from "./support/app-sources";
@@ -127,6 +128,60 @@ describe("De migratie is afgeleid uit PR D", () => {
     expect(vereisten).toMatch(/RAISE EXCEPTION 'PR H geweigerd/);
     for (const f of ["posting_allowed(uuid,date)", "assert_posting_allowed(uuid,date)", "set_posting_lock(uuid,date,text)", "reopen_fiscal_year(uuid,integer,text)"]) {
       expect(vereisten, f).toContain(`to_regprocedure('public.${f}')`);
+    }
+  });
+
+  it("5b. anti-clobber: elke doelfunctie heeft precies één toegestane VÓÓR- en één NÁ-hash, exact vergeleken", () => {
+    const vereisten = code(sql.slice(0, sql.indexOf("-- ── 1.")));
+    const DOEL = [...SCHRIJVERS, "bank_bulk_posting_candidates"];
+    const MD5 = /^[0-9a-f]{32}$/;
+    const voor = new Map<string, string>();
+    const na = new Map<string, string>();
+    const blokVoor = vereisten.slice(vereisten.indexOf("v_voor := CASE v_naam"), vereisten.indexOf("END;", vereisten.indexOf("v_voor := CASE v_naam")));
+    const blokNa = vereisten.slice(vereisten.indexOf("v_na := CASE v_naam"), vereisten.indexOf("END;", vereisten.indexOf("v_na := CASE v_naam")));
+    for (const naam of DOEL) {
+      const mv = blokVoor.match(new RegExp(`WHEN '${naam}' THEN '([0-9a-f]+)'`));
+      const mn = blokNa.match(new RegExp(`WHEN '${naam}' THEN '([0-9a-f]+)'`));
+      expect(mv?.[1], `${naam}: VÓÓR-hash`).toMatch(MD5);
+      expect(mn?.[1], `${naam}: NÁ-hash`).toMatch(MD5);
+      expect(mv![1], `${naam}: vóór ≠ ná`).not.toBe(mn![1]);
+      voor.set(naam, mv![1]);
+      na.set(naam, mn![1]);
+    }
+    // Acht verschillende functies, zestien verschillende hashes.
+    expect(new Set([...voor.values(), ...na.values()]).size).toBe(16);
+    // De hash komt uit md5(prosrc), en de vergelijking is exact: geen LIKE,
+    // position(), substring of prefix. Een derde lichaam kan dus nooit slagen.
+    expect(vereisten).toContain("SELECT md5(p.prosrc) INTO v_hash");
+    expect(vereisten).toContain("IF v_hash <> v_voor AND v_hash <> v_na THEN RAISE EXCEPTION 'PR H geweigerd: public.%() heeft een onbekend lichaam");
+    expect(vereisten).toMatch(/Niets is gewijzigd\. Onderzoek handmatig/);
+    const hashToets = vereisten.slice(vereisten.indexOf("Anti-clobber") >= 0 ? 0 : 0);
+    expect(hashToets.slice(hashToets.indexOf("v_voor := CASE"))).not.toMatch(/v_hash (LIKE|ILIKE|~)|position\([^)]*v_hash|left\(v_hash|substr/);
+    // En de toets staat vóór elke CREATE OR REPLACE.
+    expect(sql.indexOf("v_hash <> v_voor")).toBeLessThan(sql.indexOf("CREATE OR REPLACE FUNCTION public.post_purchase_invoice("));
+  });
+
+  it("5c. de VÓÓR-hashes zijn md5 van de PR D-lichamen en de NÁ-hashes md5 van de lichamen in dit bestand", () => {
+    /*
+     * prosrc is exact de tekst tussen de dollar-quotes: vanaf de newline na
+     * `AS $$` tot en met de newline vóór `$$;`. Dat is hier na te rekenen, dus
+     * de hashes in de migratie zijn geen overgeschreven getallen maar een
+     * afgeleide van de bestanden zelf — en ze vallen om zodra iemand aan een
+     * lichaam of aan een hash sleutelt.
+     */
+    const prosrc = (text: string, naam: string) => {
+      const f = functie(text, naam);
+      const start = f.indexOf("AS $$") + "AS $$".length;
+      const end = f.lastIndexOf("$$;");
+      return f.slice(start, end);
+    };
+    const md5 = (t: string) => createHash("md5").update(t, "utf8").digest("hex");
+    const vereisten = code(sql.slice(0, sql.indexOf("-- ── 1.")));
+    for (const naam of [...SCHRIJVERS, "bank_bulk_posting_candidates"]) {
+      const v = vereisten.match(new RegExp(`v_voor := CASE v_naam[^;]*WHEN '${naam}' THEN '([0-9a-f]{32})'`))![1];
+      const n = vereisten.match(new RegExp(`v_na := CASE v_naam[^;]*WHEN '${naam}' THEN '([0-9a-f]{32})'`))![1];
+      expect(md5(prosrc(prd, naam)), `${naam}: vóór = md5(PR D)`).toBe(v);
+      expect(md5(prosrc(sql, naam)), `${naam}: ná = md5(PR H)`).toBe(n);
     }
   });
 

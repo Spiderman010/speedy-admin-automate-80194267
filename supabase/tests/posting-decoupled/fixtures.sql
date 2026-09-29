@@ -81,3 +81,23 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
+
+/* Een functielichaam ONSCHADELIJK wijzigen (een toelichtingsregel erbij): het
+   gedrag is identiek, de blokkadetoets blijft staan, alleen md5(prosrc)
+   verandert — precies de hotfix die de anti-clobber-toets moet zien. */
+CREATE OR REPLACE FUNCTION proof.mutate(_name text) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_oid  oid;
+  v_src  text;
+  v_def  text;
+BEGIN
+  SELECT p.oid, p.prosrc INTO v_oid, v_src
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.proname = _name;
+  v_def := pg_get_functiondef(v_oid);
+  v_def := replace(v_def, '$function$' || v_src || '$function$',
+                          '$function$' || v_src || E'\n-- hotfix: onschadelijke toelichting\n' || '$function$');
+  EXECUTE v_def;
+  RETURN proof.hash(_name);
+END $$;
