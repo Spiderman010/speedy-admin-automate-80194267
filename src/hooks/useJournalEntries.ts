@@ -1,7 +1,17 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "./useAuth";
-import type { JournalEntryInsertPayload, JournalEntryRecord } from "@/lib/journal-entry-utils";
+import type { JournalEntryRecord } from "@/lib/journal-entry-utils";
+
+/**
+ * Legacy `journal_entries` (de oude snelle invoer) — ALLEEN LEZEN.
+ *
+ * `ledger_postings` is de enige financiële waarheid; nieuwe boekingen lopen via
+ * het memoriaal en `post_manual_journal()`. Deze hook leest de historische
+ * regels voor de alleen-lezen pagina, Bronmutaties, Rapportages en de
+ * SnelStart-export. Er is bewust geen aanmaak-, wijzig- of verwijderhook meer:
+ * de app schrijft niet naar deze tabel.
+ */
 
 export interface UseJournalEntriesOptions {
   organizationId?: string;
@@ -23,40 +33,5 @@ export function useJournalEntries(options: UseJournalEntriesOptions = {}) {
       return data as JournalEntryRecord[];
     },
     enabled: !!user && enabled,
-  });
-}
-
-export function useAddJournalEntry() {
-  const qc = useQueryClient();
-  const { user } = useAuth();
-  return useMutation({
-    mutationFn: async (entry: JournalEntryInsertPayload) => {
-      if (!user) throw new Error("Not authenticated");
-      const { data, error } = await supabase
-        .from("journal_entries")
-        .insert({ ...entry, user_id: user.id } as any)
-        .select()
-        .single();
-      if (error) throw error;
-      return data as JournalEntryRecord;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["journal_entries"] }),
-  });
-}
-
-export function useDeleteJournalEntry() {
-  const qc = useQueryClient();
-  const { user } = useAuth();
-  return useMutation({
-    mutationFn: async (id: string) => {
-      if (!user) throw new Error("Not authenticated");
-      const { error } = await supabase
-        .from("journal_entries")
-        .delete()
-        .eq("id", id);
-      if (error) throw error;
-      return id;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["journal_entries"] }),
   });
 }
