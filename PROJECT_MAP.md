@@ -1133,7 +1133,7 @@ Derde stap: het **tweede** besturingselement bestaat nu, los van de jaarafsluiti
 
 ```
 supabase/migrations/20261001120000_add_fiscal_year_reopen.sql
-supabase/tests/fiscal-year-reopen/run-proof.sh      60 bewijzen tegen een echte PostgreSQL (incl. gelijktijdigheid en erfenis)
+supabase/tests/fiscal-year-reopen/run-proof.sh      67 bewijzen tegen een echte PostgreSQL (incl. gelijktijdigheid en erfenis)
 src/test/fiscal-year-reopen-migration.test.ts       contract over de migratie
 ```
 

@@ -415,6 +415,104 @@ SELECT proof.expect_error('43', 'een jaar dat nooit is afgesloten, valt niet te 
   format('SELECT * FROM public.reopen_fiscal_year(%L, 2025, %L)', (SELECT client_id FROM proof.subject WHERE rol = 'A'), 'Niets'),
   'is niet afgesloten');
 
+-- ═══ 50-53. DE NO-OP MASKEERT GEEN GEBROKEN HEROPENDE STAND ═══════════════
+
+-- N: genest heropend (2024, dan 2023), 2022 blijft het hoogste closed jaar.
+DO $$
+DECLARE v_n uuid := proof.pl_client('PR E — N, genest heropend');
+BEGIN
+  INSERT INTO proof.subject VALUES ('N', v_n);
+  PERFORM proof.seed_group(v_n, 2022);
+  PERFORM proof.seed_group(v_n, 2023);
+  PERFORM proof.seed_group(v_n, 2024);
+END $$;
+SELECT proof.close_as('00000000-0000-0000-0000-0000000000e1', (SELECT client_id FROM proof.subject WHERE rol = 'N'), 2022);
+SELECT proof.close_as('00000000-0000-0000-0000-0000000000e1', (SELECT client_id FROM proof.subject WHERE rol = 'N'), 2023);
+SELECT proof.close_as('00000000-0000-0000-0000-0000000000e1', (SELECT client_id FROM proof.subject WHERE rol = 'N'), 2024);
+SELECT * FROM public.reopen_fiscal_year((SELECT client_id FROM proof.subject WHERE rol = 'N'), 2024, 'Genest 2024');
+SELECT * FROM public.reopen_fiscal_year((SELECT client_id FROM proof.subject WHERE rol = 'N'), 2023, 'Genest 2023');
+
+DO $$
+DECLARE
+  v_n  uuid := (SELECT client_id FROM proof.subject WHERE rol = 'N');
+  v_ev bigint := (SELECT count(*) FROM public.fiscal_year_events WHERE client_id = v_n);
+  r24  record;
+  r23  record;
+BEGIN
+  SELECT * INTO r24 FROM public.reopen_fiscal_year(v_n, 2024, 'Nogmaals 2024');
+  SELECT * INTO r23 FROM public.reopen_fiscal_year(v_n, 2023, 'Nogmaals 2023');
+  PERFORM proof.record('50', 'genest heropend en consistent: herhaalde aanroep voor 2024 én 2023 is een no-op, zonder nieuwe gebeurtenis',
+    NOT r24.reopened AND NOT r23.reopened
+      AND r24.afgesloten_boekjaar = 2022 AND proof.watermark(v_n) = 2022
+      AND (SELECT count(*) FROM public.fiscal_year_events WHERE client_id = v_n) = v_ev
+      AND r24.event_id = (SELECT id FROM public.fiscal_year_events
+                          WHERE client_id = v_n AND fiscal_year = 2024 AND event_type = 'reopened'),
+    format('2024 reopened=%s, 2023 reopened=%s, watermerk=%s', r24.reopened, r23.reopened, proof.watermark(v_n)));
+END $$;
+
+-- W: heropend, daarna het watermerk met de hand terug óver dat jaar.
+DO $$
+DECLARE v_w uuid := proof.pl_client('PR E — W, heropend onder het watermerk');
+BEGIN
+  INSERT INTO proof.subject VALUES ('W', v_w);
+  PERFORM proof.seed_group(v_w, 2024);
+END $$;
+SELECT proof.close_as('00000000-0000-0000-0000-0000000000e1', (SELECT client_id FROM proof.subject WHERE rol = 'W'), 2024);
+SELECT * FROM public.reopen_fiscal_year((SELECT client_id FROM proof.subject WHERE rol = 'W'), 2024, 'Heropend');
+SELECT proof.force_watermark((SELECT client_id FROM proof.subject WHERE rol = 'W'), 2024);
+INSERT INTO proof.snap
+SELECT 'W.voor', proof.watermark(c) || '|' || proof.status(c, 2024) || '|' || proof.events(c, 2024)
+FROM (SELECT client_id AS c FROM proof.subject WHERE rol = 'W') s;
+
+SELECT proof.expect_error('51', 'status reopened maar het watermerk dekt dat jaar nog → 23514 in plaats van een no-op',
+  format('SELECT * FROM public.reopen_fiscal_year(%L, 2024, %L)', (SELECT client_id FROM proof.subject WHERE rol = 'W'), 'Nogmaals'),
+  'staat heropend, maar het watermerk (2024)');
+SELECT proof.record('51b', 'en er is niets veranderd: watermerk, stand en geschiedenis',
+  proof.watermark(c) || '|' || proof.status(c, 2024) || '|' || proof.events(c, 2024) = (SELECT v FROM proof.snap WHERE k = 'W.voor'),
+  proof.watermark(c) || '|' || proof.status(c, 2024) || '|' || proof.events(c, 2024))
+FROM (SELECT client_id AS c FROM proof.subject WHERE rol = 'W') s;
+
+-- X: heropend, daarna een losse closed-gebeurtenis (in een eigen transactie) zonder dat de stand meebeweegt.
+DO $$
+DECLARE v_x uuid := proof.pl_client('PR E — X, geschiedenis zegt closed');
+BEGIN
+  INSERT INTO proof.subject VALUES ('X', v_x);
+  PERFORM proof.seed_group(v_x, 2024);
+END $$;
+SELECT proof.close_as('00000000-0000-0000-0000-0000000000e1', (SELECT client_id FROM proof.subject WHERE rol = 'X'), 2024);
+SELECT * FROM public.reopen_fiscal_year((SELECT client_id FROM proof.subject WHERE rol = 'X'), 2024, 'Heropend');
+INSERT INTO public.fiscal_year_events (client_id, organization_id, fiscal_year, event_type, actor_id, reason)
+SELECT id, organization_id, 2024, 'closed', '00000000-0000-0000-0000-0000000000e1', NULL
+FROM public.clients WHERE id = (SELECT client_id FROM proof.subject WHERE rol = 'X');
+INSERT INTO proof.snap
+SELECT 'X.voor', COALESCE(proof.watermark(c)::text, '-') || '|' || proof.status(c, 2024) || '|' || proof.events(c, 2024)
+FROM (SELECT client_id AS c FROM proof.subject WHERE rol = 'X') s;
+
+SELECT proof.expect_error('52', 'status reopened maar de LAATSTE gebeurtenis is closed → 23514 in plaats van een no-op',
+  format('SELECT * FROM public.reopen_fiscal_year(%L, 2024, %L)', (SELECT client_id FROM proof.subject WHERE rol = 'X'), 'Nogmaals'),
+  'staat heropend maar de gebeurtenisgeschiedenis draagt dat niet (laatste: closed)');
+SELECT proof.record('52b', 'en er is niets veranderd: watermerk, stand en geschiedenis (closed,reopened,closed)',
+  COALESCE(proof.watermark(c)::text, '-') || '|' || proof.status(c, 2024) || '|' || proof.events(c, 2024) = (SELECT v FROM proof.snap WHERE k = 'X.voor')
+    AND proof.events(c, 2024) = 'closed,reopened,closed',
+  COALESCE(proof.watermark(c)::text, '-') || '|' || proof.status(c, 2024) || '|' || proof.events(c, 2024))
+FROM (SELECT client_id AS c FROM proof.subject WHERE rol = 'X') s;
+
+-- Het gewone geneste pad blijft volledig werken: N sluit 2023, dan 2024 weer af.
+DO $$
+DECLARE v_n uuid := (SELECT client_id FROM proof.subject WHERE rol = 'N'); r record;
+BEGIN
+  SELECT * INTO r FROM public.close_fiscal_year(v_n, 2023);
+  PERFORM proof.record('53', 'genest pad blijft geldig: 2023 opnieuw afsluiten → watermerk 2023',
+    r.created AND proof.watermark(v_n) = 2023);
+END $$;
+DO $$
+DECLARE v_n uuid := (SELECT client_id FROM proof.subject WHERE rol = 'N'); r record;
+BEGIN
+  SELECT * INTO r FROM public.close_fiscal_year(v_n, 2024);
+  PERFORM proof.record('53b', '… en 2024 → watermerk 2024, geschiedenis closed,reopened,closed',
+    r.created AND proof.watermark(v_n) = 2024 AND proof.events(v_n, 2024) = 'closed,reopened,closed');
+END $$;
+
 -- ═══ 44-46. ÉÉN STAP PER TRANSACTIE, EERSTE AFSLUITING, RECHTEN ════════════
 
 DO $$

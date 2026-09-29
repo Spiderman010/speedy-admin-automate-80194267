@@ -669,18 +669,38 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
-  -- (6) IDEMPOTENT: al heropend is geen fout maar een mededeling, met de
-  --     bestaande gebeurtenis erbij. Geen tweede gebeurtenis.
+  -- (6) IDEMPOTENT — maar alleen over een CONSISTENTE heropende stand. Een
+  --     no-op mag nooit een gebroken levenscyclus maskeren; daarom eerst
+  --     dezelfde soort controle als hieronder bij (7):
+  --       (a) het watermerk is exact het hoogste jaar dat nog closed is (of
+  --           NULL als er geen is), en dat jaar ligt ONDER dit heropende jaar —
+  --           anders dekt het watermerk een jaar dat open zou moeten zijn;
+  --       (b) de LAATSTE gebeurtenis van dit jaar (dezelfde deterministische
+  --           volgorde als overal) is 'reopened' — niet "er bestaat ergens
+  --           een reopened-gebeurtenis".
+  --     Genest heropenen blijft geldig: met 2024 én 2023 heropend en 2022 als
+  --     hoogste closed jaar is een herhaalde aanroep voor 2024 gewoon een no-op.
   IF v_existing.status = 'reopened' THEN
+    SELECT max(yc.fiscal_year) INTO v_highest
+    FROM public.year_closures yc
+    WHERE yc.client_id = _client_id AND yc.status = 'closed';
+
+    IF v_client.afgesloten_boekjaar IS DISTINCT FROM v_highest
+       OR v_highest >= _fiscal_year THEN
+      RAISE EXCEPTION 'Boekjaar % staat heropend, maar het watermerk (%) is niet het hoogste nog afgesloten boekjaar onder dit jaar (%); de afsluitstand is inconsistent en moet handmatig worden onderzocht.',
+        _fiscal_year, COALESCE(v_client.afgesloten_boekjaar::text, 'leeg'), COALESCE(v_highest::text, 'geen')
+        USING ERRCODE = '23514';
+    END IF;
+
     SELECT * INTO v_event
     FROM public.fiscal_year_events e
-    WHERE e.client_id = _client_id AND e.fiscal_year = _fiscal_year AND e.event_type = 'reopened'
+    WHERE e.client_id = _client_id AND e.fiscal_year = _fiscal_year
     ORDER BY e.occurred_at DESC, e.created_xact_id DESC NULLS LAST, e.id DESC
     LIMIT 1;
 
-    IF NOT FOUND THEN
-      RAISE EXCEPTION 'Boekjaar % staat heropend maar er is geen heropeningsgebeurtenis; de afsluitstand is inconsistent en moet handmatig worden onderzocht.',
-        _fiscal_year
+    IF v_event.event_type IS DISTINCT FROM 'reopened' THEN
+      RAISE EXCEPTION 'Boekjaar % staat heropend maar de gebeurtenisgeschiedenis draagt dat niet (laatste: %); de afsluitstand is inconsistent en moet handmatig worden onderzocht.',
+        _fiscal_year, COALESCE(v_event.event_type, 'geen')
         USING ERRCODE = '23514';
     END IF;
 

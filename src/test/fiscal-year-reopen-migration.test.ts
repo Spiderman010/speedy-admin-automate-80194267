@@ -12,7 +12,7 @@ import {
  *
  * WAT HIER WEL EN NIET WORDT BEWEZEN
  * Het GEDRAG staat in `supabase/tests/fiscal-year-reopen/` en draait tegen een
- * echte PostgreSQL (60 bewijzen, incl. twee gelijktijdige sessies en erfenis
+ * echte PostgreSQL (67 bewijzen, incl. twee gelijktijdige sessies en erfenis
  * die vóór de migratie is aangelegd). Dit bestand bewaakt de VORM, en de
  * beloftes die PR E onderscheidt: de boekingsblokkade en het grootboek worden
  * nergens geraakt, de bewakers aanvaarden alleen bewijs uit dezelfde
@@ -127,6 +127,21 @@ describe("reopen_fiscal_year", () => {
     expect(status).toBeLessThan(mark);
     expect(reopen).not.toMatch(/_fiscal_year\s*-\s*1/);
     expect(reopen).toMatch(/max\(yc\.fiscal_year\)[\s\S]*yc\.status = 'closed' AND yc\.fiscal_year <> _fiscal_year/);
+  });
+
+  it("10b. de no-op controleert eerst watermerk en LAATSTE gebeurtenis — zij maskeert geen gebroken stand", () => {
+    const noop = reopen.slice(reopen.indexOf("IF v_existing.status = 'reopened' THEN"), reopen.indexOf("false;", reopen.indexOf("IF v_existing.status = 'reopened' THEN")));
+    // (a) watermerk = hoogste closed jaar, en dat jaar ligt onder het heropende jaar.
+    expect(noop).toMatch(/yc\.status = 'closed'/);
+    expect(noop).toContain("v_client.afgesloten_boekjaar IS DISTINCT FROM v_highest");
+    expect(noop).toContain("v_highest >= _fiscal_year");
+    // (b) de laatste gebeurtenis, in de vaste volgorde, zonder filter op type.
+    expect(noop).toContain("ORDER BY e.occurred_at DESC, e.created_xact_id DESC NULLS LAST, e.id DESC");
+    expect(noop).not.toMatch(/WHERE e\.client_id = _client_id AND e\.fiscal_year = _fiscal_year AND e\.event_type = 'reopened'/);
+    expect(noop).toContain("v_event.event_type IS DISTINCT FROM 'reopened'");
+    expect((noop.match(/ERRCODE = '23514'/g) ?? []).length).toBe(2);
+    // Beide controles staan vóór de RETURN QUERY van de no-op.
+    expect(noop.indexOf("IS DISTINCT FROM 'reopened'")).toBeLessThan(noop.indexOf("RETURN QUERY"));
   });
 
   it("10. herhaald heropenen is een no-op zonder nieuwe gebeurtenis; inconsistente standen falen dicht", () => {
