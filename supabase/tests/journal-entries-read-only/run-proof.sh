@@ -22,6 +22,8 @@
 #   pre-proof.sql                 V1-V7: the exposure, plus snapshots
 #   20260930120000_...sql         the REAL migration under test, applied TWICE
 #   proof.sql                     1-30
+#   the ROLLBACK block            from the migration header, applied TWICE
+#   rollback-proof.sql            R1-R6: exact pre-migration ACL and policies
 # and prints one line per numbered proof plus a summary.
 
 set -euo pipefail
@@ -61,6 +63,21 @@ if [ "${JE_SKIP_MIGRATION:-0}" != "1" ]; then
 fi
 
 run -f "$HERE/proof.sql"                                                    > /dev/null
+
+# De gedocumenteerde ROLLBACK, letterlijk uit de kop van de migratie (tussen
+# ROLLBACK-BEGIN en ROLLBACK-END, zonder het "-- " ervoor), TWEE keer: hij moet
+# de toestand van vóór de migratie exact herstellen, en idempotent zijn.
+# JE_ROLLBACK_SQL mag een ander bestand aanwijzen — alleen voor de negatieve controle.
+if [ -n "${JE_ROLLBACK_SQL:-}" ]; then
+  ROLLBACK="$(cat "$JE_ROLLBACK_SQL")"
+else
+  ROLLBACK="$(sed -n '/^-- ROLLBACK-BEGIN$/,/^-- ROLLBACK-END$/p' "$MIG/20260930120000_make_journal_entries_read_only.sql" \
+              | grep -v '^-- ROLLBACK-' | sed 's/^-- \{0,1\}//')"
+fi
+[ -n "$ROLLBACK" ] || { echo "rollbackblok niet gevonden" >&2; exit 1; }
+run -c "$ROLLBACK"                                                          > /dev/null
+run -c "$ROLLBACK"                                                          > /dev/null
+run -f "$HERE/rollback-proof.sql"                                           > /dev/null
 
 psql -q -d "$DB" -P pager=off -c "
   SELECT CASE WHEN ok THEN 'PASS' ELSE 'FAIL' END AS uitslag, n, name, left(detail, 110) AS detail

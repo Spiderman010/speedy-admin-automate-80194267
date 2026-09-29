@@ -38,17 +38,27 @@
 --
 -- IDEMPOTENT: een tweede toepassing verandert niets.
 --
--- ROLLBACK (handmatig; heropent het schrijfoppervlak):
---   GRANT INSERT, UPDATE, DELETE ON public.journal_entries TO authenticated;
+-- ROLLBACK (handmatig; heropent het schrijfoppervlak) — het exacte omgekeerde.
+--   Uitgangstoestand vóór deze migratie (bewezen in het harnas, V1, en gelijk
+--   aan Supabase's standaard): ALL voor anon, authenticated en service_role,
+--   GEEN toekenning aan PUBLIC, plus de drie schrijfpolicies uit
+--   20260613001452 (blok 3A.10). Toont de productie-precheck (rij 10) een
+--   andere ACL, herstel dan díe. De SELECT-policy is nooit weggehaald en
+--   blijft dus buiten de rollback. Het blok is letterlijk uitvoerbaar (haal
+--   alleen het "-- " voor elke regel weg) en idempotent.
+-- ROLLBACK-BEGIN
+--   GRANT ALL ON TABLE public.journal_entries TO anon, authenticated, service_role;
+--   DROP POLICY IF EXISTS role_journal_entries_insert ON public.journal_entries;
 --   CREATE POLICY role_journal_entries_insert ON public.journal_entries FOR INSERT TO authenticated
 --     WITH CHECK (public.has_min_role(auth.uid(), organization_id, 'assistant'));
+--   DROP POLICY IF EXISTS role_journal_entries_update ON public.journal_entries;
 --   CREATE POLICY role_journal_entries_update ON public.journal_entries FOR UPDATE TO authenticated
 --     USING       (public.has_min_role(auth.uid(), organization_id, 'assistant'))
 --     WITH CHECK  (public.has_min_role(auth.uid(), organization_id, 'assistant'));
+--   DROP POLICY IF EXISTS role_journal_entries_delete ON public.journal_entries;
 --   CREATE POLICY role_journal_entries_delete ON public.journal_entries FOR DELETE TO authenticated
 --     USING (public.has_min_role(auth.uid(), organization_id, 'accountant'));
---   -- en, alleen als de precheck ze liet zien, de vroegere rechten van anon en
---   -- service_role (Supabase-standaard: GRANT ALL ... TO anon, service_role).
+-- ROLLBACK-END
 -- ═════════════════════════════════════════════════════════════════════════════
 
 -- ── 0. Vereisten: fail closed ───────────────────────────────────────────────

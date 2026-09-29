@@ -99,17 +99,72 @@ describe("Migratie — journal_entries alleen-lezen", () => {
     expect((doBlock.match(/RAISE EXCEPTION/g) ?? []).length).toBe(3);
   });
 
-  it("7. documenteert de handmatige rollback, met de oorspronkelijke policies letterlijk", () => {
-    expect(raw).toMatch(/ROLLBACK/);
-    expect(raw).toMatch(/--\s+GRANT INSERT, UPDATE, DELETE ON public\.journal_entries TO authenticated;/);
-    const original = readFileSync(
-      resolve(process.cwd(), MIGRATION_DIR, "20260613001452_ac57e447-1ab9-4125-9cc8-070054d55750.sql"),
-      "utf8",
-    );
-    for (const policy of ["role_journal_entries_insert", "role_journal_entries_update", "role_journal_entries_delete"]) {
-      expect(original, `${policy} bestond`).toContain(`CREATE POLICY ${policy} ON public.journal_entries`);
-      expect(raw, `${policy} staat in de rollback`).toContain(`CREATE POLICY ${policy} ON public.journal_entries`);
-    }
+  describe("7. de rollback is het exacte, uitvoerbare omgekeerde", () => {
+    // Het blok tussen ROLLBACK-BEGIN en ROLLBACK-END, zonder het "-- " ervoor.
+    const block = raw.match(/^-- ROLLBACK-BEGIN\n([\s\S]*?)^-- ROLLBACK-END$/m)?.[1] ?? "";
+    const rollback = block
+      .split("\n")
+      .map((line) => line.replace(/^-- ?/, ""))
+      .join("\n");
+    const rollbackFlat = rollback.replace(/\s+/g, " ").trim();
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+
+    it("7a. staat als afgebakend blok in de migratie en is volledig uitvoerbaar (geen proza, geen geneste commentaar)", () => {
+      expect(block).not.toBe("");
+      for (const line of block.split("\n").filter(Boolean)) {
+        expect(line, "elke regel is een uitgeschakelde SQL-regel").toMatch(/^-- +\S/);
+      }
+      expect(rollback).not.toMatch(/--/);
+      // Elke opdracht eindigt op ';' en is SQL.
+      const stmts = rollbackFlat.split(";").map((s) => s.trim()).filter(Boolean);
+      for (const s of stmts) expect(s).toMatch(/^(GRANT|DROP POLICY IF EXISTS|CREATE POLICY) /);
+    });
+
+    it("7b. geeft elke rol die de migratie intrekt (behalve PUBLIC) de volledige vroegere rechten terug", () => {
+      const revoke = statements.find((s) => s.startsWith("REVOKE ALL ON TABLE public.journal_entries FROM"));
+      const revoked = (revoke ?? "").replace(/^.* FROM /, "").split(",").map((r) => r.trim());
+      const restored = [...rollbackFlat.matchAll(/GRANT ALL ON TABLE public\.journal_entries TO ([^;]+);/g)]
+        .flatMap((m) => m[1].split(",").map((r) => r.trim()));
+      expect(revoked).toContain("PUBLIC");
+      expect(restored.sort()).toEqual(revoked.filter((r) => r !== "PUBLIC").sort());
+    });
+
+    it("7c. kent PUBLIC niets toe — de bewezen uitgangs-ACL had geen PUBLIC-regel", () => {
+      expect(rollbackFlat).not.toMatch(/\bTO\b[^;]*\bPUBLIC\b/);
+    });
+
+    it("7d. herstelt de drie schrijfpolicies letterlijk zoals 20260613001452 ze aanmaakte", () => {
+      const original = readFileSync(
+        resolve(process.cwd(), MIGRATION_DIR, "20260613001452_ac57e447-1ab9-4125-9cc8-070054d55750.sql"),
+        "utf8",
+      );
+      for (const policy of ["role_journal_entries_insert", "role_journal_entries_update", "role_journal_entries_delete"]) {
+        const create = original.match(new RegExp(`CREATE POLICY ${policy} ON public\\.journal_entries[^;]*;`))?.[0];
+        expect(create, `${policy} bestond in 20260613001452`).toBeTruthy();
+        expect(rollbackFlat, `${policy} letterlijk in de rollback`).toContain(norm(create!));
+        // Idempotent: eerst weg, dan opnieuw.
+        expect(rollbackFlat.indexOf(`DROP POLICY IF EXISTS ${policy} ON public.journal_entries;`)).toBeLessThan(
+          rollbackFlat.indexOf(`CREATE POLICY ${policy}`),
+        );
+      }
+    });
+
+    it("7e. raakt de SELECT-policy niet, en herstelt precies wat de migratie weghaalde", () => {
+      expect(rollbackFlat).not.toMatch(/role_journal_entries_select/);
+      const dropped = statements.filter((s) => s.startsWith("DROP POLICY")).map((s) => s.match(/role_journal_entries_\w+/)![0]);
+      const recreated = [...rollbackFlat.matchAll(/CREATE POLICY (role_journal_entries_\w+)/g)].map((m) => m[1]);
+      expect(recreated.sort()).toEqual(dropped.sort());
+    });
+
+    it("7f. de oude, onvolledige rollback (alleen authenticated, alleen INSERT/UPDATE/DELETE) zou hier falen", () => {
+      const incomplete = "GRANT INSERT, UPDATE, DELETE ON public.journal_entries TO authenticated;";
+      const restoredBy = (sql: string) =>
+        [...sql.matchAll(/GRANT ALL ON TABLE public\.journal_entries TO ([^;]+);/g)].flatMap((m) =>
+          m[1].split(",").map((r) => r.trim()),
+        );
+      expect(restoredBy(incomplete)).toEqual([]);
+      expect(restoredBy(rollbackFlat).sort()).toEqual(["anon", "authenticated", "service_role"]);
+    });
   });
 });
 
