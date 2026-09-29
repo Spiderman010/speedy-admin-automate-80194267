@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { CalendarCheck, ChevronRight, History, LockKeyhole, RotateCcw } from "lucide-react";
+import { CalendarCheck, ChevronRight, History, RotateCcw } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { NoClientBanner } from "@/components/NoClientBanner";
 import { EmptyState } from "@/components/EmptyState";
@@ -14,6 +14,7 @@ import { AccountingAmount } from "@/components/platform/AccountingAmount";
 import { AccountingNotice } from "@/components/platform/AccountingNotice";
 import { AuditTrailBlock } from "@/components/platform/AuditTrailBlock";
 import { FinancialActionDialog } from "@/components/platform/FinancialActionDialog";
+import { PostingLockCard } from "@/components/overzichten/PostingLockCard";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
@@ -100,7 +101,9 @@ import {
  * DE BOEKINGSBLOKKADE IS GEEN ONDERDEEL VAN DE BOEKJAARSTATUS. Afsluiten en
  * heropenen zetten of wissen `posting_locked_through` nooit, deze pagina roept
  * `set_posting_lock()` nooit aan, en er staat nergens dat heropenen "de
- * periode weer openzet". De blokkade heeft een eigen kaart, en die zegt dat.
+ * periode weer openzet". De blokkade heeft een eigen kaart
+ * (`PostingLockCard`) met een eigen hook, een eigen schrijver en een eigen
+ * geschiedenis; deze pagina geeft haar alleen de administratie door.
  *
  * ER WORDT GEEN BEDRAG GETOOND BIJ DE AFSLUITING. `year_closures` bewaart geen
  * resultaat, want er wordt geen resultaatboeking gemaakt; een berekening
@@ -497,47 +500,6 @@ function BoekjaarstatusCard({
   );
 }
 
-/**
- * De boekingsblokkade is een ANDER besturingselement dan de boekjaarstatus
- * (PR C). Haar waarde (`clients.posting_locked_through`) staat niet in de
- * leesmodellen van deze pagina en wordt hier dus niet getoond, laat staan
- * gewijzigd: er is geen `set_posting_lock()`-aanroep op dit scherm. Wat deze
- * kaart wél zegt, is dat afsluiten en heropenen haar niet raken.
- */
-function BoekingsblokkadeCard() {
-  return (
-    <Card data-testid="boekingsblokkade-card">
-      <CardContent className="space-y-4 p-4 sm:p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <LockKeyhole className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-            <h2 className="text-sm font-semibold">Boekingsblokkade</h2>
-          </div>
-          <Badge variant="secondary">Nog niet afzonderlijk ingesteld</Badge>
-        </div>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          BoekAssist krijgt hiervoor een aparte boekingsblokkade. Deze staat los van de boekjaarstatus:
-          een boekjaar afsluiten of heropenen wijzigt de boekingsblokkade niet.
-        </p>
-        <div className="border-t pt-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-            <Button type="button" variant="outline" disabled className="w-full sm:w-auto">
-              Boekingsblokkade instellen
-            </Button>
-            <Button type="button" variant="outline" disabled className="w-full sm:w-auto">
-              Blokkade wijzigen
-            </Button>
-            <Button type="button" variant="ghost" disabled className="w-full sm:w-auto">
-              Blokkade opheffen
-            </Button>
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">Nog niet beschikbaar</p>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function Jaarafsluiting() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const { activeOrganizationId, isReady } = useActiveOrganization();
@@ -791,7 +753,11 @@ export default function Jaarafsluiting() {
               onClose={() => setBevestigen(true)}
               onReopen={() => setHeropenDialoog(true)}
             />
-            <BoekingsblokkadeCard />
+            {/* Een eigen besturingselement, met een eigen schrijver en een eigen
+                geschiedenis. Het deelt niets met de boekjaarstatus hiernaast;
+                de key laat haar bij een wissel van administratie opnieuw
+                beginnen, zonder oude melding of dialoogtoestand. */}
+            <PostingLockCard key={clientId} clientId={clientId!} clientName={clientNaam} />
           </div>
 
           <Card>

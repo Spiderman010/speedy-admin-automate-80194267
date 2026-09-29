@@ -1167,6 +1167,29 @@ src/test/jaarafsluiting-lifecycle.test.tsx  20 · het scherm, met de échte hook
 - **De historie verzint niets.** Chronologisch (oudste eerst; bij gelijk tijdstip beslist het id), met soort, boekjaar, tijdstip, reden, en de actor alleen als het de ingelogde gebruiker zelf is — geen naam verzonnen, geen uuid getoond, dezelfde regel als het afsluitbewijs. Kan de tabel niet worden gelezen, dan staat dat er.
 - **Vijf branch-scope-asserties vervangen door hun invariant** (`year-close-action` 26/30, `jaarafsluiting-close` 8/25b/29, `fiscal-year-events-migration` 20, `year-close-readiness` 18): "heropenen bestaat niet" en "de app leest de tabel nog niet" waren waar tot PR E/F. Wat blijft: geen resultaatboeking, geen doorrol, geen grootboek, heropenen uitsluitend via de PR E-schrijver, één leespad op `fiscal_year_events` en nergens een schrijfpad.
 
+### 6C-b11 — de boekingsblokkade op het scherm
+
+```
+src/lib/posting-lock.ts                         puur: stand, wijzigingssoort, gevolgen, consistentie, beschikbaarheid, foutvertaling, historie
+src/hooks/usePostingLock.ts                     usePostingLockState · usePostingLockEvents · useCanSetPostingLock · useSetPostingLock
+src/components/overzichten/PostingLockCard.tsx  de kaart op /overzichten/jaarafsluiting (vervangt de placeholder)
+src/test/posting-lock.test.ts                   30 · pure laag + statische grenzen
+src/test/posting-lock-card.test.tsx             19 · de kaart, met de échte hooks tegen een gemockte client
+```
+
+**UI-only.** Geen migratie, geen SQL, geen gegenereerde types (smalle shim in `usePostingLock.ts`, weghalen zodra 20260927120000 in de types staat). De backend van PR C/D dekt alles: zetten, vooruit, terug en opheffen (`NULL`) via `set_posting_lock()`, met geschiedenis in `posting_lock_events`.
+
+- **Eén schrijfgrens.** Alleen `set_posting_lock(client, datum | null, reden)`, precies drie waarden. Geen directe `clients`-update, geen `posting_lock_events`-schrijfactie (statisch getoetst; in de hele app is `usePostingLock.ts` de enige aanroeper). De **reden is verplicht** — dat eist de schrijver, dus de dialoog ook: getrimd, 1–500 tekens.
+- **Los van de boekjaarstatus, in code én tekst.** De blokkadebestanden noemen `close_fiscal_year`, `reopen_fiscal_year`, `afgesloten_boekjaar`, `year_closures` en `fiscal_year_events` niet; de jaarafsluitingsbestanden noemen `set_posting_lock`, `posting_locked_through` en `posting_lock_events` niet. De pagina geeft de kaart alleen `clientId` en `clientName`. De kaart zegt: "Deze boekingsblokkade staat los van de boekjaarstatus. Een boekjaar heropenen heft deze blokkade niet op. De blokkade opheffen opent geen afgesloten boekjaar."
+- **De stand in woorden is de regel van de schrijvers** (`posting_allowed()`: `datum > blokkade`): op of vóór de datum geweigerd, erna mogelijk onder voorbehoud van de andere controles.
+- **Elke wijziging zegt precies welke datums erbij komen of afgaan.** Instellen en uitbreiden: gewone knop. Terugzetten en opheffen: een waarschuwing "u versoepelt / heft een financiële bescherming op" en een rode knop. Dezelfde datum kan niet worden bevestigd.
+- **Fail closed op de stand.** Er is nooit gebackfilld en de kolom beweegt alleen met een gebeurtenis uit dezelfde transactie, dus de laatste gebeurtenis (`changed_at`, dan `id` — het spiegelbeeld van de schrijver) moet de kolom dragen, en zonder gebeurtenissen is de kolom `NULL`. Wijkt dat af, dan toont de kaart een blokkerende melding en biedt zij niets aan — ook een accountant niet.
+- **Een onzekere afloop wordt eerst verzoend.** Netwerk, onbekend of gelijktijdig: stand en geschiedenis opnieuw ophalen; blijkt de wijziging doorgevoerd, dan is dát de uitkomst. Nooit automatisch opnieuw. Een zichtbare grendel (`bezig`) dekt de hele handeling — aanroep, verversing én verzoening — want TanStack meldt de mutatie na een fout al als afgerond terwijl `onSettled` nog ververst; zonder die grendel zag de knop er klikbaar uit (de ref slikte de klik wel, maar dat is geen eerlijke UI). Een test met een vastgehouden verversing bewijst dat venster, en valt om zonder de grendel.
+- **Ververst na elke wijziging:** blokkadestand, geschiedenis, `clients`, de bank-bulkpreflight en de inhaalslag (die sinds PR D de blokkade meewegen), `ledger-completeness` en de diagnostiek. Géén boekjaarcaches: dit is een ander besturingselement.
+- **Historie:** chronologisch, van/naar/tijdstip/reden; de actor alleen als "U zelf", nooit een naam of uuid.
+- **Vier placeholder-asserties vervangen door hun invariant** (`jaarafsluiting-close` 25a/28, `jaarafsluiting-lifecycle` 10): "Nog niet afzonderlijk ingesteld" was waar tot deze PR. Wat blijft: twee losse standen, en afsluiten/heropenen raakt de blokkade niet. Nieuw: afgesloten + geen blokkade, en heropend + blokkade nog gezet, elk onafhankelijk getoond.
+- **Geen gebrek in de backend gevonden.** Ook het klantformulier (`useUpdateClient` op `/klanten`) stuurt een expliciete veldenlijst zonder `posting_locked_through`, en kan de blokkade dus niet met een verouderde waarde overschrijven.
+
 ### 6C-b11 — de afsluiting schrijft haar gebeurtenis (PR B)
 
 ```

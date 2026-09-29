@@ -132,6 +132,15 @@ vi.mock("@/integrations/supabase/client", () => ({
     from: (table: string) => ({
       select: () => ({
         eq: () => ({
+          // De boekingsblokkade (eigen kaart, eigen hook): één filter op de
+          // administratie, dan de stand of de geschiedenis.
+          maybeSingle: async () =>
+            table === "clients"
+              ? { data: { id: "client-1", posting_locked_through: null }, error: null }
+              : { data: null, error: null },
+          order: () => ({
+            order: async () => ({ data: table === "posting_lock_events" ? [] : [], error: null }),
+          }),
           eq: () => ({
             maybeSingle: async () => {
               if (table !== "year_closures") return { data: null, error: null };
@@ -519,9 +528,12 @@ describe("Een jaar dat al dicht is", () => {
     expect(status).toHaveTextContent("Boekjaarstatus");
     await waitFor(() => expect(screen.getByTestId("jaar-status-badge")).toHaveTextContent("Afgesloten"));
 
+    // Was: een placeholder "Nog niet afzonderlijk ingesteld". Sinds de
+    // blokkade-UI toont de kaart de echte stand; wat blijft is dat een
+    // afgesloten jaar zonder blokkade als twee losse standen verschijnt.
     const blokkade = screen.getByTestId("boekingsblokkade-card");
-    expect(blokkade).toHaveTextContent("Nog niet afzonderlijk ingesteld");
-    expect(blokkade).toHaveTextContent("Deze staat los van de boekjaarstatus");
+    await waitFor(() => expect(screen.getByTestId("blokkade-stand")).toHaveTextContent("Geen boekingsblokkade"));
+    expect(blokkade).toHaveTextContent("Deze boekingsblokkade staat los van de boekjaarstatus");
     expect(blokkade).not.toHaveTextContent(`31-12-${JAAR}`);
   });
 
@@ -566,7 +578,7 @@ describe("De nieuwe pagina-opbouw", () => {
     await screen.findByTestId("jaar-uitvoeren");
 
     expect(screen.getByTestId("jaar-status-badge")).toHaveTextContent("Open");
-    expect(screen.getByTestId("boekingsblokkade-card")).toHaveTextContent("Nog niet afzonderlijk ingesteld");
+    await waitFor(() => expect(screen.getByTestId("blokkade-stand")).toHaveTextContent("Geen boekingsblokkade"));
     expect(screen.getByText("Gereedheid voor afsluiten")).toBeInTheDocument();
     expect(screen.getByTestId("jaar-historie")).toHaveTextContent(
       "Voor dit boekjaar is nog geen afsluiting vastgelegd.",
