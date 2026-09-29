@@ -473,7 +473,7 @@ describe("de grenzen van de gereedheidslaag", () => {
     expect(bron).toMatch(/onClick=\{voerUit\}/);
     expect(bron).toContain("Gereedheid controleren");
     // De echte afsluitactie blijft afhankelijk van die vastgelegde uitkomst.
-    expect(bron).toMatch(/beschikbaarheid\.kind === "available"/);
+    expect(bron).toMatch(/afsluiten\.kind === "available"/);
     expect(bron).toMatch(/onClick=\{onClose\}/);
   });
 

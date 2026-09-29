@@ -236,12 +236,20 @@ describe("PR A verandert geen enkel gedrag", () => {
   });
 
 
-  it("20. de app leest de nieuwe tabel nog niet", () => {
+  it("20. de app leest de nieuwe tabel alleen via de jaarafsluitingshook, en schrijft er nooit in", () => {
     /*
-     * PR A is fundering; frontendgebruik komt in PR F, en die PR hoort deze
-     * test dan bewust bij te werken. Was: "deze branch raakt src/ niet" — waar
-     * over PR A, maar geen invariant (zie branch-sql-scope.ts).
+     * Was: "de app leest de nieuwe tabel nog niet" — waar tot PR F, dat de
+     * historie op het scherm bracht, en geen invariant. Wat blijft: precies
+     * één leespad (`useYearClose.ts`), en nergens een INSERT, UPDATE, DELETE
+     * of UPSERT — de tabel is append-only en wordt uitsluitend door de
+     * databaseschrijvers gevuld.
      */
-    expect(appFilesMatching(/fiscal_year_events/)).toEqual([]);
+    expect(appFilesMatching(/fiscal_year_events/)).toEqual(["src/hooks/useYearClose.ts"]);
+    for (const f of appFilesMatching(/fiscal_year_events/)) {
+      const bron = readFileSync(resolve(process.cwd(), f), "utf8");
+      expect(bron, f).not.toMatch(
+        /\.from\(\s*["']fiscal_year_events["']\s*\)[\s\S]{0,120}\.(insert|update|delete|upsert)\(/,
+      );
+    }
   });
 });

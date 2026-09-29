@@ -138,6 +138,9 @@ vi.mock("@/integrations/supabase/client", () => ({
               const rij = state.pogingen > 0 ? (state.closureNaPoging ?? state.closure) : state.closure;
               return { data: rij, error: null };
             },
+            // De levensloop (PR F): deze suite kent geen gebeurtenissen; de
+            // historie leunt hier dus uitsluitend op het afsluitbewijs.
+            order: () => ({ order: async () => ({ data: [], error: null }) }),
           }),
         }),
       }),
@@ -275,7 +278,12 @@ describe("De bevestiging", () => {
     expect(gevolgen).toHaveTextContent(/blijven ongewijzigd/i);
     expect(gevolgen).toHaveTextContent(/geen resultaatboeking/i);
     expect(gevolgen).toHaveTextContent(/geen beginbalans/i);
-    expect(gevolgen).toHaveTextContent(/niet meer worden heropend/i);
+    // Sinds PR E/F kan een accountant heropenen; de dialoog beweert dus niet
+    // meer dat het niet kan, en zegt erbij dat de boekingsblokkade los staat.
+    expect(gevolgen).toHaveTextContent(/alleen door een accountant worden heropend/i);
+    expect(gevolgen).toHaveTextContent(/boekingsblokkade .* verandert hierdoor niet/i);
+    expect(gevolgen).not.toHaveTextContent(/niet meer worden heropend/i);
+    expect(dialoog).toHaveTextContent(/blokkeert normale boekingen/i);
   });
 
   it("9. annuleren boekt niets", async () => {
@@ -510,18 +518,25 @@ describe("Een jaar dat al dicht is", () => {
     expect(blokkade).not.toHaveTextContent(`31-12-${JAAR}`);
   });
 
-  it("25b. de heropeningsdialoog is een niet-schrijvend prototype met verplichte reden", async () => {
+  it("25b. de heropeningsdialoog schrijft niets zolang er geen reden is", async () => {
+    /*
+     * Was: "een niet-schrijvend prototype". Sinds PR F is de dialoog echt;
+     * wat blijft is dat hij zonder geldige reden per constructie niets kan
+     * afvuren. De volledige heropeningsflow staat in
+     * `jaarafsluiting-lifecycle.test.tsx`.
+     */
     state.closure = CLOSURE;
+    state.watermark = JAAR;
     toon();
     await screen.findByTestId("jaar-afsluitbewijs");
 
-    expect(screen.getByRole("button", { name: "Boekjaar heropenen" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Bekijk toekomstige werkwijze" }));
+    fireEvent.click(await screen.findByTestId("jaar-heropenen"));
     const dialoog = await screen.findByTestId("jaar-heropenen-dialoog");
-    expect(dialoog).toHaveTextContent(/eerdere afsluiting blijft zichtbaar in de audittrail/i);
+    expect(dialoog).toHaveTextContent(/eerdere afsluiting blijft in de historie/i);
     expect(screen.getByLabelText("Reden voor heropening")).toHaveAttribute("required");
-    expect(screen.getByPlaceholderText("Nagekomen inkoopfactuur")).toBeInTheDocument();
     expect(screen.getByTestId("jaar-heropenen-bevestigen")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("jaar-heropenen-bevestigen"));
+    expect(rpcCalls.filter((c) => c.fn === "reopen_fiscal_year")).toHaveLength(0);
     expect(closeCalls()).toHaveLength(0);
     expect(writeCalls).toEqual([]);
   });
@@ -551,14 +566,17 @@ describe("De nieuwe pagina-opbouw", () => {
     );
   });
 
-  it("29. de echte afsluitactie houdt de huidige technische waarschuwing", async () => {
+  it("29. de afsluitactie beweert niet meer dat heropenen onmogelijk is", async () => {
+    /*
+     * Was: de kaart droeg de waarschuwing "kan nog niet worden heropend".
+     * Sinds PR E/F kan dat wél (accountant, met reden); die tekst zou nu een
+     * onwaarheid zijn.
+     */
     toon();
     await controleer();
 
     await screen.findByTestId("jaar-afsluiten");
-    expect(screen.getByTestId("jaar-status-card")).toHaveTextContent(
-      "de huidige technische jaarafsluiting kan nog niet worden heropend",
-    );
+    expect(screen.getByTestId("jaar-status-card")).not.toHaveTextContent(/kan nog niet worden heropend/i);
     expect(screen.getByTestId("jaar-afsluiten")).toHaveTextContent("Boekjaar definitief afsluiten");
   });
 });

@@ -30,13 +30,20 @@ import type { YearCloseReadiness } from "./year-close-readiness";
 
 // ── Het afsluitbewijs ───────────────────────────────────────────────────────
 
-/** Eén rij van public.year_closures. Geen `result_cents`: die bestaat niet. */
+/**
+ * Eén rij van public.year_closures. Geen `result_cents`: die bestaat niet.
+ *
+ * `status` (PR A/E): `closed` of `reopened`. De kolom heeft in de database
+ * default `closed`; een ontbrekende waarde (oudere leesmodellen, het
+ * RPC-resultaat van `close_fiscal_year()`) telt daarom als `closed`.
+ */
 export interface YearClosure {
   client_id: string;
   organization_id: string;
   fiscal_year: number;
   closed_at: string;
   closed_by: string;
+  status?: "closed" | "reopened";
 }
 
 /** Wat `close_fiscal_year()` teruggeeft: het bewijs plus of deze aanroep het maakte. */
@@ -92,6 +99,10 @@ export const INCONSISTENT_CLOSURE_REASON =
 
 export const INCONSISTENT_CLOSURE_ADVICE = "Controleer deze administratie voordat u verdergaat.";
 
+export const REOPENED_BUT_LOCKED_REASON =
+  "Dit boekjaar staat als heropend geregistreerd, maar de administratie staat nog als afgesloten t/m dit " +
+  "boekjaar. De afsluitstand is inconsistent en kan niet automatisch worden hersteld.";
+
 /**
  * De volgorde is bewust.
  *
@@ -100,13 +111,28 @@ export const INCONSISTENT_CLOSURE_ADVICE = "Controleer deze administratie voorda
  * iemand de gereedheidscontrole er daarna nog een keer overheen draait. Zou de
  * gereedheid eerst komen, dan kon een afgesloten jaar opnieuw een afsluitknop
  * krijgen zodra de controle toevallig `ready` opleverde.
+ *
+ * Een HEROPEND jaar (PR E) heeft wél een afsluitbewijs maar is niet dicht: het
+ * loopt hieronder gewoon de gereedheids- en rolcontrole door, want opnieuw
+ * afsluiten gaat via dezelfde `close_fiscal_year()` met dezelfde herkeuring.
  */
 export function closeAvailability(input: CloseAvailabilityInput): CloseAvailability {
   if (input.closureUnavailable) {
     return { kind: "unknown", reason: "Het afsluitbewijs kon niet worden opgehaald. Ververs de pagina." };
   }
-  if (input.closure !== null) {
+  if (input.closure !== null && input.closure.status !== "reopened") {
     return { kind: "already_closed" };
+  }
+  // Heropend, maar het watermerk dekt dit jaar nog: de database zou dat bij
+  // een herafsluiting fail-closed weigeren, dus het scherm zegt het vooraf en
+  // biedt niets aan.
+  if (
+    input.closure !== null &&
+    input.watermark !== undefined &&
+    input.watermark !== null &&
+    input.fiscalYear <= input.watermark
+  ) {
+    return { kind: "inconsistent", reason: REOPENED_BUT_LOCKED_REASON };
   }
   // Geen bewijs, maar het watermerk zegt wél dicht. Dat is de productietoestand
   // van administraties waarvan `afgesloten_boekjaar` vóór PR 2a met de hand is
@@ -161,8 +187,18 @@ export const ALREADY_CLOSED_NOTICE =
 /** Wat er ontbreekt, blijft ontbreken: er wordt nooit een waarde verzonnen. */
 export const NOT_RECORDED = "Niet vastgelegd";
 
+/**
+ * De uitleg boven de gevolgen. Hier staat expliciet WAT er dichtgaat: het
+ * afgesloten boekjaar van de administratie (`clients.afgesloten_boekjaar`, de
+ * jaargrendel waar elke boekingsschrijver op toetst). Dat is bewust een andere
+ * zin dan "de boekingsblokkade", want die verandert hier niet.
+ */
 export function closeDialogExplanation(clientName: string, fiscalYear: number): string {
-  return `U sluit boekjaar ${fiscalYear} van ${clientName} definitief af. Deze stap kan niet ongedaan worden gemaakt.`;
+  return (
+    `U sluit boekjaar ${fiscalYear} van ${clientName} af. De administratie komt daarmee op ` +
+    `"afgesloten t/m boekjaar ${fiscalYear}" te staan, en dat blokkeert normale boekingen met een datum in ` +
+    `boekjaar ${fiscalYear} of eerder. Heropenen kan daarna alleen door een accountant, met een reden.`
+  );
 }
 
 /**
@@ -178,7 +214,8 @@ export function closeConsequences(fiscalYear: number): readonly string[] {
     "Er wordt geen resultaatboeking gemaakt: het resultaat blijft zoals de balans het al toont.",
     "Er wordt geen beginbalans voor het volgende boekjaar geboekt; die volgt uit het grootboek zelf.",
     "Correcties kunt u daarna alleen nog maken in een later boekjaar dat nog open staat.",
-    `Boekjaar ${fiscalYear} kan hierna niet meer worden heropend.`,
+    `Boekjaar ${fiscalYear} kan hierna alleen door een accountant worden heropend, met een verplichte reden die in de historie wordt vastgelegd.`,
+    "De aparte boekingsblokkade van deze administratie verandert hierdoor niet.",
   ];
 }
 
@@ -241,6 +278,14 @@ export type YearCloseErrorKind =
   | "inconsistent_closure"
   /** Bewijs bestaat, watermerk staat er niet op. Ook fail closed. */
   | "inconsistent_watermark"
+  /**
+   * Elke andere "moet handmatig worden onderzocht"-weigering van PR E: stand,
+   * geschiedenis en watermerk spreken elkaar tegen. Fail closed; nooit
+   * automatisch herstellen.
+   */
+  | "inconsistent_lifecycle"
+  /** Een ouder boekjaar staat nog heropend; dat moet eerst opnieuw dicht. */
+  | "older_reopened"
   | "year_order"
   | "unbalanced_group"
   | "unposted_work"
@@ -262,7 +307,7 @@ export interface ClassifiedYearCloseError {
 const SCHEMA_CODES = new Set(["PGRST002", "PGRST204", "PGRST205", "42P01", "42883"]);
 
 /** Ziet dit eruit als onvertaalde PostgreSQL-tekst in plaats van onze eigen melding? */
-function looksLikeRawPostgres(message: string): boolean {
+export function looksLikeRawPostgres(message: string): boolean {
   return (
     message === "" ||
     /^(ERROR|FATAL):/i.test(message) ||
@@ -337,6 +382,25 @@ export function classifyYearCloseError(error: unknown): ClassifiedYearCloseError
         message:
           "Er ligt al een afsluitbewijs voor dit boekjaar, maar de administratie staat nog niet als afgesloten " +
           "geregistreerd. Deze administratie kan niet automatisch worden afgesloten.",
+        advice: INCONSISTENT_CLOSURE_ADVICE,
+      };
+    }
+    // PR E: "sluit dat eerst opnieuw af" — de melding zelf is de instructie.
+    if (/staat heropend; sluit dat eerst opnieuw af/i.test(raw)) {
+      return {
+        kind: "older_reopened",
+        code,
+        message: toonbaar,
+        advice: "Sluit eerst het heropende oudere boekjaar opnieuw af.",
+      };
+    }
+    // PR E: elke overige inconsistentie tussen stand, geschiedenis en
+    // watermerk. De tekst is al Nederlands en precies; hij blijft staan.
+    if (/moet handmatig worden onderzocht/i.test(raw)) {
+      return {
+        kind: "inconsistent_lifecycle",
+        code,
+        message: toonbaar,
         advice: INCONSISTENT_CLOSURE_ADVICE,
       };
     }
@@ -436,5 +500,9 @@ export function needsReconciliation(kind: YearCloseErrorKind): boolean {
  * staat in een toestand die een mens moet bekijken.
  */
 export function isTerminal(kind: YearCloseErrorKind): boolean {
-  return kind === "inconsistent_closure" || kind === "inconsistent_watermark";
+  return (
+    kind === "inconsistent_closure" ||
+    kind === "inconsistent_watermark" ||
+    kind === "inconsistent_lifecycle"
+  );
 }
