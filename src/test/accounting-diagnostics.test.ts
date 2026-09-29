@@ -31,7 +31,7 @@ import type { LedgerPostingLike } from "@/lib/ledger-reporting";
 const CLIENT = "client-1";
 
 const volledigeConfig: CatchupClientConfig = {
-  id: CLIENT, afgesloten_boekjaar: null,
+  id: CLIENT, posting_locked_through: null,
   crediteuren_rekening_id: "cred", debiteuren_rekening_id: "deb",
   btw_te_vorderen_rekening_id: "btwv", btw_te_betalen_rekening_id: "btwb",
 };
@@ -63,7 +63,7 @@ const si = (invoice = verkoop(), config = volledigeConfig, postingGroupId: strin
   evaluateSalesInvoice({ invoice, config, postingGroupId });
 
 const codes = (items: { code: string }[]) => items.map((i) => i.code);
-const bij = (items: { code: string; severity: string }[], code: string) =>
+const bij = (items: { code: string; severity: string; message: string }[], code: string) =>
   items.find((i) => i.code === code)!;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,12 +123,46 @@ describe("inkoopdiagnostiek", () => {
     expect(bij(items, "geen_btw_rekening").severity).toBe("warning");
   });
 
-  it("8. afgesloten boekjaar → fout, ook bij een concept", () => {
+  /*
+   * Was: "afgesloten boekjaar → fout, ook bij een concept" (ALTIJD_ERROR op
+   * `boekjaar_afgesloten`). Sinds PR H is de boekjaarstatus geen boekingstoets;
+   * wat blokkeert is de boekingsblokkade, en die volgt de gewone ernstladder.
+   */
+  it("8. een afgesloten boekjaar alléén is geen fout meer — de configuratie kent de status niet eens", () => {
+    expect(Object.keys(volledigeConfig)).not.toContain("afgesloten_boekjaar");
     const items = diagnosticsForDocument(
-      pi(inkoop({ status: "te_controleren", invoice_date: "2025-06-01" }), { ...volledigeConfig, afgesloten_boekjaar: 2025 }),
+      pi(inkoop({ status: "gecontroleerd", invoice_date: "2025-06-01" }), { ...volledigeConfig, posting_locked_through: null }),
       GEEN_GROEPEN,
     );
-    expect(bij(items, "boekjaar_afgesloten").severity).toBe("error");
+    expect(items.some((i) => /afgesloten/i.test(i.message))).toBe(false);
+    expect(items.some((i) => i.code === "boekjaar_afgesloten")).toBe(false);
+  });
+
+  it("8b. de boekingsblokkade wordt expliciet genoemd: fout op een goedgekeurde factuur, open werk op een concept", () => {
+    const dicht = { ...volledigeConfig, posting_locked_through: "2025-12-31" };
+    const goedgekeurd = diagnosticsForDocument(pi(inkoop({ status: "gecontroleerd", invoice_date: "2025-03-15" }), dicht), GEEN_GROEPEN);
+    expect(bij(goedgekeurd, "boekingsblokkade").severity).toBe("error");
+    expect(bij(goedgekeurd, "boekingsblokkade").message).toBe("Boekingsdatum 15-03-2025 valt binnen de boekingsblokkade t/m 31-12-2025.");
+    const concept = diagnosticsForDocument(pi(inkoop({ status: "te_controleren", invoice_date: "2025-03-15" }), dicht), GEEN_GROEPEN);
+    expect(bij(concept, "boekingsblokkade").severity).toBe("warning");
+  });
+
+  it("8c. een onbekende blokkade is een waarschuwing, nooit een fout en nooit 'klaar'", () => {
+    const items = diagnosticsForDocument(
+      pi(inkoop({ status: "gecontroleerd", invoice_date: "2025-03-15" }), { ...volledigeConfig, posting_locked_through: undefined }),
+      GEEN_GROEPEN,
+    );
+    expect(bij(items, "boekingsblokkade_onbekend").severity).toBe("warning");
+    expect(items.some((i) => i.code === "klaar_niet_geboekt")).toBe(false);
+    expect(items.some((i) => i.severity === "error")).toBe(false);
+  });
+
+  it("8d. de samenvatting telt onbekend apart en nooit als geblokkeerd", () => {
+    const onbekend = pi(inkoop({ status: "gecontroleerd", invoice_date: "2025-03-15" }), { ...volledigeConfig, posting_locked_through: undefined });
+    expect(onbekend.state).toBe("onbekend");
+    const items = diagnosticsForDocument(onbekend, GEEN_GROEPEN);
+    const summary = summarizeDiagnostics(items, [onbekend]);
+    expect(summary).toMatchObject({ total: 1, posted: 0, ready: 0, blocked: 0, unknown: 1, errors: 0 });
   });
 
   it("9. klaar maar niet geboekt is werk, geen bederf", () => {
@@ -397,12 +431,14 @@ describe("documentbevindingen uit de integriteitscontrole", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("ernstladder en samenvatting", () => {
-  it("29. de ernst van een blokkade hangt af van de status, behalve bij config en boekjaar", () => {
+  it("29. de ernst van een blokkade hangt af van de status, behalve bij config en een onbekende blokkade", () => {
     const doc: CatchupBlock = { code: "regels_sluiten_niet_aan", label: "x" };
     expect(severityForBlock(doc, true)).toBe("error");
     expect(severityForBlock(doc, false)).toBe("warning");
     expect(severityForBlock({ code: "geen_crediteurenrekening", label: "x", configuratie: true }, true)).toBe("warning");
-    expect(severityForBlock({ code: "boekjaar_afgesloten", label: "x" }, false)).toBe("error");
+    expect(severityForBlock({ code: "boekingsblokkade", label: "x" }, true)).toBe("error");
+    expect(severityForBlock({ code: "boekingsblokkade", label: "x" }, false)).toBe("warning");
+    expect(severityForBlock({ code: "boekingsblokkade_onbekend", label: "x" }, true)).toBe("warning");
     expect(severityForBlock({ code: "status_niet_postbaar", label: "x" }, false)).toBe("warning");
   });
 

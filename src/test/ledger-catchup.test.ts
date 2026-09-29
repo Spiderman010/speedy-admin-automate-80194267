@@ -11,7 +11,9 @@ import {
   type CatchupLineAggregate,
   type CatchupPurchaseInvoice,
   type CatchupSalesInvoice,
+  resolveCatchupState,
 } from "@/lib/ledger-catchup";
+import { postingLockVerdict } from "@/lib/posting-lock";
 
 /**
  * Historische grootboekvulling — de beoordeling per bronrecord.
@@ -26,7 +28,7 @@ const CLIENT = "client-1";
 
 const VOLLEDIGE_CONFIG: CatchupClientConfig = {
   id: CLIENT,
-  afgesloten_boekjaar: null,
+  posting_locked_through: null,
   crediteuren_rekening_id: "cred-1",
   debiteuren_rekening_id: "deb-1",
   btw_te_vorderen_rekening_id: "btw-v-1",
@@ -216,13 +218,59 @@ describe("inkoop — configuratie en documentgebreken", () => {
     expect(r.blocks.find((b) => b.code === "regel_bedrag_niet_positief")?.label).toMatch(/^2 boekingsregels/);
   });
 
-  it("13. een afgesloten boekjaar wordt nooit omzeild", () => {
-    const r = evalInkoop(inkoop({ invoice_date: "2025-06-01" }), config({ afgesloten_boekjaar: 2025 }));
+  /*
+   * Was: "een afgesloten boekjaar wordt nooit omzeild" (blokkade op
+   * `boekjaar <= afgesloten_boekjaar`). Sinds PR H toetst geen schrijver dat
+   * meer; de enige datumgrendel is de boekingsblokkade. Deze laag mag dus nooit
+   * "geblokkeerd" zeggen waar de schrijver zou boeken — en dat deed zij.
+   */
+  it("13. de boekjaarstatus is geen blokkade: de configuratie kent haar niet eens", () => {
+    expect(Object.keys(VOLLEDIGE_CONFIG)).not.toContain("afgesloten_boekjaar");
+    // Een factuur uit een (administratief) afgesloten jaar zonder blokkade is gewoon klaar.
+    expect(evalInkoop(inkoop({ invoice_date: "2025-06-01" }), config({ posting_locked_through: null })).state).toBe("klaar");
+  });
+
+  it("13b. een blokkade die de factuurdatum dekt blokkeert, met de datums erbij", () => {
+    const r = evalInkoop(inkoop({ invoice_date: "2025-06-01" }), config({ posting_locked_through: "2025-12-31" }));
     expect(r.state).toBe("geblokkeerd");
-    expect(codes(r)).toContain("boekjaar_afgesloten");
-    expect(r.blocks.find((b) => b.code === "boekjaar_afgesloten")?.label).toContain("2025");
-    // Het jaar ná het afgesloten jaar mag wel.
-    expect(evalInkoop(inkoop({ invoice_date: "2026-06-01" }), config({ afgesloten_boekjaar: 2025 })).state).toBe("klaar");
+    expect(codes(r)).toEqual(["boekingsblokkade"]);
+    expect(r.blocks[0].label).toBe("Boekingsdatum 01-06-2025 valt binnen de boekingsblokkade t/m 31-12-2025.");
+    // De grens ligt EROP: de blokkadedatum zelf is dicht, de dag erna open.
+    expect(codes(evalInkoop(inkoop({ invoice_date: "2025-12-31" }), config({ posting_locked_through: "2025-12-31" })))).toContain("boekingsblokkade");
+    expect(evalInkoop(inkoop({ invoice_date: "2026-01-01" }), config({ posting_locked_through: "2025-12-31" })).state).toBe("klaar");
+  });
+
+  it("13c. een onbekende blokkade alléén is 'onbekend': geen 'klaar' en geen verzonnen 'geblokkeerd'", () => {
+    const r = evalInkoop(inkoop({ invoice_date: "2026-03-01" }), config({ posting_locked_through: undefined }));
+    expect(r.state).toBe("onbekend");
+    expect(codes(r)).toEqual(["boekingsblokkade_onbekend"]);
+    expect(r.blocks[0].label).toMatch(/kon niet worden bepaald/);
+    expect(r.blocks[0].label).toMatch(/database controleert/i);
+    expect(r.blocks[0].label).not.toMatch(/afgesloten/i);
+  });
+
+  it("13e. PRECEDENTIE: een concreet beletsel wint van een onbekende blokkade — geblokkeerd, met de onbekendheid zichtbaar", () => {
+    // Status niet postbaar + blokkade onleesbaar: het document is hoe dan ook
+    // niet boekbaar, dus 'geblokkeerd'; de onbekende blokkade blijft als item
+    // staan zodat de gebruiker ziet dat ook dát nog niet is vastgesteld.
+    const r = evalInkoop(inkoop({ status: "te_controleren", invoice_date: "2026-03-01" }), config({ posting_locked_through: undefined }));
+    expect(r.state).toBe("geblokkeerd");
+    expect(codes(r)).toEqual(["status_niet_postbaar", "boekingsblokkade_onbekend"]);
+    // Ook met ontbrekende bedragen, en voor verkoop.
+    expect(evalInkoop(inkoop({ amount_excl: null, invoice_date: "2026-03-01" }), config({ posting_locked_through: undefined })).state).toBe("geblokkeerd");
+    expect(evalVerkoop(verkoop({ btw_verlegd: true }), config({ posting_locked_through: undefined })).state).toBe("geblokkeerd");
+    // En de regel zelf, los van een document.
+    expect(resolveCatchupState([])).toBe("klaar");
+    expect(resolveCatchupState([{ code: "boekingsblokkade_onbekend", label: "x" }])).toBe("onbekend");
+    expect(resolveCatchupState([{ code: "boekingsblokkade", label: "x" }])).toBe("geblokkeerd");
+    expect(resolveCatchupState([{ code: "boekingsblokkade_onbekend", label: "x" }, { code: "geen_boekingsregels", label: "y" }])).toBe("geblokkeerd");
+  });
+
+  it("13d. de blokkadetoets komt uit één helper: dezelfde uitkomst als postingLockVerdict()", () => {
+    const r = evalInkoop(inkoop({ invoice_date: "2025-03-15" }), config({ posting_locked_through: "2025-12-31" }));
+    const v = postingLockVerdict("2025-03-15", "2025-12-31");
+    expect(v.kind).toBe("blocked");
+    expect(r.blocks[0].label).toBe(v.kind === "blocked" ? v.message : "");
   });
 
   it("14. zonder factuurdatum kan er geen boekingsdatum zijn", () => {
@@ -277,9 +325,13 @@ describe("verkoop — dezelfde regels, de verkoopvariant", () => {
     expect(postableRecords([r])).toEqual([]);
   });
 
-  it("21. een afgesloten boekjaar blokkeert ook de verkoop", () => {
-    expect(codes(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ afgesloten_boekjaar: 2024 }))))
-      .toContain("boekjaar_afgesloten");
+  it("21. de boekingsblokkade geldt ook voor de verkoop; de boekjaarstatus niet", () => {
+    expect(codes(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: "2024-12-31" }))))
+      .toContain("boekingsblokkade");
+    expect(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: null })).state).toBe("klaar");
+    const onbekend = evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: undefined }));
+    expect(codes(onbekend)).toEqual(["boekingsblokkade_onbekend"]);
+    expect(onbekend.state).toBe("onbekend");
   });
 });
 
@@ -288,14 +340,16 @@ describe("samenvatting, selectie en volgorde", () => {
   const geboekt = evalInkoop(INKOOP, VOLLEDIGE_CONFIG, GOEDE_REGELS, "pg-1");
   const klaar = evalInkoop(inkoop({ id: "pi-2" }));
   const geblokkeerd = evalInkoop(inkoop({ id: "pi-3", status: "te_controleren" }));
+  const onbekend = evalInkoop(inkoop({ id: "pi-4" }), config({ posting_locked_through: undefined }));
 
-  it("22. de telling is per toestand en telt alles precies één keer", () => {
-    const s = summarize([geboekt, klaar, geblokkeerd]);
-    expect(s).toEqual({ totaal: 3, geboekt: 1, klaar: 1, geblokkeerd: 1 });
+  it("22. de telling is per toestand en telt alles precies één keer — onbekend apart, nooit bij geblokkeerd", () => {
+    expect(onbekend.state).toBe("onbekend");
+    const s = summarize([geboekt, klaar, geblokkeerd, onbekend]);
+    expect(s).toEqual({ totaal: 4, geboekt: 1, klaar: 1, geblokkeerd: 1, onbekend: 1 });
   });
 
-  it("23. alleen 'klaar' wordt aan de writer aangeboden", () => {
-    expect(postableRecords([geboekt, klaar, geblokkeerd]).map((r) => r.id)).toEqual(["pi-2"]);
+  it("23. alleen 'klaar' wordt aan de writer aangeboden — onbekend dus nooit", () => {
+    expect(postableRecords([geboekt, klaar, geblokkeerd, onbekend]).map((r) => r.id)).toEqual(["pi-2"]);
   });
 
   it("24. inkoop gaat vóór verkoop, daarbinnen op brondatum", () => {

@@ -42,10 +42,12 @@ import { formatCents } from "@/lib/financial-statements-presentation";
 
 export const HISTORISCH_EMPTY_MESSAGE = "Geen historische bronrecords in deze selectie.";
 
-const STATE_BADGE: Record<CatchupRecord["state"], { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
+const STATE_BADGE: Record<CatchupRecord["state"], { label: string; variant: "default" | "secondary" | "destructive" | "outline" | "warning" }> = {
   geboekt: { label: "Geboekt", variant: "secondary" },
   klaar: { label: "Klaar", variant: "default" },
   geblokkeerd: { label: "Geblokkeerd", variant: "outline" },
+  // Geen beletsel en geen vrijbrief: neutraal-waarschuwend, nooit "Geblokkeerd".
+  onbekend: { label: "Niet te bepalen", variant: "warning" },
 };
 
 function euro(amount: number | null) {
@@ -68,6 +70,8 @@ function SummaryCard({ titel, summary, testId }: { titel: string; summary: Catch
         <dd className="text-right font-mono tabular-nums" data-testid={`${testId}-klaar`}>{summary.klaar}</dd>
         <dt className="text-muted-foreground">Geblokkeerd</dt>
         <dd className="text-right font-mono tabular-nums" data-testid={`${testId}-geblokkeerd`}>{summary.geblokkeerd}</dd>
+        <dt className="text-muted-foreground">Niet te bepalen</dt>
+        <dd className="text-right font-mono tabular-nums" data-testid={`${testId}-onbekend`}>{summary.onbekend}</dd>
       </dl>
     </div>
   );
@@ -94,6 +98,10 @@ export default function GrootboekHistorisch() {
   const teBoeken = useMemo(() => postableRecords(catchup.data?.records ?? []), [catchup.data]);
   const geblokkeerd = useMemo(
     () => (catchup.data?.records ?? []).filter((r) => r.state === "geblokkeerd").length,
+    [catchup.data],
+  );
+  const onbekend = useMemo(
+    () => (catchup.data?.records ?? []).filter((r) => r.state === "onbekend").length,
     [catchup.data],
   );
 
@@ -279,6 +287,13 @@ export default function GrootboekHistorisch() {
               {geblokkeerd === 1
                 ? "1 geblokkeerd record wordt overgeslagen."
                 : `${geblokkeerd} geblokkeerde records worden overgeslagen.`}{" "}
+              {onbekend > 0 && (
+                <span data-testid="historisch-onbekend-overgeslagen">
+                  {onbekend === 1
+                    ? "1 record waarvan de boekbaarheid niet te bepalen is, wordt ook niet aangeboden."
+                    : `${onbekend} records waarvan de boekbaarheid niet te bepalen is, worden ook niet aangeboden.`}{" "}
+                </span>
+              )}
               Elke boeking wordt server-side opnieuw gevalideerd; documentstatussen worden niet gewijzigd.
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -39,7 +39,7 @@ import GrootboekHistorisch from "@/pages/GrootboekHistorisch";
 import { evaluatePurchaseInvoice, summarize, type CatchupRecord } from "@/lib/ledger-catchup";
 
 const CONFIG = {
-  id: "client-1", afgesloten_boekjaar: null, crediteuren_rekening_id: "cred",
+  id: "client-1", posting_locked_through: null, crediteuren_rekening_id: "cred",
   debiteuren_rekening_id: "deb", btw_te_vorderen_rekening_id: "btwv", btw_te_betalen_rekening_id: "btwb",
 };
 
@@ -95,6 +95,37 @@ describe("historische boekingen — overzicht", () => {
     expect(within(inkoop).getByTestId("historisch-inkoop-geboekt")).toHaveTextContent("1");
     expect(within(inkoop).getByTestId("historisch-inkoop-klaar")).toHaveTextContent("1");
     expect(within(inkoop).getByTestId("historisch-inkoop-geblokkeerd")).toHaveTextContent("1");
+  });
+
+  it("2b. een record met onleesbare blokkade is 'Niet te bepalen' — apart geteld, neutraal, niet 'Geblokkeerd'", () => {
+    const onbekend = evaluatePurchaseInvoice({
+      invoice: factuur({ id: "pi-onbekend" }), config: { ...CONFIG, posting_locked_through: undefined },
+      lines: { count: 1, sumExcl: 100, withoutAccount: 0, nonPositiveAmountCount: 0 }, postingGroupId: null,
+    });
+    expect(onbekend.state).toBe("onbekend");
+    const alle = [...records(), onbekend];
+    state.data = { records: alle, purchase: summarize(alle), sales: summarize([]) };
+    renderPagina();
+
+    const inkoop = screen.getByTestId("historisch-inkoop");
+    expect(within(inkoop).getByTestId("historisch-inkoop-geblokkeerd")).toHaveTextContent("1");
+    expect(within(inkoop).getByTestId("historisch-inkoop-onbekend")).toHaveTextContent("1");
+    expect(within(inkoop).getByTestId("historisch-inkoop-klaar")).toHaveTextContent("1");
+
+    const rij = screen.getAllByTestId("historisch-row").find((r) => r.getAttribute("data-state-label") === "onbekend")!;
+    const badge = within(rij).getByTestId("historisch-state");
+    expect(badge).toHaveTextContent("Niet te bepalen");
+    expect(badge).not.toHaveTextContent("Geblokkeerd");
+    expect(badge.className).toMatch(/warning/);
+    expect(badge.className).not.toMatch(/destructive/);
+    expect(rij).toHaveTextContent(/kon niet worden bepaald/);
+
+    // Het wordt niet aangeboden, en de bevestiging zegt dat apart.
+    fireEvent.click(screen.getByTestId("historisch-bulk"));
+    const dialoog = screen.getByRole("alertdialog");
+    expect(dialoog).toHaveTextContent(/1 record wordt aangeboden/);
+    expect(dialoog).toHaveTextContent(/1 geblokkeerd record wordt overgeslagen/);
+    expect(within(dialoog).getByTestId("historisch-onbekend-overgeslagen")).toHaveTextContent(/niet te bepalen is, wordt ook niet aangeboden/);
   });
 
   it("3. elk record toont brondatum, nummer, bedrag en grootboekstatus", () => {

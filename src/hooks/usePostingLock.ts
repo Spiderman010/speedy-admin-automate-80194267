@@ -88,21 +88,33 @@ const EVENT_COLUMNS =
  * anders zou het scherm een onbeschermde administratie melden die het niet
  * eens heeft kunnen lezen.
  */
+export async function fetchPostingLockState(clientId: string): Promise<string | null> {
+  const { data, error } = await postingLockApi()
+    .from("clients")
+    .select("id, posting_locked_through")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Administratie niet gevonden");
+  return data.posting_locked_through ?? null;
+}
+
+/*
+ * BEWUST GEEN "lees-of-onbekend"-variant. Een leesfout hier is een gewone
+ * queryfout: zij hoort de omsluitende React Query-aanroep te laten falen,
+ * zodat de normale retry en de zichtbare "Opnieuw proberen" van die pagina
+ * gelden. Een gevangen fout die als geslaagde data wordt gecachet, neemt de
+ * gebruiker juist elke herstelweg af. "Onbekend" ontstaat daarom alleen op de
+ * plek waar de lezing haar eigen query heeft (usePostingLockState): zolang die
+ * niet geslaagd is, én met een eigen refetch-knop erbij.
+ */
+
 export function usePostingLockState(clientId: string | undefined, enabled = true) {
   const { user } = useAuth();
   return useQuery<string | null>({
     queryKey: [POSTING_LOCK_STATE_QUERY_KEY, clientId ?? ""],
     enabled: enabled && !!user && !!clientId,
-    queryFn: async () => {
-      const { data, error } = await postingLockApi()
-        .from("clients")
-        .select("id, posting_locked_through")
-        .eq("id", clientId!)
-        .maybeSingle();
-      if (error) throw error;
-      if (!data) throw new Error("Administratie niet gevonden");
-      return data.posting_locked_through ?? null;
-    },
+    queryFn: () => fetchPostingLockState(clientId!),
   });
 }
 

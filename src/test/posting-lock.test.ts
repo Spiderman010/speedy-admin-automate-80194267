@@ -18,6 +18,7 @@ import {
   lockExplanation,
   lockLabel,
   needsLockReconciliation,
+  postingLockVerdict,
   nextDay,
   safePostingLockErrorMetadata,
   sortLockEventsChronologically,
@@ -88,6 +89,35 @@ describe("De reden: getrimd, 1–500 tekens — de regel van de schrijver", () =
   });
 });
 
+describe("Het oordeel over één datum — de enige voorspelling in de app", () => {
+  it("V1. geen blokkade (null) → toegestaan, ongeacht de boekjaarstatus", () => {
+    expect(postingLockVerdict("2025-06-01", null)).toEqual({ kind: "allowed" });
+  });
+
+  it("V2. op of vóór de blokkade → geblokkeerd, met de voorkeurstekst; erna → toegestaan", () => {
+    const v = postingLockVerdict("2025-03-15", "2025-12-31");
+    expect(v.kind).toBe("blocked");
+    expect(v.kind === "blocked" && v.message).toBe("Boekingsdatum 15-03-2025 valt binnen de boekingsblokkade t/m 31-12-2025.");
+    expect(postingLockVerdict("2025-12-31", "2025-12-31").kind).toBe("blocked");
+    expect(postingLockVerdict("2026-01-01", "2025-12-31")).toEqual({ kind: "allowed" });
+  });
+
+  it("V3. onbekende blokkade (undefined) → onbekend: niet toegestaan, niet geblokkeerd", () => {
+    const v = postingLockVerdict("2025-03-15", undefined);
+    expect(v.kind).toBe("unknown");
+    expect(v.kind === "unknown" && v.message).toMatch(/kon niet worden bepaald.*controleert de boeking opnieuw/);
+    // Ook zonder datum valt er niets te oordelen.
+    expect(postingLockVerdict(null, "2025-12-31").kind).toBe("unknown");
+    expect(postingLockVerdict("", "2025-12-31").kind).toBe("unknown");
+  });
+
+  it("V4. het oordeel noemt nooit de boekjaarstatus", () => {
+    for (const v of [postingLockVerdict("2025-03-15", "2025-12-31"), postingLockVerdict("2025-03-15", undefined)]) {
+      expect(JSON.stringify(v)).not.toMatch(/afgesloten|boekjaar/i);
+    }
+  });
+});
+
 describe("De stand in woorden", () => {
   it("5. NULL = geen boekingsblokkade", () => {
     expect(lockLabel(null)).toBe(NO_LOCK_LABEL);
@@ -134,13 +164,14 @@ describe("Wat een wijziging doet", () => {
     );
     const versoepeld = lockChangeConsequences("2025-12-31", "2025-06-30").join(" ");
     expect(versoepeld).toMatch(/van 01-07-2025 t\/m 31-12-2025 worden niet langer door deze blokkade tegengehouden/);
-    expect(versoepeld).toMatch(/afgesloten boekjaar blijft afgesloten/i);
+    expect(versoepeld).toMatch(/afgesloten boekjaar blijft afgesloten; die status is een administratief gegeven en houdt boekingen niet tegen/i);
   });
 
   it("11. opheffen opent geen afgesloten boekjaar, en geen enkele wijziging raakt de boekjaarstatus", () => {
     const opheffen = lockChangeConsequences("2025-12-31", null).join(" ");
     expect(opheffen).toContain(CLEAR_DOES_NOT_REOPEN_NOTE);
-    expect(opheffen).toMatch(/afgesloten boekjaar blijft afgesloten/i);
+    expect(opheffen).toMatch(/afgesloten boekjaar blijft afgesloten; die status is een administratief gegeven en houdt boekingen niet tegen/i);
+    expect(opheffen).not.toMatch(/blijven daardoor geweigerd/i);
     for (const [van, naar] of [[null, "2025-12-31"], ["2025-06-30", "2025-12-31"], ["2025-12-31", "2025-06-30"], ["2025-12-31", null]] as const) {
       const tekst = lockChangeConsequences(van, naar).join(" ");
       expect(tekst).toMatch(/boekjaarstatus en het afgesloten boekjaar van deze administratie veranderen hierdoor niet/);

@@ -179,16 +179,18 @@ export const CLOSE_DIALOG_TITLE = "Boekjaar definitief afsluiten";
 
 export const CLOSED_HEADING = "Boekjaar afgesloten";
 /**
- * Sinds PR E/F is "correcties alleen in een later jaar" niet meer waar: een
- * correctie die in dít boekjaar hoort, kan na heropening door een accountant.
- * Wat wel waar blijft: zolang het jaar afgesloten is, is het niet direct
- * beboekbaar, en heropenen heft een aparte boekingsblokkade niet op.
+ * Sinds PR H (20261002120000) is de boekjaarstatus een ADMINISTRATIEF gegeven:
+ * of er op een datum geboekt kan worden, bepaalt uitsluitend de aparte
+ * boekingsblokkade. Deze tekst belooft daarom nergens dat "afgesloten" boeken
+ * tegenhoudt, en nergens dat heropenen boeken mogelijk maakt.
  */
 export const CLOSED_EXPLANATION =
-  "Dit boekjaar is afgesloten. Zolang het afgesloten is, kunnen er geen normale boekingen of tegenboekingen " +
-  "met een datum in dit boekjaar worden gemaakt. Hoort een correctie in dit boekjaar, dan moet een accountant " +
-  "het eerst heropenen, met een reden; een aparte boekingsblokkade blijft daarbij gewoon gelden. Waar dat " +
-  "past, kan een correctie ook in een later boekjaar dat nog open staat.";
+  "Dit boekjaar is administratief afgesloten. Of er op een datum in dit boekjaar geboekt kan worden, bepaalt " +
+  "niet deze status maar de afzonderlijke boekingsblokkade van de administratie. Hoort een correctie in dit " +
+  "boekjaar, dan moet een accountant het eerst heropenen, met een reden, zodat de afsluiting daarna opnieuw " +
+  "kan worden gecontroleerd; een aparte boekingsblokkade blijft daarbij gewoon gelden. Waar dat past, " +
+  "kan een correctie ook in een later boekjaar dat nog open staat. De database controleert elke boeking opnieuw " +
+  "bij uitvoeren.";
 
 export const ALREADY_CLOSED_NOTICE =
   "Dit boekjaar was al afgesloten. Het bestaande afsluitbewijs is geladen.";
@@ -197,16 +199,17 @@ export const ALREADY_CLOSED_NOTICE =
 export const NOT_RECORDED = "Niet vastgelegd";
 
 /**
- * De uitleg boven de gevolgen. Hier staat expliciet WAT er dichtgaat: het
- * afgesloten boekjaar van de administratie (`clients.afgesloten_boekjaar`, de
- * jaargrendel waar elke boekingsschrijver op toetst). Dat is bewust een andere
- * zin dan "de boekingsblokkade", want die verandert hier niet.
+ * De uitleg boven de gevolgen. Hier staat expliciet WAT er verandert: de
+ * administratieve afsluitstand van de administratie (`clients.afgesloten_boekjaar`).
+ * Sinds PR H toetst geen schrijver die stand meer; boeken wordt begrensd door de
+ * aparte boekingsblokkade, en die verandert hier niet. Dat staat er dus bij.
  */
 export function closeDialogExplanation(clientName: string, fiscalYear: number): string {
   return (
-    `U sluit boekjaar ${fiscalYear} van ${clientName} af. De administratie komt daarmee op ` +
-    `"afgesloten t/m boekjaar ${fiscalYear}" te staan, en dat blokkeert normale boekingen met een datum in ` +
-    `boekjaar ${fiscalYear} of eerder. Heropenen kan daarna alleen door een accountant, met een reden.`
+    `U sluit boekjaar ${fiscalYear} van ${clientName} administratief af. De administratie komt daarmee op ` +
+    `"afgesloten t/m boekjaar ${fiscalYear}" te staan. Dit zet géén boekingsblokkade: of er op een datum in ` +
+    `boekjaar ${fiscalYear} geboekt kan worden, bepaalt de afzonderlijke boekingsblokkade. Heropenen kan daarna ` +
+    `alleen door een accountant, met een reden.`
   );
 }
 
@@ -218,7 +221,7 @@ export function closeDialogExplanation(clientName: string, fiscalYear: number): 
  */
 export function closeConsequences(fiscalYear: number): readonly string[] {
   return [
-    `Na afsluiten kunnen geen nieuwe boekingen of tegenboekingen meer worden gemaakt met een datum in boekjaar ${fiscalYear}.`,
+    `Boekjaar ${fiscalYear} krijgt de status Afgesloten. Die status houdt zelf geen boekingen tegen; wilt u boekingen t/m een datum tegenhouden, stel dan de afzonderlijke boekingsblokkade in.`,
     "Alle bestaande boekingen blijven ongewijzigd staan; er wordt niets verwijderd of herschreven.",
     "Er wordt geen resultaatboeking gemaakt: het resultaat blijft zoals de balans het al toont.",
     "Er wordt geen beginbalans voor het volgende boekjaar geboekt; die volgt uit het grootboek zelf.",

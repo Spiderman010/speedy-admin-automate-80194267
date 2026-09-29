@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchPostingLockState } from "./usePostingLock";
 import { useAuth } from "./useAuth";
 import { fetchLedgerPostings } from "./useLedgerPostings";
 import { fetchLedgerIntegrity } from "./useLedgerIntegrity";
@@ -152,14 +153,17 @@ export async function fetchAccountingDiagnostics(clientId: string): Promise<Acco
 
   const { data: clientRow, error: clientError } = await supabase
     .from("clients")
-    .select(
-      "id, afgesloten_boekjaar, crediteuren_rekening_id, debiteuren_rekening_id, btw_te_vorderen_rekening_id, btw_te_betalen_rekening_id",
-    )
+    .select("id, crediteuren_rekening_id, debiteuren_rekening_id, btw_te_vorderen_rekening_id, btw_te_betalen_rekening_id")
     .eq("id", clientId)
     .maybeSingle();
   if (clientError) throw clientError;
   if (!clientRow) throw new Error("Administratie niet gevonden");
-  const config = clientRow as CatchupClientConfig;
+  // De boekingsblokkade is de enige datumgrendel (PR H). Faalt de lezing, dan
+  // faalt deze query: React Query herkanst en de pagina biedt "Opnieuw proberen".
+  const config: CatchupClientConfig = {
+    ...clientRow,
+    posting_locked_through: await fetchPostingLockState(clientId),
+  };
 
   const [purchaseInvoices, salesInvoices, purchaseMarkers, salesMarkers, bankMarkers, manualMarkers, postings, accounts, integrity, reversalMarkers] =
     await Promise.all([

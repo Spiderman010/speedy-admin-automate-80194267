@@ -83,6 +83,8 @@ const state = {
   storedLines: [] as any[],
   ledgers: [TELEFOON, KANTOOR] as any[],
   clients: [{ ...volledigeClient }] as any[],
+  lock: null as string | null,
+  lockError: false,
 };
 
 vi.mock("react-router-dom", async () => {
@@ -93,6 +95,19 @@ vi.mock("react-router-dom", async () => {
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => {
+      // De boekingsblokkade wordt via haar eigen lezing opgehaald (PR H).
+      if (table === "clients") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () =>
+                state.lockError
+                  ? { data: null, error: { code: "42501", message: "permission denied" } }
+                  : { data: { id: "client-1", posting_locked_through: state.lock }, error: null },
+            }),
+          }),
+        };
+      }
       if (table !== "purchase_invoices") throw new Error(`Unexpected table ${table}`);
       return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: state.invoice, error: null }) }) }) };
     },
@@ -101,6 +116,8 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
+// De blokkadelezing (usePostingLockState) is pas actief met een ingelogde gebruiker.
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "user-1" }, session: null, loading: false }) }));
 vi.mock("@/hooks/useActiveOrganization", () => ({
   useActiveOrganization: () => ({ activeOrganizationId: "org-1", isReady: true }),
 }));
@@ -161,6 +178,8 @@ beforeEach(() => {
   state.storedLines = [];
   state.ledgers = [TELEFOON, KANTOOR];
   state.clients = [{ ...volledigeClient }];
+  state.lock = null;
+  state.lockError = false;
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

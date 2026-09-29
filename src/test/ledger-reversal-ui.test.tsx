@@ -598,15 +598,26 @@ describe("scope", () => {
     for (const f of [
       "src/hooks/usePurchaseInvoicePosting.ts",
       "src/hooks/useSalesInvoicePosting.ts",
-      "src/lib/ledger-catchup.ts",
-      "src/hooks/useLedgerCatchup.ts",
     ]) {
       if (existsSync(f)) expect(changed, f).not.toContain(f);
     }
+    // De inhaalslag stond hier ook. Dat was een scope-uitspraak: zij is een
+    // voorspelling en beweegt mee met de schrijvers (PR H). Wat blijft: zij
+    // boekt uitsluitend via de bestaande inkoop-/verkoophooks en kent de
+    // tegenboeking niet.
+    const inhaal = readFileSync("src/hooks/useLedgerCatchup.ts", "utf8");
+    expect(inhaal).toMatch(/usePostPurchaseInvoice\(\)[\s\S]*usePostSalesInvoice\(\)/);
+    expect(inhaal).not.toMatch(/reverse_posting_group|ledger_reversal|\.rpc\(/);
+    expect(readFileSync("src/lib/ledger-catchup.ts", "utf8")).not.toMatch(/reverse_posting_group|ledger_reversal|supabase|\.rpc\(/);
   });
 
   branchIt("21. de diagnostiek is niet herontworpen", () => {
-    expect(changed).not.toContain("src/lib/accounting-diagnostics.ts");
+    // `accounting-diagnostics.ts` stond hier ook; dat was een scope-uitspraak.
+    // Wat deze test beschermt is de tegenboekingskant van de diagnostiek, en
+    // die is en blijft wat `reversal-integrity.ts` zegt.
+    const diag = readFileSync("src/lib/accounting-diagnostics.ts", "utf8");
+    expect(diag).toMatch(/import \{ REVERSAL_FINDING_TITLES, type ReversalFinding \} from "\.\/reversal-integrity"/);
+    expect(diag).not.toMatch(/reverse_posting_group|\.rpc\(|supabase/);
     expect(changed).not.toContain("src/lib/reversal-integrity.ts");
     expect(changed).not.toContain("src/pages/DiagnosticsAccounting.tsx");
   });

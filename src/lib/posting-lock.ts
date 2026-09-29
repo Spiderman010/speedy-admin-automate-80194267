@@ -119,6 +119,47 @@ export function validateLockReason(raw: string): LockReasonValidation {
   return { ok: true, reason };
 }
 
+// ── Het oordeel van de blokkade over één datum ──────────────────────────────
+//
+// DE ENIGE plek in de app die "kan er op deze datum worden geboekt, gegeven de
+// blokkade?" voorspelt. Inhaalslag, diagnostiek en de inkoopwerkbank lezen
+// hier; niemand herhaalt de regel. De regel is die van `posting_allowed()`:
+// een datum op of vóór de blokkade is dicht, erna is open, geen blokkade is
+// open. Sinds PR H (20261002120000) is dit de ENIGE datumgrendel: de
+// boekjaarstatus (`afgesloten_boekjaar`) is een administratief gegeven en
+// voorspelt niets over boekbaarheid.
+//
+// FAIL CLOSED, MAAR EERLIJK: is de blokkade niet bekend (`undefined`), dan is
+// het oordeel `unknown` — niet "toegestaan", en ook niet "geblokkeerd". De
+// database toetst hoe dan ook opnieuw bij uitvoeren.
+
+export type PostingLockVerdict =
+  | { kind: "allowed" }
+  | { kind: "blocked"; lockedThrough: string; message: string }
+  | { kind: "unknown"; message: string };
+
+export const LOCK_UNKNOWN_MESSAGE =
+  "De boekingsblokkade van deze administratie kon niet worden bepaald; de database controleert de boeking opnieuw bij uitvoeren.";
+
+export function postingLockVerdict(
+  postingDate: string | null | undefined,
+  lockedThrough: string | null | undefined,
+): PostingLockVerdict {
+  if (lockedThrough === undefined) return { kind: "unknown", message: LOCK_UNKNOWN_MESSAGE };
+  if (lockedThrough === null) return { kind: "allowed" };
+  if (!postingDate) {
+    return { kind: "unknown", message: "Zonder boekingsdatum kan de boekingsblokkade niet worden getoetst." };
+  }
+  if (postingDate <= lockedThrough) {
+    return {
+      kind: "blocked",
+      lockedThrough,
+      message: `Boekingsdatum ${formatDatumNL(postingDate)} valt binnen de boekingsblokkade t/m ${formatDatumNL(lockedThrough)}.`,
+    };
+  }
+  return { kind: "allowed" };
+}
+
 // ── De huidige stand in woorden ─────────────────────────────────────────────
 
 export const NO_LOCK_LABEL = "Geen boekingsblokkade";
@@ -136,7 +177,8 @@ export function lockLabel(lockedThrough: string | null): string {
 export function lockExplanation(lockedThrough: string | null): string[] {
   if (lockedThrough === null) {
     return [
-      "Er is geen boekingsblokkade ingesteld. Boeken wordt alleen begrensd door de overige boekhoudkundige controles, waaronder een afgesloten boekjaar.",
+      "Er is geen boekingsblokkade ingesteld. Boeken wordt alleen begrensd door de overige boekhoudkundige controles; de boekjaarstatus is daar sinds de ontkoppeling geen onderdeel meer van.",
+      "Het boekjaar kan afgesloten zijn zonder dat er een afzonderlijke boekingsblokkade voor die datums is.",
     ];
   }
   const d = formatDatumNL(lockedThrough);
@@ -199,14 +241,14 @@ export function lockChangeConsequences(current: string | null, next: string | nu
       return [
         `De blokkade wordt versoepeld: boekingen van ${formatDatumNL(nextDay(next!))} t/m ${formatDatumNL(current!)} worden niet langer door deze blokkade tegengehouden.`,
         `Daarna geldt: boekingen met een datum op of vóór ${formatDatumNL(next!)} blijven geblokkeerd.`,
-        "Een afgesloten boekjaar blijft afgesloten; boekingen in dat jaar blijven daardoor geweigerd.",
+        "Een afgesloten boekjaar blijft afgesloten; die status is een administratief gegeven en houdt boekingen niet tegen.",
         ...blijft,
       ];
     case "clear":
       return [
         `De blokkade wordt opgeheven: boekingen met een datum op of vóór ${formatDatumNL(current!)} worden niet langer door deze blokkade tegengehouden.`,
         CLEAR_DOES_NOT_REOPEN_NOTE,
-        "Een afgesloten boekjaar blijft afgesloten; boekingen in dat jaar blijven daardoor geweigerd.",
+        "Een afgesloten boekjaar blijft afgesloten; die status is een administratief gegeven en houdt boekingen niet tegen.",
         ...blijft,
       ];
     case "unchanged":

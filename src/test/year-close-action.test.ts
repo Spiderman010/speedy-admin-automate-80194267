@@ -310,9 +310,10 @@ describe("De bevestiging zegt wat er gebeurt", () => {
 
   it("26. noemt de gevolgen die een accountant morgen merkt", () => {
     const tekst = gevolgen.join(" ");
-    expect(tekst).toMatch(
-      /geen nieuwe boekingen of tegenboekingen meer worden gemaakt met een datum in boekjaar 2026/i,
-    );
+    // Sinds PR H houdt de status zelf geen boekingen tegen; dat staat er nu letterlijk.
+    expect(tekst).toMatch(/status Afgesloten\. Die status houdt zelf geen boekingen tegen/i);
+    expect(tekst).toMatch(/stel dan de afzonderlijke boekingsblokkade in/i);
+    expect(tekst).not.toMatch(/geen nieuwe boekingen of tegenboekingen meer worden gemaakt/i);
     expect(tekst).toMatch(/bestaande boekingen blijven ongewijzigd/i);
     expect(tekst).toMatch(/geen resultaatboeking/i);
     expect(tekst).toMatch(/geen beginbalans voor het volgende boekjaar/i);
@@ -349,7 +350,11 @@ describe("De bevestiging zegt wat er gebeurt", () => {
     // Wat er wél moet staan: niet direct beboekbaar zolang het dicht is,
     // heropenen door een accountant met een reden, en de boekingsblokkade
     // blijft gelden.
-    expect(CLOSED_EXPLANATION).toMatch(/zolang het afgesloten is, kunnen er geen normale boekingen/i);
+    // Sinds PR H: de status voorspelt niets over boekbaarheid; de blokkade doet dat.
+    expect(CLOSED_EXPLANATION).toMatch(/administratief afgesloten/i);
+    expect(CLOSED_EXPLANATION).toMatch(/bepaalt niet deze status maar de afzonderlijke boekingsblokkade/i);
+    expect(CLOSED_EXPLANATION).toMatch(/database controleert elke boeking opnieuw/i);
+    expect(CLOSED_EXPLANATION).not.toMatch(/kunnen er geen normale boekingen/i);
     expect(CLOSED_EXPLANATION).toMatch(/moet een accountant het eerst heropenen, met een reden/i);
     expect(CLOSED_EXPLANATION).toMatch(/aparte boekingsblokkade blijft daarbij gewoon gelden/i);
     expect(CLOSED_EXPLANATION).toMatch(/later boekjaar dat nog open staat/i);
@@ -360,7 +365,9 @@ describe("De bevestiging zegt wat er gebeurt", () => {
   it("26b. de uitleg zegt WAT er dichtgaat en zwijgt niet over heropenen", () => {
     const uitleg = closeDialogExplanation("Klant A", 2026);
     expect(uitleg).toMatch(/afgesloten t\/m boekjaar 2026/);
-    expect(uitleg).toMatch(/blokkeert normale boekingen/i);
+    expect(uitleg).toMatch(/zet géén boekingsblokkade/i);
+    expect(uitleg).toMatch(/bepaalt de afzonderlijke boekingsblokkade/i);
+    expect(uitleg).not.toMatch(/blokkeert normale boekingen/i);
     expect(uitleg).toMatch(/heropenen kan daarna alleen door een accountant, met een reden/i);
     // Geen belofte over de boekingsblokkade in de andere richting.
     expect(uitleg).not.toMatch(/posting_locked_through|blokkade wordt/i);
