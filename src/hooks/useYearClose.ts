@@ -11,31 +11,44 @@ import {
   type YearClosure,
   type YearCloseResult,
 } from "@/lib/year-close-action";
+import {
+  classifyReopenError,
+  safeReopenErrorMetadata,
+  sortEventsChronologically,
+  type FiscalYearEvent,
+  type ReopenResult,
+} from "@/lib/year-close-lifecycle";
 
 /**
- * Jaarafsluiting PR 2b — de datalaag.
+ * Jaarafsluiting PR 2b + PR F — de datalaag.
  *
- * Er wordt hier NOOIT in `year_closures` of in `clients` geschreven. De enige
- * schrijfactie is één aanroep van `public.close_fiscal_year()` met precies twee
- * waarden: de administratie en het jaartal. Alles daarna — de herkeuring, het
- * bewijs, het watermerk — doet de database, in één transactie.
+ * Er wordt hier NOOIT in `year_closures`, `fiscal_year_events` of `clients`
+ * geschreven. De enige schrijfacties zijn twee RPC's: `close_fiscal_year()`
+ * met precies twee waarden (administratie en jaartal) en `reopen_fiscal_year()`
+ * met precies drie (administratie, jaartal, getrimde reden). Alles daarna — de
+ * herkeuring, het bewijs, de gebeurtenis, het watermerk — doet de database, in
+ * één transactie. De boekingsblokkade (`posting_locked_through`,
+ * `set_posting_lock()`) wordt hier niet gelezen en niet geraakt.
  *
  * `authenticated` heeft sowieso geen INSERT, UPDATE of DELETE op
- * `year_closures` (20260924120000), en `clients.afgesloten_boekjaar` kan alleen
- * nog naar een jaar waarvoor een bewijs bestaat. Een client-side schrijfpad
- * bestaat dus niet meer; deze hook bevestigt dat in code.
+ * `year_closures` of `fiscal_year_events`, en `clients.afgesloten_boekjaar` kan
+ * alleen nog bewegen mét een gebeurtenis uit dezelfde transactie. Een
+ * client-side schrijfpad bestaat dus niet; deze hook bevestigt dat in code.
  */
 
 export const YEAR_CLOSURE_QUERY_KEY = "year-closure" as const;
+export const FISCAL_YEAR_EVENTS_QUERY_KEY = "fiscal-year-events" as const;
+
+type ApiError = { code?: string; message?: string } | null;
 
 /**
- * TIJDELIJKE SHIM — weghalen zodra 20260924120000 in de gegenereerde types
- * staat (`src/integrations/supabase/types.ts` opnieuw genereren; nooit met de
- * hand bijwerken, zie AGENTS.md).
+ * TIJDELIJKE SHIM — weghalen zodra 20260924120000, 20260925120000 en
+ * 20261001120000 in de gegenereerde types staan (`src/integrations/supabase/
+ * types.ts` opnieuw genereren; nooit met de hand bijwerken, zie AGENTS.md).
  *
  * Exact hetzelfde patroon als `useLedgerReversal.ts` voor 20260921120000: de
- * cast is zo smal mogelijk — precies de twee aanroepen die hier nodig zijn,
- * met echte parameter- en resultaattypes, geen brede `any`-laag.
+ * cast is zo smal mogelijk — precies de aanroepen die hier nodig zijn, met
+ * echte parameter- en resultaattypes, geen brede `any`-laag.
  */
 interface YearCloseApi {
   from(table: "year_closures"): {
@@ -48,10 +61,30 @@ interface YearCloseApi {
           column: string,
           value: number,
         ): {
-          maybeSingle(): PromiseLike<{
-            data: YearClosure | null;
-            error: { code?: string; message?: string } | null;
-          }>;
+          maybeSingle(): PromiseLike<{ data: YearClosure | null; error: ApiError }>;
+        };
+      };
+    };
+  };
+  from(table: "fiscal_year_events"): {
+    select(columns: string): {
+      eq(
+        column: string,
+        value: string,
+      ): {
+        eq(
+          column: string,
+          value: number,
+        ): {
+          order(
+            column: string,
+            options?: { ascending?: boolean; nullsFirst?: boolean },
+          ): {
+            order(
+              column: string,
+              options?: { ascending?: boolean; nullsFirst?: boolean },
+            ): PromiseLike<{ data: FiscalYearEvent[] | null; error: ApiError }>;
+          };
         };
       };
     };
@@ -59,12 +92,18 @@ interface YearCloseApi {
   rpc(
     fn: "close_fiscal_year",
     args: { _client_id: string; _fiscal_year: number },
-  ): PromiseLike<{ data: YearCloseResult[] | null; error: { code?: string; message?: string } | null }>;
+  ): PromiseLike<{ data: YearCloseResult[] | null; error: ApiError }>;
+  rpc(
+    fn: "reopen_fiscal_year",
+    args: { _client_id: string; _fiscal_year: number; _reason: string },
+  ): PromiseLike<{ data: ReopenResult[] | null; error: ApiError }>;
 }
 
 const yearCloseApi = () => supabase as unknown as YearCloseApi;
 
-const CLOSURE_COLUMNS = "client_id, organization_id, fiscal_year, closed_at, closed_by";
+const CLOSURE_COLUMNS = "client_id, organization_id, fiscal_year, closed_at, closed_by, status";
+
+const EVENT_COLUMNS = "id, client_id, organization_id, fiscal_year, event_type, occurred_at, actor_id, reason";
 
 // ── Het bewijs lezen ────────────────────────────────────────────────────────
 
@@ -95,6 +134,33 @@ export function useYearClosure(clientId: string | undefined, fiscalYear: number,
         .maybeSingle();
       if (error) throw error;
       return data ?? null;
+    },
+  });
+}
+
+/**
+ * De levensloop van één administratie en één boekjaar: elke `closed`- en
+ * `reopened`-gebeurtenis, chronologisch (oudste eerst). Alleen lezen; de
+ * tabel is append-only en de app heeft er geen schrijfrecht op.
+ *
+ * De volgorde wordt ook client-side nog eens vastgezet, zodat het scherm
+ * nooit van de toevallige leesvolgorde afhangt.
+ */
+export function useFiscalYearEvents(clientId: string | undefined, fiscalYear: number, enabled = true) {
+  const { user } = useAuth();
+  return useQuery<FiscalYearEvent[]>({
+    queryKey: [FISCAL_YEAR_EVENTS_QUERY_KEY, clientId ?? "", fiscalYear],
+    enabled: enabled && !!user && !!clientId,
+    queryFn: async () => {
+      const { data, error } = await yearCloseApi()
+        .from("fiscal_year_events")
+        .select(EVENT_COLUMNS)
+        .eq("client_id", clientId!)
+        .eq("fiscal_year", fiscalYear)
+        .order("occurred_at", { ascending: true })
+        .order("id", { ascending: true });
+      if (error) throw error;
+      return sortEventsChronologically(data ?? []);
     },
   });
 }
@@ -152,6 +218,7 @@ function toClassifiedError(error: unknown) {
 export function invalidateYearCloseQueries(queryClient: QueryClient): Promise<unknown> {
   return Promise.all([
     queryClient.invalidateQueries({ queryKey: [YEAR_CLOSURE_QUERY_KEY] }),
+    queryClient.invalidateQueries({ queryKey: [FISCAL_YEAR_EVENTS_QUERY_KEY] }),
     queryClient.invalidateQueries({ queryKey: ["clients"] }),
     queryClient.invalidateQueries({ queryKey: [LEDGER_POSTINGS_QUERY_KEY] }),
     queryClient.invalidateQueries({ queryKey: [UNPOSTED_SOURCE_WORK_QUERY_KEY] }),
@@ -188,6 +255,58 @@ export function useCloseFiscalYear() {
     },
     onError: (error) => console.warn("[jaarafsluiting] mislukt", safeYearCloseErrorMetadata(error)),
     // Ook na een fout: de database kan wél hebben afgesloten terwijl het
+    // antwoord wegviel, en de cache mag daar niet achterlopen.
+    onSettled: () => invalidateYearCloseQueries(queryClient).then(() => undefined),
+  });
+}
+
+// ── Heropenen (PR F, op de schrijver van PR E) ──────────────────────────────
+
+export interface ReopenFiscalYearInput {
+  clientId: string;
+  fiscalYear: number;
+  /** Al getrimd en getoetst door `validateReopenReason()`; de database toetst opnieuw. */
+  reason: string;
+}
+
+function toClassifiedReopenError(error: unknown) {
+  const classified = classifyReopenError(error);
+  return Object.assign(new Error(classified.message), {
+    kind: classified.kind,
+    code: classified.code,
+    advice: classified.advice,
+  });
+}
+
+/**
+ * Heropent één afgesloten boekjaar.
+ *
+ * ER GAAN DRIE WAARDEN DE DEUR UIT: administratie, jaartal en de reden. Geen
+ * watermerk, geen status, geen gebeurtenis — de database schrijft die zelf,
+ * onder haar eigen grendel, en verlaagt het watermerk naar het hoogste jaar
+ * dat nog afgesloten is. De boekingsblokkade wordt niet aangeraakt: er wordt
+ * hier geen `set_posting_lock()` aangeroepen en `posting_locked_through` komt
+ * in deze hook niet voor.
+ *
+ * `reopened = false` is geen fout: het jaar stond al heropend en dezelfde
+ * gebeurtenis is teruggegeven. Een lege array is wél een fout — fail closed.
+ */
+export function useReopenFiscalYear() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: ReopenFiscalYearInput): Promise<ReopenResult> => {
+      const { data, error } = await yearCloseApi().rpc("reopen_fiscal_year", {
+        _client_id: input.clientId,
+        _fiscal_year: input.fiscalYear,
+        _reason: input.reason,
+      });
+      if (error) throw toClassifiedReopenError(error);
+      const row = data?.[0];
+      if (!row) throw toClassifiedReopenError(new Error("De heropening gaf geen uitkomst terug."));
+      return row;
+    },
+    onError: (error) => console.warn("[jaarafsluiting] heropenen mislukt", safeReopenErrorMetadata(error)),
+    // Ook na een fout: de database kan wél hebben heropend terwijl het
     // antwoord wegviel, en de cache mag daar niet achterlopen.
     onSettled: () => invalidateYearCloseQueries(queryClient).then(() => undefined),
   });

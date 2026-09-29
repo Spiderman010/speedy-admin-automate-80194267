@@ -1145,6 +1145,28 @@ Backend only — geen UI (dat is PR F), geen gegenereerde types.
 - **Fail closed bij inconsistente erfenis:** watermerk zonder bewijs, watermerk boven het hoogste bewijs, een bewijsloos jaar met boekingen dat mee zou openen, of een stand die de gebeurtenisgeschiedenis tegenspreekt.
 - **Ongewijzigd:** `posting_locked_through` (afsluiten en heropenen zetten of wissen haar nooit), het grootboek (geen boeking, geen resultaatbestemming, geen doorrol), de acht schrijvers en hun watermerktoets.
 
+### 6C-b11 — de levenscyclus op het scherm (PR F)
+
+```
+src/lib/year-close-lifecycle.ts             puur: status, heropenbaarheid, reden, woorden, foutvertaling, historieregels
+src/hooks/useYearClose.ts                   + useFiscalYearEvents · useReopenFiscalYear (en `status` in het bewijs)
+src/pages/Jaarafsluiting.tsx                /overzichten/jaarafsluiting — status, afsluiten, heropenen, historie
+src/test/year-close-lifecycle.test.ts       26 · de pure laag
+src/test/jaarafsluiting-lifecycle.test.tsx  20 · het scherm, met de échte hooks tegen een gemockte client
+```
+
+**UI-only.** Geen migratie, geen SQL, geen gegenereerde types (de shim in `useYearClose.ts` groeit met `fiscal_year_events` en `reopen_fiscal_year`; weghalen zodra de types zijn geregenereerd).
+
+- **De status komt uit `year_closures.status`, de historie uit `fiscal_year_events`.** Open / Afgesloten / Heropend — nooit afgeleid uit rekeningnummers, boekingen of het watermerk alleen. Een bewijs zonder `status` telt als `closed` (de databasedefault, en wat het RPC-resultaat van `close_fiscal_year()` betekent).
+- **Afsluiten en opnieuw afsluiten zijn dezelfde knop, dezelfde dialoog en dezelfde gereedheid.** `closeAvailability()` behandelt een heropend jaar niet als "al afgesloten" maar laat het de gewone route lopen: eerst `ready`, dan de rol. Het scherm blijft strenger dan de database. De dialoog zegt nu WAT er dichtgaat — "afgesloten t/m boekjaar N" op de administratie, wat normale boekingen t/m N blokkeert — en zegt niet meer dat heropenen onmogelijk is; dat was waar tot PR E.
+- **Heropenen: accountant, verplichte reden, rood.** Alleen op een jaar met status `closed` dat op het watermerk staat (PR E: het watermerk ís het hoogste afgesloten jaar, dus een hoger watermerk betekent "eerst de jongere jaren"). De reden wordt getrimd en moet 1–500 tekens zijn — dezelfde regel als de database — en de bevestigknop staat uit zolang dat niet zo is. Er gaan precies drie waarden de deur uit. De enige rode knop op dit scherm, want het is de enige handeling die een bescherming weghaalt.
+- **De boekingsblokkade is geen onderdeel van de boekjaarstatus.** Geen `set_posting_lock()`, geen `posting_locked_through` in hook, pure laag of pagina (statische tests). De blokkadekaart zegt expliciet dat afsluiten en heropenen haar niet raken, en de heropeningsdialoog belooft nergens dat een periode "weer opengaat". Haar waarde staat niet in de leesmodellen van deze pagina en wordt dus ook niet getoond.
+- **Serverweigeringen komen letterlijk door, elk met een eigen soort.** `classifyReopenError()`: niet afgesloten, niet het hoogste jaar, inconsistent (elke "moet handmatig worden onderzocht"), reden, rol, tenant, netwerk, schema. `classifyYearCloseError()` krijgt er twee soorten bij voor de herafsluiting: `older_reopened` ("sluit dat eerst opnieuw af") en `inconsistent_lifecycle` (eindstation). Alleen tekst die eruitziet als rauwe PostgreSQL wordt vervangen.
+- **Idempotent is een mededeling, geen fout.** `reopened = false` en `created = false` tonen één bewijs, één regel extra in de levensloop en geen rode toast. Een netwerkstoring verzoent eerst (het bewijs opnieuw ophalen) en herhaalt nooit vanzelf.
+- **Na elke mutatie wordt alles ververst** — `year-closure`, `fiscal-year-events`, `clients`, grootboek, bronwerk, diagnostiek — en `mutateAsync` wacht daarop, zodat het scherm nooit een verouderde status kan tonen. De gereedheidsmomentopname gaat na een heropening weg: zij beschreef een afgesloten jaar.
+- **De historie verzint niets.** Chronologisch (oudste eerst; bij gelijk tijdstip beslist het id), met soort, boekjaar, tijdstip, reden, en de actor alleen als het de ingelogde gebruiker zelf is — geen naam verzonnen, geen uuid getoond, dezelfde regel als het afsluitbewijs. Kan de tabel niet worden gelezen, dan staat dat er.
+- **Vijf branch-scope-asserties vervangen door hun invariant** (`year-close-action` 26/30, `jaarafsluiting-close` 8/25b/29, `fiscal-year-events-migration` 20, `year-close-readiness` 18): "heropenen bestaat niet" en "de app leest de tabel nog niet" waren waar tot PR E/F. Wat blijft: geen resultaatboeking, geen doorrol, geen grootboek, heropenen uitsluitend via de PR E-schrijver, één leespad op `fiscal_year_events` en nergens een schrijfpad.
+
 ### 6C-b11 — de afsluiting schrijft haar gebeurtenis (PR B)
 
 ```

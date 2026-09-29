@@ -5,12 +5,14 @@ import { execFileSync } from "node:child_process";
 import { assertBranchSqlKeepsLedgerFoundation } from "./support/branch-sql-scope";
 import {
   ALREADY_CLOSED_NOTICE,
+  CLOSED_EXPLANATION,
   INCONSISTENT_CLOSURE_ADVICE,
   INCONSISTENT_CLOSURE_REASON,
   UNKNOWN_OUTCOME_MESSAGE,
   classifyYearCloseError,
   closeAvailability,
   closeConsequences,
+  closeDialogExplanation,
   closureReceiptEntries,
   isTerminal,
   needsReconciliation,
@@ -306,7 +308,7 @@ describe("Het afsluitbewijs", () => {
 describe("De bevestiging zegt wat er gebeurt", () => {
   const gevolgen = closeConsequences(2026);
 
-  it("26. noemt de zes gevolgen die een accountant morgen merkt", () => {
+  it("26. noemt de gevolgen die een accountant morgen merkt", () => {
     const tekst = gevolgen.join(" ");
     expect(tekst).toMatch(
       /geen nieuwe boekingen of tegenboekingen meer worden gemaakt met een datum in boekjaar 2026/i,
@@ -314,8 +316,55 @@ describe("De bevestiging zegt wat er gebeurt", () => {
     expect(tekst).toMatch(/bestaande boekingen blijven ongewijzigd/i);
     expect(tekst).toMatch(/geen resultaatboeking/i);
     expect(tekst).toMatch(/geen beginbalans voor het volgende boekjaar/i);
-    expect(tekst).toMatch(/later boekjaar dat nog open staat/i);
-    expect(tekst).toMatch(/niet meer worden heropend/i);
+    // Was: "kan hierna niet meer worden heropend" — waar tot PR E, geen
+    // invariant. Wat blijft: heropenen is geen gewone handeling maar een
+    // accountantsbesluit mét vastgelegde reden, en de boekingsblokkade staat
+    // los van de afsluiting.
+    expect(tekst).toMatch(/moet een accountant het eerst heropenen/i);
+    expect(tekst).toMatch(/verplichte reden/i);
+    expect(tekst).toMatch(/boekingsblokkade .* verandert hierdoor niet/i);
+    expect(tekst).toMatch(/heropenen heft haar ook niet op/i);
+    expect(tekst).not.toMatch(/niet meer worden heropend/i);
+    // Een later jaar blijft een mogelijkheid, niet de enige weg.
+    expect(tekst).toMatch(/kan een correctie ook in een later boekjaar/i);
+  });
+
+  it("26c. nergens meer 'correcties alleen in een later jaar' — dat is sinds PR E/F onwaar", () => {
+    /*
+     * Een correctie die in het afgesloten jaar zelf hoort, kan na heropening
+     * door een accountant. Deze zinnen mogen dus niet terugkomen, noch in de
+     * bevestiging, noch in de uitleg bij een afgesloten jaar.
+     */
+    const OUD = [
+      /alleen nog (maken )?in een later/i,
+      /alleen in een later/i,
+      /horen in een later/i,
+      /correcties horen in/i,
+      /staat vast\./i,
+    ];
+    for (const tekst of [...gevolgen, CLOSED_EXPLANATION]) {
+      for (const oud of OUD) expect(tekst, `${oud}`).not.toMatch(oud);
+    }
+
+    // Wat er wél moet staan: niet direct beboekbaar zolang het dicht is,
+    // heropenen door een accountant met een reden, en de boekingsblokkade
+    // blijft gelden.
+    expect(CLOSED_EXPLANATION).toMatch(/zolang het afgesloten is, kunnen er geen normale boekingen/i);
+    expect(CLOSED_EXPLANATION).toMatch(/moet een accountant het eerst heropenen, met een reden/i);
+    expect(CLOSED_EXPLANATION).toMatch(/aparte boekingsblokkade blijft daarbij gewoon gelden/i);
+    expect(CLOSED_EXPLANATION).toMatch(/later boekjaar dat nog open staat/i);
+    // Geen belofte dat een afgesloten jaar zelf beboekbaar is.
+    expect(CLOSED_EXPLANATION).not.toMatch(/kunt u (nog )?(gewoon )?boeken|blijft beboekbaar/i);
+  });
+
+  it("26b. de uitleg zegt WAT er dichtgaat en zwijgt niet over heropenen", () => {
+    const uitleg = closeDialogExplanation("Klant A", 2026);
+    expect(uitleg).toMatch(/afgesloten t\/m boekjaar 2026/);
+    expect(uitleg).toMatch(/blokkeert normale boekingen/i);
+    expect(uitleg).toMatch(/heropenen kan daarna alleen door een accountant, met een reden/i);
+    // Geen belofte over de boekingsblokkade in de andere richting.
+    expect(uitleg).not.toMatch(/posting_locked_through|blokkade wordt/i);
+    expect(uitleg).not.toMatch(/kan niet ongedaan/i);
   });
 
   it("27. gebruikt geen interne architectuurtaal", () => {
@@ -373,21 +422,33 @@ describe("Wat deze fase NIET toevoegt", () => {
     }
   });
 
-  it("30. er is geen heropenpad, geen resultaatboeking en geen doorrol", () => {
-    for (const pad of ["src/hooks/useYearClose.ts", "src/lib/year-close-action.ts"]) {
+  it("30. geen resultaatboeking, geen doorrol, en heropenen alleen via de PR E-schrijver", () => {
+    /*
+     * Was: "er is geen heropenpad" plus een prototype-dialoog die per
+     * constructie niets deed. Dat was waar tot PR F, geen invariant. Wat
+     * blijft: de app maakt geen resultaatboeking en geen doorrol, raakt het
+     * grootboek niet, en heropent uitsluitend via `reopen_fiscal_year()` —
+     * nooit door zelf in `year_closures`, `fiscal_year_events` of het
+     * watermerk te schrijven, en nooit via de boekingsblokkade.
+     */
+    for (const pad of [
+      "src/hooks/useYearClose.ts",
+      "src/lib/year-close-action.ts",
+      "src/lib/year-close-lifecycle.ts",
+      "src/pages/Jaarafsluiting.tsx",
+    ]) {
       const bron = lees(pad);
-      expect(bron, pad).not.toMatch(/reopen|heropen(?!d)/i);
       expect(bron, pad).not.toMatch(/carry_forward|doorrol/i);
       expect(bron, pad).not.toMatch(/ledger_postings|posting_group/);
       expect(bron, pad).not.toMatch(/result_cents|resultaat_rekening|9998|9999/);
+      expect(bron, pad).not.toMatch(/set_posting_lock|posting_locked_through/);
+      expect(bron, pad).not.toMatch(/\.from\(\s*["']fiscal_year_events["']\s*\)[\s\S]{0,80}\.(insert|update|delete|upsert)\(/);
     }
 
+    const hook = lees("src/hooks/useYearClose.ts");
+    expect(hook).toContain('rpc("reopen_fiscal_year"');
     const pagina = lees("src/pages/Jaarafsluiting.tsx");
-    expect(pagina).not.toMatch(/carry_forward|doorrol/i);
-    expect(pagina).not.toMatch(/ledger_postings|posting_group/);
-    expect(pagina).not.toMatch(/result_cents|resultaat_rekening|9998|9999/);
-    expect(pagina).toMatch(/confirmDisabled/);
-    expect(pagina).toMatch(/onConfirm=\{\(\) => undefined\}/);
+    expect(pagina).toMatch(/confirmDisabled=\{!redenToets\.ok\}/);
   });
 
   it("31. de RPC wordt met precies twee argumenten aangeroepen", () => {

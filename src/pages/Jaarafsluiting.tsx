@@ -23,6 +23,8 @@ import { useYearCloseSources } from "@/hooks/useYearCloseSources";
 import {
   useCanCloseFiscalYear,
   useCloseFiscalYear,
+  useFiscalYearEvents,
+  useReopenFiscalYear,
   useYearClosure,
 } from "@/hooks/useYearClose";
 import { recentYears } from "@/lib/grootboek-saldi-utils";
@@ -46,6 +48,29 @@ import {
   type YearCloseResult,
 } from "@/lib/year-close-action";
 import {
+  ALREADY_REOPENED_NOTICE,
+  LIFECYCLE_STATUS_PRESENTATION,
+  REASON_MAX_LENGTH,
+  RECLOSE_ACTION_LABEL,
+  REOPENED_EXPLANATION,
+  REOPENED_HEADING,
+  REOPEN_ACTION_LABEL,
+  REOPEN_CONFIRM_LABEL,
+  REOPEN_DIALOG_TITLE,
+  REOPEN_PENDING_LABEL,
+  asClassifiedReopenError,
+  latestEvent,
+  lifecycleEventEntries,
+  lifecycleStatus,
+  reopenAvailability,
+  reopenConsequences,
+  reopenDialogExplanation,
+  validateReopenReason,
+  type ClassifiedReopenError,
+  type FiscalYearEvent,
+  type ReopenResult,
+} from "@/lib/year-close-lifecycle";
+import {
   READINESS_SEVERITY_ORDER,
   evaluateYearClose,
   readinessChecksBySeverity,
@@ -55,18 +80,27 @@ import {
 } from "@/lib/year-close-readiness";
 
 /**
- * Jaarafsluiting — gereedheid (PR 1) en definitief afsluiten (PR 2b).
+ * Jaarafsluiting — gereedheid (PR 1), definitief afsluiten (PR 2b) en de
+ * levenscyclus: heropenen en opnieuw afsluiten (PR F, op de schrijvers van
+ * PR E).
  *
  * TWEE VRAGEN, IN DEZE VOLGORDE. Eerst: *kan dit boekjaar verantwoord worden
  * afgesloten?* — beantwoord met de oordelen die er al zijn. Pas als het
  * antwoord `ready` is, en pas na een expliciete bevestiging, gaat er één
- * aanroep naar `public.close_fiscal_year()`.
+ * aanroep naar `public.close_fiscal_year()`. Heropenen kent geen gereedheid
+ * maar wél een verplichte reden en dezelfde expliciete bevestiging; dan gaat
+ * er één aanroep naar `public.reopen_fiscal_year()`.
  *
  * DEZE PAGINA REKENT NIET EN BESLIST NIET. Elke uitspraak komt uit
- * `evaluateYearClose()`; het afsluiten zelf doet de database, die alles onder
- * haar eigen grendel opnieuw keurt. Wat hier staat kan het scherm strenger
- * maken dan de database, nooit soepeler: bij een waarschuwing wordt er niets
- * aangeboden, ook al zou de schrijver die waarschuwing zelf niet blokkeren.
+ * `evaluateYearClose()`; de status komt uit `year_closures.status` en de
+ * historie uit `fiscal_year_events` — nooit uit rekeningnummers, boekingen of
+ * het watermerk alleen. Het afsluiten en heropenen zelf doet de database, die
+ * alles onder haar eigen grendel opnieuw keurt.
+ *
+ * DE BOEKINGSBLOKKADE IS GEEN ONDERDEEL VAN DE BOEKJAARSTATUS. Afsluiten en
+ * heropenen zetten of wissen `posting_locked_through` nooit, deze pagina roept
+ * `set_posting_lock()` nooit aan, en er staat nergens dat heropenen "de
+ * periode weer openzet". De blokkade heeft een eigen kaart, en die zegt dat.
  *
  * ER WORDT GEEN BEDRAG GETOOND BIJ DE AFSLUITING. `year_closures` bewaart geen
  * resultaat, want er wordt geen resultaatboeking gemaakt; een berekening
@@ -273,44 +307,112 @@ function Afsluitbewijs({
   );
 }
 
-const REOPEN_EXPLANATION =
-  "Heropen dit boekjaar alleen als er nog een correctie moet worden verwerkt. De eerdere afsluiting blijft zichtbaar in de audittrail.";
+/**
+ * De heropening op het scherm: de laatste `reopened`-gebeurtenis, met haar
+ * reden. Er wordt niets uit een andere bron aangevuld.
+ */
+function Heropeningsbewijs({
+  event,
+  fiscalYear,
+  currentUserId,
+  hergebruikt,
+}: {
+  event: FiscalYearEvent | null;
+  fiscalYear: number;
+  currentUserId: string | undefined;
+  /** De aanroep vond het jaar al heropend. */
+  hergebruikt: boolean;
+}) {
+  return (
+    <div className="space-y-2" data-testid="jaar-heropeningsbewijs">
+      <AccountingNotice
+        severity="warning"
+        title={`${REOPENED_HEADING} ${fiscalYear}`}
+        data-testid="jaar-heropend"
+      >
+        <p>{REOPENED_EXPLANATION}</p>
+        {hergebruikt && <p className="mt-1" data-testid="jaar-al-heropend">{ALREADY_REOPENED_NOTICE}</p>}
+      </AccountingNotice>
+      {event !== null && (
+        <AuditTrailBlock
+          entries={lifecycleEventEntries(event, currentUserId).filter((e) => e.label !== "Gebeurtenis")}
+          className="rounded-md border px-3 py-2"
+        />
+      )}
+    </div>
+  );
+}
 
-const REOPEN_CONSEQUENCES = [
-  "De eerdere afsluiting blijft in de historie staan.",
-  "Correcties kunnen daarna worden verwerkt als de boekingsblokkade dit toestaat.",
-  "Het boekjaar moet na de correctie opnieuw worden gecontroleerd en afgesloten.",
-] as const;
+/**
+ * De levensloop: elke gebeurtenis, oudste eerst. Precies wat in
+ * `fiscal_year_events` staat — geen samengevoegde of verzonnen regels.
+ */
+function Levensloop({
+  events,
+  currentUserId,
+}: {
+  events: readonly FiscalYearEvent[];
+  currentUserId: string | undefined;
+}) {
+  return (
+    <ol className="space-y-2" data-testid="jaar-gebeurtenissen">
+      {events.map((event, index) => (
+        <li
+          key={event.id}
+          className="rounded-md border px-3 py-2"
+          data-testid="jaar-gebeurtenis"
+          data-event-type={event.event_type}
+          data-index={index}
+        >
+          <AuditTrailBlock entries={lifecycleEventEntries(event, currentUserId)} />
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function BoekjaarstatusCard({
   fiscalYear,
   bewijs,
+  laatsteHeropening,
   clientName,
   currentUserId,
-  beschikbaarheid,
+  afsluiten,
+  heropenen,
   closePending,
+  reopenPending,
   onClose,
-  onReopenPreview,
+  onReopen,
 }: {
   fiscalYear: number;
   bewijs: YearClosure | null;
+  laatsteHeropening: FiscalYearEvent | null;
   clientName: string;
   currentUserId: string | undefined;
-  beschikbaarheid: ReturnType<typeof closeAvailability>;
+  afsluiten: ReturnType<typeof closeAvailability>;
+  heropenen: ReturnType<typeof reopenAvailability>;
   closePending: boolean;
+  reopenPending: boolean;
   onClose: () => void;
-  onReopenPreview: () => void;
+  onReopen: () => void;
 }) {
-  const isClosed = bewijs !== null;
-  const statusEntries = bewijs === null
-    ? []
-    : closureReceiptEntries({ closure: bewijs, clientName, currentUserId })
-        .filter((entry) => entry.label === "Afgesloten op" || entry.label === "Afgesloten door")
-        .map((entry) => ({
-          label: entry.label,
-          value: entry.value,
-          valueClassName: entry.valueClassName,
-        }));
+  const status = lifecycleStatus(bewijs);
+  const presentatie = LIFECYCLE_STATUS_PRESENTATION[status];
+
+  const statusEntries =
+    status === "closed" && bewijs !== null
+      ? closureReceiptEntries({ closure: bewijs, clientName, currentUserId })
+          .filter((entry) => entry.label === "Afgesloten op" || entry.label === "Afgesloten door")
+          .map(({ label, value, valueClassName }) => ({ label, value, valueClassName }))
+      : status === "reopened" && laatsteHeropening !== null
+        ? lifecycleEventEntries(laatsteHeropening, currentUserId)
+            .filter((entry) => entry.label === "Tijdstip" || entry.label === "Door" || entry.label === "Reden")
+            .map(({ label, value, valueClassName }) => ({
+              label: label === "Tijdstip" ? "Heropend op" : label === "Door" ? "Heropend door" : label,
+              value,
+              valueClassName,
+            }))
+        : [];
 
   return (
     <Card data-testid="jaar-status-card">
@@ -320,50 +422,71 @@ function BoekjaarstatusCard({
             <h2 className="text-sm font-semibold">Boekjaarstatus</h2>
             <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{fiscalYear}</p>
           </div>
-          <Badge variant={isClosed ? "success" : "info"} data-testid="jaar-status-badge">
-            {isClosed ? "Afgesloten" : "Open"}
+          <Badge variant={presentatie.variant} data-testid="jaar-status-badge" data-status={status}>
+            {presentatie.label}
           </Badge>
         </div>
 
         {statusEntries.length > 0 && (
-          <AuditTrailBlock entries={statusEntries} className="border-t pt-3" />
+          <AuditTrailBlock entries={statusEntries} className="border-t pt-3" data-testid="jaar-status-details" />
         )}
 
-        {isClosed ? (
+        {status === "closed" ? (
           <div className="space-y-2 border-t pt-3">
-            <Button type="button" variant="outline" className="w-full sm:w-auto" disabled>
-              <RotateCcw className="mr-2 h-4 w-4" aria-hidden="true" />
-              Boekjaar heropenen
-            </Button>
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <p className="text-xs text-muted-foreground">Heropenen is nog niet beschikbaar.</p>
-              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs" onClick={onReopenPreview}>
-                Bekijk toekomstige werkwijze
+            {heropenen.kind === "available" ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={onReopen}
+                disabled={reopenPending}
+                data-testid="jaar-heropenen"
+              >
+                <RotateCcw className="mr-2 h-4 w-4" aria-hidden="true" />
+                {REOPEN_ACTION_LABEL}
               </Button>
-            </div>
+            ) : (
+              <>
+                <Button type="button" variant="outline" className="w-full sm:w-auto" disabled>
+                  <RotateCcw className="mr-2 h-4 w-4" aria-hidden="true" />
+                  {REOPEN_ACTION_LABEL}
+                </Button>
+                {heropenen.kind !== "not_closed" && heropenen.kind !== "already_reopened" && (
+                  <p
+                    className="text-xs text-muted-foreground"
+                    data-testid="jaar-geen-heropening"
+                    data-kind={heropenen.kind}
+                  >
+                    {heropenen.reason}
+                  </p>
+                )}
+              </>
+            )}
           </div>
-        ) : beschikbaarheid.kind === "available" ? (
+        ) : afsluiten.kind === "available" ? (
           <div className="space-y-3 border-t pt-3">
-            <AccountingNotice severity="warning" title="Huidige technische beperking">
-              Let op: de huidige technische jaarafsluiting kan nog niet worden heropend. Heropenen wordt
-              toegevoegd zodra de nieuwe jaarcyclus is geïmplementeerd.
-            </AccountingNotice>
+            {status === "reopened" && (
+              <AccountingNotice severity="warning" data-testid="jaar-heropend-hint">
+                Dit boekjaar is heropend. Opnieuw afsluiten doorloopt dezelfde volledige controle als een
+                eerste afsluiting.
+              </AccountingNotice>
+            )}
             <Button
               type="button"
               onClick={onClose}
               disabled={closePending}
               data-testid="jaar-afsluiten"
             >
-              {CLOSE_ACTION_LABEL}
+              {status === "reopened" ? RECLOSE_ACTION_LABEL : CLOSE_ACTION_LABEL}
             </Button>
           </div>
         ) : (
           <div className="border-t pt-3">
             <Button type="button" disabled className="w-full sm:w-auto">
-              Boekjaar afsluiten
+              {status === "reopened" ? RECLOSE_ACTION_LABEL : "Boekjaar afsluiten"}
             </Button>
             <p className="mt-2 text-xs text-muted-foreground">
-              {beschikbaarheid.kind === "no_snapshot"
+              {afsluiten.kind === "no_snapshot"
                 ? "Voer eerst de gereedheidscontrole uit."
                 : "Afsluiten is pas beschikbaar zodra de gereedheidscontrole akkoord is."}
             </p>
@@ -374,6 +497,13 @@ function BoekjaarstatusCard({
   );
 }
 
+/**
+ * De boekingsblokkade is een ANDER besturingselement dan de boekjaarstatus
+ * (PR C). Haar waarde (`clients.posting_locked_through`) staat niet in de
+ * leesmodellen van deze pagina en wordt hier dus niet getoond, laat staan
+ * gewijzigd: er is geen `set_posting_lock()`-aanroep op dit scherm. Wat deze
+ * kaart wél zegt, is dat afsluiten en heropenen haar niet raken.
+ */
 function BoekingsblokkadeCard() {
   return (
     <Card data-testid="boekingsblokkade-card">
@@ -386,7 +516,8 @@ function BoekingsblokkadeCard() {
           <Badge variant="secondary">Nog niet afzonderlijk ingesteld</Badge>
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          BoekAssist krijgt hiervoor een aparte boekingsblokkade. Deze staat los van de boekjaarstatus.
+          BoekAssist krijgt hiervoor een aparte boekingsblokkade. Deze staat los van de boekjaarstatus:
+          een boekjaar afsluiten of heropenen wijzigt de boekingsblokkade niet.
         </p>
         <div className="border-t pt-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -427,8 +558,11 @@ export default function Jaarafsluiting() {
   });
 
   const closureQuery = useYearClosure(clientId, fiscalYear, orgEnabled && hasSpecificClient);
-  const { data: canClose, isError: roleError } = useCanCloseFiscalYear();
+  const eventsQuery = useFiscalYearEvents(clientId, fiscalYear, orgEnabled && hasSpecificClient);
+  /** Eén rolvloer voor beide handelingen: accountant, via `has_min_role()`. */
+  const { data: isAccountant, isError: roleError } = useCanCloseFiscalYear();
   const close = useCloseFiscalYear();
+  const reopen = useReopenFiscalYear();
   const { user } = useAuth();
   const { toast } = useToast();
 
@@ -436,7 +570,8 @@ export default function Jaarafsluiting() {
    * De synchrone grendel. `close.isPending` en de `disabled` op de knop worden
    * pas na een render waar; twee klikken binnen één tick zien die dus allebei
    * nog op "uit" staan. Een ref is meteen waar en sluit dat af — nog vóór de
-   * eerste render. Zelfde patroon als de tegenboeking (6C-b9).
+   * eerste render. Zelfde patroon als de tegenboeking (6C-b9). Eén grendel
+   * voor afsluiten én heropenen: die twee mogen nooit tegelijk lopen.
    */
   const inFlight = useRef(false);
 
@@ -457,8 +592,14 @@ export default function Jaarafsluiting() {
   const [fout, setFout] = useState<
     { clientId: string; fiscalYear: number; classified: ClassifiedYearCloseError } | null
   >(null);
+  const [heropenUitkomst, setHeropenUitkomst] = useState<
+    { clientId: string; fiscalYear: number; result: ReopenResult } | null
+  >(null);
+  const [heropenFout, setHeropenFout] = useState<
+    { clientId: string; fiscalYear: number; classified: ClassifiedReopenError } | null
+  >(null);
   const [bevestigen, setBevestigen] = useState(false);
-  const [heropenVoorbeeld, setHeropenVoorbeeld] = useState(false);
+  const [heropenDialoog, setHeropenDialoog] = useState(false);
   const [heropenReden, setHeropenReden] = useState("");
 
   const past = (s: { clientId: string; fiscalYear: number } | null) =>
@@ -466,23 +607,42 @@ export default function Jaarafsluiting() {
 
   const huidigeSnapshot = past(snapshot) ? snapshot : null;
   const huidigeUitkomst = past(uitkomst) ? uitkomst : null;
+  const huidigeHeropenUitkomst = past(heropenUitkomst) ? heropenUitkomst : null;
 
   const closure = closureQuery.data ?? null;
   /** Het bewijs uit de database wint; de RPC-uitkomst is het vangnet vóór de verversing. */
   const bewijs: YearClosure | null = closure ?? huidigeUitkomst?.result ?? null;
-  /** Zodra er bewijs ligt, is de mislukking achterhaald — wat er ook eerder misging. */
-  const huidigeFout = past(fout) && bewijs === null ? fout!.classified : null;
+  const status = lifecycleStatus(bewijs);
+  /** Zodra het jaar dicht is, is een afsluitfout achterhaald — wat er ook eerder misging. */
+  const huidigeFout = past(fout) && status !== "closed" ? fout!.classified : null;
+  /** En zodra het jaar heropend is, is een heropenfout achterhaald. */
+  const huidigeHeropenFout = past(heropenFout) && status !== "reopened" ? heropenFout!.classified : null;
 
-  const beschikbaarheid = closeAvailability({
+  const gebeurtenissen = eventsQuery.data ?? [];
+  const laatsteHeropening = latestEvent(gebeurtenissen, "reopened");
+
+  const afsluiten = closeAvailability({
     fiscalYear,
     readiness: huidigeSnapshot?.readiness ?? null,
     closure: bewijs,
     closurePending: closureQuery.isPending,
     closureUnavailable: closureQuery.isError,
     watermark: selectedClient?.afgesloten_boekjaar,
-    canClose,
+    canClose: isAccountant,
     roleUnavailable: roleError,
   });
+
+  const heropenen = reopenAvailability({
+    fiscalYear,
+    closure: bewijs,
+    closurePending: closureQuery.isPending,
+    closureUnavailable: closureQuery.isError,
+    watermark: selectedClient?.afgesloten_boekjaar,
+    canReopen: isAccountant,
+    roleUnavailable: roleError,
+  });
+
+  const redenToets = validateReopenReason(heropenReden);
 
   const clientNaam = selectedClient?.name ?? "—";
   const jaren = useMemo(() => recentYears(), []);
@@ -498,11 +658,12 @@ export default function Jaarafsluiting() {
   };
 
   const sluitAf = async () => {
-    if (!clientId || inFlight.current || close.isPending) return;
+    if (!clientId || inFlight.current || close.isPending || reopen.isPending) return;
     inFlight.current = true;
     try {
       const result = await close.mutateAsync({ clientId, fiscalYear });
       setFout(null);
+      setHeropenUitkomst(null);
       setUitkomst({ clientId, fiscalYear, result });
       setBevestigen(false);
       // De gereedheidsmomentopname gaat weg: zij beschrijft een toestand van
@@ -517,10 +678,11 @@ export default function Jaarafsluiting() {
       setFout({ clientId, fiscalYear, classified });
       setBevestigen(false);
       // Bij een onbekende afloop is `onSettled` de cache al aan het verversen.
-      // Blijkt er dan tóch bewijs te liggen, dan verdwijnt deze melding vanzelf
-      // (zie `huidigeFout`) en staat het afsluitbewijs er in plaats daarvan.
+      // Blijkt er dan tóch een dicht jaar te liggen, dan verdwijnt deze melding
+      // vanzelf (zie `huidigeFout`) en staat het afsluitbewijs er in plaats
+      // daarvan.
       const bevestigd = await closureQuery.refetch();
-      if (bevestigd.data) {
+      if (bevestigd.data && lifecycleStatus(bevestigd.data) === "closed") {
         setFout(null);
         setUitkomst({ clientId, fiscalYear, result: { ...bevestigd.data, created: false } });
         setSnapshot(null);
@@ -533,11 +695,48 @@ export default function Jaarafsluiting() {
     }
   };
 
+  const heropen = async () => {
+    if (!clientId || inFlight.current || close.isPending || reopen.isPending) return;
+    // De knop staat al uit bij een ongeldige reden; dit is de tweede grendel.
+    if (!redenToets.ok) return;
+    inFlight.current = true;
+    try {
+      const result = await reopen.mutateAsync({ clientId, fiscalYear, reason: redenToets.reason });
+      setHeropenFout(null);
+      setUitkomst(null);
+      setHeropenUitkomst({ clientId, fiscalYear, result });
+      setHeropenDialoog(false);
+      setHeropenReden("");
+      // De gereedheidsmomentopname beschreef een afgesloten jaar; na de
+      // heropening moet zij opnieuw.
+      setSnapshot(null);
+      toast({
+        title: result.reopened ? `Boekjaar ${fiscalYear} heropend` : "Boekjaar was al heropend",
+        description: result.reopened ? undefined : ALREADY_REOPENED_NOTICE,
+      });
+    } catch (error) {
+      const classified = asClassifiedReopenError(error);
+      setHeropenFout({ clientId, fiscalYear, classified });
+      setHeropenDialoog(false);
+      // Zelfde verzoening als bij het afsluiten: eerst kijken wat er staat.
+      const bevestigd = await closureQuery.refetch();
+      if (bevestigd.data && lifecycleStatus(bevestigd.data) === "reopened") {
+        setHeropenFout(null);
+        setSnapshot(null);
+        toast({ title: "Boekjaar was al heropend", description: ALREADY_REOPENED_NOTICE });
+        return;
+      }
+      toast({ title: "Heropenen niet gelukt", description: classified.message, variant: "destructive" });
+    } finally {
+      inFlight.current = false;
+    }
+  };
+
   return (
     <>
       <PageHeader
         title="Jaarafsluiting"
-        description="Beoordeel de gereedheid, bekijk de boekjaarstatus en beheer straks de afzonderlijke boekingsblokkade."
+        description="Beoordeel de gereedheid, bekijk de boekjaarstatus en de historie, en sluit een boekjaar af of heropen het."
       />
 
       {!hasSpecificClient ? (
@@ -582,12 +781,15 @@ export default function Jaarafsluiting() {
             <BoekjaarstatusCard
               fiscalYear={fiscalYear}
               bewijs={bewijs}
+              laatsteHeropening={laatsteHeropening}
               clientName={clientNaam}
               currentUserId={user?.id}
-              beschikbaarheid={beschikbaarheid}
+              afsluiten={afsluiten}
+              heropenen={heropenen}
               closePending={close.isPending}
+              reopenPending={reopen.isPending}
               onClose={() => setBevestigen(true)}
-              onReopenPreview={() => setHeropenVoorbeeld(true)}
+              onReopen={() => setHeropenDialoog(true)}
             />
             <BoekingsblokkadeCard />
           </div>
@@ -601,7 +803,7 @@ export default function Jaarafsluiting() {
                 </p>
               </div>
 
-              {huidigeSnapshot === null && bewijs === null && huidigeFout === null ? (
+              {huidigeSnapshot === null && status !== "closed" && huidigeFout === null && huidigeHeropenFout === null ? (
                 <EmptyState
                   icon={CalendarCheck}
                   message="Er is nog geen gereedheidscontrole uitgevoerd. Kies een administratie en boekjaar en start de controle."
@@ -622,7 +824,11 @@ export default function Jaarafsluiting() {
                   {/* De melding komt uit `classifyYearCloseError()`, nooit
                       rechtstreeks uit het Supabase-object: daar zitten
                       SQLSTATE's, constraintnamen en details in die een
-                      gebruiker niets zeggen en die hier niet horen. */}
+                      gebruiker niets zeggen en die hier niet horen. De
+                      boekhoudkundige weigeringen van de database — open werk,
+                      een ongebalanceerde groep, de volgorde, een heropend
+                      ouder jaar — komen wél letterlijk door: dat is de
+                      actie die de gebruiker moet ondernemen. */}
                   <p>{huidigeFout.message}</p>
                   {huidigeFout.advice !== undefined && (
                     <p className="mt-1" data-testid="jaar-afsluitadvies">{huidigeFout.advice}</p>
@@ -630,26 +836,51 @@ export default function Jaarafsluiting() {
                 </AccountingNotice>
               )}
 
-              {beschikbaarheid.kind === "inconsistent" && (
+              {huidigeHeropenFout !== null && (
+                <AccountingNotice
+                  severity="blocking"
+                  title="Heropenen niet gelukt"
+                  data-testid="jaar-heropenfout"
+                  data-kind={huidigeHeropenFout.kind}
+                >
+                  <p>{huidigeHeropenFout.message}</p>
+                  {huidigeHeropenFout.advice !== undefined && (
+                    <p className="mt-1" data-testid="jaar-heropenadvies">{huidigeHeropenFout.advice}</p>
+                  )}
+                </AccountingNotice>
+              )}
+
+              {afsluiten.kind === "inconsistent" && (
                 <AccountingNotice
                   severity="blocking"
                   title="Afsluitstatus klopt niet"
                   data-testid="jaar-inconsistent"
                 >
-                  <p>{beschikbaarheid.reason}</p>
+                  <p>{afsluiten.reason}</p>
                   <p className="mt-1">{INCONSISTENT_CLOSURE_ADVICE}</p>
                 </AccountingNotice>
               )}
 
-              {(beschikbaarheid.kind === "not_ready" ||
-                beschikbaarheid.kind === "not_allowed" ||
-                beschikbaarheid.kind === "unknown") && (
+              {heropenen.kind === "inconsistent" && (
+                <AccountingNotice
+                  severity="blocking"
+                  title="Afsluitstatus klopt niet"
+                  data-testid="jaar-heropen-inconsistent"
+                >
+                  <p>{heropenen.reason}</p>
+                  <p className="mt-1">{INCONSISTENT_CLOSURE_ADVICE}</p>
+                </AccountingNotice>
+              )}
+
+              {(afsluiten.kind === "not_ready" ||
+                afsluiten.kind === "not_allowed" ||
+                afsluiten.kind === "unknown") && (
                 <p
                   className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground"
                   data-testid="jaar-geen-actie"
-                  data-kind={beschikbaarheid.kind}
+                  data-kind={afsluiten.kind}
                 >
-                  {beschikbaarheid.reason}
+                  {afsluiten.reason}
                 </p>
               )}
             </CardContent>
@@ -661,24 +892,52 @@ export default function Jaarafsluiting() {
                 <History className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
                 <h2 className="text-sm font-semibold">Historie</h2>
               </div>
-              {bewijs !== null ? (
+
+              {status === "closed" && bewijs !== null && (
                 <Afsluitbewijs
                   closure={bewijs}
                   clientName={clientNaam}
                   currentUserId={user?.id}
                   hergebruikt={huidigeUitkomst?.result.created === false}
                 />
-              ) : (
+              )}
+
+              {status === "reopened" && (
+                <Heropeningsbewijs
+                  event={laatsteHeropening}
+                  fiscalYear={fiscalYear}
+                  currentUserId={user?.id}
+                  hergebruikt={huidigeHeropenUitkomst?.result.reopened === false}
+                />
+              )}
+
+              {status === "open" && gebeurtenissen.length === 0 && !eventsQuery.isError && (
                 <p className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
                   Voor dit boekjaar is nog geen afsluiting vastgelegd.
                 </p>
+              )}
+
+              {eventsQuery.isError && (
+                <AccountingNotice severity="blocking" title="Historie niet geladen" data-testid="jaar-historie-fout">
+                  De gebeurtenissen van dit boekjaar konden niet worden opgehaald. Ververs de pagina; er is
+                  hierover niets vastgesteld.
+                </AccountingNotice>
+              )}
+
+              {gebeurtenissen.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Levensloop ({gebeurtenissen.length})
+                  </h3>
+                  <Levensloop events={gebeurtenissen} currentUserId={user?.id} />
+                </div>
               )}
             </CardContent>
           </Card>
 
           <p className="text-xs text-muted-foreground">
             Alle uitspraken komen uit opgeslagen grootboekmutaties en de bestaande boekhoudregels. Het afsluiten
-            zelf doet de database: zij keurt alles opnieuw en blijft de autoriteit.
+            en heropenen zelf doet de database: zij keurt alles opnieuw en blijft de autoriteit.
           </p>
 
           <FinancialActionDialog
@@ -702,21 +961,27 @@ export default function Jaarafsluiting() {
           />
 
           <FinancialActionDialog
-            open={heropenVoorbeeld}
+            open={heropenDialoog}
             onOpenChange={(open) => {
-              setHeropenVoorbeeld(open);
+              setHeropenDialoog(open);
               if (!open) setHeropenReden("");
             }}
-            title="Boekjaar heropenen"
-            explanation={REOPEN_EXPLANATION}
-            consequences={REOPEN_CONSEQUENCES}
-            confirmLabel="Boekjaar heropenen"
-            isPending={false}
-            confirmDisabled
-            onConfirm={() => undefined}
+            title={REOPEN_DIALOG_TITLE}
+            explanation={reopenDialogExplanation(clientNaam, fiscalYear)}
+            consequences={reopenConsequences(fiscalYear)}
+            confirmLabel={REOPEN_CONFIRM_LABEL}
+            pendingLabel={REOPEN_PENDING_LABEL}
+            /* Heropenen haalt een bescherming weg. Het verwijdert niets, maar
+               het is de ene handeling op dit scherm die bewust rood hoort te
+               zijn: zie de Platform Kit over `intent`. */
+            intent="destructive"
+            isPending={reopen.isPending}
+            confirmDisabled={!redenToets.ok}
+            onConfirm={heropen}
             data-testid="jaar-heropenen-dialoog"
             confirmTestId="jaar-heropenen-bevestigen"
             cancelTestId="jaar-heropenen-annuleren"
+            consequencesTestId="jaar-heropenen-gevolgen"
           >
             <div className="space-y-2">
               <Label htmlFor="jaar-heropenen-reden">Reden voor heropening</Label>
@@ -724,11 +989,21 @@ export default function Jaarafsluiting() {
                 id="jaar-heropenen-reden"
                 value={heropenReden}
                 onChange={(event) => setHeropenReden(event.target.value)}
-                placeholder="Nagekomen inkoopfactuur"
+                placeholder="Bijvoorbeeld: nagekomen inkoopfactuur"
                 required
+                aria-invalid={!redenToets.ok && heropenReden !== ""}
+                aria-describedby="jaar-heropenen-reden-toets"
+                data-testid="jaar-heropenen-reden"
               />
-              <p className="text-xs text-muted-foreground">
-                Prototype: heropenen wordt pas actief wanneer de nieuwe jaarcyclus beschikbaar is.
+              <p
+                id="jaar-heropenen-reden-toets"
+                className={`text-xs ${redenToets.ok ? "text-muted-foreground" : "text-destructive"}`}
+                data-testid="jaar-heropenen-reden-toets"
+                data-ok={redenToets.ok ? "true" : "false"}
+              >
+                {redenToets.ok === false
+                  ? redenToets.message
+                  : `${redenToets.reason.length} van maximaal ${REASON_MAX_LENGTH} tekens. De reden wordt onuitwisbaar vastgelegd.`}
               </p>
             </div>
           </FinancialActionDialog>
