@@ -1201,6 +1201,21 @@ Stap 3 van de werkvolgorde. **Geen migratie, geen SQL, geen datawijziging.**
 - **Niet omgezet, niet verwijderd.** Een legacy-regel is niet deterministisch naar een gebalanceerde memoriaalboeking te vertalen (tegenrekening en richting ontbreken). Wat ermee gebeurt, volgt pas na een read-only productie-audit.
 - **Nog open (vervolg-PR, na de audit):** RLS staat directe PostgREST-writes (assistent INSERT/UPDATE, accountant DELETE) nog toe; die worden in een aparte migratie dichtgezet. Het memoriaal heeft géén SnelStart-export — als snelle invoer nog als SnelStart-invoer werd gebruikt, is dat een productbeslissing.
 
+### `journal_entries` — ook in de database alleen-lezen (stap 2)
+
+```
+supabase/migrations/20260930120000_make_journal_entries_read_only.sql
+supabase/tests/journal-entries-read-only/run-proof.sh      37 bewijzen tegen een echte PostgreSQL
+src/test/journal-entries-read-only-migration.test.ts       contract over de migratie en haar aanname
+```
+
+Productie-audit vooraf: 3 legacy-regels, geen recente activiteit, geen deterministische grootboekkoppeling — de regels blijven dus zoals zij zijn.
+
+- **Rechten:** `REVOKE ALL` van `PUBLIC, anon, authenticated, service_role`, daarna alleen `SELECT` terug voor `authenticated` en `service_role`. `anon` krijgt niets (RLS gaf anon al geen rijen).
+- **Policies:** de schrijfpolicies (`insert`/`update`/`delete`) zijn verwijderd; `role_journal_entries_select` is ongewijzigd. Verdediging in de diepte: komt er ooit weer een schrijfrecht bij, dan weigert RLS nog steeds.
+- **Ongewijzigd:** rijen, kolommen, FK's (incl. `ON DELETE CASCADE`/`SET NULL` — die draaien als tabeleigenaar en blijven werken), indexen, triggers, functies, eigenaar, RLS aan, tenant-isolatie, en elk ander tabelrecht (ook `ledger_postings`).
+- **Faalt gesloten** als de tabel ontbreekt, RLS uit staat of de SELECT-policy ontbreekt.
+
 ---
 
 ## Emergency rule
