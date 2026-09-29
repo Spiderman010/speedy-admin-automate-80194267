@@ -460,6 +460,7 @@ export type Database = {
           organization_id: string | null
           phone: string | null
           postal_code: string | null
+          posting_locked_through: string | null
           rechtsvorm: string | null
           snelstart_inkoop_mailbox: string | null
           updated_at: string
@@ -492,6 +493,7 @@ export type Database = {
           organization_id?: string | null
           phone?: string | null
           postal_code?: string | null
+          posting_locked_through?: string | null
           rechtsvorm?: string | null
           snelstart_inkoop_mailbox?: string | null
           updated_at?: string
@@ -524,6 +526,7 @@ export type Database = {
           organization_id?: string | null
           phone?: string | null
           postal_code?: string | null
+          posting_locked_through?: string | null
           rechtsvorm?: string | null
           snelstart_inkoop_mailbox?: string | null
           updated_at?: string
@@ -569,6 +572,60 @@ export type Database = {
           },
           {
             foreignKeyName: "clients_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      fiscal_year_events: {
+        Row: {
+          actor_id: string
+          backfilled: boolean
+          client_id: string
+          created_xact_id: unknown
+          event_type: string
+          fiscal_year: number
+          id: string
+          occurred_at: string
+          organization_id: string
+          reason: string | null
+        }
+        Insert: {
+          actor_id: string
+          backfilled?: boolean
+          client_id: string
+          created_xact_id?: unknown
+          event_type: string
+          fiscal_year: number
+          id?: string
+          occurred_at?: string
+          organization_id: string
+          reason?: string | null
+        }
+        Update: {
+          actor_id?: string
+          backfilled?: boolean
+          client_id?: string
+          created_xact_id?: unknown
+          event_type?: string
+          fiscal_year?: number
+          id?: string
+          occurred_at?: string
+          organization_id?: string
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fiscal_year_events_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fiscal_year_events_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1440,6 +1497,57 @@ export type Database = {
         }
         Relationships: []
       }
+      posting_lock_events: {
+        Row: {
+          changed_at: string
+          changed_by: string
+          client_id: string
+          created_xact_id: unknown
+          id: string
+          new_locked_through: string | null
+          organization_id: string
+          previous_locked_through: string | null
+          reason: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by: string
+          client_id: string
+          created_xact_id?: unknown
+          id?: string
+          new_locked_through?: string | null
+          organization_id: string
+          previous_locked_through?: string | null
+          reason: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string
+          client_id?: string
+          created_xact_id?: unknown
+          id?: string
+          new_locked_through?: string | null
+          organization_id?: string
+          previous_locked_through?: string | null
+          reason?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "posting_lock_events_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "posting_lock_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -1913,6 +2021,7 @@ export type Database = {
           closed_by: string
           fiscal_year: number
           organization_id: string
+          status: string
         }
         Insert: {
           client_id: string
@@ -1920,6 +2029,7 @@ export type Database = {
           closed_by: string
           fiscal_year: number
           organization_id: string
+          status?: string
         }
         Update: {
           client_id?: string
@@ -1927,6 +2037,7 @@ export type Database = {
           closed_by?: string
           fiscal_year?: number
           organization_id?: string
+          status?: string
         }
         Relationships: [
           {
@@ -1950,6 +2061,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      assert_posting_allowed: {
+        Args: { _client_id: string; _posting_date: string }
+        Returns: undefined
+      }
       bank_bulk_posting_candidates: {
         Args: { _boekjaar?: number; _client_id: string }
         Returns: {
@@ -2043,9 +2158,28 @@ export type Database = {
         }
         Returns: boolean
       }
+      posting_allowed: {
+        Args: { _client_id: string; _posting_date: string }
+        Returns: boolean
+      }
       posting_client_org_ok: {
         Args: { _client_id: string; _organization_id: string }
         Returns: boolean
+      }
+      reopen_fiscal_year: {
+        Args: { _client_id: string; _fiscal_year: number; _reason: string }
+        Returns: {
+          actor_id: string
+          afgesloten_boekjaar: number
+          client_id: string
+          event_id: string
+          fiscal_year: number
+          occurred_at: string
+          organization_id: string
+          reason: string
+          reopened: boolean
+          status: string
+        }[]
       }
       replace_purchase_invoice_lines: {
         Args: { _invoice_id: string; _lines: Json }
@@ -2126,6 +2260,18 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      set_posting_lock: {
+        Args: { _client_id: string; _locked_through: string; _reason: string }
+        Returns: {
+          changed: boolean
+          changed_at: string
+          changed_by: string
+          client_id: string
+          locked_through: string
+          organization_id: string
+          previous_locked_through: string
+        }[]
       }
     }
     Enums: {
