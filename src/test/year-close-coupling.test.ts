@@ -25,6 +25,14 @@ import { resolve } from "node:path";
  *
  * ER WORDT HIER NIETS VOORGESCHREVEN. Dit is een waarneming van de bestaande
  * code, geen eis aan toekomstige code.
+ *
+ * DE UITROL IS GEBEURD (PR H, 20261002120000). Bewijzen 1-5 en 7 lezen de
+ * MIGRATIES WAARIN de koppeling ontstond en blijven waar: die bestanden zijn
+ * geschiedenis en worden niet herschreven. Bewijs 9 is het moment waarop deze
+ * test "mee hoort te bewegen": het leest de LAATSTE definitie van elke
+ * schrijver en bevestigt dat alle zeven gedateerde schrijvers bewust zijn
+ * meegenomen, en dat de nihilverklaring bewust niet. De gedrags- en
+ * rollbackbewijzen staan in supabase/tests/posting-decoupled/.
  */
 
 const MIGRATIES = "supabase/migrations";
@@ -60,7 +68,7 @@ function functieBody(sql: string, naam: string): string {
   return sql.slice(start, volgende < 0 ? undefined : volgende);
 }
 
-describe("Afgesloten boekjaar = schrijfverbod, zoals het vandaag is", () => {
+describe("Afgesloten boekjaar = schrijfverbod — hoe het ontstond, en hoe het is ontkoppeld", () => {
   it("1. alle acht schrijvers dragen de toets, elk in hun eigen functie", () => {
     for (const { migratie, functie, jaarVariabele } of SCHRIJVERS) {
       const body = functieBody(uitvoerbaar(migratie), functie);
@@ -242,6 +250,40 @@ describe("Afgesloten boekjaar = schrijfverbod, zoals het vandaag is", () => {
     expect(body).toContain("public.post_bank_transaction(");
     expect(body).not.toMatch(/INSERT INTO public\.ledger_postings/);
     expect(body).not.toMatch(/posting_locked_through/);
+  });
+
+  it("9. PR H: in de LAATSTE definitie toetst geen gedateerde schrijver het watermerk nog — en de nihilverklaring wél", () => {
+    /*
+     * Dit is de bevestiging waar de kop van dit bestand om vroeg. Niet per
+     * bestand maar over alle migraties heen, in volgorde: de definitie die
+     * telt is de laatste. Zeven schrijvers zonder watermerktoets en mét
+     * blokkadetoets; de nihilverklaring met haar levenscyclusregel en zonder
+     * blokkade; en geen negende schrijfweg die we zouden missen.
+     */
+    const { readdirSync } = require("node:fs") as typeof import("node:fs");
+    const laatste = new Map<string, string>();
+    for (const bestand of readdirSync(resolve(process.cwd(), MIGRATIES)).filter((f) => f.endsWith(".sql")).sort()) {
+      const sql = uitvoerbaar(bestand);
+      for (const match of sql.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)/g)) {
+        laatste.set(match[1], functieBody(sql, match[1]).replace(/\s+/g, " "));
+      }
+    }
+    const gedateerd = SCHRIJVERS.filter((s) => s.functie !== "declare_opening_balance_nil").map((s) => s.functie);
+    for (const functie of gedateerd) {
+      const body = laatste.get(functie) ?? "";
+      expect(body, functie).not.toBe("");
+      expect(body, `${functie}: geen watermerktoets meer`).not.toMatch(/afgesloten_boekjaar/);
+      expect(body, `${functie}: wel de blokkadetoets`).toContain("PERFORM public.assert_posting_allowed(");
+    }
+    const nil = laatste.get("declare_opening_balance_nil") ?? "";
+    expect(nil).toContain("v_client.afgesloten_boekjaar IS NOT NULL AND v_header.boekjaar <= v_client.afgesloten_boekjaar");
+    expect(nil).not.toMatch(/posting_allowed|posting_locked_through/);
+
+    // Wie het watermerk nog als boekingstoets draagt, in de laatste definitie: alleen zij.
+    const nogMetToets = [...laatste.entries()]
+      .filter(([, body]) => /v_client\.afgesloten_boekjaar IS NOT NULL AND [\w.]+ <= v_client\.afgesloten_boekjaar/.test(body))
+      .map(([naam]) => naam);
+    expect(nogMetToets).toEqual(["declare_opening_balance_nil"]);
   });
 });
 
