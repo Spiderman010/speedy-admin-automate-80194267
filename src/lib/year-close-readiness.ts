@@ -194,9 +194,10 @@ export interface YearCloseInput {
   /** De bestaande controle, gedraaid over exact dit boekjaar. */
   diagnostics: DiagnosticRun;
   /**
-   * `clients.afgesloten_boekjaar`: het WATERMERK, niet één specifiek jaar.
-   * Elke schrijver weigert met `boekjaar <= afgesloten_boekjaar`, dus alles tot
-   * en met dit jaar is dicht. `null` = er is nog niets afgesloten.
+   * `clients.afgesloten_boekjaar`: het WATERMERK, niet één specifiek jaar —
+   * alles tot en met dit jaar is administratief afgesloten. `null` = er is nog
+   * niets afgesloten. Sinds PR H zegt dit niets over boekbaarheid; dat doet de
+   * aparte boekingsblokkade.
    */
   closedThrough: Source<number | null>;
   /** Aantal grootboekregels per boekjaar, over de hele administratie. */
@@ -227,7 +228,7 @@ export function yearAlreadyClosed(fiscalYear: number, closedThrough: number | nu
     return {
       ...basis,
       severity: "error",
-      summary: `Boekjaar ${fiscalYear} is al afgesloten; de administratie is dicht tot en met ${closedThrough}.`,
+      summary: `Boekjaar ${fiscalYear} is al afgesloten; de administratie is afgesloten tot en met ${closedThrough}.`,
       drilldown: NAAR_ADMINISTRATIE,
     };
   }
@@ -237,16 +238,15 @@ export function yearAlreadyClosed(fiscalYear: number, closedThrough: number | nu
     summary:
       closedThrough === null
         ? `Boekjaar ${fiscalYear} is nog niet afgesloten; er is voor deze administratie nog geen boekjaar afgesloten.`
-        : `Boekjaar ${fiscalYear} is nog niet afgesloten; de administratie is dicht tot en met ${closedThrough}.`,
+        : `Boekjaar ${fiscalYear} is nog niet afgesloten; de administratie is afgesloten tot en met ${closedThrough}.`,
   };
 }
 
 /**
  * E2. Mag dit boekjaar in deze volgorde dicht?
  *
- * `afgesloten_boekjaar` is één integer en elke schrijver toetst met `<=`. Het
- * watermerk op 2026 zetten sluit dus ook 2024 en 2025 — stilzwijgend, en
- * onomkeerbaar voor een append-only grootboek. Liggen er vóór dit jaar nog
+ * `afgesloten_boekjaar` is één integer en een watermerk. Het op 2026 zetten
+ * verklaart dus ook 2024 en 2025 afgesloten — stilzwijgend. Liggen er vóór dit jaar nog
  * niet-afgesloten boekjaren MET boekingen, dan is dat geen nette afsluiting
  * maar een sprong, en dat is een blokkade.
  *
@@ -315,15 +315,15 @@ export function yearActivity(
 }
 
 /**
- * G. Postbaar bronwerk dat door dít afsluiten onboekbaar zou worden.
+ * G. Postbaar bronwerk dat bij dít afsluiten nog open staat.
  *
- * Dit is GEEN nieuwe boekhoudregel maar het gevolg van een bestaande: elke
- * schrijver weigert met `v_boekjaar <= v_client.afgesloten_boekjaar`. Zet het
- * watermerk op het gekozen jaar, dan is elk postbaar-maar-nog-niet-geboekt
- * document met een boekjaar t/m dat jaar voorgoed onboekbaar — en dat is
- * precies het soort onomkeerbaarheid dat een afsluitcontrole hoort te
- * voorkomen. Daarom een blokkade, en niet de waarschuwing die `outstandingWork`
- * (administratiebreed, zonder jaar) voor hetzelfde werk geeft.
+ * Dit is GEEN nieuwe boekhoudregel maar die van `close_fiscal_year()` zelf: de
+ * afsluiting verklaart het boekjaar volledig, en dat kan niet zolang er
+ * postbaar-maar-nog-niet-geboekt werk met een boekjaar t/m dat jaar ligt.
+ * Daarom een blokkade, en niet de waarschuwing die `outstandingWork`
+ * (administratiebreed, zonder jaar) voor hetzelfde werk geeft. Sinds PR H maakt
+ * afsluiten zulk werk niet meer onboekbaar — dat doet alleen de aparte
+ * boekingsblokkade — maar de afsluiting blijft een volledigheidsverklaring.
  *
  * Werk ná het gekozen boekjaar raakt deze afsluiting niet en blokkeert dus
  * niets; het wordt alleen benoemd zodat niemand denkt dat het is meegewogen.
@@ -354,8 +354,8 @@ export function unpostedWorkThroughYear(
     count: buckets.throughYear,
     summary:
       `${telwoord(buckets.throughYear, "postbaar brondocument is", "postbare brondocumenten zijn")} nog niet geboekt ` +
-      `met boekjaar t/m ${fiscalYear}. Afsluiten maakt ${buckets.throughYear === 1 ? "dat document" : "die documenten"} ` +
-      `voorgoed onboekbaar, want elke schrijver weigert een boekjaar t/m het afsluitjaar${achteraf}.`,
+      `met boekjaar t/m ${fiscalYear}. Een afsluiting verklaart het boekjaar volledig en kan dus pas als ` +
+      `${buckets.throughYear === 1 ? "dat document is" : "die documenten zijn"} geboekt${achteraf}.`,
     drilldown: { label: "Naar de inhaalslag", to: "/bank/inhaalslag" },
   };
 }

@@ -39,7 +39,7 @@ import GrootboekHistorisch from "@/pages/GrootboekHistorisch";
 import { evaluatePurchaseInvoice, summarize, type CatchupRecord } from "@/lib/ledger-catchup";
 
 const CONFIG = {
-  id: "client-1", afgesloten_boekjaar: null, crediteuren_rekening_id: "cred",
+  id: "client-1", posting_locked_through: null, crediteuren_rekening_id: "cred",
   debiteuren_rekening_id: "deb", btw_te_vorderen_rekening_id: "btwv", btw_te_betalen_rekening_id: "btwb",
 };
 

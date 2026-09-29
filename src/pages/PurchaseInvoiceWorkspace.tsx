@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, Link2, PenLine, Plus } from "lucide-react";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { useClients } from "@/hooks/useClients";
+import { usePostingLockState } from "@/hooks/usePostingLock";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
@@ -406,6 +407,12 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
    * kop van het paneel zegt dat er ook bij. De correctheid van wat er NU in het
    * formulier staat wordt bewaakt door `approveBlockers` hierboven.
    */
+  // De boekingsblokkade komt uit haar eigen lezing (dezelfde als de kaart op
+  // de jaarafsluiting). Nog niet geladen of onleesbaar = onbekend: de
+  // gereedheid zegt dan "niet te bepalen", nooit "klaar".
+  const postingLock = usePostingLockState(client?.id);
+  const lockedThrough = postingLock.isSuccess ? postingLock.data : undefined;
+
   const postingReadiness = useMemo(() => {
     if (!invoice || !client) return undefined;
     return evaluatePurchaseInvoice({
@@ -422,7 +429,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
       },
       config: {
         id: client.id,
-        afgesloten_boekjaar: client.afgesloten_boekjaar ?? null,
+        posting_locked_through: lockedThrough,
         crediteuren_rekening_id: client.crediteuren_rekening_id ?? null,
         debiteuren_rekening_id: client.debiteuren_rekening_id ?? null,
         btw_te_vorderen_rekening_id: client.btw_te_vorderen_rekening_id ?? null,
@@ -431,7 +438,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
       lines: aggregateInvoiceLines(storedLines ?? []),
       postingGroupId: posting?.posting_group_id ?? null,
     });
-  }, [invoice, client, storedLines, posting]);
+  }, [invoice, client, storedLines, posting, lockedThrough]);
 
   const readinessBlocked = !!postingReadiness && postingReadiness.state === "geblokkeerd";
 

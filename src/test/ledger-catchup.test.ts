@@ -12,6 +12,7 @@ import {
   type CatchupPurchaseInvoice,
   type CatchupSalesInvoice,
 } from "@/lib/ledger-catchup";
+import { postingLockVerdict } from "@/lib/posting-lock";
 
 /**
  * Historische grootboekvulling — de beoordeling per bronrecord.
@@ -26,7 +27,7 @@ const CLIENT = "client-1";
 
 const VOLLEDIGE_CONFIG: CatchupClientConfig = {
   id: CLIENT,
-  afgesloten_boekjaar: null,
+  posting_locked_through: null,
   crediteuren_rekening_id: "cred-1",
   debiteuren_rekening_id: "deb-1",
   btw_te_vorderen_rekening_id: "btw-v-1",
@@ -216,13 +217,42 @@ describe("inkoop — configuratie en documentgebreken", () => {
     expect(r.blocks.find((b) => b.code === "regel_bedrag_niet_positief")?.label).toMatch(/^2 boekingsregels/);
   });
 
-  it("13. een afgesloten boekjaar wordt nooit omzeild", () => {
-    const r = evalInkoop(inkoop({ invoice_date: "2025-06-01" }), config({ afgesloten_boekjaar: 2025 }));
+  /*
+   * Was: "een afgesloten boekjaar wordt nooit omzeild" (blokkade op
+   * `boekjaar <= afgesloten_boekjaar`). Sinds PR H toetst geen schrijver dat
+   * meer; de enige datumgrendel is de boekingsblokkade. Deze laag mag dus nooit
+   * "geblokkeerd" zeggen waar de schrijver zou boeken — en dat deed zij.
+   */
+  it("13. de boekjaarstatus is geen blokkade: de configuratie kent haar niet eens", () => {
+    expect(Object.keys(VOLLEDIGE_CONFIG)).not.toContain("afgesloten_boekjaar");
+    // Een factuur uit een (administratief) afgesloten jaar zonder blokkade is gewoon klaar.
+    expect(evalInkoop(inkoop({ invoice_date: "2025-06-01" }), config({ posting_locked_through: null })).state).toBe("klaar");
+  });
+
+  it("13b. een blokkade die de factuurdatum dekt blokkeert, met de datums erbij", () => {
+    const r = evalInkoop(inkoop({ invoice_date: "2025-06-01" }), config({ posting_locked_through: "2025-12-31" }));
     expect(r.state).toBe("geblokkeerd");
-    expect(codes(r)).toContain("boekjaar_afgesloten");
-    expect(r.blocks.find((b) => b.code === "boekjaar_afgesloten")?.label).toContain("2025");
-    // Het jaar ná het afgesloten jaar mag wel.
-    expect(evalInkoop(inkoop({ invoice_date: "2026-06-01" }), config({ afgesloten_boekjaar: 2025 })).state).toBe("klaar");
+    expect(codes(r)).toEqual(["boekingsblokkade"]);
+    expect(r.blocks[0].label).toBe("Boekingsdatum 01-06-2025 valt binnen de boekingsblokkade t/m 31-12-2025.");
+    // De grens ligt EROP: de blokkadedatum zelf is dicht, de dag erna open.
+    expect(codes(evalInkoop(inkoop({ invoice_date: "2025-12-31" }), config({ posting_locked_through: "2025-12-31" })))).toContain("boekingsblokkade");
+    expect(evalInkoop(inkoop({ invoice_date: "2026-01-01" }), config({ posting_locked_through: "2025-12-31" })).state).toBe("klaar");
+  });
+
+  it("13c. een onbekende blokkade is geen 'klaar' en geen verzonnen 'geblokkeerd'", () => {
+    const r = evalInkoop(inkoop({ invoice_date: "2026-03-01" }), config({ posting_locked_through: undefined }));
+    expect(r.state).toBe("geblokkeerd");
+    expect(codes(r)).toEqual(["boekingsblokkade_onbekend"]);
+    expect(r.blocks[0].label).toMatch(/kon niet worden bepaald/);
+    expect(r.blocks[0].label).toMatch(/database controleert/i);
+    expect(r.blocks[0].label).not.toMatch(/afgesloten/i);
+  });
+
+  it("13d. de blokkadetoets komt uit één helper: dezelfde uitkomst als postingLockVerdict()", () => {
+    const r = evalInkoop(inkoop({ invoice_date: "2025-03-15" }), config({ posting_locked_through: "2025-12-31" }));
+    const v = postingLockVerdict("2025-03-15", "2025-12-31");
+    expect(v.kind).toBe("blocked");
+    expect(r.blocks[0].label).toBe(v.kind === "blocked" ? v.message : "");
   });
 
   it("14. zonder factuurdatum kan er geen boekingsdatum zijn", () => {
@@ -277,9 +307,12 @@ describe("verkoop — dezelfde regels, de verkoopvariant", () => {
     expect(postableRecords([r])).toEqual([]);
   });
 
-  it("21. een afgesloten boekjaar blokkeert ook de verkoop", () => {
-    expect(codes(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ afgesloten_boekjaar: 2024 }))))
-      .toContain("boekjaar_afgesloten");
+  it("21. de boekingsblokkade geldt ook voor de verkoop; de boekjaarstatus niet", () => {
+    expect(codes(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: "2024-12-31" }))))
+      .toContain("boekingsblokkade");
+    expect(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: null })).state).toBe("klaar");
+    expect(codes(evalVerkoop(verkoop({ invoice_date: "2024-02-01" }), config({ posting_locked_through: undefined }))))
+      .toEqual(["boekingsblokkade_onbekend"]);
   });
 });
 

@@ -26,7 +26,15 @@
  * De volgorde van de controles hieronder volgt bewust de volgorde in de
  * migraties 20260915140000 (inkoop) en 20260915160000 (verkoop), zodat de
  * getoonde reden dezelfde is als de reden waarop de writer zou afslaan.
+ *
+ * DE BOEKJAARSTATUS VOORSPELT HIER NIETS. Sinds PR H (20261002120000) toetst
+ * geen enkele schrijver `afgesloten_boekjaar` meer; de enige datumgrendel is
+ * de boekingsblokkade (`posting_locked_through`, via `postingLockVerdict()`).
+ * Een afgesloten of heropend boekjaar is dus geen reden om een document niet
+ * aan te bieden — alleen een blokkade die de datum dekt is dat.
  */
+
+import { postingLockVerdict } from "./posting-lock";
 
 /** Exact de statussen die post_purchase_invoice() accepteert. */
 export const CATCHUP_PURCHASE_POSTABLE_STATUSES = ["gecontroleerd", "betaald", "geexporteerd"] as const;
@@ -41,7 +49,10 @@ export type CatchupState = "geboekt" | "klaar" | "geblokkeerd";
 export type CatchupBlockCode =
   | "status_niet_postbaar"
   | "geen_factuurdatum"
-  | "boekjaar_afgesloten"
+  /** De boekingsdatum valt op of vóór `clients.posting_locked_through`. */
+  | "boekingsblokkade"
+  /** De blokkade kon niet worden gelezen: geen oordeel, dus ook geen "klaar". */
+  | "boekingsblokkade_onbekend"
   | "bedragen_ontbreken"
   | "bedrag_niet_positief"
   | "btw_verlegd"
@@ -85,10 +96,18 @@ export interface CatchupRecord {
   postingGroupId: string | null;
 }
 
-/** De administratie-instellingen waar de writers op controleren. */
+/**
+ * De administratie-instellingen waar de writers op controleren.
+ *
+ * `posting_locked_through` is de ENIGE datumgrendel (PR H): `null` = geen
+ * blokkade, een datum = dicht t/m die dag, `undefined` = niet gelezen (fail
+ * closed: geen "klaar", maar ook geen verzonnen "geblokkeerd"). De
+ * boekjaarstatus (`afgesloten_boekjaar`) hoort hier bewust NIET in: zij
+ * voorspelt sinds de ontkoppeling niets over boekbaarheid.
+ */
 export interface CatchupClientConfig {
   id: string;
-  afgesloten_boekjaar: number | null;
+  posting_locked_through: string | null | undefined;
   crediteuren_rekening_id: string | null;
   debiteuren_rekening_id: string | null;
   btw_te_vorderen_rekening_id: string | null;
@@ -188,12 +207,19 @@ function btwVan(invoice: { btw_amount: number | null }): number {
   return invoice.btw_amount ?? 0;
 }
 
-function boekjaarVan(date: string): number {
-  return Number(date.slice(0, 4));
-}
-
-function jaarAfgesloten(date: string, config: CatchupClientConfig): boolean {
-  return config.afgesloten_boekjaar !== null && boekjaarVan(date) <= config.afgesloten_boekjaar;
+/**
+ * Het oordeel van de boekingsblokkade als blokkade-item, of niets. Eén helper
+ * voor inkoop én verkoop; de regel zelf staat in posting-lock.ts.
+ */
+function blokkadeVoor(date: string, config: CatchupClientConfig): CatchupBlock | null {
+  const oordeel = postingLockVerdict(date, config.posting_locked_through);
+  if (oordeel.kind === "blocked") {
+    return { code: "boekingsblokkade", label: oordeel.message };
+  }
+  if (oordeel.kind === "unknown") {
+    return { code: "boekingsblokkade_onbekend", label: oordeel.message };
+  }
+  return null;
 }
 
 export function evaluatePurchaseInvoice(input: {
@@ -235,11 +261,9 @@ export function evaluatePurchaseInvoice(input: {
 
   if (!invoice.invoice_date) {
     blocks.push({ code: "geen_factuurdatum", label: "Factuur heeft geen factuurdatum" });
-  } else if (jaarAfgesloten(invoice.invoice_date, config)) {
-    blocks.push({
-      code: "boekjaar_afgesloten",
-      label: `Boekjaar ${boekjaarVan(invoice.invoice_date)} is afgesloten voor deze administratie`,
-    });
+  } else {
+    const blokkade = blokkadeVoor(invoice.invoice_date, config);
+    if (blokkade) blocks.push(blokkade);
   }
 
   if (invoice.amount_excl === null || invoice.amount_incl === null) {
@@ -348,11 +372,9 @@ export function evaluateSalesInvoice(input: {
 
   if (!invoice.invoice_date) {
     blocks.push({ code: "geen_factuurdatum", label: "Factuur heeft geen factuurdatum" });
-  } else if (jaarAfgesloten(invoice.invoice_date, config)) {
-    blocks.push({
-      code: "boekjaar_afgesloten",
-      label: `Boekjaar ${boekjaarVan(invoice.invoice_date)} is afgesloten voor deze administratie`,
-    });
+  } else {
+    const blokkade = blokkadeVoor(invoice.invoice_date, config);
+    if (blokkade) blocks.push(blokkade);
   }
 
   // Verlegde BTW wordt door de writer geweigerd (ERRCODE 0A000), niet stil als

@@ -283,7 +283,7 @@ describe("De bevestiging", () => {
     expect(dialoog).toHaveTextContent("Klant A");
     expect(dialoog).toHaveTextContent(String(JAAR));
     const gevolgen = screen.getByTestId("jaar-gevolgen");
-    expect(gevolgen).toHaveTextContent(/geen nieuwe boekingen of tegenboekingen/i);
+    expect(gevolgen).toHaveTextContent(/status Afgesloten\. Die status houdt zelf geen boekingen tegen/i);
     expect(gevolgen).toHaveTextContent(/blijven ongewijzigd/i);
     expect(gevolgen).toHaveTextContent(/geen resultaatboeking/i);
     expect(gevolgen).toHaveTextContent(/geen beginbalans/i);
@@ -293,7 +293,7 @@ describe("De bevestiging", () => {
     expect(gevolgen).toHaveTextContent(/boekingsblokkade .* verandert hierdoor niet/i);
     expect(gevolgen).not.toHaveTextContent(/niet meer worden heropend/i);
     expect(gevolgen).not.toHaveTextContent(/alleen nog (maken )?in een later/i);
-    expect(dialoog).toHaveTextContent(/blokkeert normale boekingen/i);
+    expect(dialoog).toHaveTextContent(/zet géén boekingsblokkade/i);
   });
 
   it("9. annuleren boekt niets", async () => {
@@ -493,7 +493,7 @@ describe("Een jaar dat al dicht is", () => {
     const uitleg = screen.getByTestId("jaar-afgesloten");
     // Dicht zolang het dicht is; een correctie in dit jaar vraagt heropening
     // door een accountant — nooit meer "alleen in een later jaar".
-    expect(uitleg).toHaveTextContent(/zolang het afgesloten is, kunnen er geen normale boekingen/i);
+    expect(uitleg).toHaveTextContent(/bepaalt niet deze status maar de afzonderlijke boekingsblokkade/i);
     expect(uitleg).toHaveTextContent(/moet een accountant het eerst heropenen, met een reden/i);
     expect(uitleg).toHaveTextContent(/boekingsblokkade blijft daarbij gewoon gelden/i);
     expect(uitleg).not.toHaveTextContent(/horen in een later|alleen (nog )?(maken )?in een later/i);

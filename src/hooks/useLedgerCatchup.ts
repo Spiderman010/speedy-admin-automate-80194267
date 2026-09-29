@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { readPostingLockStateOrUnknown } from "./usePostingLock";
 import { useAuth } from "./useAuth";
 import { usePostPurchaseInvoice } from "./usePurchaseInvoicePosting";
 import { usePostSalesInvoice } from "./useSalesInvoicePosting";
@@ -133,14 +134,17 @@ export async function fetchLedgerCatchup(opts: {
 
   const { data: clientRow, error: clientError } = await supabase
     .from("clients")
-    .select(
-      "id, afgesloten_boekjaar, crediteuren_rekening_id, debiteuren_rekening_id, btw_te_vorderen_rekening_id, btw_te_betalen_rekening_id",
-    )
+    .select("id, crediteuren_rekening_id, debiteuren_rekening_id, btw_te_vorderen_rekening_id, btw_te_betalen_rekening_id")
     .eq("id", clientId)
     .maybeSingle();
   if (clientError) throw clientError;
   if (!clientRow) throw new Error("Administratie niet gevonden");
-  const config = clientRow as CatchupClientConfig;
+  // De boekingsblokkade is de enige datumgrendel (PR H). Zij komt via dezelfde
+  // lezing als de blokkadekaart; onleesbaar = onbekend, nooit "toegestaan".
+  const config: CatchupClientConfig = {
+    ...clientRow,
+    posting_locked_through: await readPostingLockStateOrUnknown(clientId),
+  };
 
   const [purchaseInvoices, salesInvoices, purchaseMarkers, salesMarkers] = await Promise.all([
     fetchAll<CatchupPurchaseInvoice>(

@@ -108,7 +108,7 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 const client = (over: Row = {}) => ({
-  id: CLIENT, afgesloten_boekjaar: null, crediteuren_rekening_id: "cred", debiteuren_rekening_id: "deb",
+  id: CLIENT, posting_locked_through: null, crediteuren_rekening_id: "cred", debiteuren_rekening_id: "deb",
   btw_te_vorderen_rekening_id: "btwv", btw_te_betalen_rekening_id: "btwb", ...over,
 });
 

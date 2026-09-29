@@ -62,7 +62,7 @@ const CLIENT = "client-1";
 const ANDER = "client-2";
 
 const client = (over: Row = {}) => ({
-  id: CLIENT, afgesloten_boekjaar: null, crediteuren_rekening_id: "cred", debiteuren_rekening_id: "deb",
+  id: CLIENT, posting_locked_through: null, crediteuren_rekening_id: "cred", debiteuren_rekening_id: "deb",
   btw_te_vorderen_rekening_id: "btwv", btw_te_betalen_rekening_id: "btwb", ...over,
 });
 
@@ -275,7 +275,7 @@ describe("de console", () => {
     const { diagnosticsForDocument, summarizeDiagnostics, summarizeLedger, diagnosticsForLedger, postingGroupBalances } =
       await import("@/lib/accounting-diagnostics");
     const config = {
-      id: CLIENT, afgesloten_boekjaar: null, crediteuren_rekening_id: "cred", debiteuren_rekening_id: "deb",
+      id: CLIENT, posting_locked_through: null, crediteuren_rekening_id: "cred", debiteuren_rekening_id: "deb",
       btw_te_vorderen_rekening_id: "btwv", btw_te_betalen_rekening_id: "btwb",
     };
     const records = [

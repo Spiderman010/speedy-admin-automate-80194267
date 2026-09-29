@@ -95,6 +95,8 @@ const state = {
   invoice: { ...baseInvoice } as typeof baseInvoice | null,
   storedLines: [{ ...baseLine }] as Array<typeof baseLine>,
   clients: [{ ...volledigeClient }] as any[],
+  lock: null as string | null,
+  lockError: false,
   posting: null as { posting_group_id: string } | null,
 };
 
@@ -106,6 +108,19 @@ vi.mock("react-router-dom", async () => {
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => {
+      // De boekingsblokkade wordt via haar eigen lezing opgehaald (PR H).
+      if (table === "clients") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () =>
+                state.lockError
+                  ? { data: null, error: { code: "42501", message: "permission denied" } }
+                  : { data: { id: "client-1", posting_locked_through: state.lock }, error: null },
+            }),
+          }),
+        };
+      }
       if (table !== "purchase_invoices") throw new Error(`Unexpected table ${table}`);
       return {
         select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: state.invoice, error: null }) }) }),
@@ -116,6 +131,8 @@ vi.mock("@/integrations/supabase/client", () => ({
 }));
 
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: toastSpy }) }));
+// De blokkadelezing (usePostingLockState) is pas actief met een ingelogde gebruiker.
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "user-1" }, session: null, loading: false }) }));
 vi.mock("@/hooks/useActiveOrganization", () => ({
   useActiveOrganization: () => ({ activeOrganizationId: "org-1", isReady: true }),
 }));
@@ -188,6 +205,8 @@ beforeEach(() => {
   state.invoice = { ...baseInvoice };
   state.storedLines = [{ ...baseLine }];
   state.clients = [{ ...volledigeClient }];
+  state.lock = null;
+  state.lockError = false;
   state.posting = null;
 });
 
@@ -296,12 +315,33 @@ describe("boeken — writer-uitgelijnde boekbaarheid", () => {
     expect(postBtn()).toBeDisabled();
   });
 
-  it("12. een afgesloten boekjaar is een zichtbare blokkade", async () => {
-    state.clients = [{ ...volledigeClient, afgesloten_boekjaar: 2026 }];
+  it("12. een boekingsblokkade die de factuurdatum dekt is een zichtbare blokkade, met de datums erbij", async () => {
+    state.lock = "2026-12-31";
     await renderReady();
 
-    expect(readiness().querySelector("[data-block-code='boekjaar_afgesloten']")).not.toBeNull();
-    expect(readiness()).toHaveTextContent("2026");
+    expect(readiness().querySelector("[data-block-code='boekingsblokkade']")).not.toBeNull();
+    expect(readiness()).toHaveTextContent("Boekingsdatum 20-07-2026 valt binnen de boekingsblokkade t/m 31-12-2026.");
+    expect(readiness()).not.toHaveTextContent(/is afgesloten/);
+    expect(postBtn()).toBeDisabled();
+  });
+
+  it("12b. een afgesloten boekjaar zónder blokkade is géén blokkade meer (PR H)", async () => {
+    state.clients = [{ ...volledigeClient, afgesloten_boekjaar: 2026 }];
+    state.lock = null;
+    await renderReady();
+
+    expect(readiness()).toHaveAttribute("data-readiness", "klaar");
+    expect(readiness().querySelector("[data-block-code='boekjaar_afgesloten']")).toBeNull();
+    expect(postBtn()).toBeEnabled();
+  });
+
+  it("12c. een onleesbare blokkade is 'niet te bepalen': geen knop, geen verzonnen reden", async () => {
+    state.lockError = true;
+    await renderReady();
+
+    expect(readiness().querySelector("[data-block-code='boekingsblokkade_onbekend']")).not.toBeNull();
+    expect(readiness()).toHaveTextContent(/kon niet worden bepaald/);
+    expect(readiness()).not.toHaveTextContent(/afgesloten/);
     expect(postBtn()).toBeDisabled();
   });
 

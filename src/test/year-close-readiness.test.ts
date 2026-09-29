@@ -585,8 +585,10 @@ describe("ouder onopgelost bronwerk beschermt het watermerk", () => {
     const c = check(r, "unposted_work");
     expect(c?.severity).toBe("error");
     expect(c?.count).toBe(1);
-    // De reden is de bestaande schrijversregel, niet een verzonnen norm.
-    expect(c?.summary).toContain("onboekbaar");
+    // De reden is de regel van close_fiscal_year() (volledigheid), niet een
+    // verzonnen norm — en sinds PR H niet meer "voorgoed onboekbaar".
+    expect(c?.summary).toMatch(/verklaart het boekjaar volledig/);
+    expect(c?.summary).not.toMatch(/onboekbaar/);
   });
 
   it("27. werk ín het gekozen boekjaar blokkeert net zo goed", () => {

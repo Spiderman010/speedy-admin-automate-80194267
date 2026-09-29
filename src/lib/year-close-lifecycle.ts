@@ -279,7 +279,7 @@ export function reopenDialogExplanation(clientName: string, fiscalYear: number):
 export function reopenConsequences(fiscalYear: number): readonly string[] {
   return [
     `Boekjaar ${fiscalYear} krijgt de status Heropend; de eerdere afsluiting blijft in de historie staan.`,
-    `Nieuwe boekingen en tegenboekingen met een datum in boekjaar ${fiscalYear} zijn daarna weer mogelijk, tenzij iets anders ze tegenhoudt.`,
+    `Heropenen verandert niets aan wat er geboekt kan worden: dat bepaalt de afzonderlijke boekingsblokkade, en die blijft precies zoals zij staat.`,
     "De aparte boekingsblokkade van deze administratie verandert hierdoor niet; die staat los van de boekjaarstatus.",
     "Er wordt niets geboekt, verwijderd of herschreven.",
     `Na de correctie moet boekjaar ${fiscalYear} opnieuw worden gecontroleerd en afgesloten.`,

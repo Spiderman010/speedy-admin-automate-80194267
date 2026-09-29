@@ -498,10 +498,15 @@ describe("branch-scope", () => {
       "src/lib/financial-statements.ts",
       "src/lib/proef-saldibalans.ts",
       "src/lib/ledger-integrity.ts",
-      "src/lib/ledger-catchup.ts",
     ]) {
       expect(readFileSync(p, "utf8"), p).toBe(toon(p));
     }
+    // Was: ook `ledger-catchup.ts` byte-identiek. Dat is geen rekenlaag maar
+    // een voorspelling van boekbaarheid, en die beweegt terecht mee met de
+    // schrijvers (PR H). Wat blijft: zij rekent niets uit en schrijft niets.
+    const catchup = readFileSync("src/lib/ledger-catchup.ts", "utf8");
+    expect(catchup).not.toMatch(/supabase|\.rpc\(|ledger_postings|useMutation/);
+    expect(catchup).not.toMatch(/signedAmountCents|buildTrialBalance|financial-statements/);
   });
 
   branchIt("43. de motor blijft server-side: geen gewijzigd bestand krijgt een schrijfpad naar het grootboek", () => {

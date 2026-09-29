@@ -88,21 +88,38 @@ const EVENT_COLUMNS =
  * anders zou het scherm een onbeschermde administratie melden die het niet
  * eens heeft kunnen lezen.
  */
+export async function fetchPostingLockState(clientId: string): Promise<string | null> {
+  const { data, error } = await postingLockApi()
+    .from("clients")
+    .select("id, posting_locked_through")
+    .eq("id", clientId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Administratie niet gevonden");
+  return data.posting_locked_through ?? null;
+}
+
+/**
+ * Dezelfde lezing voor leesmodellen die niet mogen omvallen op de blokkade
+ * (inhaalslag, diagnostiek): kon zij niet worden gelezen, dan `undefined` =
+ * onbekend, en het oordeel wordt `unknown` — nooit "toegestaan", nooit een
+ * verzonnen "geblokkeerd". Zie `postingLockVerdict()`.
+ */
+export async function readPostingLockStateOrUnknown(clientId: string): Promise<string | null | undefined> {
+  try {
+    return await fetchPostingLockState(clientId);
+  } catch (error) {
+    console.warn("[boekingsblokkade] stand niet leesbaar; oordeel wordt onbekend", { clientId, error: String(error) });
+    return undefined;
+  }
+}
+
 export function usePostingLockState(clientId: string | undefined, enabled = true) {
   const { user } = useAuth();
   return useQuery<string | null>({
     queryKey: [POSTING_LOCK_STATE_QUERY_KEY, clientId ?? ""],
     enabled: enabled && !!user && !!clientId,
-    queryFn: async () => {
-      const { data, error } = await postingLockApi()
-        .from("clients")
-        .select("id, posting_locked_through")
-        .eq("id", clientId!)
-        .maybeSingle();
-      if (error) throw error;
-      if (!data) throw new Error("Administratie niet gevonden");
-      return data.posting_locked_through ?? null;
-    },
+    queryFn: () => fetchPostingLockState(clientId!),
   });
 }
 

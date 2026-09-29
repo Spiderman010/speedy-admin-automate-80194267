@@ -65,13 +65,21 @@ export interface DiagnosticItem {
 const ALTIJD_WAARSCHUWING = new Set<string>([
   // De factuur is nog niet goedgekeurd. Dat is de normale gang van zaken.
   "status_niet_postbaar",
+  // De blokkade kon niet worden gelezen: er is niets vastgesteld, dus geen
+  // bederf en geen vrijbrief. Onbekend is geen fout en geen "klaar".
+  "boekingsblokkade_onbekend",
 ]);
 
-/** Codes die altijd een gebroken toestand zijn. */
-const ALTIJD_ERROR = new Set<string>([
-  // Boeken in een afgesloten jaar mag niet en wordt nooit toegestaan.
-  "boekjaar_afgesloten",
-]);
+/*
+ * Er is BEWUST geen "altijd fout"-lijst meer. Die bevatte één code,
+ * `boekjaar_afgesloten`, met de toelichting "boeken in een afgesloten jaar mag
+ * niet en wordt nooit toegestaan". Sinds PR H (20261002120000) is dat onwaar:
+ * de boekjaarstatus is een administratief gegeven en de enige datumgrendel is
+ * de boekingsblokkade. Een document dat binnen de blokkade valt
+ * (`boekingsblokkade`) volgt de gewone regel hieronder: op een goedgekeurde
+ * factuur is het een fout (de schrijver weigert voorspelbaar), op een concept
+ * open werk. Zie posting-prediction-invariants.test.ts.
+ */
 
 /**
  * De ernst van één blokkade uit `evaluatePurchase/SalesInvoice()`.
@@ -85,7 +93,6 @@ const ALTIJD_ERROR = new Set<string>([
  * de inrichting is nog niet af.
  */
 export function severityForBlock(block: CatchupBlock, isPostableStatus: boolean): DiagnosticSeverity {
-  if (ALTIJD_ERROR.has(block.code)) return "error";
   if (ALTIJD_WAARSCHUWING.has(block.code)) return "warning";
   if (block.configuratie) return "warning";
   return isPostableStatus ? "error" : "warning";
