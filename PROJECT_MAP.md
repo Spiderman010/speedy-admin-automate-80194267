@@ -1170,6 +1170,22 @@ src/pages/Jaarafsluiting.tsx        /overzichten/jaarafsluiting — nu ook de af
 - **Er is geen resultaatrekening, en v1 heeft er ook geen nodig.** `clients` kent geen resultaat- of eigenvermogenrekening, en de balans toont de resultaatbestemming als **presentatieregel** (`prior_years_result` en `current_year_result`), niet als boeking. Juist dáárom maakt de jaarafsluiting geen resultaatboeking: die zou de presentatie kapotmaken in plaats van haar aanvullen. Rekening **9998 'Resultaat'** bestaat slechts als ingezaaide rekening in het standaardschema — dat is géén configuratie en mag nooit als autoriteit worden gebruikt. Een configuratieveld is dus géén openstaande ontwerpeis; het wordt pas een vraag als de firma ooit een échte resultaatbestemmingsboeking wil, en dat is een eigen fase mét een wijziging in de rapportagemotor.
 - **De beginbalansmotor kan géén doorrol doen — en hoeft dat niet.** `post_opening_balance()` weigert zodra de administratie al énige grootboekregel vóór `opening_date` heeft (de "earliest fact"-regel). Bij het afsluiten van jaar N bestaan die regels per definitie. Dat is geen ontbrekende functie: de kern leidt `openingCents` af als Σ(debet − credit) vóór de periodegrens, dus de openingspositie van N+1 ís het cumulatieve grootboek. Een eigen doorrol-bronsoort is daarmee geen openstaande eis maar een oplossing voor een probleem dat niet bestaat.
 
+### ACL-hardening — interne hulpfuncties alleen voor de eigenaar
+
+```
+supabase/migrations/20260929120000_harden_internal_function_acls.sql
+supabase/tests/function-acl-hardening/run-proof.sh     49 bewijzen tegen een echte PostgreSQL
+src/test/function-acl-hardening-migration.test.ts      contract over de migratie en haar aanname
+```
+
+Uitkomst van de productie-audit van 2026-09-28. **Alleen rechten; geen lichaam, eigenaar, tabel of policy geraakt.**
+
+- **De oorzaak.** `lock_ledger_client(uuid)`, `ledger_client_lock_key(uuid)` en `posting_allowed(uuid, date)` deden alleen `REVOKE ALL … FROM PUBLIC`. Supabase's `pg_default_acl` kent bij het aanmaken van elke functie in `public` EXECUTE rechtstreeks toe aan `anon`, `authenticated` en `service_role`; die directe toekenningen bleven staan. Nu: `REVOKE ALL … FROM PUBLIC, anon, authenticated, service_role` — alleen de eigenaar.
+- **Veilig, want elke aanroeper is `SECURITY DEFINER`**: `post_opening_balance`, `reverse_posting_group`, `declare_opening_balance_nil`, `close_fiscal_year`, `set_posting_lock`, `assert_posting_allowed` en de trigger `lock_ledger_client_for_posting`. `ledger_client_lock_key` wordt alleen binnen `lock_ledger_client` gebruikt. Geen policy, view, app-code of edge function roept ze aan; de contracttest bewaakt dat, ook voor toekomstige aanroepers.
+- **`post_purchase_invoice(uuid)`** blijft een toegangspunt voor `authenticated` (de app roept hem aan), maar `anon` en `service_role` zijn eruit — gelijk aan zijn zes gedateerde broers. `authenticated` wordt daarbij nooit ingetrokken.
+- **`assert_posting_allowed`** stond al op alleen-eigenaar en is niet aangeraakt.
+- **`ALTER DEFAULT PRIVILEGES` bewust niet gewijzigd**: dat raakt élke toekomstige functie, ook die van de Lovable-tooling. **Conventie vanaf nu:** een interne hulpfunctie trekt in haar eigen migratie expliciet in van `PUBLIC, anon, authenticated, service_role`; `FROM PUBLIC` alleen is op dit platform onvoldoende.
+
 ---
 
 ## Emergency rule
