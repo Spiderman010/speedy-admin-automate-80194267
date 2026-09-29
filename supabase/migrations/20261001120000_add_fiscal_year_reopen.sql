@@ -653,7 +653,8 @@ BEGIN
 
   -- (5) Geen bewijs: niets te heropenen — of een erfenis die niet klopt.
   IF NOT v_found THEN
-    IF v_client.afgesloten_boekjaar IS NOT NULL AND _fiscal_year <= v_client.afgesloten_boekjaar THEN
+    -- Een NULL-watermerk maakt deze vergelijking NULL, dus onwaar.
+    IF _fiscal_year <= v_client.afgesloten_boekjaar THEN
       RAISE EXCEPTION 'Boekjaar % valt onder het watermerk % maar heeft geen afsluitbewijs; de afsluitstand is inconsistent en moet handmatig worden onderzocht.',
         _fiscal_year, v_client.afgesloten_boekjaar
         USING ERRCODE = '23514';

@@ -352,9 +352,14 @@ describe("Wat deze fase NIET toevoegt", () => {
       expect(sql, `${f}: het jaarwatermerk blijft staan`).not.toMatch(
         /DROP\s+(COLUMN\s+)?(IF EXISTS\s+)?afgesloten_boekjaar/i,
       );
-      expect(sql, `${f}: heropenen bestaat nog niet`).not.toMatch(
-        /CREATE(?: OR REPLACE)? FUNCTION public\.\w*(reopen|heropen)\w*/i,
-      );
+      // Was: "heropenen bestaat nog niet" — waar tot PR E, geen invariant. Wat
+      // blijft: heropenen bestaat alleen als databaseschrijver in de eigen
+      // PR E-migratie, nooit als losse definitie elders.
+      if (!f.endsWith("_add_fiscal_year_reopen.sql")) {
+        expect(sql, `${f}: heropenen hoort alleen in de PR E-migratie`).not.toMatch(
+          /CREATE(?: OR REPLACE)? FUNCTION public\.\w*(reopen|heropen)\w*/i,
+        );
+      }
     }
   });
 
