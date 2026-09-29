@@ -6,6 +6,7 @@ import {
   assertBranchSqlKeepsLedgerFoundation,
   assertBranchTouchesNoExistingWriter,
 } from "@/test/support/branch-sql-scope";
+import { appFilesMatching } from "@/test/support/app-sources";
 
 /**
  * 6C-b11 PR C — de boekingsblokkade, los van de jaarafsluiting.
@@ -302,9 +303,14 @@ describe("PR C raakt het bestaande gedrag niet aan", () => {
   });
 
 
-  it("23. de app is niet aangeraakt en de gegenereerde types evenmin", () => {
-    expect(changed.filter((f) => f.startsWith("src/") && !f.startsWith("src/test/"))).toEqual([]);
-    expect(changed).not.toContain("src/integrations/supabase/types.ts");
+  it("23. de app wijzigt de boekingsblokkade nooit buiten set_posting_lock() om", () => {
+    /*
+     * Was: "deze branch raakt src/ niet" — waar over PR C, maar geen invariant
+     * (zie branch-sql-scope.ts). Wat het beschermde: de blokkade en haar
+     * auditspoor bewegen alleen via de schrijver, nooit via een directe update.
+     */
+    expect(appFilesMatching(/\.from\(\s*["'`]posting_lock_events["'`]\s*\)[^;]*\.(insert|update|upsert|delete)\s*\(/)).toEqual([]);
+    expect(appFilesMatching(/\.(update|upsert|insert)\(\s*\{[^}]*posting_locked_through/)).toEqual([]);
   });
 
   it("24. de koppelingstest is bijgewerkt zoals zij zelf voorschreef", () => {

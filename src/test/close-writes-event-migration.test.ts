@@ -6,6 +6,7 @@ import {
   assertBranchSqlKeepsLedgerFoundation,
   assertBranchTouchesNoExistingWriter,
 } from "@/test/support/branch-sql-scope";
+import { appFilesMatching } from "@/test/support/app-sources";
 
 /**
  * 6C-b11 PR B — de afsluiting schrijft haar gebeurtenis.
@@ -206,9 +207,15 @@ describe("PR B raakt verder niets aan", () => {
     assertBranchSqlKeepsLedgerFoundation(changed);
   });
 
-  it("14. de app is niet aangeraakt en de gegenereerde types evenmin", () => {
-    expect(changed.filter((f) => f.startsWith("src/") && !f.startsWith("src/test/"))).toEqual([]);
-    expect(changed).not.toContain("src/integrations/supabase/types.ts");
+  it("14. de app schrijft zelf nooit een afsluitbewijs of een boekjaargebeurtenis", () => {
+    /*
+     * Was: "deze branch raakt src/ niet". Dat was waar over PR B, maar is geen
+     * invariant (zie branch-sql-scope.ts). Wat het beschermde: bewijs en
+     * gebeurtenis ontstaan uitsluitend in close_fiscal_year(), nooit via de app.
+     */
+    expect(
+      appFilesMatching(/\.from\(\s*["'`](year_closures|fiscal_year_events)["'`]\s*\)[^;]*\.(insert|update|upsert|delete)\s*\(/),
+    ).toEqual([]);
   });
 
   it("15. de koppelingstest bestaat nog en pint de schrijvers nog steeds", () => {
