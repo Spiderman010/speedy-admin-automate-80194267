@@ -89,18 +89,20 @@ function KpiCard({
       to={to}
       className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <Card className="h-full transition-colors hover:bg-muted/50">
-        <CardContent className="p-4">
+      <Card className="h-full transition-colors hover:border-primary/30 hover:bg-primary/[0.03]">
+        <CardContent className="p-3.5">
           {loading ? (
             <Skeleton className="h-14 w-full" />
           ) : (
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                <Icon className="h-4 w-4" />
+              </span>
               <div className="min-w-0">
-                <p className="text-xs font-medium text-muted-foreground">{title}</p>
-                <p className="mt-1 font-display text-2xl font-bold leading-none">{value}</p>
-                <p className="mt-1.5 truncate text-xs text-muted-foreground">{context}</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+                <p className="mt-0.5 font-display text-2xl font-bold leading-none tabular-nums">{value}</p>
+                <p className="mt-1.5 break-words text-xs text-muted-foreground sm:truncate">{context}</p>
               </div>
-              <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
             </div>
           )}
         </CardContent>
@@ -111,7 +113,7 @@ function KpiCard({
 
 function EmptyState({ icon: Icon, title, sub }: { icon: typeof CheckCircle2; title: string; sub?: string }) {
   return (
-    <div className="py-8 text-center">
+    <div className="px-4 py-8 text-center">
       <Icon className="mx-auto mb-2 h-6 w-6 text-muted-foreground/40" />
       <p className="text-sm font-medium">{title}</p>
       {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
@@ -250,7 +252,11 @@ export default function Dashboard() {
       )}
 
       {/* ── Operationele KPI's ── */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section aria-labelledby="dash-kerncijfers">
+        <h2 id="dash-kerncijfers" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Kerncijfers
+        </h2>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <KpiCard
           title="Nog te verwerken"
           value={pendingInvoices}
@@ -284,24 +290,29 @@ export default function Dashboard() {
           loading={loadingInvoices}
         />
       </div>
+      </section>
 
       {/* ── Werkvoorraad + Aandacht vereist ── */}
-      <div className="mt-6 grid gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader className="pb-3">
-            <CardTitle className="font-display text-base">Werkvoorraad per administratie</CardTitle>
-            <p className="text-sm text-muted-foreground">
+      <section aria-labelledby="dash-werkvoorraad" className="mt-5">
+        <h2 id="dash-werkvoorraad" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Werkvoorraad en aandacht
+        </h2>
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Card className="overflow-hidden xl:col-span-2">
+          <CardHeader className="border-b bg-muted/30 px-4 py-3">
+            <CardTitle className="font-display text-sm">Werkvoorraad per administratie</CardTitle>
+            <p className="text-xs text-muted-foreground">
               Openstaand werk en exportgereedheid, administraties met aandacht eerst
             </p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {loadingWork ? (
-              <div className="space-y-2">
+              <div className="space-y-2 p-4">
                 {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
               </div>
             ) : workRows.length > 0 ? (
               <div className="overflow-x-auto">
-                <Table>
+                <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Administratie</TableHead>
@@ -337,13 +348,13 @@ export default function Dashboard() {
                             </p>
                           )}
                         </TableCell>
-                        <TableCell className="text-right text-sm tabular-nums">
+                        <TableCell className="text-right font-mono text-sm tabular-nums">
                           {readiness.inkoopTeControleren}
                         </TableCell>
-                        <TableCell className="text-right text-sm tabular-nums">
+                        <TableCell className="text-right font-mono text-sm tabular-nums">
                           {readiness.bankGeblokkeerd}
                         </TableCell>
-                        <TableCell className="hidden text-right text-sm tabular-nums sm:table-cell">
+                        <TableCell className="hidden text-right font-mono text-sm tabular-nums sm:table-cell">
                           {readiness.openVraagposten}
                         </TableCell>
                         <TableCell>
@@ -375,23 +386,23 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="font-display text-base">Aandacht vereist</CardTitle>
-            <p className="text-sm text-muted-foreground">Oudste openstaande acties eerst</p>
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b bg-muted/30 px-4 py-3">
+            <CardTitle className="font-display text-sm">Aandacht vereist</CardTitle>
+            <p className="text-xs text-muted-foreground">Oudste openstaande acties eerst</p>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {loadingAttention ? (
-              <div className="space-y-2">
+              <div className="space-y-2 p-4">
                 {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
               </div>
             ) : attentionItems.length > 0 ? (
-              <div className="space-y-1">
+              <div className="divide-y">
                 {attentionItems.map(item => (
                   <Link
                     key={item.id}
                     to={item.to}
-                    className="-mx-2 flex items-start gap-3 rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:py-1.5"
+                    className="flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:py-2"
                   >
                     {item.kind === "vraagpost" ? (
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
@@ -405,7 +416,7 @@ export default function Dashboard() {
                         {item.date ? ` · ${new Date(item.date).toLocaleDateString("nl-NL")}` : ""}
                       </p>
                     </div>
-                    <Badge variant="outline" className="shrink-0 text-xs">
+                    <Badge variant="outline" className="shrink-0 whitespace-nowrap text-xs">
                       {item.kind === "inkoop" ? "Inkoop" : "Vraagpost"}
                     </Badge>
                   </Link>
@@ -421,9 +432,14 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+      </section>
 
       {/* ── Snelle navigatie ── */}
-      <div className="mt-6 flex flex-wrap gap-2">
+      <section aria-labelledby="dash-navigatie" className="mt-5">
+        <h2 id="dash-navigatie" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Snelle navigatie
+        </h2>
+      <div className="flex flex-wrap gap-2">
         <Button asChild variant="outline" size="sm">
           <Link to="/bank"><Landmark className="mr-2 h-4 w-4" />Bank</Link>
         </Button>
@@ -443,6 +459,7 @@ export default function Dashboard() {
           <Link to="/overzichten"><BarChart3 className="mr-2 h-4 w-4" />Rapportages</Link>
         </Button>
       </div>
+      </section>
     </>
   );
 }
