@@ -35,14 +35,14 @@ export function PurchaseInvoiceQueue({
     <aside
       data-testid="invoice-queue"
       aria-label="Factuurwachtrij"
-      className="min-w-0 overflow-hidden rounded-lg border bg-card shadow-card xl:sticky xl:top-[4.5rem] xl:h-[calc(100dvh-6.5rem)]"
+      className="min-w-0 overflow-hidden rounded-md border bg-card shadow-none xl:sticky xl:top-[4.5rem] xl:h-[calc(100dvh-6.5rem)]"
     >
       <div className="flex h-11 items-center justify-between border-b px-3">
         <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Wachtrij</h2>
         <span className="font-mono text-xs tabular-nums text-muted-foreground">{invoices.length}</span>
       </div>
       <div className="max-h-56 overflow-x-auto xl:h-[calc(100%-2.75rem)] xl:max-h-none xl:overflow-x-hidden xl:overflow-y-auto">
-        <nav className="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-1 p-1.5 xl:grid-flow-row xl:auto-cols-auto">
+        <nav className="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] gap-0.5 p-1 xl:grid-flow-row xl:auto-cols-auto">
           {invoices.map((item) => {
             const active = item.id === activeInvoiceId;
             const amount = item.amount_incl ?? item.amount_excl;
@@ -54,11 +54,11 @@ export function PurchaseInvoiceQueue({
                 aria-current={active ? "page" : undefined}
                 onClick={() => onSelect(item.id)}
                 className={cn(
-                  "h-auto min-h-[4.5rem] w-full justify-start rounded-md border border-transparent px-2.5 py-2 text-left",
+                  "h-auto min-h-[3.25rem] w-full justify-start rounded-sm border border-transparent px-2.5 py-1.5 text-left",
                   active && "bg-primary/[0.07] shadow-[inset_3px_0_0_hsl(var(--primary))] hover:bg-primary/10",
                 )}
               >
-                <span className="min-w-0 flex-1 space-y-1">
+                <span className="min-w-0 flex-1 space-y-0.5">
                   <span className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold">
                       {item.supplier || "Onbekende leverancier"}
@@ -75,7 +75,7 @@ export function PurchaseInvoiceQueue({
                       {item.invoice_date ? formatDatumNL(item.invoice_date) : "Geen datum"}
                     </span>
                   </span>
-                  <Badge variant={statusVariant(item.status)} className="h-5 text-[10px] leading-none">
+                  <Badge variant={statusVariant(item.status)} className="h-4 text-[10px] leading-none">
                     {statusLabel(item.status)}
                   </Badge>
                 </span>

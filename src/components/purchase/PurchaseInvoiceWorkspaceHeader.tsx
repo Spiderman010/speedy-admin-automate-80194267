@@ -76,12 +76,12 @@ export function PurchaseInvoiceWorkspaceHeader({
   const position = currentIndex >= 0 ? `${currentIndex + 1} / ${totalCount}` : "—";
 
   return (
-    <header className="space-y-1.5 rounded-lg border bg-card px-3 py-2 shadow-card">
+    <header className="space-y-1 rounded-md border bg-card px-3 py-2 shadow-none">
       {/* Shell header already shows the "Inkoop › Details" breadcrumb; keep an sr-only h1 for a11y. */}
       <h1 className="sr-only">Inkoopfactuur verwerken</h1>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" className="-ml-2 shrink-0" onClick={onBack}>
+        <Button variant="ghost" size="sm" className="-ml-2 h-9 shrink-0" onClick={onBack}>
           <ArrowLeft className="h-4 w-4 sm:mr-2" />
           <span className="hidden sm:inline">Inkoopoverzicht</span>
           <span className="sr-only sm:hidden">Terug naar inkoopoverzicht</span>
@@ -102,7 +102,7 @@ export function PurchaseInvoiceWorkspaceHeader({
           <Button
             variant="outline"
             size="icon"
-            className="h-8 w-8"
+            className="h-9 w-9"
             onClick={onPrev}
             disabled={!hasPrev}
             title="Vorige factuur"
@@ -116,7 +116,7 @@ export function PurchaseInvoiceWorkspaceHeader({
           <Button
             variant="outline"
             size="icon"
-            className="h-8 w-8"
+            className="h-9 w-9"
             onClick={onNext}
             disabled={!hasNext}
             title="Volgende factuur"
