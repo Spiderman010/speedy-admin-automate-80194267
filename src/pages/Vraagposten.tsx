@@ -178,7 +178,7 @@ export default function Vraagposten() {
   return (
     <>
       <h1 className="sr-only">Vraagposten</h1>
-      <div className="mb-4 space-y-2.5">
+      <div className="mb-3 space-y-2 rounded-lg border bg-card px-3 py-2 shadow-card">
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative w-full max-w-md flex-1 min-w-[12rem]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -186,11 +186,11 @@ export default function Vraagposten() {
               placeholder="Zoeken op titel, bron, categorie of klant..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
+              className="h-9 pl-10"
               aria-label="Zoeken in vraagposten"
             />
           </div>
-          <span className="text-sm text-muted-foreground whitespace-nowrap">
+          <span className="text-xs text-muted-foreground whitespace-nowrap tabular-nums">
             {filteredSorted.length} {filteredSorted.length === 1 ? "vraagpost" : "vraagposten"}
           </span>
         </div>
@@ -212,10 +212,10 @@ export default function Vraagposten() {
           ))}
         </div>
       </div>
-      <Card>
-        <CardContent className="overflow-x-auto p-4 sm:p-6">
+      <Card className="overflow-hidden">
+        <CardContent className="overflow-x-auto p-0">
           {isLoading ? (
-            <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+            <div className="space-y-2 p-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
           ) : isError ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10 mb-4">
@@ -238,7 +238,7 @@ export default function Vraagposten() {
               <p className="mt-1 max-w-sm text-sm text-muted-foreground">{emptyDescription}</p>
             </div>
           ) : (
-            <Table>
+            <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[8rem]">Status</TableHead>
@@ -246,7 +246,7 @@ export default function Vraagposten() {
                   <TableHead className="hidden sm:table-cell">Klant</TableHead>
                   <TableHead className="hidden lg:table-cell">Bron</TableHead>
                   <TableHead className="hidden lg:table-cell">Categorie</TableHead>
-                  <TableHead className="hidden md:table-cell">Datum</TableHead>
+                  <TableHead className="hidden md:table-cell whitespace-nowrap">Datum</TableHead>
                   <TableHead className="text-right">Actie</TableHead>
                 </TableRow>
               </TableHeader>
@@ -270,7 +270,7 @@ export default function Vraagposten() {
                     className="scroll-mt-24 transition-colors duration-300"
                   >
                     <TableCell className={highlightClass}>{statusBadge(vp.status)}</TableCell>
-                    <TableCell className={`${highlightClass} font-medium`}>
+                    <TableCell className={`${highlightClass} font-medium align-top`}>
                       <span className="block max-w-[14rem] sm:max-w-xs lg:max-w-md truncate" title={vp.titel ?? undefined}>{formatMT940Title(vp.titel)}</span>
                       {detail && (
                         <div
@@ -288,14 +288,14 @@ export default function Vraagposten() {
                         </span>
                       </div>
                     </TableCell>
-                    <TableCell className={`${highlightClass} hidden sm:table-cell text-sm`}>{getClientName(vp.client_id)}</TableCell>
-                    <TableCell className={`${highlightClass} hidden lg:table-cell text-sm`}>{sourceLabel}</TableCell>
-                    <TableCell className={`${highlightClass} hidden lg:table-cell text-sm`}>{categorieLabel}</TableCell>
-                    <TableCell className={`${highlightClass} hidden md:table-cell text-sm text-muted-foreground`}>
+                    <TableCell className={`${highlightClass} hidden sm:table-cell max-w-[11rem] truncate`}>{getClientName(vp.client_id)}</TableCell>
+                    <TableCell className={`${highlightClass} hidden lg:table-cell whitespace-nowrap text-muted-foreground`}>{sourceLabel}</TableCell>
+                    <TableCell className={`${highlightClass} hidden lg:table-cell whitespace-nowrap text-muted-foreground`}>{categorieLabel}</TableCell>
+                    <TableCell className={`${highlightClass} hidden md:table-cell whitespace-nowrap font-mono text-xs text-muted-foreground`}>
                       {vp.created_at ? new Date(vp.created_at).toLocaleDateString("nl-NL") : "—"}
                     </TableCell>
                     <TableCell className={`${highlightClass} text-right`}>
-                      <div className="inline-flex gap-1.5 items-center whitespace-nowrap">
+                      <div className="inline-flex items-center gap-1 whitespace-nowrap">
                         {(vp.status === "open" || vp.status === "in_behandeling") && (
                           <>
                             <Button size="sm" variant="outline" className="h-9" onClick={() => handleStatus(vp.id, "opgelost")}>
