@@ -6,7 +6,8 @@
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
+    /* App-achtergrond: licht warmgrijs; content staat op witte kaarten. */
+    --background: 40 14% 95%;
     --foreground: 222 47% 11%;
 
     --card: 0 0% 100%;
@@ -18,23 +19,25 @@
     --primary: 217 82% 47%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 215 48% 93%;
+    --secondary: 40 10% 93%;
     --secondary-foreground: 221 39% 18%;
 
-    --muted: 214 38% 95%;
-    --muted-foreground: 218 18% 38%;
+    --muted: 40 12% 95%;
+    --muted-foreground: 220 10% 40%;
 
-    --accent: 166 52% 34%;
-    --accent-foreground: 0 0% 100%;
+    /* Accent = neutrale hover/focus-markering (menu's, selects). Bewust
+       geen groen: groen is gereserveerd voor de status "klaar". */
+    --accent: 214 70% 95%;
+    --accent-foreground: 221 39% 18%;
 
     --destructive: 2 68% 45%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 216 25% 89%;
-    --input: 216 24% 86%;
+    --border: 36 12% 87%;
+    --input: 36 10% 82%;
     --ring: 217 82% 47%;
 
-    --radius: 0.625rem;
+    --radius: 0.5rem;
 
     --sidebar-background: 220 47% 12%;
     --sidebar-foreground: 215 22% 86%;
@@ -45,9 +48,13 @@
     --sidebar-border: 218 30% 22%;
     --sidebar-ring: 213 88% 65%;
 
-    --success: 166 57% 31%;
-    --warning: 36 78% 38%;
+    /* Status — uitsluitend semantisch: groen = klaar, amber = aandacht,
+       rood (--destructive) = geblokkeerd. Niet voor gewone acties. */
+    --success: 145 63% 30%;
+    --warning: 34 90% 38%;
     --info: 217 82% 47%;
+
+    --shadow-color: 30 15% 30%;
   }
 
   .dark {
@@ -69,7 +76,7 @@
     --muted: 219 32% 16%;
     --muted-foreground: 216 18% 66%;
 
-    --accent: 166 48% 39%;
+    --accent: 218 32% 20%;
     --accent-foreground: 214 29% 96%;
 
     --destructive: 2 62% 46%;
@@ -88,9 +95,11 @@
     --sidebar-border: 218 31% 17%;
     --sidebar-ring: 213 88% 65%;
 
-    --success: 164 52% 46%;
-    --warning: 38 78% 58%;
+    --success: 145 50% 48%;
+    --warning: 38 85% 58%;
     --info: 213 82% 64%;
+
+    --shadow-color: 220 50% 2%;
   }
 }
 
@@ -102,6 +111,7 @@
   body {
     @apply bg-background text-foreground;
     font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   h1, h2, h3, h4, h5, h6 {
