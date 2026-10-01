@@ -3,7 +3,6 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
-import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
 
 function resolveBuildCommitSha() {
   const envCommit = process.env.VITE_COMMIT_SHA || process.env.GITHUB_SHA;
@@ -37,7 +36,8 @@ function buildCommitMetaPlugin() {
   };
 }
 
-// https://vitejs.dev/config/
+// The checked-in MCP Edge Function is intentionally type-checked and owned.
+// Do not re-enable mcpPlugin() until its generated Deno output preserves types.
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
@@ -46,7 +46,7 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  plugins: [react(), mode === "development" && componentTagger(), mcpPlugin(), buildCommitMetaPlugin()].filter(Boolean),
+  plugins: [react(), mode === "development" && componentTagger(), buildCommitMetaPlugin()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
