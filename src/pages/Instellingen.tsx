@@ -671,8 +671,8 @@ function HerkenningsregelsTab() {
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-1 justify-end">
-                    <Button variant="ghost" size="icon" onClick={() => openEdit(t)} aria-label="Regel bewerken" className="h-8 w-8"><Pencil className="h-4 w-4" /></Button>
-                    <Button variant="ghost" size="icon" onClick={() => deleteMut.mutate(t.id)} aria-label="Regel verwijderen" className="h-8 w-8"><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                    <Button variant="ghost" size="icon" onClick={() => openEdit(t)} aria-label="Regel bewerken" className="h-9 w-9"><Pencil className="h-4 w-4" /></Button>
+                    <Button variant="ghost" size="icon" onClick={() => deleteMut.mutate(t.id)} aria-label="Regel verwijderen" className="h-9 w-9"><Trash2 className="h-4 w-4 text-destructive" /></Button>
                   </div>
                 </TableCell>
               </TableRow>
