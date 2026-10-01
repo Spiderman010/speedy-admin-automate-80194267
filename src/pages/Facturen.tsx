@@ -520,9 +520,9 @@ export default function Facturen() {
       <h1 className="sr-only">Inkoopfacturen</h1>
 
       {/* Compact action bar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-card">
         <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="h-9 w-48">
             <span className="truncate">
               {clientFilter === "all"
                 ? "Alle klanten"
@@ -538,7 +538,7 @@ export default function Facturen() {
           value={String(yearFilter)}
           onValueChange={(v) => setYearFilter(v === "all" ? "all" : Number(v))}
         >
-          <SelectTrigger className="w-32" aria-label="Jaar">
+          <SelectTrigger className="h-9 w-32" aria-label="Jaar">
             <span className="truncate">{yearFilter === "all" ? "Alle jaren" : yearFilter}</span>
           </SelectTrigger>
           <SelectContent>
@@ -549,7 +549,7 @@ export default function Facturen() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button variant="outline" disabled={exporting} onClick={handleExportSnelstart}>
+        <Button size="sm" variant="outline" disabled={exporting} onClick={handleExportSnelstart}>
           {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}Export Snelstart
         </Button>
       </div>
@@ -560,7 +560,7 @@ export default function Facturen() {
           <TabsTrigger value="upload">Upload</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="upload" className="mt-6 space-y-4">
+        <TabsContent value="upload" className="mt-3 space-y-4">
           <Card>
             <CardContent className="p-6">
               <div className="mb-4">
@@ -627,8 +627,8 @@ export default function Facturen() {
           )}
         </TabsContent>
 
-        <TabsContent value="overview" className="mt-6">
-          <div className="mb-5 space-y-2.5">
+        <TabsContent value="overview" className="mt-3">
+          <div className="mb-3 space-y-2">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="relative max-w-md flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -636,10 +636,10 @@ export default function Facturen() {
                   placeholder="Zoeken op leverancier, factuurnummer of grootboek..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
+                  className="h-9 pl-10"
                 />
               </div>
-              <Button onClick={() => setCreateOpen(true)}>
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />Nieuwe inkoopfactuur
               </Button>
             </div>
@@ -683,10 +683,10 @@ export default function Facturen() {
               ))}
             </div>
           </div>
-          <Card>
-            <CardContent className="overflow-x-auto p-6">
+          <Card className="overflow-hidden">
+            <CardContent className="overflow-x-auto p-0">
               {isLoading ? (
-                <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+                <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
               ) : isListError ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                   <p className="text-sm text-destructive">Inkoopfacturen laden mislukt.</p>
@@ -709,14 +709,14 @@ export default function Facturen() {
                   </p>
                 </div>
               ) : (
-                <Table>
+                <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("supplier")}>Leverancier<SortIcon field="supplier" /></TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("invoice_number")}>Factuurnummer<SortIcon field="invoice_number" /></TableHead>
                       <TableHead className="hidden sm:table-cell">Klant</TableHead>
                       <TableHead className="cursor-pointer select-none" onClick={() => toggleSort("date")}>Datum<SortIcon field="date" /></TableHead>
-                      <TableHead className="text-right cursor-pointer select-none" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
+                      <TableHead className="text-right cursor-pointer select-none whitespace-nowrap" onClick={() => toggleSort("amount")}>Bedrag<SortIcon field="amount" /></TableHead>
                       <TableHead className="text-right">Openstaand</TableHead>
                       <TableHead className="text-right cursor-pointer select-none hidden md:table-cell" onClick={() => toggleSort("btw")}>BTW<SortIcon field="btw" /></TableHead>
                       <TableHead className="hidden md:table-cell">Grootboek</TableHead>
@@ -734,7 +734,7 @@ export default function Facturen() {
                       const linkedVraagpost = vraagpostByPurchaseInvoiceId.get(inv.id);
                       const vraagpostBadge = linkedVraagpost ? getVraagpostBadgeProps(linkedVraagpost.status) : null;
                       return (
-                        <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/facturen/inkoop/${inv.id}`)}>
+                        <TableRow key={inv.id} className="cursor-pointer" onClick={() => navigate(`/facturen/inkoop/${inv.id}`)}>
                           <TableCell className="font-medium">
                             <div className="flex flex-col gap-1">
                               <span>{inv.supplier}</span>
@@ -801,9 +801,9 @@ export default function Facturen() {
                             </div>
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground hidden sm:table-cell">{getClientName(inv.client_id)}</TableCell>
-                          <TableCell>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
-                          <TableCell className="text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="whitespace-nowrap font-mono text-xs">{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right font-mono tabular-nums">{formatCurrency(inv.amount_incl)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right tabular-nums">
                             {(() => {
                               const total = getInvoiceTotalAmount(inv);
                               const remaining = getInvoiceRemainingAmount(inv);
@@ -825,7 +825,7 @@ export default function Facturen() {
                               return <span className="text-muted-foreground text-sm">—</span>;
                             })()}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-muted-foreground hidden md:table-cell">{formatCurrency(inv.btw_amount)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right font-mono tabular-nums text-muted-foreground hidden md:table-cell">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell className="text-sm hidden md:table-cell">{inv.ledger_account_text || "—"}</TableCell>
                           <TableCell className="hidden lg:table-cell">
                             <Badge variant="outline" className="text-xs">
@@ -889,7 +889,7 @@ export default function Facturen() {
                 </Table>
               )}
               {!isLoading && !isListError && totalCount > 0 && (
-                <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t bg-muted/30 px-4 py-2.5">
                   <span className="text-sm text-muted-foreground">
                     {(page - 1) * PURCHASE_INVOICES_PAGE_SIZE + 1}–{Math.min(page * PURCHASE_INVOICES_PAGE_SIZE, totalCount)} van {totalCount} facturen
                     {paymentFilter !== "all" ? " · betaalstatusfilter geldt binnen de huidige pagina" : ""}
