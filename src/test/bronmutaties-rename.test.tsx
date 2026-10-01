@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { assertBranchSqlKeepsLedgerFoundation } from "@/test/support/branch-sql-scope";
+import { assertNavKeepsSubpagesNested } from "./support/nav-scope";
 
 /**
  * Fase 6C-b7 PR 2 — de oude "Grootboekmutaties" heet nu "Bronmutaties", zodat
@@ -48,7 +49,9 @@ describe("Bronmutaties — hernoeming", () => {
     expect(app).toContain('path="/grootboek/saldi"');
     expect(app).toContain('path="/grootboek/saldi/:accountId"');
     const changed = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], { encoding: "utf8" });
-    expect(changed).not.toMatch(/nav\.ts/);
+    // Voorheen: "nav.ts staat niet in de diff" — een scope-uitspraak, geen invariant
+    // (zie src/test/support/nav-scope.ts). Bewaakt blijft dat deze subpagina geen eigen nav-item krijgt.
+    assertNavKeepsSubpagesNested(["/grootboek/mutaties", "/grootboek/saldi"]);
     expect(changed).not.toMatch(/integrations\/supabase\/types\.ts/);
     // Voorheen: "deze branch bevat geen migratie". Dat was een uitspraak over de
     // SCOPE van één UI-PR, geen invariant — zodra een latere fase wél een

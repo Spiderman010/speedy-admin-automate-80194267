@@ -88,6 +88,7 @@ import {
 } from "@/lib/reporting-classification";
 import type { ClassificationForm } from "@/lib/reporting-classification";
 import { assertBranchSqlKeepsLedgerFoundation, assertBranchTouchesNoExistingWriter } from "@/test/support/branch-sql-scope";
+import { assertNavKeepsSubpagesNested } from "./support/nav-scope";
 
 const makeAccount = (over: Partial<any> = {}) => ({
   id: `gb-${Math.random().toString(36).slice(2)}`,
@@ -867,10 +868,12 @@ describe("branch-scope", () => {
       "src/lib/ledger-completeness.ts",
       "src/lib/grootboek-saldi-utils.ts",
       "src/hooks/useLedgerPostings.ts",
-      "src/components/layout/nav.ts",
     ]) {
       expect(changed, f).not.toContain(f);
     }
+    // Voorheen: "nav.ts staat niet in de diff" — een scope-uitspraak, geen invariant
+    // (zie src/test/support/nav-scope.ts). Bewaakt blijft dat deze subpagina geen eigen nav-item krijgt.
+    assertNavKeepsSubpagesNested();
   });
 
   it("55b. de gegenereerde types worden uitsluitend als typen geïmporteerd", () => {

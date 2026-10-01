@@ -18,6 +18,7 @@ import {
   type BankBulkCandidate,
   type BankBulkResult,
 } from "@/lib/bank-bulk-posting";
+import { assertNavKeepsSubpagesNested } from "./support/nav-scope";
 
 /**
  * Bank-inhaalslag — de grenzen van de bulklaag.
@@ -357,7 +358,9 @@ describe("de grenzen van deze branch", () => {
     const changed = changedFiles();
     if (!changed) return;
 
-    expect(changed).not.toContain("src/components/layout/nav.ts");
+    // Voorheen: "nav.ts staat niet in de diff" — een scope-uitspraak, geen invariant
+    // (zie src/test/support/nav-scope.ts). Bewaakt blijft dat deze subpagina geen eigen nav-item krijgt.
+    assertNavKeepsSubpagesNested(["/bank/inhaalslag"]);
     expect(changed).not.toContain("package.json");
     expect(changed).not.toContain("package-lock.json");
 

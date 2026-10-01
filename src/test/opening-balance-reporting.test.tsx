@@ -26,6 +26,7 @@ import { GrootboekAccountMutations } from "@/components/grootboek/GrootboekAccou
 import type { OpeningBalanceMarker, OpeningBalanceRow } from "@/lib/opening-balance-utils";
 import { useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
 import { assertBranchSqlKeepsLedgerFoundation } from "@/test/support/branch-sql-scope";
+import { assertNavKeepsSubpagesNested } from "./support/nav-scope";
 
 const overviewState = {
   data: undefined as { headers: OpeningBalanceRow[]; marker: OpeningBalanceMarker | null } | undefined,
@@ -545,7 +546,10 @@ describe("statische bewaking", () => {
     assertBranchSqlKeepsLedgerFoundation(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
-    expect(changed.filter((f) => /nav\.ts$|package-lock|bun\.lockb/.test(f))).toEqual([]);
+    expect(changed.filter((f) => /package-lock|bun\.lockb/.test(f))).toEqual([]);
+    // Voorheen: "nav.ts staat niet in de diff" — een scope-uitspraak, geen invariant
+    // (zie src/test/support/nav-scope.ts). Bewaakt blijft dat deze subpagina geen eigen nav-item krijgt.
+    assertNavKeepsSubpagesNested(["/grootboek/beginbalans"]);
     // Voorheen stond App.tsx hier ook in: een scope-uitspraak van deze PR, geen
     // invariant — een latere fase mag routes toevoegen. Bewaakt blijft dat de
     // beginbalansroute zelf ongewijzigd is.
