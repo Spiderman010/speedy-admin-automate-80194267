@@ -214,7 +214,7 @@ export default function Klanten() {
       <button
         type="button"
         onClick={() => toggleSort(col)}
-        className="inline-flex select-none items-center rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        className="inline-flex select-none items-center rounded-sm [font:inherit] [letter-spacing:inherit] [text-transform:inherit] transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         {children}
         <SortArrow col={col} />
@@ -372,14 +372,14 @@ export default function Klanten() {
   return (
     <>
       <PageHeader title="Klanten" description="Beheer klantadministraties">
-        <Button onClick={() => { resetForm(); setShowDialog(true); }}>
+        <Button size="sm" onClick={() => { resetForm(); setShowDialog(true); }}>
           <Plus className="mr-2 h-4 w-4" />
           Nieuwe klant
         </Button>
       </PageHeader>
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="flex flex-col gap-2 border-b bg-muted/30 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-4">
           <SearchInput
             value={search}
             onChange={setSearch}
@@ -395,7 +395,7 @@ export default function Klanten() {
 
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="space-y-3 p-4 sm:p-6">
+            <div className="space-y-2 p-4">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <Skeleton className="h-9 w-9 shrink-0 rounded-lg" />
@@ -419,13 +419,13 @@ export default function Klanten() {
                   const openTasks = getOpenTasks(client.id);
                   const btwLabel = client.btw_type === "vrijgesteld" ? "Vrijgesteld" : client.btw_type === "mix" ? "Mix" : null;
                   return (
-                    <li key={client.id} className="p-4">
+                    <li key={client.id} className="px-3 py-3">
                       <div className="flex items-start gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
                           <Building2 className="h-4 w-4 text-primary" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium" title={client.name}>{client.name}</p>
+                          <p className="truncate text-sm font-semibold" title={client.name}>{client.name}</p>
                           <p className="truncate text-xs text-muted-foreground">{client.email || "—"}</p>
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">
                             <StatusBadge openTasks={openTasks} />
@@ -482,7 +482,7 @@ export default function Klanten() {
               ) : (
               /* Tablet en desktop: volledige tabel, scrollt binnen de eigen container. */
               <div className="overflow-x-auto">
-                <Table>
+                <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
                   <TableHeader>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
                       <SortableHead col="name">Bedrijf</SortableHead>
@@ -502,22 +502,22 @@ export default function Klanten() {
                       const openTasks = getOpenTasks(client.id);
                       const btwLabel = client.btw_type === "vrijgesteld" ? "Vrijgesteld" : client.btw_type === "mix" ? "Mix" : null;
                       return (
-                        <TableRow key={client.id} className="group">
+                        <TableRow key={client.id} className={`group${showDialog && editingId === client.id ? " shadow-[inset_3px_0_0_hsl(var(--primary))]" : ""}`} data-state={showDialog && editingId === client.id ? "selected" : undefined}>
                           <TableCell className="max-w-[260px]">
                             <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10">
                                 <Building2 className="h-4 w-4 text-primary" />
                               </div>
                               <div className="min-w-0">
-                                <p className="truncate font-medium" title={client.name}>{client.name}</p>
+                                <p className="truncate font-semibold" title={client.name}>{client.name}</p>
                                 <p className="truncate text-xs text-muted-foreground" title={client.email || undefined}>
                                   {client.email || "—"}
                                 </p>
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="whitespace-nowrap font-mono text-sm tabular-nums">{client.kvk_number || "—"}</TableCell>
-                          <TableCell className="whitespace-nowrap font-mono text-sm">
+                          <TableCell className="whitespace-nowrap font-mono text-xs tabular-nums">{client.kvk_number || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">
                             {client.btw_number || "—"}
                             {btwLabel && <Badge variant="outline" className="ml-2 text-[10px]">{btwLabel}</Badge>}
                           </TableCell>
@@ -536,7 +536,7 @@ export default function Klanten() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-9 px-2 text-muted-foreground hover:text-foreground"
+                                className="h-8 px-2 text-muted-foreground hover:text-foreground"
                                 onClick={() => openEdit(client)}
                                 title="Klant bewerken"
                                 aria-label={`Bewerk ${client.name}`}
@@ -546,7 +546,7 @@ export default function Klanten() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-9 w-9 p-0 text-muted-foreground hover:text-destructive"
+                                className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
                                 onClick={() => setDeleteTarget({ id: client.id, name: client.name })}
                                 title="Klant verwijderen"
                                 aria-label={`Verwijder ${client.name}`}
@@ -607,7 +607,7 @@ export default function Klanten() {
           <DialogHeader>
             <DialogTitle className="font-display">{editingId ? "Klant bewerken" : "Nieuwe klant toevoegen"}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
+          <div className="grid gap-3 py-2">
             {/* Bedrijfsnaam */}
             <div className="grid gap-2">
               <Label htmlFor="name">Bedrijfsnaam *</Label>
@@ -726,8 +726,8 @@ export default function Klanten() {
             </div>
 
             {/* SnelStart instellingen */}
-            <div className="grid gap-2">
-              <Label className="text-sm font-semibold">SnelStart instellingen</Label>
+            <div className="grid gap-3 rounded-md border bg-muted/20 p-3">
+              <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">SnelStart instellingen</Label>
               <div className="grid grid-cols-3 gap-4">
                 <div className="grid gap-2">
                   <Label htmlFor="inkoop_dagboek" className="text-xs font-normal">Inkoop-dagboek</Label>
