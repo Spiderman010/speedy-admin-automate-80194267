@@ -193,7 +193,7 @@ export default function Overzichten() {
   };
 
   return (
-    <div className="min-w-0 space-y-6 overflow-x-hidden">
+    <div className="min-w-0 space-y-4 overflow-x-hidden">
       <div className="[&>div]:mb-0 [&>div]:min-w-0 [&>div]:flex-col [&>div]:gap-4 sm:[&>div]:flex-row [&>div>div]:min-w-0 [&>div>div:last-child]:w-full sm:[&>div>div:last-child]:w-72">
         <PageHeader title="Rapportages" description="Financiële overzichten per administratie">
           <div className="min-w-0 w-full space-y-1.5">
@@ -213,10 +213,10 @@ export default function Overzichten() {
       </div>
 
       <section aria-labelledby="rapporttype-heading">
-        <div className="mb-3 flex items-end justify-between gap-4">
+        <div className="mb-2 flex items-end justify-between gap-4">
           <div>
-            <h2 id="rapporttype-heading" className="font-display text-base font-semibold">Rapporttype</h2>
-            <p className="text-sm text-muted-foreground">Kies het financiële overzicht dat u wilt raadplegen.</p>
+            <h2 id="rapporttype-heading" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Rapporttype</h2>
+            <p className="text-xs text-muted-foreground">Kies het financiële overzicht dat u wilt raadplegen.</p>
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
@@ -224,16 +224,16 @@ export default function Overzichten() {
             const { title, icon: Icon, status } = rapport;
             const href = "href" in rapport ? rapport.href : undefined;
             const inhoud = (
-              <CardContent className="flex min-h-32 flex-col justify-between p-4">
+              <CardContent className="flex min-h-32 flex-col justify-between p-3">
                 <div className="flex min-w-0 items-start gap-3">
-                  <div className="rounded-md border bg-muted/50 p-2" aria-hidden="true">
+                  <div className="rounded-md bg-primary/10 p-2" aria-hidden="true">
                     <Icon className={`h-4 w-4 ${href ? "text-primary" : "text-muted-foreground"}`} />
                   </div>
                   <h3 className="min-w-0 break-words text-sm font-semibold leading-5">{title}</h3>
                 </div>
                 <Badge
                   variant="outline"
-                  className={`mt-4 w-fit max-w-full whitespace-normal text-left font-normal ${href ? "" : "text-muted-foreground"}`}
+                  className={`mt-3 w-fit max-w-full whitespace-normal text-left font-normal ${href ? "" : "text-muted-foreground"}`}
                 >
                   {status}
                 </Badge>
@@ -242,20 +242,20 @@ export default function Overzichten() {
             // Alleen een beschikbaar rapport is aanklikbaar; de rest blijft een
             // inerte kaart, zodat niemand op een dood pad klikt.
             return href ? (
-              <Card key={title} className="min-w-0 shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/30">
+              <Card key={title} className="min-w-0 transition-colors hover:border-primary/40 hover:bg-primary/[0.03]">
                 <Link to={href} className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open ${title}`}>
                   {inhoud}
                 </Link>
               </Card>
             ) : (
-              <Card key={title} className="min-w-0 shadow-sm">{inhoud}</Card>
+              <Card key={title} className="min-w-0 opacity-80">{inhoud}</Card>
             );
           })}
         </div>
       </section>
 
-      <section aria-labelledby="filters-heading" className="rounded-lg border bg-card p-4 shadow-sm">
-        <h2 id="filters-heading" className="mb-3 font-display text-base font-semibold">Filters</h2>
+      <section aria-labelledby="filters-heading" className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+        <h2 id="filters-heading" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Filters</h2>
         <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto] lg:items-end">
           {[
             ["Boekjaar", "Boekjaar nog niet beschikbaar"],
@@ -318,58 +318,58 @@ export default function Overzichten() {
       ) : (
         <section aria-labelledby="huidig-overzicht-heading" className="space-y-4">
           <div>
-            <h2 id="huidig-overzicht-heading" className="font-display text-base font-semibold">Brondocumenten van deze administratie</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 id="huidig-overzicht-heading" className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Brondocumenten van deze administratie</h2>
+            <p className="text-xs text-muted-foreground">
               Tellingen uit de brondocumenten, niet uit het grootboek. Voor geboekte grootboekcijfers:
               zie de proef- en saldibalans hierboven.
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3.5">
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-success" />
-              <p className="text-sm text-muted-foreground">Inkoopfacturen</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Inkoopfacturen</p>
             </div>
-            <p className="mt-1 font-display text-xl font-bold tabular-nums">{formatEuro(totalInvoices)}</p>
+            <p className="mt-1 font-display text-xl font-bold leading-none tabular-nums">{formatEuro(totalInvoices)}</p>
             <p className="text-xs text-muted-foreground">{invoices?.length ?? 0} facturen</p>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3.5">
             <div className="flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-destructive" />
-              <p className="text-sm text-muted-foreground">BTW totaal</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">BTW totaal</p>
             </div>
-            <p className="mt-1 font-display text-xl font-bold tabular-nums">{formatEuro(totalBtw)}</p>
+            <p className="mt-1 font-display text-xl font-bold leading-none tabular-nums">{formatEuro(totalBtw)}</p>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-3.5">
             <div className="flex items-center gap-2">
               <Minus className="h-4 w-4 text-primary" />
-              <p className="text-sm text-muted-foreground">Boekingen totaal</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boekingen totaal</p>
             </div>
-            <p className="mt-1 font-display text-xl font-bold tabular-nums">{formatEuro(totalEntries)}</p>
+            <p className="mt-1 font-display text-xl font-bold leading-none tabular-nums">{formatEuro(totalEntries)}</p>
             <p className="text-xs text-muted-foreground">{entries?.length ?? 0} boekingen</p>
           </CardContent>
         </Card>
           </div>
 
-          <Card className="min-w-0 shadow-sm">
-        <CardHeader>
-          <CardTitle className="font-display text-lg">Recente inkoopfacturen</CardTitle>
+          <Card className="min-w-0 overflow-hidden">
+        <CardHeader className="border-b bg-muted/30 px-4 py-3">
+          <CardTitle className="font-display text-sm">Recente inkoopfacturen</CardTitle>
         </CardHeader>
-        <CardContent className="px-0 sm:px-6">
+        <CardContent className="p-0">
           {!invoices?.length ? (
-            <div className="px-4 py-10 text-center sm:px-0">
+            <div className="px-4 py-10 text-center">
               <p className="font-medium">Geen financiële gegevens beschikbaar</p>
               <p className="mt-1 text-sm text-muted-foreground">Er zijn geen financiële gegevens voor de geselecteerde administratie of periode.</p>
             </div>
           ) : (
             <div className="w-full overflow-x-auto">
-              <Table className="min-w-[760px]">
+              <Table className="min-w-[760px] text-[13px] [&_th]:h-9 [&_td]:py-1.5">
               <TableHeader className="bg-muted/50">
                 <TableRow>
                   <TableHead>Leverancier</TableHead>
@@ -384,8 +384,8 @@ export default function Overzichten() {
                 {invoices.slice(0, 10).map((inv) => (
                   <TableRow key={inv.id}>
                     <TableCell className="max-w-56 truncate font-medium" title={inv.supplier}>{inv.supplier}</TableCell>
-                    <TableCell className="font-mono text-sm tabular-nums">{inv.invoice_number || "—"}</TableCell>
-                    <TableCell>{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums">{inv.invoice_number || "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{inv.amount_excl != null ? formatEuro(inv.amount_excl) : "—"}</TableCell>
                     <TableCell className="text-right font-mono tabular-nums">{inv.btw_amount != null ? formatEuro(inv.btw_amount) : "—"}</TableCell>
                     <TableCell className="text-right font-mono font-semibold tabular-nums">{inv.amount_incl != null ? formatEuro(inv.amount_incl) : "—"}</TableCell>

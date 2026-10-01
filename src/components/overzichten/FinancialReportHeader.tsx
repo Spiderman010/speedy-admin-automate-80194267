@@ -55,11 +55,11 @@ export function FinancialReportHeader({
   return (
     <section
       aria-label="Rapportinstellingen en status"
-      className="mb-4 rounded-lg border bg-card shadow-sm"
+      className="mb-3 rounded-lg border bg-card shadow-card"
       data-testid={`${idPrefix}-toolbar`}
     >
       {/* Rij 1 — waarover gaat dit rapport, en wat is het oordeel. */}
-      <div className="flex flex-wrap items-center gap-2 border-b p-3">
+      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2.5">
         <Select value={selectedClientId} onValueChange={onSelectClient}>
           <SelectTrigger className="h-9 w-full min-w-0 sm:w-56" aria-label="Administratie">
             <span className="truncate">{selectedClient ? selectedClient.name : "Alle administraties"}</span>
@@ -110,7 +110,7 @@ function RangeRow({
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   return (
-    <div className="flex flex-wrap items-end gap-x-3 gap-y-2 p-3">
+    <div className="flex flex-wrap items-end gap-x-3 gap-y-2 px-3 py-2.5">
       <div className="grid gap-1">
         <Label htmlFor={`${idPrefix}-from`} className="text-xs text-muted-foreground">Van</Label>
         <Input

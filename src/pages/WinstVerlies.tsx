@@ -206,7 +206,7 @@ export default function WinstVerlies() {
     }
 
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         {nothingClassified && <NothingClassifiedNotice accounts={unclassified.accounts} what="winst_verlies" />}
         <FinancialStatementTable
           caption="Winst-en-verliesrekening"
@@ -315,7 +315,7 @@ export default function WinstVerlies() {
             />
           )}
           <Card>
-            <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
+            <CardContent className="p-3 sm:p-4">{renderBody()}</CardContent>
           </Card>
         </div>
       )}

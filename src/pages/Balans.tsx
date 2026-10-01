@@ -238,7 +238,7 @@ export default function Balans() {
     // Geen enkele geclassificeerde regel terwijl er wél activiteit is: dan is
     // het overzicht leeg om één reden, en die hoort bovenaan te staan.
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         {nothingClassified && <NothingClassifiedNotice accounts={unclassified.accounts} what="balans" />}
         {/* Twee kolommen naast elkaar op een breed scherm, onder elkaar op een
             smal — elk met een eigen omkadering zodat Activa en Passiva ook
@@ -247,7 +247,7 @@ export default function Balans() {
           <section aria-labelledby="balans-activa" className="min-w-0 rounded-lg border">
             <h2
               id="balans-activa"
-              className="border-b bg-muted/30 px-3 py-2 text-sm font-semibold uppercase tracking-wide"
+              className="border-b bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide"
             >
               Activa
             </h2>
@@ -266,7 +266,7 @@ export default function Balans() {
           <section aria-labelledby="balans-passiva" className="min-w-0 rounded-lg border">
             <h2
               id="balans-passiva"
-              className="border-b bg-muted/30 px-3 py-2 text-sm font-semibold uppercase tracking-wide"
+              className="border-b bg-muted/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide"
             >
               Passiva
             </h2>
@@ -383,7 +383,7 @@ export default function Balans() {
           {ready && !nothingClassified && <StatementCompletenessNotice completeness={ready.completeness} />}
           {ready && <OpeningBalanceCarryForwardNotice completeness={openingBalance.data} />}
           <Card>
-            <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
+            <CardContent className="p-3 sm:p-4">{renderBody()}</CardContent>
           </Card>
         </div>
       )}
