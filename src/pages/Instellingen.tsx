@@ -910,36 +910,36 @@ function BtwTab() {
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>BTW instellingen</CardTitle>
-        <CardDescription>Standaardtarieven en codes voor de BTW-aangifte en export.</CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-muted/30 px-4 py-3">
+        <CardTitle className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">BTW instellingen</CardTitle>
+        <CardDescription className="text-xs">Standaardtarieven en codes voor de BTW-aangifte en export.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="grid grid-cols-1 gap-4 max-w-md sm:grid-cols-2">
+      <CardContent className="space-y-4 p-4">
+        <div className="grid max-w-md grid-cols-1 gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="btw-hoog">Standaard BTW tarief hoog (%)</Label>
-            <Input id="btw-hoog" type="number" value={hoog} onChange={e => setHoog(parseFloat(e.target.value) || 0)} />
+            <Input id="btw-hoog" type="number" className="h-9 text-right font-mono tabular-nums" value={hoog} onChange={e => setHoog(parseFloat(e.target.value) || 0)} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="btw-laag">Standaard BTW tarief laag (%)</Label>
-            <Input id="btw-laag" type="number" value={laag} onChange={e => setLaag(parseFloat(e.target.value) || 0)} />
+            <Input id="btw-laag" type="number" className="h-9 text-right font-mono tabular-nums" value={laag} onChange={e => setLaag(parseFloat(e.target.value) || 0)} />
           </div>
         </div>
-        <div className="space-y-3">
-          <p className="text-sm font-medium">BTW codes voor export</p>
-          <div className="grid grid-cols-2 gap-4 max-w-md sm:grid-cols-4">
-            <div className="space-y-1.5"><Label htmlFor="btw-code-h">Hoog</Label><Input id="btw-code-h" value={codeH} onChange={e => setCodeH(e.target.value)} /></div>
-            <div className="space-y-1.5"><Label htmlFor="btw-code-l">Laag</Label><Input id="btw-code-l" value={codeL} onChange={e => setCodeL(e.target.value)} /></div>
-            <div className="space-y-1.5"><Label htmlFor="btw-code-v">Verlegd</Label><Input id="btw-code-v" value={codeV} onChange={e => setCodeV(e.target.value)} /></div>
-            <div className="space-y-1.5"><Label htmlFor="btw-code-g">Geen/Vrijgesteld</Label><Input id="btw-code-g" value={codeG} onChange={e => setCodeG(e.target.value)} /></div>
+        <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">BTW codes voor export</p>
+          <div className="grid max-w-md grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="space-y-1.5"><Label htmlFor="btw-code-h">Hoog</Label><Input id="btw-code-h" className="h-9 font-mono" value={codeH} onChange={e => setCodeH(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label htmlFor="btw-code-l">Laag</Label><Input id="btw-code-l" className="h-9 font-mono" value={codeL} onChange={e => setCodeL(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label htmlFor="btw-code-v">Verlegd</Label><Input id="btw-code-v" className="h-9 font-mono" value={codeV} onChange={e => setCodeV(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label htmlFor="btw-code-g">Geen/Vrijgesteld</Label><Input id="btw-code-g" className="h-9 font-mono" value={codeG} onChange={e => setCodeG(e.target.value)} /></div>
           </div>
         </div>
-        <p className="text-sm text-muted-foreground max-w-xl">
+        <p className="max-w-xl text-xs text-muted-foreground">
           BTW type per klant wordt ingesteld in het klantenprofiel. Vrijgestelde klanten krijgen nooit BTW. Mix klanten: BTW wordt per factuur bepaald.
         </p>
-        <div className="flex justify-end border-t pt-4">
-          <Button onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
+        <div className="flex justify-end border-t pt-3">
+          <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
             {saveMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Instellingen opslaan
           </Button>
