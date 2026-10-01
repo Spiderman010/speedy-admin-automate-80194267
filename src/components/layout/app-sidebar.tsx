@@ -59,7 +59,7 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="gap-0 border-b border-sidebar-border p-0">
-        <div className="flex h-12 items-center gap-2 px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+        <div className="flex h-11 items-center gap-2 px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
           <div
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground"
             aria-hidden="true"
@@ -76,7 +76,7 @@ export function AppSidebar() {
         <div className="group-data-[collapsible=icon]:hidden">
           {/* Organisatiekiezer — alleen zichtbaar als user lid is van > 1 organisatie */}
           <OrganizationSelector />
-          <div className="border-b border-sidebar-border px-2.5 py-2.5">
+          <div className="border-b border-sidebar-border px-2.5 py-2">
             <p className="mb-1 px-1 text-[11px] font-medium text-sidebar-foreground/60">Actieve klant</p>
             <Select value={selectedClientId} onValueChange={setSelectedClientId}>
               <SelectTrigger
@@ -100,22 +100,26 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="py-1.5">
+      <SidebarContent className="gap-0 py-1">
         {NAV_SECTIONS.map((section, i) => (
-          <SidebarGroup key={section.label ?? `top-${i}`}>
+          <SidebarGroup
+            key={section.label ?? `top-${i}`}
+            className={i > 0 ? "border-t border-sidebar-border/60 py-1.5" : "py-1.5"}
+          >
             {section.label && (
-              <SidebarGroupLabel className="h-7 text-[10px] font-semibold uppercase text-sidebar-foreground/45">
+              <SidebarGroupLabel className="h-6 text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">
                 {section.label}
               </SidebarGroupLabel>
             )}
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu className="gap-0.5">
                 {section.items.map(item => (
                   <SidebarMenuItem key={item.url}>
                     <SidebarMenuButton
                       asChild
                       isActive={isNavItemActive(item, location.pathname)}
                       tooltip={item.title}
+                      className="h-8 text-[13px] text-sidebar-foreground/80 data-[active=true]:bg-sidebar-primary/15 data-[active=true]:text-sidebar-accent-foreground data-[active=true]:shadow-[inset_3px_0_0_hsl(var(--sidebar-primary))]"
                     >
                       <NavLink to={item.url} end={item.exact}>
                         <item.icon className="shrink-0" />
