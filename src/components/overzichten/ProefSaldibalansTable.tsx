@@ -35,8 +35,8 @@ export function ProefSaldibalansTable({
 }: ProefSaldibalansTableProps) {
   return (
     // Horizontaal scrollen binnen de container, nooit de hele pagina.
-    <div className="-mx-1 overflow-x-auto px-1">
-      <Table className="min-w-[1040px]">
+    <div className="-mx-3 -my-3 overflow-x-auto sm:-mx-4 sm:-my-4">
+      <Table className="min-w-[1040px] text-[13px] [&_th]:h-9 [&_td]:py-1.5">
         <caption className="sr-only">
           Proef- en saldibalans per grootboekrekening: beginsaldo, periodemutaties en eindsaldo,
           elk gesplitst in debet en credit. Alle bedragen in euro.
@@ -60,7 +60,7 @@ export function ProefSaldibalansTable({
             const label = a.nummer === null ? a.omschrijving : `${a.nummer} - ${a.omschrijving}`;
             return (
               <TableRow key={a.id} data-testid="psb-row" data-account-id={a.id}>
-                <TableCell className="font-mono tabular-nums">
+                <TableCell className="font-mono text-xs tabular-nums">
                   {onDrilldown ? (
                     <button
                       type="button"
@@ -112,7 +112,7 @@ export function ProefSaldibalansTable({
           })}
         </TableBody>
         <tfoot>
-          <TableRow className="border-t-2 font-medium hover:bg-transparent" data-testid="psb-totals">
+          <TableRow className="border-t-2 bg-muted/50 font-medium hover:bg-transparent" data-testid="psb-totals">
             <TableCell colSpan={3}>
               Totaal ({rows.length} rekening{rows.length === 1 ? "" : "en"})
             </TableCell>
