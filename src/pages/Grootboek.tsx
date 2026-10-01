@@ -347,7 +347,7 @@ export default function Grootboek() {
       <h1 className="sr-only">Rekeningschema</h1>
 
       {/* Compact action bar: search left, actions right, wraps on mobile. */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-3 flex flex-col gap-2 rounded-lg border bg-card px-3 py-2 shadow-card sm:flex-row sm:items-center sm:justify-between">
         <SearchInput
           value={search}
           onChange={setSearch}
@@ -356,53 +356,54 @@ export default function Grootboek() {
         />
         <div className="flex flex-wrap items-center gap-2">
           {/* Fase 6C-b7: het grootboek zelf (ledger_postings), onder Grootboek zonder eigen nav-item. */}
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/saldi">
               <ArrowUpRight className="mr-2 h-4 w-4" />Grootboeksaldi
             </Link>
           </Button>
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/mutaties">
               <ArrowUpRight className="mr-2 h-4 w-4" />Bronmutaties
             </Link>
           </Button>
           {/* Fase 6C-b6: memoriaal hangt onder Grootboek, zonder eigen nav-item. */}
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/memoriaal">
               <ArrowUpRight className="mr-2 h-4 w-4" />Memoriaalboekingen
             </Link>
           </Button>
           {/* Fase 6C-b8: beginbalans hangt onder Grootboek, zonder eigen nav-item. */}
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/beginbalans">
               <ArrowUpRight className="mr-2 h-4 w-4" />Beginbalans
             </Link>
           </Button>
           {/* Historische grootboekvulling: bestaande facturen die nog niet
               geboekt zijn, alsnog via de bestaande writers boeken. */}
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/historisch">
               <ArrowUpRight className="mr-2 h-4 w-4" />Historische boekingen
             </Link>
           </Button>
           {/* Integriteitscontrole: leest alleen, herstelt nooit. */}
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/integriteit">
               <ArrowUpRight className="mr-2 h-4 w-4" />Integriteit
             </Link>
           </Button>
           {/* Balans/W&V PR 4: de jaarrekeningrapporten, ook onder Grootboek. */}
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/balans">
               <ArrowUpRight className="mr-2 h-4 w-4" />Balans
             </Link>
           </Button>
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/winst-verlies">
               <ArrowUpRight className="mr-2 h-4 w-4" />Winst &amp; verlies
             </Link>
           </Button>
           <Button
+            size="sm"
             variant="outline"
             onClick={() => setSeedConfirmOpen(true)}
             disabled={seedRek.isPending}
@@ -410,14 +411,14 @@ export default function Grootboek() {
             <Download className="mr-2 h-4 w-4" />
             {seedRek.isPending ? "Bezig…" : "Import standaard schema"}
           </Button>
-          <Button onClick={openNew}>
+          <Button size="sm" onClick={openNew}>
             <Plus className="mr-2 h-4 w-4" />Nieuwe grootboekrekening
           </Button>
         </div>
       </div>
 
       {/* Summarising filter chips — client-side only, stamgegevens don't need a query rework. */}
-      <div className="mb-4 space-y-2">
+      <div className="mb-3 space-y-1.5">
         <div data-testid="status-filters" className="flex flex-wrap items-center gap-1.5">
           <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Status</span>
           <FilterChip label="Alle" active={statusFilter === "alle"} onClick={() => setStatusFilter("alle")} />
@@ -507,15 +508,15 @@ export default function Grootboek() {
         </div>
       </div>
 
-      <Card>
-        <CardContent className="p-6">
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
           {isLoading ? (
-            <GrootboekTableSkeleton />
+            <div className="p-4"><GrootboekTableSkeleton /></div>
           ) : filtered.length === 0 ? (
             <EmptyState message={emptyMessage()} />
           ) : (
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-24">Nummer</TableHead>
