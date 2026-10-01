@@ -31,7 +31,7 @@ export function PurchaseInvoiceActionBar({
   return (
     <div
       data-testid="action-bar"
-      className="sticky bottom-0 z-30 -mx-4 -mb-6 mt-1 border-t bg-background/95 px-4 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:-mx-6 sm:px-6 lg:-mx-8 lg:-mb-8 lg:px-8"
+      className="sticky bottom-0 z-30 -mx-3 -mb-3 mt-1 border-t bg-card/95 px-3 py-2.5 backdrop-blur supports-[backdrop-filter]:bg-card/90 sm:-mx-4 sm:-mb-4 sm:px-4 lg:-mx-5 lg:px-5"
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         {showBlockers && (

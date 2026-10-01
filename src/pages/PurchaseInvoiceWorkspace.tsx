@@ -113,7 +113,7 @@ function emptyHeader(inv: PurchaseInvoice | null): HeaderForm {
 function FieldGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <legend className="mb-2 text-xs font-semibold text-foreground">
         {title}
       </legend>
       {children}
@@ -670,7 +670,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           {/* Factuurgegevens */}
           <Card>
             <CardContent className="space-y-4 p-4">
-              <h2 className="text-sm font-semibold">Factuurgegevens</h2>
+              <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Factuurgegevens</h2>
 
               <FieldGroup title="Identificatie">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -866,7 +866,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           <Card>
             <CardContent className="space-y-3 p-4">
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-semibold">Boekingsregels</h2>
+                <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boekingsregels</h2>
                 <PurchaseInvoiceTotalsStatusPill state={totalsState} />
                 {lines.length > 0 && (
                   <Button variant="outline" size="sm" className="ml-auto" onClick={addLine}>
@@ -915,7 +915,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
             </CardContent>
           </Card>
 
-          <div data-testid="purchase-posting-section">
+          <Card data-testid="purchase-posting-section">
+            <CardContent className="p-4">
             {posting ? (
               <p className="text-xs text-muted-foreground" data-testid="purchase-posting-done">
                 Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens en
@@ -961,7 +962,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                 </div>
               </div>
             )}
-          </div>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Right column: original document */}
