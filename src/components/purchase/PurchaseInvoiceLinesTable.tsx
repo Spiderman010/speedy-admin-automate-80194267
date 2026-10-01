@@ -59,7 +59,7 @@ export function PurchaseInvoiceLinesTable({
 }: PurchaseInvoiceLinesTableProps) {
   if (lines.length === 0) {
     return (
-      <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+      <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
         <p>Nog geen boekingsregels.</p>
         <Button variant="outline" size="sm" className="mt-3" onClick={onAddLine}>
           <Plus className="mr-1 h-4 w-4" /> Eerste boekingsregel toevoegen
@@ -98,11 +98,11 @@ export function PurchaseInvoiceLinesTable({
                 key={idx}
                 data-partial={partial ? "true" : undefined}
                 className={cn(
-                  "align-top",
+                  "align-top border-b",
                   partial && "border-l-2 border-l-amber-500 bg-amber-50/60 hover:bg-amber-50/80 dark:bg-amber-950/20 dark:hover:bg-amber-950/30",
                 )}
               >
-                <TableCell className="py-1.5 pl-2">
+                <TableCell className="py-1 pl-2">
                   <div className="flex items-center gap-1.5">
                     {partial && (
                       <AlertTriangle
@@ -116,17 +116,17 @@ export function PurchaseInvoiceLinesTable({
                       placeholder="Omschrijving"
                       aria-label="Omschrijving"
                       aria-invalid={partial || undefined}
-                      className="h-8"
+                      className="h-9"
                     />
                   </div>
                 </TableCell>
-                <TableCell className="py-1.5">
+                <TableCell className="py-1">
                   <GrootboekCombobox
                     value={line.grootboek_label}
                     onValueChange={(v) => onPatchLine(idx, { grootboek_label: v })}
                     onIdChange={(id) => onPatchLine(idx, { grootboekrekening_id: id })}
                     noneOption
-                    className="h-8"
+                    className="h-9"
                   />
                   {/* Oude factuur zonder opgeslagen regels: de tekst van toen is
                       geen rekening. Ze staat hier als verwijzing, en alleen bij
@@ -146,7 +146,7 @@ export function PurchaseInvoiceLinesTable({
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-6 px-2 text-[11px]"
+                            className="min-h-9 px-2 text-[11px]"
                             data-testid="legacy-account-confirm"
                             onClick={() => {
                               const suggestion = line.suggestedAccount;
@@ -168,7 +168,7 @@ export function PurchaseInvoiceLinesTable({
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="py-1.5">
+                <TableCell className="py-1">
                   <Input
                     inputMode="decimal"
                     value={line.amount_input}
@@ -180,16 +180,16 @@ export function PurchaseInvoiceLinesTable({
                     placeholder="0,00"
                     aria-label="Bedrag excl. regel"
                     aria-invalid={partial || undefined}
-                    className="h-8 text-right font-mono tabular-nums"
+                    className="h-9 text-right font-mono tabular-nums"
                   />
                 </TableCell>
-                <TableCell className="py-1.5">
+                <TableCell className="py-1">
                   <Select
                     value={line.btw_percentage}
                     onValueChange={(v) => onPatchLine(idx, { btw_percentage: v })}
                     disabled={isBtwVrijgesteld}
                   >
-                    <SelectTrigger className="h-8" aria-label="BTW-percentage regel">
+                    <SelectTrigger className="h-9" aria-label="BTW-percentage regel">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -199,17 +199,17 @@ export function PurchaseInvoiceLinesTable({
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell className="py-1.5 pt-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                <TableCell className="py-1 pt-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
                   {formatEuro(btw)}
                 </TableCell>
-                <TableCell className="py-1.5 pt-3 text-right font-mono text-sm tabular-nums">
+                <TableCell className="py-1 pt-3 text-right font-mono text-sm tabular-nums">
                   {formatEuro(incl)}
                 </TableCell>
-                <TableCell className="py-1.5 pr-1">
+                <TableCell className="py-1 pr-1">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                    className="h-9 w-9 text-muted-foreground hover:text-destructive"
                     onClick={() => onRemoveLine(idx)}
                     aria-label="Regel verwijderen"
                     title="Regel verwijderen"

@@ -113,7 +113,7 @@ function emptyHeader(inv: PurchaseInvoice | null): HeaderForm {
 function FieldGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-2 text-xs font-semibold text-foreground">
+      <legend className="mb-1.5 text-xs font-semibold text-foreground">
         {title}
       </legend>
       {children}
@@ -637,7 +637,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   const amountInputClass = "h-9 text-right font-mono tabular-nums";
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <PurchaseInvoiceWorkspaceHeader
         supplier={header.supplier}
         invoiceNumber={header.invoice_number}
@@ -669,11 +669,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         <div className="min-w-0 space-y-3">
           {/* Factuurgegevens */}
           <Card>
-            <CardContent className="space-y-4 p-4">
+            <CardContent className="space-y-3 p-3 sm:p-4">
               <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Factuurgegevens</h2>
 
               <FieldGroup title="Identificatie">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <div className="min-w-0">
                     <Label>Administratie</Label>
                     <Select value={header.client_id} onValueChange={(v) => patchHeader({ client_id: v })}>
@@ -690,7 +690,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
                   <div className="min-w-0">
                     <Label>Leverancier</Label>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <Select
                         value={header.leverancier_id || "__none__"}
                         onValueChange={(v) => {
@@ -753,7 +753,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               </FieldGroup>
 
               <FieldGroup title="Bedragen">
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
                   <div className="min-w-0">
                     <Label>Bedrag excl.</Label>
                     <Input
@@ -824,7 +824,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               </FieldGroup>
 
               <FieldGroup title="Boekingscontext">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <div className="min-w-0">
                     <Label>Standaard grootboek (notitie)</Label>
                     {/* Dit veld is uitsluitend TEKST. `ledger_account_id`
@@ -864,7 +864,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           {/* Boekingsregels + totalencontrole together, so the reason approve is
               blocked is visible right where the lines are edited. */}
           <Card>
-            <CardContent className="space-y-3 p-4">
+            <CardContent className="space-y-2.5 p-3 sm:p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boekingsregels</h2>
                 <PurchaseInvoiceTotalsStatusPill state={totalsState} />
@@ -916,7 +916,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           </Card>
 
           <Card data-testid="purchase-posting-section">
-            <CardContent className="p-4">
+            <CardContent className="p-3 sm:p-4">
             {posting ? (
               <p className="text-xs text-muted-foreground" data-testid="purchase-posting-done">
                 Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens en
@@ -972,7 +972,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
             data-testid="document-panel"
             className="h-[70vh] min-h-[420px] lg:sticky lg:top-[4.5rem] lg:h-[calc(100dvh-6.5rem)]"
           >
-            <Card className="flex h-full flex-col overflow-hidden">
+            <Card className="flex h-full flex-col overflow-hidden rounded-md shadow-none">
               <PurchaseInvoiceDocumentPreview filePath={invoice.file_path} />
             </Card>
           </div>

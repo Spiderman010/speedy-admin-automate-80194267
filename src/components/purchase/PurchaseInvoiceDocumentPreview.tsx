@@ -33,7 +33,7 @@ export function PurchaseInvoiceDocumentPreview({ filePath }: { filePath: string 
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-2.5">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
         <div className="flex min-w-0 items-center gap-2">
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -49,7 +49,7 @@ export function PurchaseInvoiceDocumentPreview({ filePath }: { filePath: string 
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 shrink-0 px-2"
+            className="h-9 shrink-0 px-2"
             onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
             title="Open in nieuw tabblad"
             aria-label="Open in nieuw tabblad"

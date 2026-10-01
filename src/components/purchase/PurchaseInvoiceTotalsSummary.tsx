@@ -61,7 +61,7 @@ export function PurchaseInvoiceTotalsSummary({
     );
 
   return (
-    <div data-testid="totals-summary" data-totals-state={state} className="space-y-2">
+    <div data-testid="totals-summary" data-totals-state={state} className="space-y-1.5 border-t pt-2">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -85,11 +85,11 @@ export function PurchaseInvoiceTotalsSummary({
               <td className="py-1 text-right font-mono tabular-nums">{formatEuro(lineTotals.sumBtw)}</td>
               <td className="py-1 text-right font-mono tabular-nums">{formatEuro(lineTotals.sumIncl)}</td>
             </tr>
-            <tr className="border-t">
-              <th scope="row" className="py-1.5 text-left font-medium">Verschil</th>
+          <tr className="border-t bg-muted/30">
+              <th scope="row" className="py-1.5 pl-2 text-left font-medium">Verschil</th>
               <td className={cn("py-1.5", diffCls(diffs.excl, diffs.exclOk))}>{fmt(diffs.excl)}</td>
               <td className={cn("py-1.5", diffCls(diffs.btw, diffs.btwOk))}>{fmt(diffs.btw)}</td>
-              <td className={cn("py-1.5", diffCls(diffs.incl, diffs.inclOk))}>{fmt(diffs.incl)}</td>
+              <td className={cn("py-1.5 pr-2", diffCls(diffs.incl, diffs.inclOk))}>{fmt(diffs.incl)}</td>
             </tr>
           </tbody>
         </table>
