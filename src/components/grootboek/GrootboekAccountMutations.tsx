@@ -54,8 +54,8 @@ export function GrootboekAccountMutations({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2" data-testid="account-header">
-        <span className="font-mono text-lg tabular-nums">{a.nummer ?? "—"}</span>
-        <span className="font-display text-lg font-semibold">{a.omschrijving}</span>
+        <span className="font-mono text-base tabular-nums text-muted-foreground">{a.nummer ?? "—"}</span>
+        <span className="font-display text-base font-semibold">{a.omschrijving}</span>
         <Badge variant={a.categorie === "onbekend" ? "outline" : "secondary"} className="font-normal">
           {CATEGORY_LABELS[a.categorie]}
         </Badge>
@@ -64,7 +64,7 @@ export function GrootboekAccountMutations({
         <span className="text-sm text-muted-foreground">· {periodLabel}</span>
       </div>
 
-      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="account-summary">
+      <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4" data-testid="account-summary">
         <Stat label="Beginsaldo" cents={running.openingCents} />
         <Stat label="Debet" cents={periodDebit} />
         <Stat label="Credit" cents={periodCredit} />
@@ -74,8 +74,8 @@ export function GrootboekAccountMutations({
       {running.lines.length === 0 ? (
         <EmptyState message="Geen mutaties op deze rekening in de gekozen periode." />
       ) : (
-        <div className="-mx-1 overflow-x-auto px-1">
-          <Table className="min-w-[840px]">
+        <div className="-mx-3 -mb-3 overflow-x-auto sm:-mx-4 sm:-mb-4">
+          <Table className="min-w-[840px] text-[13px] [&_th]:h-9 [&_td]:py-1.5">
             <caption className="sr-only">
               Mutaties van {formatLedgerAccountLabel(a)} met lopend saldo (debet-positief)
             </caption>
@@ -91,7 +91,7 @@ export function GrootboekAccountMutations({
               </TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow className="text-muted-foreground hover:bg-transparent" data-testid="mutation-opening">
+              <TableRow className="bg-muted/30 text-muted-foreground hover:bg-transparent" data-testid="mutation-opening">
                 <TableCell colSpan={5}>Beginsaldo</TableCell>
                 <TableCell className="text-right font-mono tabular-nums">{formatCents(running.openingCents)}</TableCell>
                 <TableCell />
@@ -100,7 +100,7 @@ export function GrootboekAccountMutations({
                 const source = resolveLedgerSource(l.row.source_type, l.row.source_id);
                 return (
                   <TableRow key={l.row.id} data-testid="mutation-row" data-source-type={l.row.source_type}>
-                    <TableCell className="whitespace-nowrap">{formatDatumNL(l.row.posting_date)}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{formatDatumNL(l.row.posting_date)}</TableCell>
                     <TableCell className="max-w-[320px] truncate">{l.row.description || "—"}</TableCell>
                     <TableCell>
                       {/* Neutrale badge: kleur mag geen debet/credit suggereren. */}
@@ -185,8 +185,8 @@ export function GrootboekAccountMutations({
 function Stat({ label, cents, emphasis }: { label: string; cents: number; emphasis?: boolean }) {
   return (
     <Card>
-      <CardContent className="p-3">
-        <dt className="text-xs text-muted-foreground">{label}</dt>
+      <CardContent className="px-3 py-2.5">
+        <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
         <dd className={cn("mt-0.5 font-mono tabular-nums", emphasis ? "text-lg font-semibold" : "text-base")}>
           {formatCents(cents)}
         </dd>

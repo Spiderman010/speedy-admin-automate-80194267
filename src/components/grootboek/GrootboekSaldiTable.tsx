@@ -30,8 +30,8 @@ export function GrootboekSaldiTable({
   return (
     // Horizontaal scrollen binnen de container op smalle schermen, nooit de
     // hele pagina.
-    <div className="-mx-1 overflow-x-auto px-1">
-      <Table className="min-w-[840px]">
+    <div className="-mx-3 -mb-3 -mt-3 overflow-x-auto sm:-mx-4 sm:-mb-4 sm:-mt-4">
+      <Table className="min-w-[840px] text-[13px] [&_th]:h-9 [&_td]:py-1.5">
         <caption className="sr-only">
           Saldilijst per grootboekrekening: beginsaldo, debet, credit en eindsaldo (debet-positief)
         </caption>
@@ -52,7 +52,7 @@ export function GrootboekSaldiTable({
             const label = formatLedgerAccountLabel(a);
             return (
               <TableRow key={a.id} data-testid="saldi-row" data-account-id={a.id}>
-                <TableCell className="font-mono tabular-nums">{a.nummer ?? "—"}</TableCell>
+                <TableCell className="font-mono text-xs tabular-nums">{a.nummer ?? "—"}</TableCell>
                 <TableCell className="max-w-[320px]">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <Link
@@ -84,7 +84,7 @@ export function GrootboekSaldiTable({
           })}
         </TableBody>
         <tfoot>
-          <TableRow className="border-t-2 font-medium hover:bg-transparent" data-testid="saldi-totals">
+          <TableRow className="border-t-2 bg-muted/50 font-medium hover:bg-transparent" data-testid="saldi-totals">
             <TableCell colSpan={3}>Totaal ({rollups.length} rekening{rollups.length === 1 ? "" : "en"})</TableCell>
             <Money cents={totals.openingCents} />
             <Money cents={totals.periodDebitCents} />

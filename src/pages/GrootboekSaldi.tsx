@@ -196,7 +196,7 @@ export default function GrootboekSaldi() {
         }
       >
         {accountId && (
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             <Link to="/grootboek/saldi">
               <ArrowLeft className="mr-2 h-4 w-4" />Naar saldilijst
             </Link>
@@ -204,10 +204,10 @@ export default function GrootboekSaldi() {
         )}
       </PageHeader>
 
-      <div className="mb-4 space-y-3 rounded-lg border bg-card p-3 shadow-sm">
+      <div className="mb-3 space-y-2.5 rounded-lg border bg-card px-3 py-2.5 shadow-card">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Select value={selectedClientId} onValueChange={(v) => setSelectedClientId(v)}>
-            <SelectTrigger className="w-full sm:w-64" aria-label="Administratie">
+            <SelectTrigger className="h-9 w-full sm:w-64" aria-label="Administratie">
               <span className="truncate">{selectedClient ? selectedClient.name : "Alle administraties"}</span>
             </SelectTrigger>
             <SelectContent>
@@ -260,8 +260,8 @@ export default function GrootboekSaldi() {
             openingBalanceLoading={openingBalanceCompleteness.isPending}
             openingBalanceError={openingBalanceCompleteness.isError}
           />
-          <Card>
-            <CardContent className="p-4 sm:p-6">{renderBody()}</CardContent>
+          <Card className="overflow-hidden">
+            <CardContent className="p-3 sm:p-4">{renderBody()}</CardContent>
           </Card>
         </div>
       )}

@@ -182,7 +182,7 @@ export default function GrootboekMutaties() {
       <h1 className="sr-only">Bronmutaties</h1>
 
       {/* Explainability — this is deliberately not presented as a closing ledger. */}
-      <div className="mb-4 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+      <div className="mb-3 flex items-start gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
         <Info className="mt-0.5 h-4 w-4 shrink-0" />
         <div>
           <p className="font-medium text-foreground">Bronmutaties</p>
@@ -197,9 +197,9 @@ export default function GrootboekMutaties() {
       </div>
 
       {/* Administratie + zoeken */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-3 flex flex-col gap-2 rounded-lg border bg-card px-3 py-2 shadow-card sm:flex-row sm:items-center sm:justify-between">
         <Select value={selectedClientId} onValueChange={(v) => setSelectedClientId(v)}>
-          <SelectTrigger className="w-full sm:w-64" aria-label="Administratie">
+          <SelectTrigger className="h-9 w-full sm:w-64" aria-label="Administratie">
             <span className="truncate">{selectedClient ? selectedClient.name : "Alle administraties"}</span>
           </SelectTrigger>
           <SelectContent>
@@ -218,7 +218,7 @@ export default function GrootboekMutaties() {
       </div>
 
       {/* Bron / jaar / rekening */}
-      <div className="mb-4 space-y-2">
+      <div className="mb-3 space-y-1.5">
         <div data-testid="source-filters" className="flex flex-wrap items-center gap-1.5">
           <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground">Bron</span>
           <FilterChip label="Alle" active={sourceFilter === "all"} onClick={() => setSourceFilter("all")} />
@@ -237,7 +237,7 @@ export default function GrootboekMutaties() {
             value={String(yearFilter)}
             onValueChange={(v) => setYearFilter(v === "all" ? "all" : Number(v))}
           >
-            <SelectTrigger className="w-36" aria-label="Jaar">
+            <SelectTrigger className="h-9 w-36" aria-label="Jaar">
               <span>{yearFilter === "all" ? "Alle jaren" : yearFilter}</span>
             </SelectTrigger>
             <SelectContent>
@@ -249,7 +249,7 @@ export default function GrootboekMutaties() {
           </Select>
           <span className="w-20 shrink-0 text-xs font-medium text-muted-foreground sm:w-auto sm:pl-4">Rekening</span>
           <Select value={accountFilter} onValueChange={setAccountFilter}>
-            <SelectTrigger className="w-full sm:w-72" aria-label="Grootboekrekening">
+            <SelectTrigger className="h-9 w-full sm:w-72" aria-label="Grootboekrekening">
               <span className="truncate">
                 {selectedAccount
                   ? `${selectedAccount.nummer} - ${selectedAccount.omschrijving}`
@@ -274,12 +274,12 @@ export default function GrootboekMutaties() {
       {!hasSpecificClient ? (
         <NoClientBanner message="Kies eerst een specifieke administratie om de grootboekmutaties te bekijken." />
       ) : (
-        <Card>
-          <CardContent className="p-6">
+        <Card className="overflow-hidden">
+          <CardContent className="p-0">
             {isLoading ? (
-              <MutationsSkeleton />
+              <div className="p-4"><MutationsSkeleton /></div>
             ) : hasError ? (
-              <div className="flex flex-col items-start gap-3 py-6" role="alert">
+              <div className="flex flex-col items-start gap-3 px-4 py-6" role="alert">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                   <div>
@@ -298,7 +298,7 @@ export default function GrootboekMutaties() {
               <EmptyState message={emptyMessage()} />
             ) : (
               <>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/30 px-4 py-2">
                   <p className="text-sm text-muted-foreground" data-testid="mutation-count">
                     {filtered.length} {filtered.length === 1 ? "mutatie" : "mutaties"}
                   </p>
@@ -312,7 +312,7 @@ export default function GrootboekMutaties() {
                   )}
                 </div>
                 <div className="overflow-x-auto">
-                  <Table>
+                  <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-28">Datum</TableHead>
@@ -328,7 +328,7 @@ export default function GrootboekMutaties() {
                     <TableBody>
                       {filtered.map((m) => (
                         <TableRow key={m.id}>
-                          <TableCell className="whitespace-nowrap">{formatDatum(m.date)}</TableCell>
+                          <TableCell className="whitespace-nowrap font-mono text-xs">{formatDatum(m.date)}</TableCell>
                           <TableCell><SourceBadge source={m.source} /></TableCell>
                           <TableCell className="hidden max-w-[220px] md:table-cell">
                             {m.ledgerAccountLabel ? (
