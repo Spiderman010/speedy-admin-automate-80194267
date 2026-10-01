@@ -65,6 +65,10 @@ export default {
         warning: "hsl(var(--warning))",
         info: "hsl(var(--info))",
       },
+      boxShadow: {
+        /* Eén zachte schaduw voor kaarten en panelen. */
+        card: "0 1px 2px 0 hsl(var(--shadow-color) / 0.06), 0 1px 3px 0 hsl(var(--shadow-color) / 0.04)",
+      },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
