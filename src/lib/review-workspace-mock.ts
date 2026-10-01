@@ -152,7 +152,7 @@ export const REVIEW_EXAMPLE_ITEMS: readonly ReviewItem[] = [
   },
   {
     id: "vb-5",
-    datum: "2026-09-12",
+    datum: "2026-08-28",
     type: "inkoopfactuur",
     relatie: "Energie Direct",
     omschrijving: "Energie augustus",
@@ -169,8 +169,8 @@ export const REVIEW_EXAMPLE_ITEMS: readonly ReviewItem[] = [
     ],
     bijlagen: ["ED-77812.pdf"],
     activiteit: [
-      { moment: "12-09-2026 09:20", tekst: "Factuur geüpload" },
-      { moment: "12-09-2026 09:21", tekst: "Geblokkeerd: boekingsblokkade" },
+      { moment: "28-08-2026 09:20", tekst: "Factuur geüpload" },
+      { moment: "28-08-2026 09:21", tekst: "Geblokkeerd: boekingsblokkade" },
     ],
   },
   {

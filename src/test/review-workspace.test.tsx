@@ -234,6 +234,29 @@ describe("Review — het paneel volgt de gefilterde tabel", () => {
 });
 
 describe("Review — voorbeelddata", () => {
+  it("8b. een voorbeeld dat op de boekingsblokkade wordt geblokkeerd, valt ook echt binnen zijn eigen blokkade", () => {
+    const opBlokkade = REVIEW_EXAMPLE_ITEMS.filter((i) => /boekingsblokkade/i.test(i.reden));
+    // Het bekende voorbeeld moet hier tussen zitten; anders toetst deze test niets.
+    expect(opBlokkade.map((i) => i.id)).toContain("vb-5");
+    for (const item of opBlokkade) {
+      expect(item.status, item.id).toBe("geblokkeerd");
+      const tm = /t\/m (\d{2})-(\d{2})-(\d{4})/.exec(item.toelichting) ?? /tot en met (\d{2})-(\d{2})-(\d{4})/.exec(item.toelichting);
+      expect(tm, `${item.id}: toelichting noemt geen blokkadedatum`).not.toBeNull();
+      const blokkadeTot = `${tm![3]}-${tm![2]}-${tm![1]}`;
+      // ISO-datums vergelijken lexicografisch: op of vóór de blokkade = geblokkeerd.
+      expect(item.datum <= blokkadeTot, `${item.id}: ${item.datum} valt na de blokkade t/m ${blokkadeTot}`).toBe(true);
+      // De activiteit hoort bij dezelfde factuur: niet vóór de factuurdatum.
+      for (const regel of item.activiteit) {
+        const [d, m, j] = regel.moment.slice(0, 10).split("-");
+        expect(`${j}-${m}-${d}` >= item.datum, `${item.id}: ${regel.moment}`).toBe(true);
+      }
+    }
+    // En de omschrijving "augustus" past bij een augustusdatum.
+    const vb5 = REVIEW_EXAMPLE_ITEMS.find((i) => i.id === "vb-5")!;
+    expect(vb5.datum.startsWith("2026-08-")).toBe(true);
+    expect(vb5.activiteit.every((r) => r.moment.slice(3, 10) === "08-2026")).toBe(true);
+  });
+
   it("8. elk voorbeeldvoorstel is in balans en elke regel is óf debet óf credit", () => {
     for (const item of REVIEW_EXAMPLE_ITEMS) {
       const { debetCents, creditCents } = proposalTotals(item.voorstel);
