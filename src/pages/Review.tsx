@@ -390,7 +390,11 @@ export default function Review() {
 
   const counts = useMemo(() => countByStatus(REVIEW_EXAMPLE_ITEMS), []);
   const visible = useMemo(() => filterReviewItems(REVIEW_EXAMPLE_ITEMS, search, statusFilter), [search, statusFilter]);
-  const selected = REVIEW_EXAMPLE_ITEMS.find((item) => item.id === selectedId) ?? null;
+  // Het paneel toont alleen een regel die in de gefilterde tabel zichtbaar is.
+  // Valt de selectie weg door zoeken of een statusfilter, dan wordt de eerste
+  // zichtbare regel gekozen; zonder zichtbare regels blijft het paneel leeg.
+  const selected = visible.find((item) => item.id === selectedId) ?? visible[0] ?? null;
+  if (selected !== null && selected.id !== selectedId) setSelectedId(selected.id);
 
   return (
     <div>
@@ -414,7 +418,7 @@ export default function Review() {
       </PageHeader>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
-        <ReviewTable items={visible} selectedId={selectedId} onSelect={setSelectedId} />
+        <ReviewTable items={visible} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
         <ReviewDetailPanel item={selected} />
       </div>
     </div>

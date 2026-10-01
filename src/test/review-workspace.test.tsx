@@ -167,6 +167,72 @@ describe("Review — de pagina", () => {
   });
 });
 
+describe("Review — het paneel volgt de gefilterde tabel", () => {
+  const paneel = () => screen.getByTestId("review-detail");
+  const geselecteerd = () =>
+    within(screen.getByTestId("review-table"))
+      .getAllByRole("row")
+      .filter((r) => r.getAttribute("aria-selected") === "true")
+      .map((r) => r.getAttribute("data-testid"));
+  const kies = (id: string) => {
+    const item = REVIEW_EXAMPLE_ITEMS.find((i) => i.id === id)!;
+    fireEvent.click(within(screen.getByTestId(`review-row-${id}`)).getByRole("button", { name: item.omschrijving }));
+  };
+
+  it("11. statusfilter: een weggefilterde selectie wijkt voor de eerste zichtbare regel", () => {
+    renderReview();
+    const klaar = REVIEW_EXAMPLE_ITEMS.find((i) => i.status === "klaar")!;
+    kies(klaar.id);
+    expect(paneel()).toHaveTextContent(klaar.omschrijving);
+
+    fireEvent.click(screen.getByTestId("review-counter-geblokkeerd"));
+    const eerste = filterReviewItems(REVIEW_EXAMPLE_ITEMS, "", "geblokkeerd")[0];
+    expect(paneel()).toHaveTextContent(eerste.omschrijving);
+    expect(paneel()).not.toHaveTextContent(klaar.omschrijving);
+    expect(geselecteerd()).toEqual([`review-row-${eerste.id}`]);
+
+    // Een selectie die zichtbaar blijft, blijft staan.
+    const tweede = filterReviewItems(REVIEW_EXAMPLE_ITEMS, "", "geblokkeerd")[1];
+    kies(tweede.id);
+    fireEvent.click(screen.getByTestId("review-counter-geblokkeerd"));
+    expect(paneel()).toHaveTextContent(tweede.omschrijving);
+    expect(geselecteerd()).toEqual([`review-row-${tweede.id}`]);
+  });
+
+  it("12. zoeken: een weggefilterde selectie wijkt voor de eerste zichtbare regel", () => {
+    renderReview();
+    const start = REVIEW_EXAMPLE_ITEMS[0];
+    expect(paneel()).toHaveTextContent(start.omschrijving);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Zoeken in voorbeeldregels" }), {
+      target: { value: "Energie Direct" },
+    });
+    const zichtbaar = filterReviewItems(REVIEW_EXAMPLE_ITEMS, "Energie Direct", null);
+    expect(zichtbaar.map((i) => i.id)).not.toContain(start.id);
+    expect(paneel()).toHaveTextContent(zichtbaar[0].omschrijving);
+    expect(paneel()).not.toHaveTextContent(start.relatie);
+    expect(geselecteerd()).toEqual([`review-row-${zichtbaar[0].id}`]);
+  });
+
+  it("13. geen zichtbare regels: het paneel toont de lege detailtoestand", () => {
+    renderReview();
+    fireEvent.change(screen.getByRole("textbox", { name: "Zoeken in voorbeeldregels" }), {
+      target: { value: "bestaat-niet-xyz" },
+    });
+    expect(paneel()).toHaveTextContent("Kies een regel om de details te bekijken.");
+    expect(within(paneel()).queryByRole("button", { name: "Goedkeuren" })).toBeNull();
+
+    // Ook via het statusfilter in combinatie met zoeken.
+    fireEvent.change(screen.getByRole("textbox", { name: "Zoeken in voorbeeldregels" }), {
+      target: { value: "Energie Direct" },
+    });
+    fireEvent.click(screen.getByTestId("review-counter-klaar"));
+    expect(filterReviewItems(REVIEW_EXAMPLE_ITEMS, "Energie Direct", "klaar")).toEqual([]);
+    expect(paneel()).toHaveTextContent("Kies een regel om de details te bekijken.");
+    expect(geselecteerd()).toEqual([]);
+  });
+});
+
 describe("Review — voorbeelddata", () => {
   it("8. elk voorbeeldvoorstel is in balans en elke regel is óf debet óf credit", () => {
     for (const item of REVIEW_EXAMPLE_ITEMS) {
