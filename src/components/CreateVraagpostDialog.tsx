@@ -65,7 +65,7 @@ export function CreateVraagpostDialog({
           <DialogTitle>Nieuwe vraagpost</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <div>
+          <div className="grid gap-1.5">
             <Label>Categorie</Label>
             <Select value={categorie} onValueChange={setCategorie}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -76,11 +76,11 @@ export function CreateVraagpostDialog({
               </SelectContent>
             </Select>
           </div>
-          <div>
+          <div className="grid gap-1.5">
             <Label>Titel *</Label>
             <Input value={titel} onChange={e => setTitel(e.target.value)} />
           </div>
-          <div>
+          <div className="grid gap-1.5">
             <Label>Omschrijving</Label>
             <Textarea value={omschrijving} onChange={e => setOmschrijving(e.target.value)} rows={3} />
           </div>
