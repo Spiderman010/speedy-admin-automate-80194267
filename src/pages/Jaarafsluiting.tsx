@@ -165,7 +165,7 @@ const STATUS_PRESENTATION: Record<
 function Bevinding({ check }: { check: ReadinessCheck }) {
   return (
     <li
-      className="rounded-md border px-3 py-2"
+      className="rounded-md border bg-card px-3 py-2"
       data-testid="jaar-bevinding"
       data-check={check.id}
       data-severity={check.severity}
@@ -197,9 +197,9 @@ function Bevinding({ check }: { check: ReadinessCheck }) {
 
 function Telling({ label, value, testId }: { label: string; value: number; testId: string }) {
   return (
-    <div className="rounded-md border px-3 py-2" data-testid={testId}>
-      <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</dt>
-      <dd className="mt-0.5 font-mono text-lg font-semibold tabular-nums">{value}</dd>
+    <div className="rounded-md border bg-card px-3 py-2 shadow-card" data-testid={testId}>
+      <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</dt>
+      <dd className="mt-0.5 font-mono text-lg font-semibold leading-tight tabular-nums">{value}</dd>
     </div>
   );
 }
@@ -237,7 +237,7 @@ function Rapport({ readiness, clientName }: { readiness: YearCloseReadiness; cli
         if (groep.length === 0) return null;
         return (
           <section key={severity} aria-labelledby={`jaar-${severity}`} data-testid={`jaar-groep-${severity}`}>
-            <h3 id={`jaar-${severity}`} className="mb-2 text-sm font-semibold">
+            <h3 id={`jaar-${severity}`} className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               {SEVERITY_HEADING[severity]} ({groep.length})
             </h3>
             <ul className="space-y-2">
@@ -249,7 +249,7 @@ function Rapport({ readiness, clientName }: { readiness: YearCloseReadiness; cli
 
       {readiness.administrationWide.length > 0 && (
         <section aria-labelledby="jaar-breed" data-testid="jaar-groep-administratiebreed">
-          <h3 id="jaar-breed" className="mb-1 text-sm font-semibold">
+          <h3 id="jaar-breed" className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             Administratiebreed ({readiness.administrationWide.length})
           </h3>
           <p className="mb-2 text-xs text-muted-foreground" data-testid="jaar-breed-uitleg">
@@ -362,7 +362,7 @@ function Levensloop({
       {events.map((event, index) => (
         <li
           key={event.id}
-          className="rounded-md border px-3 py-2"
+          className="rounded-md border bg-card px-3 py-1.5"
           data-testid="jaar-gebeurtenis"
           data-event-type={event.event_type}
           data-index={index}
@@ -418,17 +418,18 @@ function BoekjaarstatusCard({
         : [];
 
   return (
-    <Card data-testid="jaar-status-card">
-      <CardContent className="space-y-4 p-4 sm:p-5">
-        <div className="flex items-start justify-between gap-3">
+    <Card data-testid="jaar-status-card" className="overflow-hidden">
+      <CardContent className="p-0">
+        <div className="flex items-start justify-between gap-3 border-b bg-muted/30 px-4 py-3">
           <div>
-            <h2 className="text-sm font-semibold">Boekjaarstatus</h2>
-            <p className="mt-0.5 font-mono text-xl font-semibold tabular-nums">{fiscalYear}</p>
+            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boekjaarstatus</h2>
+            <p className="mt-0.5 font-mono text-xl font-semibold leading-tight tabular-nums">{fiscalYear}</p>
           </div>
           <Badge variant={presentatie.variant} data-testid="jaar-status-badge" data-status={status}>
             {presentatie.label}
           </Badge>
         </div>
+        <div className="space-y-4 p-4">
 
         {statusEntries.length > 0 && (
           <AuditTrailBlock entries={statusEntries} className="border-t pt-3" data-testid="jaar-status-details" />
@@ -495,6 +496,7 @@ function BoekjaarstatusCard({
             </p>
           </div>
         )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -705,7 +707,7 @@ export default function Jaarafsluiting() {
         <NoClientBanner message="Kies eerst een specifieke administratie om de gereedheid te bepalen." />
       ) : (
         <div className="space-y-4">
-          <section aria-label="Administratie en boekjaar" className="rounded-lg border bg-card p-3 shadow-sm">
+          <section aria-label="Administratie en boekjaar" className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
             <div className="flex flex-wrap items-center gap-2">
               <CalendarCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <Select value={selectedClientId} onValueChange={setSelectedClientId}>
@@ -760,14 +762,15 @@ export default function Jaarafsluiting() {
             <PostingLockCard key={clientId} clientId={clientId!} clientName={clientNaam} />
           </div>
 
-          <Card>
-            <CardContent className="space-y-4 p-4 sm:p-6">
-              <div>
-                <h2 className="text-sm font-semibold">Gereedheid voor afsluiten</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
+          <Card className="overflow-hidden">
+            <CardContent className="p-0">
+              <div className="border-b bg-muted/30 px-4 py-3">
+                <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Gereedheid voor afsluiten</h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   Controleer het open werk en de boekhoudkundige aandachtspunten voor dit boekjaar.
                 </p>
               </div>
+              <div className="space-y-4 p-4 empty:hidden">
 
               {huidigeSnapshot === null && status !== "closed" && huidigeFout === null && huidigeHeropenFout === null ? (
                 <EmptyState
@@ -849,15 +852,17 @@ export default function Jaarafsluiting() {
                   {afsluiten.reason}
                 </p>
               )}
+              </div>
             </CardContent>
           </Card>
 
-          <Card data-testid="jaar-historie">
-            <CardContent className="space-y-4 p-4 sm:p-5">
-              <div className="flex items-center gap-2">
+          <Card data-testid="jaar-historie" className="overflow-hidden">
+            <CardContent className="p-0">
+              <div className="flex items-center gap-2 border-b bg-muted/30 px-4 py-3">
                 <History className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                <h2 className="text-sm font-semibold">Historie</h2>
+                <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Historie</h2>
               </div>
+              <div className="space-y-4 p-4">
 
               {status === "closed" && bewijs !== null && (
                 <Afsluitbewijs
@@ -898,6 +903,7 @@ export default function Jaarafsluiting() {
                   <Levensloop events={gebeurtenissen} currentUserId={user?.id} />
                 </div>
               )}
+              </div>
             </CardContent>
           </Card>
 
@@ -949,7 +955,7 @@ export default function Jaarafsluiting() {
             cancelTestId="jaar-heropenen-annuleren"
             consequencesTestId="jaar-heropenen-gevolgen"
           >
-            <div className="space-y-2">
+            <div className="space-y-2 rounded-md border bg-muted/20 p-3">
               <Label htmlFor="jaar-heropenen-reden">Reden voor heropening</Label>
               <Textarea
                 id="jaar-heropenen-reden"
