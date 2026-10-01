@@ -1907,14 +1907,14 @@ export default function Bank() {
   return (
     <>
       <h1 className="sr-only">Bankafschriften</h1>
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm">
         <ClientMultiSelect
           clients={clients ?? []}
           value={clientSelection}
           onChange={handleClientSelectionChange}
         />
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
+        <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center [&>*]:w-full [&>*]:px-2 [&>*]:text-xs sm:[&>*]:w-auto sm:[&>*]:px-3 sm:[&>*]:text-sm">
+          <Button size="sm" variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
             const exportCandidates = transactions ?? [];
             if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
             const gb = grootboekrekeningen ?? [];
@@ -1934,7 +1934,7 @@ export default function Bank() {
           }}>
             <Download className="mr-2 h-4 w-4" />Export Snelstart
           </Button>
-          <Button variant="outline" disabled={!hasSelection || !matchingReady} onClick={() => {
+          <Button size="sm" variant="outline" disabled={!hasSelection || !matchingReady} onClick={() => {
             const clientName = singleClientId ? clients?.find(c => c.id === singleClientId)?.name : undefined;
             const rowCount = exportAfletterrapportCSV(
               allAllocations ?? [],
@@ -1957,6 +1957,7 @@ export default function Bank() {
             <Download className="mr-2 h-4 w-4" />Afletterrapport CSV
           </Button>
           <Button
+            size="sm"
             variant="default"
             onClick={() => setVerwerkingOpen(true)}
             disabled={!hasSelection || !matchingReady || openCount === 0}
@@ -1964,12 +1965,12 @@ export default function Bank() {
             <Zap className="mr-2 h-4 w-4" />
             Verwerken {openCount > 0 && `(${openCount})`}
           </Button>
-          <Button variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild>
             {/* De inhaalslag is een detail van dit werkgebied, geen eigen
                 bestemming: /bank/inhaalslag valt onder hetzelfde nav-item. */}
             <Link to="/bank/inhaalslag">Inhaalslag grootboek</Link>
           </Button>
-          <Button onClick={() => setUploadOpen(true)}>
+          <Button size="sm" onClick={() => setUploadOpen(true)}>
             <Upload className="mr-2 h-4 w-4" />Upload afschrift
           </Button>
         </div>
@@ -2017,22 +2018,22 @@ export default function Bank() {
           </Button>
         </div>
       )}
-      <div className="grid gap-4 sm:grid-cols-4 mb-6">
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <CheckCircle2 className="h-5 w-5 text-success" />
-          <div><p className="font-display text-xl font-bold">{wholeSetReady ? matched : "–"}</p><p className="text-xs text-muted-foreground">Gematcht</p></div>
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-success/10"><CheckCircle2 className="h-4 w-4 text-success" /></span>
+          <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? matched : "–"}</p><p className="text-xs text-muted-foreground">Gematcht</p></div>
         </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <Link2 className="h-5 w-5 text-warning" />
-          <div><p className="font-display text-xl font-bold">{wholeSetReady ? suggested : "–"}</p><p className="text-xs text-muted-foreground">Suggesties</p></div>
+        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-warning/10"><Link2 className="h-4 w-4 text-warning" /></span>
+          <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? suggested : "–"}</p><p className="text-xs text-muted-foreground">Suggesties</p></div>
         </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <Download className="h-5 w-5 text-muted-foreground" />
-          <div><p className="font-display text-xl font-bold">{wholeSetReady ? (transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0) : "–"}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
+        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted"><Download className="h-4 w-4 text-muted-foreground" /></span>
+          <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? (transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0) : "–"}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
         </CardContent></Card>
-        <Card><CardContent className="flex items-center gap-3 p-4">
-          <HelpCircle className="h-5 w-5 text-destructive" />
-          <div><p className="font-display text-xl font-bold">{wholeSetReady ? unmatched : "–"}</p><p className="text-xs text-muted-foreground">Niet gematcht</p></div>
+        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10"><HelpCircle className="h-4 w-4 text-destructive" /></span>
+          <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? unmatched : "–"}</p><p className="text-xs text-muted-foreground">Niet gematcht</p></div>
         </CardContent></Card>
       </div>
 
@@ -2111,7 +2112,8 @@ export default function Bank() {
 
 
 
-      <div className="mb-4 space-y-3">
+      <div className="mb-3 space-y-2">
+        <div className="flex flex-col gap-2 2xl:flex-row 2xl:items-center">
         <Tabs value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
           <TabsList className="flex-wrap h-auto gap-1">
             <TabsTrigger value="all">
@@ -2130,18 +2132,18 @@ export default function Bank() {
             <TabsTrigger value="niet_in_bankexport" title="Betalingen die tijdelijk op tussenrekening 1799 staan.">Onbekende betalingen</TabsTrigger>
           </TabsList>
         </Tabs>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-1 flex-wrap gap-2">
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Zoeken op omschrijving, naam, referentie, tegenrekening..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              className="h-9 pl-9"
             />
           </div>
           <Select value={vraagpostFilter} onValueChange={setVraagpostFilter}>
-            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-9 w-52"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Alle vraagposten</SelectItem>
               <SelectItem value="with">Met vraagpost</SelectItem>
@@ -2151,6 +2153,7 @@ export default function Bank() {
               <SelectItem value="without">Zonder vraagpost</SelectItem>
             </SelectContent>
           </Select>
+        </div>
         </div>
         {statusFilter === "open" && (
           <div className="flex flex-wrap gap-2">
@@ -2296,10 +2299,10 @@ export default function Bank() {
         );
       })()}
 
-      <Card>
-        <CardContent className="overflow-x-auto p-6">
+      <Card className="overflow-hidden shadow-sm">
+        <CardContent className="overflow-x-auto p-0">
           {tableLoading ? (
-            <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+            <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
           ) : tableError ? (
             <div className="py-12 text-center text-muted-foreground space-y-3">
               <p className="text-destructive">Banktransacties laden mislukt.</p>
@@ -2324,7 +2327,7 @@ export default function Bank() {
               return (
                 <div
                   role="status"
-                  className="mb-3 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md border bg-muted/50 px-3 py-2 text-sm text-center"
+                  className="m-3 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-md border bg-muted/50 px-3 py-2 text-sm text-center"
                 >
                   {fullSelected ? (
                     <>
@@ -2356,7 +2359,7 @@ export default function Bank() {
                 </div>
               );
             })()}
-            <Table>
+            <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
               <TableHeader>
                 <TableRow>
                   {txColumnDefs.map(col => (
@@ -2386,7 +2389,8 @@ export default function Bank() {
                   return (
                     <TableRow
                       key={t.id}
-                      className="cursor-pointer"
+                      className={`cursor-pointer${detailTx?.id === t.id ? " shadow-[inset_3px_0_0_hsl(var(--primary))]" : ""}`}
+                      data-state={detailTx?.id === t.id ? "selected" : undefined}
                       onClick={() => setDetailTx(t)}
                     >
                       <TableCell onClick={(e) => e.stopPropagation()}>
@@ -2396,7 +2400,7 @@ export default function Bank() {
                           disabled={stalePageData}
                         />
                       </TableCell>
-                      <TableCell>{new Date(t.transaction_date).toLocaleDateString("nl-NL")}</TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs">{new Date(t.transaction_date).toLocaleDateString("nl-NL")}</TableCell>
                       <TableCell className="max-w-xs">
                         <div className="flex items-center gap-1">
                           <span className="truncate">{getDisplayDescription(t.description, { counterAccount: t.counter_account, reference: t.reference })}</span>
@@ -2420,8 +2424,8 @@ export default function Bank() {
                           })()}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <span className={`font-mono ${t.amount < 0 ? "text-destructive" : "text-success"}`}>
+                      <TableCell className="whitespace-nowrap text-right">
+                        <span className={`font-mono tabular-nums ${t.amount < 0 ? "text-destructive" : "text-success"}`}>
                           {formatCurrency(t.amount)}
                         </span>
                         {t.matched_invoice_id && (() => {
