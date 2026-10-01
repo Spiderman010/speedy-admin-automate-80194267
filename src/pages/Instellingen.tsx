@@ -101,14 +101,14 @@ function ProfielTab() {
   );
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><User className="h-5 w-5 text-muted-foreground" />Bedrijfsgegevens</CardTitle>
-          <CardDescription>Deze gegevens worden gebruikt voor je account en correspondentie.</CardDescription>
+    <div className="space-y-4">
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b bg-muted/30 px-4 py-3">
+          <CardTitle className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"><User className="h-4 w-4 text-muted-foreground" />Bedrijfsgegevens</CardTitle>
+          <CardDescription className="text-xs">Deze gegevens worden gebruikt voor je account en correspondentie.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="space-y-4 p-4">
+          <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="profiel-naam">Naam</Label>
               <Input id="profiel-naam" value={naam} onChange={e => setNaam(e.target.value)} placeholder="Je volledige naam" />
@@ -128,15 +128,15 @@ function ProfielTab() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="profiel-kvk">KVK nummer</Label>
-              <Input id="profiel-kvk" value={kvk} onChange={e => setKvk(e.target.value)} placeholder="12345678" />
+              <Input id="profiel-kvk" className="font-mono tabular-nums" value={kvk} onChange={e => setKvk(e.target.value)} placeholder="12345678" />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="profiel-btw">BTW nummer</Label>
-              <Input id="profiel-btw" value={btwnummer} onChange={e => setBtwnummer(e.target.value)} placeholder="NL123456789B01" />
+              <Input id="profiel-btw" className="font-mono" value={btwnummer} onChange={e => setBtwnummer(e.target.value)} placeholder="NL123456789B01" />
             </div>
           </div>
-          <div className="flex justify-end border-t pt-4">
-            <Button onClick={handleSaveProfiel} disabled={saveMut.isPending} className="min-h-9">
+          <div className="flex justify-end border-t pt-3">
+            <Button size="sm" onClick={handleSaveProfiel} disabled={saveMut.isPending} className="min-h-9">
               {saveMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Profiel opslaan
             </Button>
@@ -144,13 +144,13 @@ function ProfielTab() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Wachtwoord wijzigen</CardTitle>
-          <CardDescription>Kies een nieuw wachtwoord van minimaal 6 tekens.</CardDescription>
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b bg-muted/30 px-4 py-3">
+          <CardTitle className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Wachtwoord wijzigen</CardTitle>
+          <CardDescription className="text-xs">Kies een nieuw wachtwoord van minimaal 6 tekens.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-2">
+        <CardContent className="space-y-4 p-4">
+          <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="ww-nieuw">Nieuw wachtwoord</Label>
               <Input id="ww-nieuw" type="password" value={nieuwWachtwoord} onChange={e => setNieuwWachtwoord(e.target.value)} placeholder="Minimaal 6 tekens" />
@@ -160,8 +160,8 @@ function ProfielTab() {
               <Input id="ww-bevestig" type="password" value={wachtwoordBevestig} onChange={e => setWachtwoordBevestig(e.target.value)} placeholder="Herhaal wachtwoord" />
             </div>
           </div>
-          <div className="flex justify-end border-t pt-4">
-            <Button onClick={handleWachtwoordWijzigen} disabled={savingPassword || !nieuwWachtwoord} className="min-h-9">
+          <div className="flex justify-end border-t pt-3">
+            <Button size="sm" onClick={handleWachtwoordWijzigen} disabled={savingPassword || !nieuwWachtwoord} className="min-h-9">
               {savingPassword && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {savingPassword ? "Bezig..." : "Wachtwoord wijzigen"}
             </Button>
@@ -169,13 +169,13 @@ function ProfielTab() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Account</CardTitle>
-          <CardDescription>Meld je af op dit apparaat.</CardDescription>
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b bg-muted/30 px-4 py-3">
+          <CardTitle className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Account</CardTitle>
+          <CardDescription className="text-xs">Meld je af op dit apparaat.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <Button variant="destructive" onClick={handleUitloggen} className="gap-2 min-h-9">
+        <CardContent className="p-4">
+          <Button size="sm" variant="destructive" onClick={handleUitloggen} className="gap-2 min-h-9">
             <LogOut className="h-4 w-4" />Uitloggen
           </Button>
         </CardContent>
@@ -224,37 +224,37 @@ function MatchingTab() {
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Matching instellingen</CardTitle>
-        <CardDescription>Bepaal hoe banktransacties automatisch aan facturen worden gekoppeld.</CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-muted/30 px-4 py-3">
+        <CardTitle className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Matching instellingen</CardTitle>
+        <CardDescription className="text-xs">Bepaal hoe banktransacties automatisch aan facturen worden gekoppeld.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-1.5 max-w-xs">
+      <CardContent className="space-y-4 p-4">
+        <div className="max-w-xs space-y-1.5 rounded-md border bg-muted/20 p-3">
           <Label htmlFor="match-tolerantie">Maximaal bedragverschil bij matching (€)</Label>
-          <Input id="match-tolerantie" type="number" step="0.01" value={tolerantie} onChange={e => setTolerantie(parseFloat(e.target.value) || 0)} className="w-40" />
+          <Input id="match-tolerantie" type="number" step="0.01" value={tolerantie} onChange={e => setTolerantie(parseFloat(e.target.value) || 0)} className="h-9 w-40 text-right font-mono tabular-nums" />
         </div>
 
-        <div className="max-w-xl divide-y rounded-lg border">
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
+        <div className="max-w-xl divide-y rounded-md border bg-muted/20">
+          <div className="flex items-center justify-between gap-4 px-3 py-2.5">
             <Label htmlFor="sw-deelbetalingen" className="font-normal">Deelbetalingen toestaan</Label>
             <Switch id="sw-deelbetalingen" checked={deelbetalingen} onCheckedChange={setDeelbetalingen} />
           </div>
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
+          <div className="flex items-center justify-between gap-4 px-3 py-2.5">
             <Label htmlFor="sw-omschrijving" className="font-normal">Zoeken in omschrijving</Label>
             <Switch id="sw-omschrijving" checked={zoekOmschrijving} onCheckedChange={setZoekOmschrijving} />
           </div>
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
+          <div className="flex items-center justify-between gap-4 px-3 py-2.5">
             <Label htmlFor="sw-referentie" className="font-normal">Zoeken in referentie</Label>
             <Switch id="sw-referentie" checked={zoekReferentie} onCheckedChange={setZoekReferentie} />
           </div>
-          <div className="flex items-center justify-between gap-4 px-4 py-3">
+          <div className="flex items-center justify-between gap-4 px-3 py-2.5">
             <Label htmlFor="sw-naam" className="font-normal">Zoeken in naam</Label>
             <Switch id="sw-naam" checked={zoekNaam} onCheckedChange={setZoekNaam} />
           </div>
         </div>
 
-        <div className="grid gap-6 max-w-xl sm:grid-cols-2">
+        <div className="grid max-w-xl gap-4 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
           <div className="space-y-2">
             <Label id="lbl-auto-drempel">Betrouwbaarheidsdrempel automatisch matchen: <span className="tabular-nums">{autoMatchDrempel}%</span></Label>
             <p className="text-xs text-muted-foreground">Transacties boven deze score worden automatisch gematcht</p>
@@ -267,8 +267,8 @@ function MatchingTab() {
           </div>
         </div>
 
-        <div className="flex justify-end border-t pt-4">
-          <Button onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
+        <div className="flex justify-end border-t pt-3">
+          <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
             {saveMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Instellingen opslaan
           </Button>
@@ -622,26 +622,26 @@ function HerkenningsregelsTab() {
   };
 
   return (
-    <Card>
-      <CardHeader className="space-y-4">
+    <Card className="overflow-hidden">
+      <CardHeader className="space-y-3 border-b bg-muted/30 px-4 py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="space-y-1">
-            <CardTitle>Herkenningsregels</CardTitle>
-            <CardDescription>Automatisch boeken van banktransacties op basis van herkenbare termen.</CardDescription>
+            <CardTitle className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Herkenningsregels</CardTitle>
+            <CardDescription className="text-xs">Automatisch boeken van banktransacties op basis van herkenbare termen.</CardDescription>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:shrink-0">
-            <Button variant="outline" onClick={handlePreview} disabled={previewing || isLoading} className="min-h-9 w-full sm:w-auto">
+            <Button size="sm" variant="outline" onClick={handlePreview} disabled={previewing || isLoading} className="min-h-9 w-full sm:w-auto">
               {previewing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
               Preview toepassen op open bankregels
             </Button>
-            <Button onClick={openNew} className="min-h-9 w-full sm:w-auto"><Plus className="h-4 w-4 mr-2" />Nieuwe regel</Button>
+            <Button size="sm" onClick={openNew} className="min-h-9 w-full sm:w-auto"><Plus className="h-4 w-4 mr-2" />Nieuwe regel</Button>
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3 p-4">
         <SearchInput placeholder="Zoek op zoekterm of grootboek..." value={search} onChange={setSearch} className="max-w-sm" />
         <div className="overflow-x-auto rounded-md border">
-        <Table>
+        <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
           <TableHeader>
             <TableRow>
               <TableHead>Zoekterm</TableHead>
@@ -665,7 +665,7 @@ function HerkenningsregelsTab() {
                 <TableCell className="max-w-[160px] truncate">{actieLabel(t.actie)}</TableCell>
                 <TableCell className="hidden lg:table-cell max-w-[200px] truncate">{getBookingTemplateLedgerLabel(t, accounts) || "-"}</TableCell>
                 <TableCell className="hidden lg:table-cell">{geldtVoorLabel(t.geldt_voor)}</TableCell>
-                <TableCell className="text-right tabular-nums">{t.prioriteit ?? 0}</TableCell>
+                <TableCell className="text-right font-mono tabular-nums">{t.prioriteit ?? 0}</TableCell>
                 <TableCell>
                   <Switch checked={t.actief} onCheckedChange={v => updateMut.mutate({ id: t.id, actief: v })} aria-label={`Regel ${t.zoekterm || ""} actief`} />
                 </TableCell>
@@ -686,11 +686,11 @@ function HerkenningsregelsTab() {
           <DialogContent className="max-w-lg">
             <DialogHeader><DialogTitle>{editId ? "Regel bewerken" : "Nieuwe regel"}</DialogTitle></DialogHeader>
             <div className="space-y-4">
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label>Zoekterm *</Label>
                 <Input value={form.zoekterm} onChange={e => setForm(f => ({ ...f, zoekterm: e.target.value }))} />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label>Zoeken in</Label>
                 <Select value={form.zoek_in} onValueChange={v => setForm(f => ({ ...f, zoek_in: v }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -702,7 +702,7 @@ function HerkenningsregelsTab() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label>Actie</Label>
                 <Select value={form.actie} onValueChange={v => setForm(f => ({ ...f, actie: v }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -723,7 +723,7 @@ function HerkenningsregelsTab() {
                   />
                 </div>
               )}
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label>Geldt voor</Label>
                 <Select value={form.geldt_voor} onValueChange={v => setForm(f => ({ ...f, geldt_voor: v }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -748,9 +748,9 @@ function HerkenningsregelsTab() {
                   </Select>
                 </div>
               )}
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <Label>Prioriteit</Label>
-                <Input type="number" value={form.prioriteit} onChange={e => setForm(f => ({ ...f, prioriteit: parseInt(e.target.value) || 0 }))} className="w-24" />
+                <Input type="number" value={form.prioriteit} onChange={e => setForm(f => ({ ...f, prioriteit: parseInt(e.target.value) || 0 }))} className="h-9 w-24 text-right font-mono tabular-nums" />
               </div>
               <div className="flex items-center gap-3">
                 <Label>Actief</Label>
@@ -1000,13 +1000,13 @@ function GrootboekStandaardenTab() {
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Grootboek standaarden</CardTitle>
-        <CardDescription>Standaard grootboekrekeningen voor terugkerende boekingen.</CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-muted/30 px-4 py-3">
+        <CardTitle className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Grootboek standaarden</CardTitle>
+        <CardDescription className="text-xs">Standaard grootboekrekeningen voor terugkerende boekingen.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
-        <div className="grid gap-4 sm:grid-cols-2">
+      <CardContent className="space-y-4 p-4">
+        <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
           {STANDAARD_BOEKINGEN.map(s => (
             <div key={s.key} className="space-y-1.5">
               <Label>{s.label}</Label>
@@ -1014,8 +1014,8 @@ function GrootboekStandaardenTab() {
             </div>
           ))}
         </div>
-        <div className="flex justify-end border-t pt-4">
-          <Button onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
+        <div className="flex justify-end border-t pt-3">
+          <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
             {saveMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Instellingen opslaan
           </Button>
@@ -1058,13 +1058,13 @@ function ExportTab() {
   );
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Export instellingen</CardTitle>
-        <CardDescription>Bestandsopmaak voor de Snelstart-export.</CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-muted/30 px-4 py-3">
+        <CardTitle className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Export instellingen</CardTitle>
+        <CardDescription className="text-xs">Bestandsopmaak voor de Snelstart-export.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
-        <div className="grid gap-4 max-w-2xl sm:grid-cols-2">
+      <CardContent className="space-y-4 p-4">
+        <div className="grid max-w-2xl gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Exportformaat</Label>
             <Select value={formaat} onValueChange={setFormaat}>
@@ -1106,11 +1106,11 @@ function ExportTab() {
             </Select>
           </div>
         </div>
-        <p className="text-sm text-muted-foreground max-w-xl">
+        <p className="max-w-xl text-xs text-muted-foreground">
           Deze instellingen worden gebruikt bij Export Snelstart in Bankafschriften en Facturen.
         </p>
-        <div className="flex justify-end border-t pt-4">
-          <Button onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
+        <div className="flex justify-end border-t pt-3">
+          <Button size="sm" onClick={handleSave} disabled={saveMut.isPending} className="min-h-9">
             {saveMut.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Instellingen opslaan
           </Button>
@@ -1123,7 +1123,7 @@ function ExportTab() {
 // ──── Main Page ────
 export default function Instellingen() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader title="Instellingen" description="Beheer je applicatie-instellingen" />
       <Tabs defaultValue="profiel" className="max-w-5xl">
         <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 h-auto gap-1">
@@ -1134,12 +1134,12 @@ export default function Instellingen() {
           <TabsTrigger value="grootboek" className="min-h-9">Grootboek standaarden</TabsTrigger>
           <TabsTrigger value="export" className="min-h-9">Export</TabsTrigger>
         </TabsList>
-        <TabsContent value="profiel" className="mt-6"><ProfielTab /></TabsContent>
-        <TabsContent value="matching" className="mt-6"><MatchingTab /></TabsContent>
-        <TabsContent value="herkenningsregels" className="mt-6"><HerkenningsregelsTab /></TabsContent>
-        <TabsContent value="btw" className="mt-6"><BtwTab /></TabsContent>
-        <TabsContent value="grootboek" className="mt-6"><GrootboekStandaardenTab /></TabsContent>
-        <TabsContent value="export" className="mt-6"><ExportTab /></TabsContent>
+        <TabsContent value="profiel" className="mt-3"><ProfielTab /></TabsContent>
+        <TabsContent value="matching" className="mt-3"><MatchingTab /></TabsContent>
+        <TabsContent value="herkenningsregels" className="mt-3"><HerkenningsregelsTab /></TabsContent>
+        <TabsContent value="btw" className="mt-3"><BtwTab /></TabsContent>
+        <TabsContent value="grootboek" className="mt-3"><GrootboekStandaardenTab /></TabsContent>
+        <TabsContent value="export" className="mt-3"><ExportTab /></TabsContent>
       </Tabs>
     </div>
   );
