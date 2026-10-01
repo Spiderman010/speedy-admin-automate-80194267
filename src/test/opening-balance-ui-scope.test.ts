@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { assertBranchSqlKeepsLedgerFoundation } from "@/test/support/branch-sql-scope";
+import { assertNavKeepsSubpagesNested } from "./support/nav-scope";
 
 /**
  * Fase 6C-b8 (PR 2) — statische bewaking van de UI-laag.
@@ -163,7 +164,7 @@ describe("Beginbalans-UI — branch-scope", () => {
 
   branchIt("raakt de schrijvers, de export en de navigatie niet aan; de rapportagekern rekent onveranderd", () => {
     for (const f of changed!) {
-      expect(f).not.toMatch(/proef-saldibalans\.ts|snelstart-export\.ts|nav\.ts$/);
+      expect(f).not.toMatch(/proef-saldibalans\.ts|snelstart-export\.ts/);
       expect(f).not.toMatch(/useManualJournal|usePurchaseInvoicePosting|useSalesInvoicePosting|useBankAllocationPosting/);
     }
     // Voorheen: "ledger-reporting.ts en ledger-completeness.ts zijn niet
@@ -181,6 +182,7 @@ describe("Beginbalans-UI — branch-scope", () => {
     expect(app).toMatch(/path="\/grootboek"/);
     const nav = readFileSync("src/components/layout/nav.ts", "utf8");
     expect(nav).not.toMatch(/beginbalans/i);
+    assertNavKeepsSubpagesNested(["/grootboek/beginbalans"]);
     const grootboek = readFileSync("src/pages/Grootboek.tsx", "utf8");
     expect(grootboek).toContain('to="/grootboek/beginbalans"');
     expect(grootboek).toContain("Beginbalans");

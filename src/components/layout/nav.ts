@@ -2,6 +2,7 @@ import {
   BarChart3,
   BookOpen,
   Building2,
+  ClipboardCheck,
   FileText,
   HelpCircle,
   Landmark,
@@ -41,6 +42,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Boekhouding",
     items: [
+      { title: "Review", url: "/review", icon: ClipboardCheck },
       { title: "Administraties", url: "/klanten", icon: Building2 },
       { title: "Bank", url: "/bank", icon: Landmark },
       { title: "Inkoop", url: "/facturen", icon: FileText },

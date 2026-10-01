@@ -35,6 +35,7 @@ import ResetPassword from "./pages/ResetPassword";
 import NotFound from "./pages/NotFound";
 import OAuthConsent from "./pages/OAuthConsent";
 import AIChat from "./pages/AIChat";
+import Review from "./pages/Review";
 
 function safeNextPath(raw: string | null): string {
   if (!raw) return "/";
@@ -79,6 +80,8 @@ const App = () => (
             <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
             <Route element={<ProtectedRoutes />}>
               <Route path="/" element={<Index />} />
+              {/* Visueel prototype met voorbeelddata: geen query, geen schrijfpad. */}
+              <Route path="/review" element={<Review />} />
               <Route path="/klanten" element={<Klanten />} />
               <Route path="/leveranciers" element={<Leveranciers />} />
               <Route path="/facturen" element={<Facturen />} />

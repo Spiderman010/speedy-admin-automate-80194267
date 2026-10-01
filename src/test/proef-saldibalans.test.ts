@@ -14,6 +14,7 @@ import {
   trialBalanceToCsv,
   type TrialBalance,
 } from "@/lib/proef-saldibalans";
+import { assertNavKeepsSubpagesNested } from "./support/nav-scope";
 
 // Byte order mark als code point: een letterlijk teken in de bron is
 // onzichtbaar en sneuvelt bij de eerste bewerking.
@@ -460,7 +461,9 @@ describe("proef-saldibalans — statische grenzen", () => {
     // dertien testbestanden er niet dertien varianten van onderhouden.
     assertBranchSqlKeepsLedgerFoundation(gewijzigd.split("\n").filter(Boolean));
     expect(gewijzigd).not.toMatch(/integrations\/supabase\/types\.ts/);
-    expect(gewijzigd).not.toMatch(/components\/layout\/nav\.ts/);
+    // Voorheen: "nav.ts staat niet in de diff" — een scope-uitspraak, geen invariant
+    // (zie src/test/support/nav-scope.ts). Bewaakt blijft dat deze subpagina geen eigen nav-item krijgt.
+    assertNavKeepsSubpagesNested(["/overzichten/proef-saldibalans"]);
     // Ook dit was een scope-uitspraak over deze ene UI-PR. Wat blijft gelden:
     // SQL hoort in supabase/, nooit in src/ — en elke migratie in de branch is
     // hierboven al tegen de fundering gehouden.

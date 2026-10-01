@@ -68,6 +68,7 @@ import {
   type BankBulkCandidate,
   type BankBulkResult,
 } from "@/lib/bank-bulk-posting";
+import { assertNavKeepsSubpagesNested } from "./support/nav-scope";
 
 const rij = (over: Partial<BankBulkCandidate>): BankBulkCandidate => ({
   transaction_id: "tx-0000-0000",
@@ -649,8 +650,9 @@ describe("de grenzen van deze branch", () => {
   });
 
   it("17b. de nieuwe route hangt onder het bestaande Bank-item, zonder nieuw nav-item", () => {
-    const changed = changedFiles();
-    if (changed) expect(changed).not.toContain("src/components/layout/nav.ts");
+    // Voorheen: "nav.ts staat niet in de diff" — een scope-uitspraak, geen invariant
+    // (zie src/test/support/nav-scope.ts). Bewaakt blijft dat deze subpagina geen eigen nav-item krijgt.
+    assertNavKeepsSubpagesNested(["/bank/inhaalslag"]);
     const app = readFileSync(resolve(process.cwd(), "src/App.tsx"), "utf8");
     expect(app).toContain('<Route path="/bank/inhaalslag" element={<BankInhaalslag />} />');
   });
