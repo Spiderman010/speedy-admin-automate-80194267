@@ -324,7 +324,7 @@ export default function Verkoop() {
       <button
         type="button"
         onClick={() => toggleSort(field)}
-        className="inline-flex select-none items-center hover:text-foreground"
+        className="inline-flex select-none items-center [font:inherit] [letter-spacing:inherit] [text-transform:inherit] hover:text-foreground"
       >
         {children}
         <SortIcon field={field} />
@@ -525,9 +525,9 @@ export default function Verkoop() {
       <h1 className="sr-only">Verkoopfacturen</h1>
 
       {/* Compact action bar */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-card">
         <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
-          <SelectTrigger className="w-48" aria-label="Klant">
+          <SelectTrigger className="h-9 w-48" aria-label="Klant">
             <span className="truncate">
               {clientFilter === "all"
                 ? "Alle klanten"
@@ -540,7 +540,7 @@ export default function Verkoop() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button variant="outline" disabled={exporting} onClick={async () => {
+        <Button size="sm" variant="outline" disabled={exporting} onClick={async () => {
           if (exporting) return;
           if (!activeOrganizationId) {
             toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
@@ -576,7 +576,7 @@ export default function Verkoop() {
         }}>
           {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}Export
         </Button>
-        <Button onClick={() => setDialogOpen(true)}>
+        <Button size="sm" onClick={() => setDialogOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />Handmatig toevoegen
         </Button>
       </div>
@@ -587,7 +587,7 @@ export default function Verkoop() {
           <TabsTrigger value="upload">Upload</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="upload" className="mt-6 space-y-4">
+        <TabsContent value="upload" className="mt-3 space-y-4">
           <Card>
             <CardContent className="p-6">
               <div className="mb-4">
@@ -639,41 +639,41 @@ export default function Verkoop() {
           )}
         </TabsContent>
 
-        <TabsContent value="overview" className="mt-6">
+        <TabsContent value="overview" className="mt-3">
           {receivablesSummary && receivablesSummary.totalInvoices > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-              <div className="rounded-lg border bg-card px-4 py-3">
-                <p className="text-xs text-muted-foreground">Openstaand totaal</p>
-                <p className="mt-1 text-lg font-semibold text-amber-600 dark:text-amber-400">
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Openstaand totaal</p>
+                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums text-amber-600 dark:text-amber-400">
                   {formatCurrency(receivablesSummary.openTotal)}
                 </p>
               </div>
-              <div className="rounded-lg border bg-card px-4 py-3">
-                <p className="text-xs text-muted-foreground">Open facturen</p>
-                <p className="mt-1 text-lg font-semibold">{receivablesSummary.countOpen}</p>
+              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Open facturen</p>
+                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums">{receivablesSummary.countOpen}</p>
               </div>
-              <div className="rounded-lg border bg-card px-4 py-3">
-                <p className="text-xs text-muted-foreground">Deelbetalingen</p>
-                <p className="mt-1 text-lg font-semibold text-amber-600 dark:text-amber-400">
+              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Deelbetalingen</p>
+                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums text-amber-600 dark:text-amber-400">
                   {receivablesSummary.countPartial}
                 </p>
               </div>
-              <div className="rounded-lg border bg-card px-4 py-3">
-                <p className="text-xs text-muted-foreground">Betaald</p>
-                <p className="mt-1 text-lg font-semibold text-green-600 dark:text-green-400">
+              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Betaald</p>
+                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums text-green-600 dark:text-green-400">
                   {receivablesSummary.countPaid}
                 </p>
               </div>
             </div>
           )}
-          <div className="mb-5 space-y-2.5">
+          <div className="mb-3 space-y-2">
             <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Zoeken op factuurnummer, klantnaam of status..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="h-9 pl-10"
               />
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -704,10 +704,10 @@ export default function Verkoop() {
               ))}
             </div>
           </div>
-          <Card>
-            <CardContent className="overflow-x-auto p-6">
+          <Card className="overflow-hidden">
+            <CardContent className="overflow-x-auto p-0">
               {isLoading ? (
-                <div className="space-y-3">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
+                <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
               ) : isPageError ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                   <p className="text-sm text-destructive">Verkoopfacturen laden mislukt.</p>
@@ -738,7 +738,7 @@ export default function Verkoop() {
                   </p>
                 </div>
               ) : (
-                <Table>
+                <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Klant</TableHead>
@@ -746,8 +746,8 @@ export default function Verkoop() {
                       <SortableHead field="customer_name" className="hidden md:table-cell">Klantnaam</SortableHead>
                       <SortableHead field="date" className="hidden sm:table-cell">Datum</SortableHead>
                       <SortableHead field="due_date" className="hidden lg:table-cell">Vervaldatum</SortableHead>
-                      <SortableHead field="amount" className="hidden sm:table-cell text-right">Totaal</SortableHead>
-                      <TableHead className="text-right">Openstaand</TableHead>
+                      <SortableHead field="amount" className="hidden sm:table-cell text-right whitespace-nowrap">Totaal</SortableHead>
+                      <TableHead className="text-right whitespace-nowrap">Openstaand</TableHead>
                       <SortableHead field="btw" className="hidden xl:table-cell text-right">BTW</SortableHead>
                       <TableHead>Workflow</TableHead>
                       <TableHead className="hidden sm:table-cell">Betaling</TableHead>
@@ -762,10 +762,10 @@ export default function Verkoop() {
                       const isPartiallyPaid = paymentState === "partial";
                       const hasExportWarning = inv.status === "geexporteerd";
                       return (
-                        <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
-                          <TableCell className="text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
+                        <TableRow key={inv.id} className={`cursor-pointer${editOpen && editInvoice?.id === inv.id ? " shadow-[inset_3px_0_0_hsl(var(--primary))]" : ""}`} data-state={editOpen && editInvoice?.id === inv.id ? "selected" : undefined} onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
+                          <TableCell className="max-w-[9rem] truncate text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
                           <TableCell className="font-mono text-sm font-medium">
-                            <div className="flex items-center gap-2 flex-wrap">
+                            <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
                               {inv.invoice_number ? (
                                 <>
                                   <span>{inv.invoice_number}</span>
@@ -781,11 +781,11 @@ export default function Verkoop() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="hidden md:table-cell font-medium">{inv.customer_name}</TableCell>
-                          <TableCell className="hidden sm:table-cell whitespace-nowrap">{new Date(inv.invoice_date).toLocaleDateString("nl-NL")}</TableCell>
-                          <TableCell className="hidden lg:table-cell whitespace-nowrap">{inv.due_date ? new Date(inv.due_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
-                          <TableCell className="hidden sm:table-cell text-right font-mono">{formatCurrency(inv.amount_incl)}</TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="hidden max-w-[12rem] truncate font-medium md:table-cell">{inv.customer_name}</TableCell>
+                          <TableCell className="hidden whitespace-nowrap font-mono text-xs sm:table-cell">{new Date(inv.invoice_date).toLocaleDateString("nl-NL")}</TableCell>
+                          <TableCell className="hidden whitespace-nowrap font-mono text-xs lg:table-cell">{inv.due_date ? new Date(inv.due_date).toLocaleDateString("nl-NL") : "—"}</TableCell>
+                          <TableCell className="hidden whitespace-nowrap text-right font-mono tabular-nums sm:table-cell">{formatCurrency(inv.amount_incl)}</TableCell>
+                          <TableCell className="whitespace-nowrap text-right tabular-nums">
                             {(() => {
                               const total = getInvoiceTotalAmount(inv);
                               const remaining = getInvoiceRemainingAmount(inv);
@@ -809,7 +809,7 @@ export default function Verkoop() {
                               return <span className="text-muted-foreground text-sm">—</span>;
                             })()}
                           </TableCell>
-                          <TableCell className="hidden xl:table-cell text-right font-mono text-muted-foreground">{formatCurrency(inv.btw_amount)}</TableCell>
+                          <TableCell className="hidden whitespace-nowrap text-right font-mono tabular-nums text-muted-foreground xl:table-cell">{formatCurrency(inv.btw_amount)}</TableCell>
                           <TableCell>
                             <Badge variant={sc.variant} className="gap-1 whitespace-nowrap">
                               <sc.icon className="h-3 w-3" />{sc.label}
@@ -831,7 +831,7 @@ export default function Verkoop() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-0.5 whitespace-nowrap">
                               {allocationsByInvoiceId.has(inv.id) && (
                                 <TooltipProvider>
                                   <Tooltip>
@@ -879,7 +879,7 @@ export default function Verkoop() {
                 </Table>
               )}
               {!isLoading && !isPageError && totalCount > 0 && (
-                <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t bg-muted/30 px-4 py-2.5">
                   <span className="text-sm text-muted-foreground">
                     {(page - 1) * SALES_INVOICES_PAGE_SIZE + 1}–{Math.min(page * SALES_INVOICES_PAGE_SIZE, totalCount)} van {totalCount} verkoopfacturen
                   </span>
