@@ -48,7 +48,7 @@ export function PurchaseInvoiceActionBar({
         )}
 
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Button variant="ghost" size="sm" onClick={onCancel} className="mr-auto sm:mr-0">
+          <Button variant="ghost" size="sm" onClick={onCancel} className="mr-auto h-9 sm:mr-0">
             <ArrowLeft className="mr-2 h-4 w-4" /> Annuleren
           </Button>
           <Button variant="outline" onClick={onSave} disabled={!canSave}>

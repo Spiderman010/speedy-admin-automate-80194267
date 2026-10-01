@@ -81,7 +81,7 @@ export function PurchaseInvoiceWorkspaceHeader({
       <h1 className="sr-only">Inkoopfactuur verwerken</h1>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" className="-ml-2 shrink-0" onClick={onBack}>
+        <Button variant="ghost" size="sm" className="-ml-2 h-9 shrink-0" onClick={onBack}>
           <ArrowLeft className="h-4 w-4 sm:mr-2" />
           <span className="hidden sm:inline">Inkoopoverzicht</span>
           <span className="sr-only sm:hidden">Terug naar inkoopoverzicht</span>

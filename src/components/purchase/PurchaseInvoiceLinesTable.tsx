@@ -61,7 +61,7 @@ export function PurchaseInvoiceLinesTable({
     return (
       <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
         <p>Nog geen boekingsregels.</p>
-        <Button variant="outline" size="sm" className="mt-3" onClick={onAddLine}>
+        <Button variant="outline" size="sm" className="mt-3 h-9" onClick={onAddLine}>
           <Plus className="mr-1 h-4 w-4" /> Eerste boekingsregel toevoegen
         </Button>
       </div>
