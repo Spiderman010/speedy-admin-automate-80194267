@@ -632,21 +632,15 @@ describe("de grenzen van deze branch", () => {
     }
   }
 
-  it("17. het bestaande bankscherm krijgt er één link bij en verandert verder niet", () => {
-    const changed = changedFiles();
-    if (!changed) return;
-    if (!changed.includes("src/pages/Bank.tsx")) return;
-    const diff = execFileSync("git", ["diff", "origin/main...HEAD", "--", "src/pages/Bank.tsx"], {
-      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    });
-    const toegevoegd = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"));
-    const verwijderd = diff.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---"));
-    // Alleen de router-import en de knop; niets wordt weggehaald behalve die
-    // ene importregel die wordt uitgebreid.
-    expect(verwijderd).toHaveLength(1);
-    expect(verwijderd[0]).toContain("react-router-dom");
-    expect(toegevoegd.join("\n")).toContain("/bank/inhaalslag");
-    expect(toegevoegd.join("\n")).not.toMatch(/ledger_postings|post_bank_transaction/);
+  it("17. het bestaande bankscherm linkt naar de inhaalslag en schrijft zelf niet naar het grootboek", () => {
+    // Voorheen: "Bank.tsx krijgt er één link bij en verandert verder niet" — een
+    // scope-uitspraak over de inhaalslag-PR (git diff origin/main...HEAD), geen
+    // invariant; elke latere lay-outwijziging aan Bank.tsx liet hem omvallen.
+    // Bewaakt blijft wat het beschermde: de link naar de inhaalslag staat er, en
+    // het bankscherm boekt zelf niet rechtstreeks in het grootboek.
+    const bank = readFileSync(resolve(process.cwd(), "src/pages/Bank.tsx"), "utf8");
+    expect(bank).toContain('<Link to="/bank/inhaalslag">Inhaalslag grootboek</Link>');
+    expect(bank).not.toMatch(/ledger_postings|post_bank_transaction/);
   });
 
   it("17b. de nieuwe route hangt onder het bestaande Bank-item, zonder nieuw nav-item", () => {
