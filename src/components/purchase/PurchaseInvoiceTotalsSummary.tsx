@@ -61,12 +61,12 @@ export function PurchaseInvoiceTotalsSummary({
     );
 
   return (
-    <div data-testid="totals-summary" data-totals-state={state} className="space-y-2 border-t bg-muted/10 px-3 py-2">
-      <div className="overflow-x-auto">
-        <table className="ml-auto w-full max-w-md text-[13px] [&_td]:whitespace-nowrap [&_td]:pl-3">
+    <div data-testid="totals-summary" data-totals-state={state} className="space-y-2 px-3 py-3">
+      <div className="ml-auto max-w-md overflow-x-auto rounded-md border px-2 py-1 sm:px-3">
+        <table className="w-full text-[13px] [&_td]:whitespace-nowrap [&_td]:pl-2 max-sm:text-xs sm:[&_td]:pl-3">
           <thead>
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th scope="col" className="w-[38%] py-1 text-left font-medium"><span className="sr-only">Regel</span></th>
+              <th scope="col" className="py-1 text-left font-medium sm:w-[38%]"><span className="sr-only">Regel</span></th>
               <th scope="col" className="py-1 text-right font-medium">Excl.</th>
               <th scope="col" className="py-1 text-right font-medium">BTW</th>
               <th scope="col" className="py-1 text-right font-medium">Incl.</th>
@@ -94,7 +94,7 @@ export function PurchaseInvoiceTotalsSummary({
           </tbody>
         </table>
       </div>
-      <div role="status" className={cn("flex items-start gap-2 rounded-sm border px-3 py-1.5 text-[13px]", banner)}>
+      <div role="status" className={cn("ml-auto flex max-w-md items-start gap-2 rounded-md border px-3 py-1.5 text-[13px]", banner)}>
         <BannerIcon className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{message}</span>
       </div>

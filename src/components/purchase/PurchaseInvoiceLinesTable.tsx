@@ -69,16 +69,16 @@ export function PurchaseInvoiceLinesTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <Table className="min-w-[800px] table-fixed text-[13px] [&_td:last-child]:sticky [&_td:last-child]:right-0 [&_td:last-child]:bg-card [&_th:last-child]:sticky [&_th:last-child]:right-0 [&_th:last-child]:bg-card [&_th]:text-[11px] [&_th]:uppercase [&_th]:tracking-wide">
+    <div className="mx-3 overflow-x-auto rounded-md border">
+      <Table className="min-w-[720px] table-fixed text-[13px] [&_td:last-child]:sticky [&_td:last-child]:right-0 [&_td:last-child]:bg-card [&_th:last-child]:sticky [&_th:last-child]:right-0 [&_th:last-child]:bg-card [&_th]:text-[11px] [&_th]:uppercase [&_th]:tracking-wide [&_thead_tr]:bg-muted/40 [&_tbody_tr:last-child]:border-b-0">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className="h-8 min-w-[160px] pl-3">Omschrijving</TableHead>
-            <TableHead className="h-8 w-[12.5rem]">Grootboek</TableHead>
-            <TableHead className="h-8 w-[6.5rem] text-right">Excl.</TableHead>
-            <TableHead className="h-8 w-[5.5rem]">BTW %</TableHead>
-            <TableHead className="h-8 w-[5.5rem] text-right">BTW</TableHead>
-            <TableHead className="h-8 w-[6.75rem] text-right">Incl.</TableHead>
+            <TableHead className="h-8 w-[11rem]">Grootboek</TableHead>
+            <TableHead className="h-8 w-[6.75rem] text-right">Excl.</TableHead>
+            <TableHead className="h-8 w-[5rem]">BTW %</TableHead>
+            <TableHead className="h-8 w-[5.25rem] text-right">BTW</TableHead>
+            <TableHead className="h-8 w-[6.25rem] text-right">Incl.</TableHead>
             <TableHead className="h-8 w-12 pr-2"><span className="sr-only">Acties</span></TableHead>
           </TableRow>
         </TableHeader>
@@ -102,7 +102,7 @@ export function PurchaseInvoiceLinesTable({
                   partial && "border-l-2 border-l-amber-500 bg-amber-50/60 hover:bg-amber-50/80 dark:bg-amber-950/20 dark:hover:bg-amber-950/30",
                 )}
               >
-                <TableCell className="py-1 pl-3">
+                <TableCell className="py-0.5 pl-3">
                   <div className="flex items-center gap-1.5">
                     {partial && (
                       <AlertTriangle
@@ -120,7 +120,7 @@ export function PurchaseInvoiceLinesTable({
                     />
                   </div>
                 </TableCell>
-                <TableCell className="py-1">
+                <TableCell className="py-0.5">
                   <GrootboekCombobox
                     value={line.grootboek_label}
                     onValueChange={(v) => onPatchLine(idx, { grootboek_label: v })}
@@ -168,7 +168,7 @@ export function PurchaseInvoiceLinesTable({
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="py-1">
+                <TableCell className="py-0.5">
                   <Input
                     inputMode="decimal"
                     value={line.amount_input}
@@ -180,10 +180,10 @@ export function PurchaseInvoiceLinesTable({
                     placeholder="0,00"
                     aria-label="Bedrag excl. regel"
                     aria-invalid={partial || undefined}
-                    className="h-9 text-right font-mono tabular-nums"
+                    className="h-9 px-2 text-right font-mono tabular-nums"
                   />
                 </TableCell>
-                <TableCell className="py-1">
+                <TableCell className="py-0.5">
                   <Select
                     value={line.btw_percentage}
                     onValueChange={(v) => onPatchLine(idx, { btw_percentage: v })}
@@ -199,13 +199,13 @@ export function PurchaseInvoiceLinesTable({
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell className="py-1 pt-3 text-right font-mono text-[13px] tabular-nums text-muted-foreground">
+                <TableCell className="py-0.5 pt-2.5 text-right font-mono text-[13px] tabular-nums text-muted-foreground">
                   {formatEuro(btw)}
                 </TableCell>
-                <TableCell className="py-1 pt-3 text-right font-mono text-[13px] tabular-nums">
+                <TableCell className="py-0.5 pt-2.5 text-right font-mono text-[13px] tabular-nums">
                   {formatEuro(incl)}
                 </TableCell>
-                <TableCell className="py-1 pr-2">
+                <TableCell className="py-0.5 pr-2">
                   <Button
                     variant="ghost"
                     size="icon"
