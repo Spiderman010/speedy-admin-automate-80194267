@@ -36,7 +36,8 @@ export function PurchaseInvoiceDocumentPreview({ filePath }: { filePath: string 
       <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 border-b bg-muted/40 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <span className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/65 whitespace-nowrap">
+            <span aria-hidden className="h-px w-4 bg-foreground/30" />
             Origineel document
           </span>
           {fileName && (
