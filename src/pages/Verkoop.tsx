@@ -546,6 +546,10 @@ export default function Verkoop() {
   const dockLockRef = useRef(dockViewport);
   if (!(editOpen && detailDirty)) dockLockRef.current = dockViewport;
   const showDetailDock = dockLockRef.current;
+  // De export leest de opgeslagen facturen. Staat er in het dok een factuur met
+  // niet-opgeslagen invoer, dan zou de CSV andere waarden bevatten dan het dok
+  // toont; de dialoog blokkeerde dat, het dok doet dat nu ook.
+  const exportBlockedByDraft = showDetailDock && editOpen && detailDirty;
   // In het dok blijft de lijst klikbaar (de dialoog blokkeerde dat). Een andere
   // factuur kiezen met niet-opgeslagen invoer vraagt daarom eerst bevestiging.
   const [pendingInvoice, setPendingInvoice] = useState<any>(null);
@@ -616,8 +620,8 @@ export default function Verkoop() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button size="sm" variant="outline" disabled={exporting} onClick={async () => {
-          if (exporting) return;
+        <Button size="sm" variant="outline" disabled={exporting || exportBlockedByDraft} onClick={async () => {
+          if (exporting || exportBlockedByDraft) return;
           if (!activeOrganizationId) {
             toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
             return;

@@ -258,4 +258,23 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     await act(async () => pending.get("org/a.pdf")!("https://signed/a.pdf")); // te laat
     expect(document.querySelector("iframe")).toHaveAttribute("src", "https://signed/b.pdf");
   });
+
+  it("blokkeert de export zolang het dok niet-opgeslagen invoer heeft (Codex P1, review 4)", () => {
+    renderVerkoop();
+    const exportButton = () => screen.getByRole("button", { name: /Export/ });
+    expect(exportButton()).toBeEnabled();
+
+    fireEvent.click(rowFor("V-DOK-001"));
+    expect(exportButton()).toBeEnabled(); // geopend maar ongewijzigd
+
+    fireEvent.change(
+      within(screen.getByTestId("sales-detail-dock")).getByDisplayValue("Dok Klant BV"),
+      { target: { value: "Nog niet opgeslagen" } },
+    );
+    expect(exportButton()).toBeDisabled();
+
+    // Terugzetten naar de opgeslagen waarde: de export is weer beschikbaar.
+    fireEvent.change(screen.getByDisplayValue("Nog niet opgeslagen"), { target: { value: "Dok Klant BV" } });
+    expect(exportButton()).toBeEnabled();
+  });
 });
