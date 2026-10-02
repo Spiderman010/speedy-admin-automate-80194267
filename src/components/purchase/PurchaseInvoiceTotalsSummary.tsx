@@ -61,11 +61,11 @@ export function PurchaseInvoiceTotalsSummary({
     );
 
   return (
-    <div data-testid="totals-summary" data-totals-state={state} className="space-y-1.5 border-t pt-2">
+    <div data-testid="totals-summary" data-totals-state={state} className="space-y-2 border-t bg-muted/10 px-3 py-2">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="ml-auto w-full max-w-md text-[13px] [&_td]:whitespace-nowrap [&_td]:pl-3">
           <thead>
-            <tr className="text-xs uppercase tracking-wide text-muted-foreground">
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
               <th scope="col" className="w-[38%] py-1 text-left font-medium"><span className="sr-only">Regel</span></th>
               <th scope="col" className="py-1 text-right font-medium">Excl.</th>
               <th scope="col" className="py-1 text-right font-medium">BTW</th>
@@ -85,7 +85,7 @@ export function PurchaseInvoiceTotalsSummary({
               <td className="py-1 text-right font-mono tabular-nums">{formatEuro(lineTotals.sumBtw)}</td>
               <td className="py-1 text-right font-mono tabular-nums">{formatEuro(lineTotals.sumIncl)}</td>
             </tr>
-          <tr className="border-t bg-muted/30">
+          <tr className="border-t-2 border-foreground/15 bg-muted/40">
               <th scope="row" className="py-1.5 pl-2 text-left font-medium">Verschil</th>
               <td className={cn("py-1.5", diffCls(diffs.excl, diffs.exclOk))}>{fmt(diffs.excl)}</td>
               <td className={cn("py-1.5", diffCls(diffs.btw, diffs.btwOk))}>{fmt(diffs.btw)}</td>
@@ -94,7 +94,7 @@ export function PurchaseInvoiceTotalsSummary({
           </tbody>
         </table>
       </div>
-      <div role="status" className={cn("flex items-start gap-2 rounded-md border px-3 py-2 text-sm", banner)}>
+      <div role="status" className={cn("flex items-start gap-2 rounded-sm border px-3 py-1.5 text-[13px]", banner)}>
         <BannerIcon className="mt-0.5 h-4 w-4 shrink-0" />
         <span>{message}</span>
       </div>

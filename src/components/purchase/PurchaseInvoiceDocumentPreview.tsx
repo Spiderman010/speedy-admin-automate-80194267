@@ -33,14 +33,14 @@ export function PurchaseInvoiceDocumentPreview({ filePath }: { filePath: string 
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
+      <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 border-b bg-muted/40 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             Origineel document
           </span>
           {fileName && (
-            <span className="hidden truncate font-mono text-xs text-muted-foreground md:inline" title={fileName}>
+            <span className="hidden min-w-0 truncate font-mono text-xs text-muted-foreground md:inline" title={fileName}>
               {fileName}
             </span>
           )}
