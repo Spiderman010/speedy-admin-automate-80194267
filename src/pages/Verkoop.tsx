@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect, useSyncExternalStore, type ComponentProps } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,7 +42,7 @@ import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { exportSalesInvoicesCSV } from "@/lib/snelstart-export";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SalesInvoiceDialog, type SalesInvoiceFormData } from "@/components/SalesInvoiceDialog";
-import { SalesInvoiceEditDialog } from "@/components/SalesInvoiceEditDialog";
+import { SalesInvoiceDetailDock, SalesInvoiceEditDialog } from "@/components/SalesInvoiceEditDialog";
 import { InvoiceNumberCopyButton } from "@/components/InvoiceNumberCopyButton";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
@@ -135,6 +135,24 @@ function scoreSalesCandidates(
     results.push({ tx, bankAllocated, bankUnallocated, suggestedAmount, score, reasons });
   }
   return results.sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Alleen lay-out: vanaf 1360px staat de factuurdetail in een vast dok naast de
+ * lijst, daaronder in de bestaande dialoog. Beide tonen dezelfde
+ * `editInvoice`/`editOpen` met dezelfde handlers; dit kiest alleen de container.
+ */
+const DETAIL_DOCK_QUERY = "(min-width: 1360px)";
+function useDetailDockLayout(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const mql = window.matchMedia(DETAIL_DOCK_QUERY);
+      mql.addEventListener("change", onChange);
+      return () => mql.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(DETAIL_DOCK_QUERY).matches,
+    () => false,
+  );
 }
 
 export default function Verkoop() {
@@ -520,12 +538,47 @@ export default function Verkoop() {
     }
   };
 
+  const showDetailDock = useDetailDockLayout();
+  // De props van de factuurdetail, één keer opgebouwd en gedeeld door de
+  // dialoog en het desktopdok: dezelfde selectie (`editInvoice`/`editOpen`),
+  // dezelfde handlers.
+  const editDetailProps: ComponentProps<typeof SalesInvoiceEditDialog> = {
+    invoice: editInvoice,
+    open: editOpen,
+    onOpenChange: setEditOpen,
+    allInvoices: pageInvoices ?? [],
+    // undefined while the duplicate set is loading/failed → the dialog
+    // falls back to its own scan instead of being forced to "not duplicate".
+    knownDuplicate: editInvoice && duplicateIds ? duplicateIds.has(editInvoice.id) : undefined,
+    onSave: async (id, updates) => {
+      try {
+        await updateInvoice.mutateAsync({ id, ...updates } as any);
+        toast({ title: "Factuur opgeslagen" });
+      } catch (e: any) {
+        toast({ title: "Opslaan mislukt", description: e.message, variant: "destructive" });
+        throw e;
+      }
+    },
+    onApprove: async (id, updates) => {
+      try {
+        await updateInvoice.mutateAsync({ id, ...updates } as any);
+        toast({ title: "Factuur goedgekeurd" });
+      } catch (e: any) {
+        toast({ title: "Goedkeuren mislukt", description: e.message, variant: "destructive" });
+        throw e;
+      }
+    },
+  };
+
   return (
     <>
       <h1 className="sr-only">Verkoopfacturen</h1>
 
+      {/* Werkruimte: factuurlijst links, vanaf 1360px het vaste detaildok rechts. */}
+      <div className="min-[1360px]:grid min-[1360px]:grid-cols-[minmax(0,1fr)_380px] min-[1360px]:items-start min-[1360px]:gap-3">
+      <div className="min-w-0">
       {/* Compact action bar */}
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-card">
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         <Select value={clientFilter} onValueChange={(v) => { setClientFilter(v); setSelectedClientId(v); }}>
           <SelectTrigger className="h-9 w-48" aria-label="Klant">
             <span className="truncate">
@@ -640,33 +693,35 @@ export default function Verkoop() {
         </TabsContent>
 
         <TabsContent value="overview" className="mt-3">
+          {/* Werkoppervlak: samenvatting, filters, tabel en paginering in één kader. */}
+          <div className="overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
           {receivablesSummary && receivablesSummary.totalInvoices > 0 && (
-            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+            <div className="grid grid-cols-2 gap-px border-b bg-border sm:grid-cols-4">
+              <div className="bg-card px-3 py-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Openstaand totaal</p>
-                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums text-amber-600 dark:text-amber-400">
+                <p className="mt-0.5 font-mono text-base font-semibold leading-tight tabular-nums text-amber-600 dark:text-amber-400">
                   {formatCurrency(receivablesSummary.openTotal)}
                 </p>
               </div>
-              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+              <div className="bg-card px-3 py-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Open facturen</p>
-                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums">{receivablesSummary.countOpen}</p>
+                <p className="mt-0.5 font-mono text-base font-semibold leading-tight tabular-nums">{receivablesSummary.countOpen}</p>
               </div>
-              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+              <div className="bg-card px-3 py-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Deelbetalingen</p>
-                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums text-amber-600 dark:text-amber-400">
+                <p className="mt-0.5 font-mono text-base font-semibold leading-tight tabular-nums text-amber-600 dark:text-amber-400">
                   {receivablesSummary.countPartial}
                 </p>
               </div>
-              <div className="rounded-lg border bg-card px-3 py-2.5 shadow-card">
+              <div className="bg-card px-3 py-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Betaald</p>
-                <p className="mt-0.5 font-display text-lg font-bold leading-tight tabular-nums text-green-600 dark:text-green-400">
+                <p className="mt-0.5 font-mono text-base font-semibold leading-tight tabular-nums text-green-600 dark:text-green-400">
                   {receivablesSummary.countPaid}
                 </p>
               </div>
             </div>
           )}
-          <div className="mb-3 space-y-2">
+          <div className="space-y-2 border-b px-3 py-2">
             <div className="relative max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
@@ -704,7 +759,7 @@ export default function Verkoop() {
               ))}
             </div>
           </div>
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden rounded-none border-0 shadow-none">
             <CardContent className="overflow-x-auto p-0">
               {isLoading ? (
                 <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
@@ -738,7 +793,7 @@ export default function Verkoop() {
                   </p>
                 </div>
               ) : (
-                <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
+                <Table className="text-[13px] [&_th]:h-8 [&_td]:py-1 [&_thead_tr]:bg-muted/40">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Klant</TableHead>
@@ -762,7 +817,7 @@ export default function Verkoop() {
                       const isPartiallyPaid = paymentState === "partial";
                       const hasExportWarning = inv.status === "geexporteerd";
                       return (
-                        <TableRow key={inv.id} className={`cursor-pointer${editOpen && editInvoice?.id === inv.id ? " shadow-[inset_3px_0_0_hsl(var(--primary))]" : ""}`} data-state={editOpen && editInvoice?.id === inv.id ? "selected" : undefined} onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
+                        <TableRow key={inv.id} className={`cursor-pointer${editOpen && editInvoice?.id === inv.id ? " shadow-[inset_2px_0_0_hsl(var(--primary))]" : ""}`} data-state={editOpen && editInvoice?.id === inv.id ? "selected" : undefined} onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
                           <TableCell className="max-w-[9rem] truncate text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
                           <TableCell className="font-mono text-sm font-medium">
                             <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
@@ -879,7 +934,7 @@ export default function Verkoop() {
                 </Table>
               )}
               {!isLoading && !isPageError && totalCount > 0 && (
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t bg-muted/30 px-4 py-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t bg-muted/20 px-3 py-2">
                   <span className="text-sm text-muted-foreground">
                     {(page - 1) * SALES_INVOICES_PAGE_SIZE + 1}–{Math.min(page * SALES_INVOICES_PAGE_SIZE, totalCount)} van {totalCount} verkoopfacturen
                   </span>
@@ -897,8 +952,12 @@ export default function Verkoop() {
               )}
             </CardContent>
           </Card>
+          </div>
         </TabsContent>
       </Tabs>
+      </div>
+      {showDetailDock && <SalesInvoiceDetailDock {...editDetailProps} />}
+      </div>
 
       <SalesInvoiceDialog
         open={dialogOpen}
@@ -907,33 +966,8 @@ export default function Verkoop() {
         onSave={handleManualSave}
       />
 
-      <SalesInvoiceEditDialog
-        invoice={editInvoice}
-        open={editOpen}
-        onOpenChange={setEditOpen}
-        allInvoices={pageInvoices ?? []}
-        // undefined while the duplicate set is loading/failed → the dialog
-        // falls back to its own scan instead of being forced to "not duplicate".
-        knownDuplicate={editInvoice && duplicateIds ? duplicateIds.has(editInvoice.id) : undefined}
-        onSave={async (id, updates) => {
-          try {
-            await updateInvoice.mutateAsync({ id, ...updates } as any);
-            toast({ title: "Factuur opgeslagen" });
-          } catch (e: any) {
-            toast({ title: "Opslaan mislukt", description: e.message, variant: "destructive" });
-            throw e;
-          }
-        }}
-        onApprove={async (id, updates) => {
-          try {
-            await updateInvoice.mutateAsync({ id, ...updates } as any);
-            toast({ title: "Factuur goedgekeurd" });
-          } catch (e: any) {
-            toast({ title: "Goedkeuren mislukt", description: e.message, variant: "destructive" });
-            throw e;
-          }
-        }}
-      />
+      {/* Eén factuurdetail, twee containers: dialoog onder 1360px, dok erboven. */}
+      {!showDetailDock && <SalesInvoiceEditDialog {...editDetailProps} />}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
