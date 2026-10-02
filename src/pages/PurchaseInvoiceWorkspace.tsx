@@ -672,7 +672,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           {/* Factuurgegevens */}
           <section>
             <div className="flex min-h-9 flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1">
-              <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Factuurgegevens</h2>
+              <h2 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/65"><span aria-hidden className="h-px w-4 bg-foreground/30" />Factuurgegevens</h2>
             </div>
             <div className="space-y-3 p-3">
 
@@ -870,7 +870,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
           <section className="border-t">
             <div>
               <div className="flex min-h-9 flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1">
-                <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boekingsregels</h2>
+                <h2 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/65"><span aria-hidden className="h-px w-4 bg-foreground/30" />Boekingsregels</h2>
                 <PurchaseInvoiceTotalsStatusPill state={totalsState} />
                 {lines.length > 0 && (
                   <Button variant="outline" size="sm" className="ml-auto h-9" onClick={addLine}>

@@ -38,7 +38,7 @@ export function PurchaseInvoiceQueue({
       className="min-w-0 self-start overflow-hidden border-b bg-muted/20 lg:col-span-2 xl:col-span-1 xl:sticky xl:top-[4.5rem] xl:h-[calc(100dvh-8.5rem)] xl:border-b-0"
     >
       <div className="flex h-9 items-center justify-between border-b bg-muted/40 px-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Wachtrij</h2>
+        <h2 className="flex items-center gap-2 font-mono text-[11px] font-medium uppercase tracking-[0.2em] text-foreground/65"><span aria-hidden className="h-px w-4 bg-foreground/30" />Wachtrij</h2>
         <span className="rounded-sm border bg-card px-1.5 font-mono text-[11px] tabular-nums text-muted-foreground">{invoices.length}</span>
       </div>
       <div className="max-h-56 overflow-x-auto xl:h-[calc(100%-2.25rem)] xl:max-h-none xl:overflow-x-hidden xl:overflow-y-auto">
