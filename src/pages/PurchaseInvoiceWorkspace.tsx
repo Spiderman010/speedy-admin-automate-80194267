@@ -113,7 +113,7 @@ function emptyHeader(inv: PurchaseInvoice | null): HeaderForm {
 function FieldGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <fieldset className="min-w-0">
-      <legend className="mb-1.5 text-xs font-semibold text-foreground">
+      <legend className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {title}
       </legend>
       {children}
@@ -602,7 +602,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         <Skeleton className="h-5 w-24" />
         <Skeleton className="ml-auto h-8 w-32" />
       </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] min-[1360px]:grid-cols-[16.5rem_minmax(0,1fr)_21.5rem]">
+        <Skeleton className="hidden h-[420px] w-full min-[1360px]:block" />
         <div className="space-y-4">
           <Skeleton className="h-64 w-full" />
           <Skeleton className="h-48 w-full" />
@@ -637,7 +638,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   const amountInputClass = "h-9 text-right font-mono tabular-nums";
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-0">
+      <div className="rounded-md border bg-card">
       <PurchaseInvoiceWorkspaceHeader
         supplier={header.supplier}
         invoiceNumber={header.invoice_number}
@@ -657,7 +659,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
       <div
         data-testid="workspace-grid"
-        className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[15rem_minmax(30rem,1.25fr)_minmax(21rem,1fr)]"
+        className="grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[15rem_minmax(30rem,1.25fr)_minmax(21rem,1fr)] min-[1360px]:grid-cols-[16.5rem_minmax(0,1fr)_21.5rem]"
       >
         <PurchaseInvoiceQueue
           invoices={sortedInvoices}
@@ -666,16 +668,18 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         />
 
         {/* Centre column: processing */}
-        <div className="min-w-0 space-y-3">
+        <div className="min-w-0 border-b lg:border-b-0 xl:border-l">
           {/* Factuurgegevens */}
-          <Card>
-            <CardContent className="space-y-3 p-3 sm:p-4">
+          <section>
+            <div className="flex min-h-9 flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1">
               <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Factuurgegevens</h2>
+            </div>
+            <div className="space-y-3 p-3">
 
               <FieldGroup title="Identificatie">
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <div className="min-w-0">
-                    <Label>Administratie</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Administratie</Label>
                     <Select value={header.client_id} onValueChange={(v) => patchHeader({ client_id: v })}>
                       <SelectTrigger className="h-9" aria-label="Administratie">
                         <SelectValue placeholder="Selecteer klant" />
@@ -689,7 +693,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                   </div>
 
                   <div className="min-w-0">
-                    <Label>Leverancier</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Leverancier</Label>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <Select
                         value={header.leverancier_id || "__none__"}
@@ -731,7 +735,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                   </div>
 
                   <div className="min-w-0">
-                    <Label>Factuurnummer</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Factuurnummer</Label>
                     <Input
                       className="h-9 font-mono"
                       value={header.invoice_number}
@@ -740,7 +744,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                     />
                   </div>
                   <div className="min-w-0">
-                    <Label>Factuurdatum</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Factuurdatum</Label>
                     <Input
                       className="h-9"
                       type="date"
@@ -755,7 +759,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               <FieldGroup title="Bedragen">
                 <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
                   <div className="min-w-0">
-                    <Label>Bedrag excl.</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Bedrag excl.</Label>
                     <Input
                       inputMode="decimal"
                       value={header.amount_excl}
@@ -770,7 +774,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                     />
                   </div>
                   <div className="min-w-0">
-                    <Label>BTW-bedrag</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">BTW-bedrag</Label>
                     <Input
                       inputMode="decimal"
                       value={header.btw_amount}
@@ -786,7 +790,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                     />
                   </div>
                   <div className="min-w-0">
-                    <Label>Bedrag incl.</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Bedrag incl.</Label>
                     <Input
                       inputMode="decimal"
                       value={header.amount_incl}
@@ -801,7 +805,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                     />
                   </div>
                   <div className="min-w-0">
-                    <Label>BTW %</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">BTW %</Label>
                     <Select
                       value={header.btw_percentage}
                       onValueChange={(v) => patchHeader({ btw_percentage: v })}
@@ -826,7 +830,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               <FieldGroup title="Boekingscontext">
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <div className="min-w-0">
-                    <Label>Standaard grootboek (notitie)</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Standaard grootboek (notitie)</Label>
                     {/* Dit veld is uitsluitend TEKST. `ledger_account_id`
                         verwijst naar een andere tabel (`ledger_accounts`) dan de
                         rekeningen die deze kiezer toont (`grootboekrekeningen`),
@@ -847,7 +851,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                     </p>
                   </div>
                   <div className="min-w-0">
-                    <Label>Notities</Label>
+                    <Label className="text-xs font-medium text-muted-foreground">Notities</Label>
                     <Textarea
                       rows={2}
                       className="min-h-9"
@@ -858,18 +862,18 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                   </div>
                 </div>
               </FieldGroup>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
           {/* Boekingsregels + totalencontrole together, so the reason approve is
               blocked is visible right where the lines are edited. */}
-          <Card>
-            <CardContent className="space-y-2.5 p-3 sm:p-4">
-              <div className="flex flex-wrap items-center gap-2">
+          <section className="border-t">
+            <div>
+              <div className="flex min-h-9 flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1">
                 <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boekingsregels</h2>
                 <PurchaseInvoiceTotalsStatusPill state={totalsState} />
                 {lines.length > 0 && (
-                  <Button variant="outline" size="sm" className="ml-auto" onClick={addLine}>
+                  <Button variant="outline" size="sm" className="ml-auto h-9" onClick={addLine}>
                     <Plus className="mr-1 h-4 w-4" /> Regel toevoegen
                   </Button>
                 )}
@@ -881,7 +885,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                   dat er nog geen regels zijn. Dat verschil moet uitgesproken
                   worden, anders lijkt het rapport te liegen. */}
               {heeftConceptregels && (
-                <p className="text-xs text-muted-foreground" data-testid="derived-line-notice">
+                <p className="border-b bg-muted/20 px-3 py-2 text-xs text-muted-foreground" data-testid="derived-line-notice">
                   Deze boekingsregel is nog niet opgeslagen. Hij is afgeleid uit de factuurtotalen;
                   kies een grootboekrekening en sla op, dan telt hij mee voor het boeken.
                 </p>
@@ -897,7 +901,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
               {hasPartialLine && (
                 <p
-                  className="text-xs text-amber-700 dark:text-amber-400"
+                  className="border-t px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
                   role="alert"
                   data-testid="partial-line-warning"
                 >
@@ -912,11 +916,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                 state={totalsState}
                 message={totalsMessage}
               />
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          <Card data-testid="purchase-posting-section">
-            <CardContent className="p-3 sm:p-4">
+          <section data-testid="purchase-posting-section" className="border-t">
+            <div className="p-3">
             {posting ? (
               <p className="text-xs text-muted-foreground" data-testid="purchase-posting-done">
                 Deze factuur is geboekt in het grootboek. Boekhoudkundige gegevens en
@@ -962,21 +966,22 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                 </div>
               </div>
             )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </div>
 
         {/* Right column: original document */}
-        <div className="min-w-0">
+        <div className="min-w-0 lg:border-l">
           <div
             data-testid="document-panel"
-            className="h-[70vh] min-h-[420px] lg:sticky lg:top-[4.5rem] lg:h-[calc(100dvh-6.5rem)]"
+            className="h-[70vh] min-h-[420px] lg:sticky lg:top-[4.5rem] lg:h-[calc(100dvh-8.5rem)]"
           >
-            <Card className="flex h-full flex-col overflow-hidden rounded-md shadow-none">
+            <Card className="flex h-full flex-col overflow-hidden rounded-none border-0 bg-card shadow-none lg:rounded-br-md">
               <PurchaseInvoiceDocumentPreview filePath={invoice.file_path} />
             </Card>
           </div>
         </div>
+      </div>
       </div>
 
       <PurchaseInvoiceActionBar

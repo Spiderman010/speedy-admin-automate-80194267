@@ -59,7 +59,7 @@ export function PurchaseInvoiceLinesTable({
 }: PurchaseInvoiceLinesTableProps) {
   if (lines.length === 0) {
     return (
-      <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+      <div className="m-3 rounded-sm border border-dashed p-4 text-center text-sm text-muted-foreground">
         <p>Nog geen boekingsregels.</p>
         <Button variant="outline" size="sm" className="mt-3 h-9" onClick={onAddLine}>
           <Plus className="mr-1 h-4 w-4" /> Eerste boekingsregel toevoegen
@@ -69,17 +69,17 @@ export function PurchaseInvoiceLinesTable({
   }
 
   return (
-    <div className="-mx-1 overflow-x-auto px-1">
-      <Table className="min-w-[760px]">
+    <div className="overflow-x-auto">
+      <Table className="min-w-[800px] table-fixed text-[13px] [&_td:last-child]:sticky [&_td:last-child]:right-0 [&_td:last-child]:bg-card [&_th:last-child]:sticky [&_th:last-child]:right-0 [&_th:last-child]:bg-card [&_th]:text-[11px] [&_th]:uppercase [&_th]:tracking-wide">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="h-9 min-w-[160px] pl-2">Omschrijving</TableHead>
-            <TableHead className="h-9 min-w-[200px]">Grootboek</TableHead>
-            <TableHead className="h-9 w-[112px] text-right">Excl.</TableHead>
-            <TableHead className="h-9 w-[84px]">BTW %</TableHead>
-            <TableHead className="h-9 w-[96px] text-right">BTW</TableHead>
-            <TableHead className="h-9 w-[112px] text-right">Incl.</TableHead>
-            <TableHead className="h-9 w-[40px] pr-1"><span className="sr-only">Acties</span></TableHead>
+            <TableHead className="h-8 min-w-[160px] pl-3">Omschrijving</TableHead>
+            <TableHead className="h-8 w-[12.5rem]">Grootboek</TableHead>
+            <TableHead className="h-8 w-[6.5rem] text-right">Excl.</TableHead>
+            <TableHead className="h-8 w-[5.5rem]">BTW %</TableHead>
+            <TableHead className="h-8 w-[5.5rem] text-right">BTW</TableHead>
+            <TableHead className="h-8 w-[6.75rem] text-right">Incl.</TableHead>
+            <TableHead className="h-8 w-12 pr-2"><span className="sr-only">Acties</span></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -102,7 +102,7 @@ export function PurchaseInvoiceLinesTable({
                   partial && "border-l-2 border-l-amber-500 bg-amber-50/60 hover:bg-amber-50/80 dark:bg-amber-950/20 dark:hover:bg-amber-950/30",
                 )}
               >
-                <TableCell className="py-1 pl-2">
+                <TableCell className="py-1 pl-3">
                   <div className="flex items-center gap-1.5">
                     {partial && (
                       <AlertTriangle
@@ -199,13 +199,13 @@ export function PurchaseInvoiceLinesTable({
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell className="py-1 pt-3 text-right font-mono text-sm tabular-nums text-muted-foreground">
+                <TableCell className="py-1 pt-3 text-right font-mono text-[13px] tabular-nums text-muted-foreground">
                   {formatEuro(btw)}
                 </TableCell>
-                <TableCell className="py-1 pt-3 text-right font-mono text-sm tabular-nums">
+                <TableCell className="py-1 pt-3 text-right font-mono text-[13px] tabular-nums">
                   {formatEuro(incl)}
                 </TableCell>
-                <TableCell className="py-1 pr-1">
+                <TableCell className="py-1 pr-2">
                   <Button
                     variant="ghost"
                     size="icon"
