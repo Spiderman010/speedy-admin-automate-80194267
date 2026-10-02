@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 /**
@@ -97,7 +97,14 @@ function renderVerkoop() {
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/verkoop"]}>
-        <Verkoop />
+        {/* Staat voor de navigatie van de app-shell (sidebar/kop) buiten de pagina. */}
+        <nav>
+          <Link to="/bank">Naar Bank</Link>
+        </nav>
+        <Routes>
+          <Route path="/verkoop" element={<Verkoop />} />
+          <Route path="/bank" element={<p>Bankpagina</p>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -173,13 +180,14 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     expect(within(dock).getByDisplayValue("Tweede Klant BV")).toBeInTheDocument();
   });
 
-  it("vraagt bevestiging voor een andere factuur bij niet-opgeslagen invoer (Codex P1)", () => {
+  it("vraagt bevestiging bij een klik buiten het dok met niet-opgeslagen invoer (Codex P1)", () => {
     renderVerkoop();
     const dock = screen.getByTestId("sales-detail-dock");
     fireEvent.click(rowFor("V-DOK-001"));
     fireEvent.change(within(dock).getByDisplayValue("Dok Klant BV"), { target: { value: "Dok Klant BV (gewijzigd)" } });
 
-    // Andere factuur kiezen: de invoer blijft staan en er komt een bevestiging.
+    // Alles buiten het dok is nu inert; een klik daarbuiten opent de bevestiging.
+    expect(screen.getByRole("table").closest("[inert]")).not.toBeNull();
     fireEvent.click(rowFor("V-DOK-002"));
     const confirm = screen.getByTestId("sales-unsaved-switch");
     expect(within(confirm).getByText("Wijzigingen niet opgeslagen")).toBeInTheDocument();
@@ -194,12 +202,71 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     expect(screen.getByDisplayValue("Dok Klant BV (gewijzigd)")).toBeInTheDocument();
     expect(rowFor("V-DOK-001")).toHaveAttribute("data-state", "selected");
 
-    // Opnieuw, nu verwerpen: factuur B staat in het dok.
+    // Opnieuw, nu verwerpen: de factuur sluit, het scherm is weer vrij en B kan worden gekozen.
     fireEvent.click(rowFor("V-DOK-002"));
     fireEvent.click(within(screen.getByTestId("sales-unsaved-switch")).getByRole("button", { name: "Wijzigingen verwerpen" }));
-    expect(screen.getByDisplayValue("Tweede Klant BV")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Dok Klant BV (gewijzigd)")).not.toBeInTheDocument();
+    expect(screen.getByRole("table").closest("[inert]")).toBeNull();
+    fireEvent.click(rowFor("V-DOK-002"));
+    expect(screen.getByDisplayValue("Tweede Klant BV")).toBeInTheDocument();
     expect(rowFor("V-DOK-002")).toHaveAttribute("data-state", "selected");
+  });
+
+  it("navigeert niet weg bij niet-opgeslagen invoer in het dok (Codex P1, review 5)", () => {
+    renderVerkoop();
+    fireEvent.click(rowFor("V-DOK-001"));
+    fireEvent.change(
+      within(screen.getByTestId("sales-detail-dock")).getByDisplayValue("Dok Klant BV"),
+      { target: { value: "Nog niet opgeslagen" } },
+    );
+    expect(screen.getByRole("link", { name: "Naar Bank" }).closest("[inert]")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("link", { name: "Naar Bank" }));
+    expect(screen.queryByText("Bankpagina")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sales-unsaved-switch")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Nog niet opgeslagen")).toBeInTheDocument();
+  });
+
+  it("laat een open keuzemenu of dialoog (Radix-laag) zijn eigen klik-buiten afhandelen", () => {
+    renderVerkoop();
+    fireEvent.click(rowFor("V-DOK-001"));
+    fireEvent.change(
+      within(screen.getByTestId("sales-detail-dock")).getByDisplayValue("Dok Klant BV"),
+      { target: { value: "Nog niet opgeslagen" } },
+    );
+    // Radix zet pointer-events op de body uit zolang een modale laag open is.
+    document.body.style.pointerEvents = "none";
+    try {
+      fireEvent.click(document.body);
+      expect(screen.queryByTestId("sales-unsaved-switch")).not.toBeInTheDocument();
+    } finally {
+      document.body.style.pointerEvents = "";
+    }
+    fireEvent.click(document.body);
+    expect(screen.getByTestId("sales-unsaved-switch")).toBeInTheDocument();
+  });
+
+  it("navigeert gewoon zonder niet-opgeslagen invoer", () => {
+    renderVerkoop();
+    fireEvent.click(rowFor("V-DOK-001"));
+    fireEvent.click(screen.getByRole("link", { name: "Naar Bank" }));
+    expect(screen.getByText("Bankpagina")).toBeInTheDocument();
+  });
+
+  it("vraagt bij verversen of sluiten van het venster om bevestiging zolang er niet-opgeslagen invoer is", () => {
+    renderVerkoop();
+    fireEvent.click(rowFor("V-DOK-001"));
+    const beforeUnload = () => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(beforeUnload()).toBe(false);
+    fireEvent.change(
+      within(screen.getByTestId("sales-detail-dock")).getByDisplayValue("Dok Klant BV"),
+      { target: { value: "Nog niet opgeslagen" } },
+    );
+    expect(beforeUnload()).toBe(true);
   });
 
   it("behoudt de invoer als dezelfde, al geopende factuur opnieuw wordt gekozen (Codex P2, review 2)", () => {
@@ -210,9 +277,11 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
       { target: { value: "Concept blijft staan" } },
     );
     // De rij is inmiddels een nieuw object (verse query-data); opnieuw klikken
-    // op dezelfde factuur mag het formulier niet opnieuw vullen.
+    // op dezelfde factuur mag het formulier niet opnieuw vullen. In het dok valt
+    // die klik op de bewakingslaag; terug naar de factuur laat de invoer staan.
     fireEvent.click(rowFor("V-DOK-001"));
-    expect(screen.queryByTestId("sales-unsaved-switch")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Concept blijft staan")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Terug naar factuur" }));
     expect(screen.getByDisplayValue("Concept blijft staan")).toBeInTheDocument();
   });
 
@@ -259,22 +328,16 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     expect(document.querySelector("iframe")).toHaveAttribute("src", "https://signed/b.pdf");
   });
 
-  it("blokkeert de export zolang het dok niet-opgeslagen invoer heeft (Codex P1, review 4)", () => {
+  it("start geen export zolang het dok niet-opgeslagen invoer heeft (Codex P1, review 4)", () => {
     renderVerkoop();
-    const exportButton = () => screen.getByRole("button", { name: /Export/ });
-    expect(exportButton()).toBeEnabled();
-
     fireEvent.click(rowFor("V-DOK-001"));
-    expect(exportButton()).toBeEnabled(); // geopend maar ongewijzigd
-
     fireEvent.change(
       within(screen.getByTestId("sales-detail-dock")).getByDisplayValue("Dok Klant BV"),
       { target: { value: "Nog niet opgeslagen" } },
     );
-    expect(exportButton()).toBeDisabled();
-
-    // Terugzetten naar de opgeslagen waarde: de export is weer beschikbaar.
-    fireEvent.change(screen.getByDisplayValue("Nog niet opgeslagen"), { target: { value: "Dok Klant BV" } });
-    expect(exportButton()).toBeEnabled();
+    vi.mocked(supabase.from).mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /Export/ }));
+    expect(screen.getByTestId("sales-unsaved-switch")).toBeInTheDocument();
+    expect(supabase.from).not.toHaveBeenCalled();
   });
 });

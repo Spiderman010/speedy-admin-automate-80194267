@@ -546,22 +546,60 @@ export default function Verkoop() {
   const dockLockRef = useRef(dockViewport);
   if (!(editOpen && detailDirty)) dockLockRef.current = dockViewport;
   const showDetailDock = dockLockRef.current;
-  // De export leest de opgeslagen facturen. Staat er in het dok een factuur met
-  // niet-opgeslagen invoer, dan zou de CSV andere waarden bevatten dan het dok
-  // toont; de dialoog blokkeerde dat, het dok doet dat nu ook.
-  const exportBlockedByDraft = showDetailDock && editOpen && detailDirty;
-  // In het dok blijft de lijst klikbaar (de dialoog blokkeerde dat). Een andere
-  // factuur kiezen met niet-opgeslagen invoer vraagt daarom eerst bevestiging.
-  const [pendingInvoice, setPendingInvoice] = useState<any>(null);
+  // Bewaking van niet-opgeslagen invoer in het dok. De dialoog blokkeerde de
+  // rest van het scherm; het dok doet dat nu ook zolang er niet-opgeslagen
+  // invoer is: alles buiten het dok wordt `inert` (geen muis, geen toetsenbord),
+  // een klik daarbuiten opent de bevestiging, en verversen of sluiten van het
+  // venster vraagt de browser te bevestigen. Zonder wijzigingen werkt alles zoals
+  // gewoonlijk.
+  const dockGuardActive = showDetailDock && editOpen && detailDirty;
+  const [guardPromptOpen, setGuardPromptOpen] = useState(false);
+  useEffect(() => {
+    if (!dockGuardActive) return;
+    const dock = document.querySelector('[data-testid="sales-detail-dock"]');
+    if (!dock) return;
+    const madeInert: Element[] = [];
+    for (let node: Element | null = dock; node && node !== document.body; node = node.parentElement) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling !== node && !sibling.hasAttribute("inert")) {
+          sibling.setAttribute("inert", "");
+          madeInert.push(sibling);
+        }
+      }
+    }
+    // Het dok zelf en zijn eigen lijsten, keuzemenu's en dialogen blijven bruikbaar.
+    const allowed = (target: EventTarget | null) =>
+      target instanceof Element &&
+      (dock.contains(target) ||
+        !!target.closest('[data-radix-popper-content-wrapper], [role="dialog"], [role="alertdialog"], [role="listbox"]'));
+    const onClickOutside = (event: MouseEvent) => {
+      if (allowed(event.target)) return;
+      // Een open keuzemenu of dialoog (Radix-laag) blokkeert de pagina al zelf en
+      // handelt zijn eigen klik-buiten af; dan staat deze bewaking opzij.
+      if (document.body.style.pointerEvents === "none") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setGuardPromptOpen(true);
+    };
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    document.addEventListener("click", onClickOutside, true);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      madeInert.forEach((el) => el.removeAttribute("inert"));
+      document.removeEventListener("click", onClickOutside, true);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [dockGuardActive]);
   const openInvoice = (inv: any) => {
     // Dezelfde, al geopende factuur opnieuw kiezen met niet-opgeslagen invoer is
     // een no-op: na een herlading is de rij een nieuw object, en dat zou het
     // formulier opnieuw vullen uit de opgeslagen gegevens.
     if (editOpen && detailDirty && editInvoice?.id === inv.id) return;
-    if (showDetailDock && editOpen && detailDirty && editInvoice?.id !== inv.id) {
-      setPendingInvoice(inv);
-      return;
-    }
     setEditInvoice(inv);
     setEditOpen(true);
   };
@@ -620,8 +658,8 @@ export default function Verkoop() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button size="sm" variant="outline" disabled={exporting || exportBlockedByDraft} onClick={async () => {
-          if (exporting || exportBlockedByDraft) return;
+        <Button size="sm" variant="outline" disabled={exporting} onClick={async () => {
+          if (exporting) return;
           if (!activeOrganizationId) {
             toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
             return;
@@ -996,7 +1034,7 @@ export default function Verkoop() {
       {/* Eén factuurdetail, twee containers: dialoog onder 1360px, dok erboven. */}
       {!showDetailDock && <SalesInvoiceEditDialog {...editDetailProps} />}
 
-      <AlertDialog open={!!pendingInvoice} onOpenChange={(open) => !open && setPendingInvoice(null)}>
+      <AlertDialog open={guardPromptOpen} onOpenChange={setGuardPromptOpen}>
         <AlertDialogContent data-testid="sales-unsaved-switch">
           <AlertDialogHeader>
             <AlertDialogTitle>Wijzigingen niet opgeslagen</AlertDialogTitle>
@@ -1006,9 +1044,10 @@ export default function Verkoop() {
             <AlertDialogCancel>Terug naar factuur</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                setEditInvoice(pendingInvoice);
-                setEditOpen(true);
-                setPendingInvoice(null);
+                // Verwerpen sluit de geopende factuur; daarna werkt het scherm
+                // weer gewoon en kan de bedoelde actie opnieuw worden gekozen.
+                setEditOpen(false);
+                setGuardPromptOpen(false);
               }}
             >
               Wijzigingen verwerpen
