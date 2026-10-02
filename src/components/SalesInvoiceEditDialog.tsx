@@ -30,14 +30,21 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
 
   useEffect(() => {
     if (!filePath) { setUrl(null); return; }
+    // Een trager antwoord voor een eerder gekozen document mag het huidige
+    // document nooit vervangen (in het dok blijft dit component gemonteerd
+    // terwijl de factuur wisselt).
+    let cancelled = false;
     setLoading(true);
+    setUrl(null);
     supabase.storage.from("invoices").createSignedUrl(filePath, 3600).then(({ data, error }) => {
+      if (cancelled) return;
       if (error) console.error("Storage signed URL error:", error);
       setUrl(data?.signedUrl ?? null);
       setLoading(false);
     });
     setZoom(1);
     setRotation(0);
+    return () => { cancelled = true; };
   }, [filePath]);
 
   if (!filePath) {

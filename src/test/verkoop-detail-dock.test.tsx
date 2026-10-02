@@ -89,6 +89,8 @@ vi.mock("@/components/CreateVraagpostDialog", () => ({ CreateVraagpostDialog: ()
 vi.mock("@/components/SalesInvoiceDialog", () => ({ SalesInvoiceDialog: () => null }));
 
 import Verkoop from "@/pages/Verkoop";
+import { SalesInvoiceDetailDock } from "@/components/SalesInvoiceEditDialog";
+import { supabase } from "@/integrations/supabase/client";
 
 function renderVerkoop() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -230,5 +232,26 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     expect(screen.getByTestId("sales-detail-dock")).toBeInTheDocument();
     setWide(false);
     expect(screen.queryByTestId("sales-detail-dock")).not.toBeInTheDocument();
+  });
+
+  it("toont nooit het document van een eerder gekozen factuur als dat antwoord later binnenkomt (Codex P1, review 3)", async () => {
+    // Twee signed-URL-verzoeken die we zelf in omgekeerde volgorde laten slagen.
+    const pending = new Map<string, (url: string) => void>();
+    vi.mocked(supabase.storage.from).mockReturnValue({
+      createSignedUrl: (path: string) =>
+        new Promise((resolve) => pending.set(path, (url) => resolve({ data: { signedUrl: url }, error: null }))),
+    } as never);
+    const a = { ...invoice, pdf_path: "org/a.pdf" };
+    const b = { ...invoiceB, pdf_path: "org/b.pdf" };
+    const props = { open: true, onOpenChange: vi.fn(), onSave: vi.fn(), onApprove: vi.fn(), allInvoices: [] };
+    const queryClient = new QueryClient();
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}><SalesInvoiceDetailDock {...props} invoice={a as never} /></QueryClientProvider>,
+    );
+    rerender(<QueryClientProvider client={queryClient}><SalesInvoiceDetailDock {...props} invoice={b as never} /></QueryClientProvider>);
+
+    await act(async () => pending.get("org/b.pdf")!("https://signed/b.pdf"));
+    await act(async () => pending.get("org/a.pdf")!("https://signed/a.pdf")); // te laat
+    expect(document.querySelector("iframe")).toHaveAttribute("src", "https://signed/b.pdf");
   });
 });
