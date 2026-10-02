@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef, useSyncExternalStore, type ComponentProps } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 
@@ -64,7 +64,7 @@ import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
-import { BankTransactionDetailSheet } from "@/components/bank/BankTransactionDetailSheet";
+import { BankTransactionDetailDock, BankTransactionDetailSheet } from "@/components/bank/BankTransactionDetailSheet";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -168,6 +168,24 @@ type SuggestionDetail = {
   isSafe: boolean;
   unsafeReasons: string[];
 };
+
+/**
+ * Alleen lay-out: vanaf 1360px staan de transactiedetails in een vast dok naast
+ * de banklijst, daaronder in de bestaande Sheet. Beide tonen dezelfde
+ * `detailTx` met dezelfde handlers; dit kiest alleen de container.
+ */
+const DETAIL_DOCK_QUERY = "(min-width: 1360px)";
+function useDetailDockLayout(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      const mql = window.matchMedia(DETAIL_DOCK_QUERY);
+      mql.addEventListener("change", onChange);
+      return () => mql.removeEventListener("change", onChange);
+    },
+    () => window.matchMedia(DETAIL_DOCK_QUERY).matches,
+    () => false,
+  );
+}
 
 export default function Bank() {
   const [searchParams] = useSearchParams();
@@ -1904,9 +1922,40 @@ export default function Bank() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [tableRows.length, selectedIds.size, stalePageData]);
 
+  const showDetailDock = useDetailDockLayout();
+  // De props van de transactiedetails, één keer opgebouwd en gedeeld door de
+  // Sheet en het desktopdok: dezelfde selectie (`detailTx`), dezelfde handlers.
+  const detailProps: Omit<ComponentProps<typeof BankTransactionDetailSheet>, "open"> = {
+    onOpenChange: (v) => { if (!v) setDetailTx(null); },
+    transaction: detailTx,
+    allocations: detailTx ? (allocationsByTxId.get(detailTx.id) ?? []) : [],
+    purchaseInvoices: detailTx?.client_id ? (invoices ?? []).filter(i => i.client_id === detailTx.client_id) : [],
+    salesInvoices: detailTx?.client_id ? (salesInvs ?? []).filter(i => i.client_id === detailTx.client_id) : [],
+    grootboekrekeningen: grootboekrekeningen ?? [],
+    vraagpost: detailTx ? (vraagpostByBankTransactionId.get(detailTx.id) ?? null) : null,
+    isSafe: !!detailTx && safeMatchIds.has(detailTx.id),
+    onMatch: (tx) => { setMatchTx(tx); setDetailTx(null); },
+    onConfirmSuggestion: (tx) => { handleSafeSuggestionConfirm(tx); setDetailTx(null); },
+    onRejectSuggestion: (tx) => { handleRejectSuggestion(tx); setDetailTx(null); },
+    onUnlink: (tx) => {
+      setDetailTx(null);
+      if (tx.match_status === "handmatig_geboekt") {
+        updateTx.mutateAsync({ id: tx.id, match_status: "niet_gematcht", grootboekrekening_id: null })
+          .then(() => toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." }));
+      } else {
+        handleUnlink(tx);
+      }
+    },
+    onOpenAfletter: (tx) => { setAfletteringTx(tx); setDetailTx(null); },
+    onMaakVraagpost: (tx) => { handleMaakVraagpost(tx); setDetailTx(null); },
+  };
+
   return (
     <>
       <h1 className="sr-only">Bankafschriften</h1>
+      {/* Werkruimte: banklijst links, vanaf 1360px het vaste detaildok rechts. */}
+      <div className="min-[1360px]:grid min-[1360px]:grid-cols-[minmax(0,1fr)_380px] min-[1360px]:items-start min-[1360px]:gap-3">
+      <div className="min-w-0">
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         <ClientMultiSelect
           clients={clients ?? []}
@@ -2842,6 +2891,9 @@ export default function Bank() {
       )}
       </>
       )}
+      </div>
+      {showDetailDock && <BankTransactionDetailDock {...detailProps} />}
+      </div>
 
 
 
@@ -2930,31 +2982,8 @@ export default function Bank() {
         }
       />
 
-      <BankTransactionDetailSheet
-        open={!!detailTx}
-        onOpenChange={(v) => { if (!v) setDetailTx(null); }}
-        transaction={detailTx}
-        allocations={detailTx ? (allocationsByTxId.get(detailTx.id) ?? []) : []}
-        purchaseInvoices={detailTx?.client_id ? (invoices ?? []).filter(i => i.client_id === detailTx.client_id) : []}
-        salesInvoices={detailTx?.client_id ? (salesInvs ?? []).filter(i => i.client_id === detailTx.client_id) : []}
-        grootboekrekeningen={grootboekrekeningen ?? []}
-        vraagpost={detailTx ? (vraagpostByBankTransactionId.get(detailTx.id) ?? null) : null}
-        isSafe={!!detailTx && safeMatchIds.has(detailTx.id)}
-        onMatch={(tx) => { setMatchTx(tx); setDetailTx(null); }}
-        onConfirmSuggestion={(tx) => { handleSafeSuggestionConfirm(tx); setDetailTx(null); }}
-        onRejectSuggestion={(tx) => { handleRejectSuggestion(tx); setDetailTx(null); }}
-        onUnlink={(tx) => {
-          setDetailTx(null);
-          if (tx.match_status === "handmatig_geboekt") {
-            updateTx.mutateAsync({ id: tx.id, match_status: "niet_gematcht", grootboekrekening_id: null })
-              .then(() => toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." }));
-          } else {
-            handleUnlink(tx);
-          }
-        }}
-        onOpenAfletter={(tx) => { setAfletteringTx(tx); setDetailTx(null); }}
-        onMaakVraagpost={(tx) => { handleMaakVraagpost(tx); setDetailTx(null); }}
-      />
+      {/* Eén detailinhoud, twee containers: Sheet onder 1360px, dok erboven. */}
+      <BankTransactionDetailSheet open={!!detailTx && !showDetailDock} {...detailProps} />
 
       <BankMatchDialog
         open={!!matchTx}
