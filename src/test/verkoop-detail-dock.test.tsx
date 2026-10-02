@@ -57,7 +57,8 @@ vi.mock("@/hooks/useSalesInvoices", async (importOriginal) => {
   return {
     ...actual,
     usePaginatedSalesInvoices: () => ({
-      data: { invoices: [invoice, invoiceB], total: 2 },
+      // Verse objecten per aanroep, zoals na een herlading van de query.
+      data: { invoices: [{ ...invoice }, { ...invoiceB }], total: 2 },
       isLoading: false,
       isFetching: false,
       isError: false,
@@ -193,6 +194,20 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     expect(screen.getByDisplayValue("Tweede Klant BV")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Dok Klant BV (gewijzigd)")).not.toBeInTheDocument();
     expect(rowFor("V-DOK-002")).toHaveAttribute("data-state", "selected");
+  });
+
+  it("behoudt de invoer als dezelfde, al geopende factuur opnieuw wordt gekozen (Codex P2, review 2)", () => {
+    renderVerkoop();
+    fireEvent.click(rowFor("V-DOK-001"));
+    fireEvent.change(
+      within(screen.getByTestId("sales-detail-dock")).getByDisplayValue("Dok Klant BV"),
+      { target: { value: "Concept blijft staan" } },
+    );
+    // De rij is inmiddels een nieuw object (verse query-data); opnieuw klikken
+    // op dezelfde factuur mag het formulier niet opnieuw vullen.
+    fireEvent.click(rowFor("V-DOK-001"));
+    expect(screen.queryByTestId("sales-unsaved-switch")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Concept blijft staan")).toBeInTheDocument();
   });
 
   it("houdt de container vast bij een viewportwissel zolang er niet-opgeslagen invoer is (Codex P2)", () => {

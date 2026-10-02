@@ -550,6 +550,10 @@ export default function Verkoop() {
   // factuur kiezen met niet-opgeslagen invoer vraagt daarom eerst bevestiging.
   const [pendingInvoice, setPendingInvoice] = useState<any>(null);
   const openInvoice = (inv: any) => {
+    // Dezelfde, al geopende factuur opnieuw kiezen met niet-opgeslagen invoer is
+    // een no-op: na een herlading is de rij een nieuw object, en dat zou het
+    // formulier opnieuw vullen uit de opgeslagen gegevens.
+    if (editOpen && detailDirty && editInvoice?.id === inv.id) return;
     if (showDetailDock && editOpen && detailDirty && editInvoice?.id !== inv.id) {
       setPendingInvoice(inv);
       return;
