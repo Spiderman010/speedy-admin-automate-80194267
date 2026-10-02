@@ -33,10 +33,10 @@ export function PurchaseInvoiceDocumentPreview({ filePath }: { filePath: string 
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-9 shrink-0 items-center justify-between gap-2 border-b bg-muted/40 px-3">
+      <div className="flex min-h-11 shrink-0 items-center justify-between gap-2 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <span className="whitespace-nowrap text-sm font-semibold text-foreground">
             Origineel document
           </span>
           {fileName && (
@@ -60,7 +60,7 @@ export function PurchaseInvoiceDocumentPreview({ filePath }: { filePath: string 
         )}
       </div>
 
-      <div className="min-h-0 flex-1 bg-muted/20">
+      <div className="mx-3 mb-3 min-h-0 flex-1 overflow-hidden rounded-sm border bg-muted/60">
         {!filePath ? (
           <div className="flex h-full flex-col items-center justify-center p-6 text-muted-foreground">
             <FileText className="mb-3 h-10 w-10 opacity-40" />
@@ -75,10 +75,10 @@ export function PurchaseInvoiceDocumentPreview({ filePath }: { filePath: string 
             {error ?? "Document niet beschikbaar"}
           </div>
         ) : isPdf ? (
-          <iframe src={url} className="h-full w-full" title="Factuur PDF" />
+          <iframe src={url} className="h-full w-full bg-white" title="Factuur PDF" />
         ) : (
-          <div className="h-full overflow-auto">
-            <img src={url} alt="Factuurdocument" className="h-auto w-full" />
+          <div className="h-full overflow-auto p-3">
+            <img src={url} alt="Factuurdocument" className="h-auto w-full bg-white shadow-[0_1px_4px_rgba(15,23,42,0.12)]" />
           </div>
         )}
       </div>

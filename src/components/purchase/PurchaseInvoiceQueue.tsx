@@ -35,13 +35,13 @@ export function PurchaseInvoiceQueue({
     <aside
       data-testid="invoice-queue"
       aria-label="Factuurwachtrij"
-      className="min-w-0 self-start overflow-hidden border-b bg-muted/20 lg:col-span-2 xl:col-span-1 xl:sticky xl:top-[4.5rem] xl:h-[calc(100dvh-8.5rem)] xl:border-b-0"
+      className="min-w-0 self-start overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-2 xl:col-span-1 xl:col-start-1 xl:row-span-2 xl:row-start-1 xl:sticky xl:top-[3.75rem] xl:h-[calc(100dvh-8.5rem)]"
     >
-      <div className="flex h-9 items-center justify-between border-b bg-muted/40 px-3">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Wachtrij</h2>
+      <div className="flex h-11 items-center justify-between border-b px-3">
+        <h2 className="text-sm font-semibold text-foreground">Wachtrij</h2>
         <span className="rounded-sm border bg-card px-1.5 font-mono text-[11px] tabular-nums text-muted-foreground">{invoices.length}</span>
       </div>
-      <div className="max-h-56 overflow-x-auto xl:h-[calc(100%-2.25rem)] xl:max-h-none xl:overflow-x-hidden xl:overflow-y-auto">
+      <div className="max-h-56 overflow-x-auto xl:h-[calc(100%-2.75rem)] xl:max-h-none xl:overflow-x-hidden xl:overflow-y-auto">
         <nav className="grid grid-flow-col auto-cols-[minmax(14rem,1fr)] divide-x xl:grid-flow-row xl:auto-cols-auto xl:divide-x-0 xl:divide-y">
           {invoices.map((item) => {
             const active = item.id === activeInvoiceId;
@@ -54,13 +54,13 @@ export function PurchaseInvoiceQueue({
                 aria-current={active ? "page" : undefined}
                 onClick={() => onSelect(item.id)}
                 className={cn(
-                  "h-auto min-h-[3.25rem] w-full md:h-auto justify-start rounded-none px-3 py-2 text-left font-normal hover:bg-accent/60",
-                  active && "bg-card shadow-[inset_3px_0_0_hsl(var(--primary))] hover:bg-card [&_.queue-supplier]:text-primary",
+                  "h-auto min-h-[3.25rem] w-full md:h-auto justify-start rounded-none px-3 py-2 text-left font-normal hover:bg-muted/60",
+                  active && "bg-primary/[0.06] shadow-[inset_2px_0_0_hsl(var(--primary))] hover:bg-primary/[0.08]",
                 )}
               >
-                <span className="min-w-0 flex-1 space-y-0.5">
-                  <span className="flex items-center gap-2">
-                    <span className="queue-supplier min-w-0 flex-1 truncate text-[13px] font-semibold">
+                <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5">
+                  <span className="col-span-2 flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">
                       {item.supplier || "Onbekende leverancier"}
                     </span>
                     {amount != null && (
@@ -75,7 +75,7 @@ export function PurchaseInvoiceQueue({
                       {item.invoice_date ? formatDatumNL(item.invoice_date) : "Geen datum"}
                     </span>
                   </span>
-                  <Badge variant={statusVariant(item.status)} className="h-4 text-[10px] leading-none">
+                  <Badge variant={statusVariant(item.status)} className="col-span-2 h-4 justify-self-start text-[10px] font-medium leading-none">
                     {statusLabel(item.status)}
                   </Badge>
                 </span>

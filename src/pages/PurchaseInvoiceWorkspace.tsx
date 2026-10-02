@@ -602,8 +602,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         <Skeleton className="h-5 w-24" />
         <Skeleton className="ml-auto h-8 w-32" />
       </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] min-[1360px]:grid-cols-[16.5rem_minmax(0,1fr)_21.5rem]">
-        <Skeleton className="hidden h-[420px] w-full min-[1360px]:block" />
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[minmax(0,3fr)_minmax(0,6fr)_minmax(0,4fr)]">
+        <Skeleton className="hidden h-[420px] w-full xl:block" />
         <div className="space-y-4">
           <Skeleton className="h-64 w-full" />
           <Skeleton className="h-48 w-full" />
@@ -639,7 +639,12 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
   return (
     <div className="space-y-0">
-      <div className="rounded-md border bg-card">
+      <div
+        data-testid="workspace-grid"
+        className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[minmax(0,3fr)_minmax(0,6fr)_minmax(0,4fr)] xl:grid-rows-[auto_1fr] xl:gap-y-0"
+      >
+      {/* Kop: op desktop de bovenband van de middenkolom; op mobiel bovenaan. */}
+      <div className="min-w-0 rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)] lg:col-span-2 xl:col-span-1 xl:col-start-2 xl:row-start-1 xl:rounded-b-none xl:border-b-0 xl:shadow-none">
       <PurchaseInvoiceWorkspaceHeader
         supplier={header.supplier}
         invoiceNumber={header.invoice_number}
@@ -656,11 +661,8 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         onPrev={goPrev}
         onNext={goNext}
       />
+      </div>
 
-      <div
-        data-testid="workspace-grid"
-        className="grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[15rem_minmax(30rem,1.25fr)_minmax(21rem,1fr)] min-[1360px]:grid-cols-[16.5rem_minmax(0,1fr)_21.5rem]"
-      >
         <PurchaseInvoiceQueue
           invoices={sortedInvoices}
           activeInvoiceId={invoiceId}
@@ -668,13 +670,13 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         />
 
         {/* Centre column: processing */}
-        <div className="min-w-0 border-b lg:border-b-0 xl:border-l">
+        <div className="min-w-0 rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)] xl:col-start-2 xl:row-start-2 xl:rounded-t-none">
           {/* Factuurgegevens */}
           <section>
-            <div className="flex min-h-9 flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1">
+            <div className="flex min-h-9 flex-wrap items-center gap-2 px-3 pt-2.5">
               <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Factuurgegevens</h2>
             </div>
-            <div className="space-y-3 p-3">
+            <div className="m-3 mt-2 space-y-3 rounded-md border bg-muted/20 p-3">
 
               <FieldGroup title="Identificatie">
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -869,7 +871,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               blocked is visible right where the lines are edited. */}
           <section className="border-t">
             <div>
-              <div className="flex min-h-9 flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1">
+              <div className="flex min-h-9 flex-wrap items-center gap-2 px-3 pt-2.5">
                 <h2 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Boekingsregels</h2>
                 <PurchaseInvoiceTotalsStatusPill state={totalsState} />
                 {lines.length > 0 && (
@@ -971,17 +973,16 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         </div>
 
         {/* Right column: original document */}
-        <div className="min-w-0 lg:border-l">
+        <div className="min-w-0 xl:col-start-3 xl:row-span-2 xl:row-start-1">
           <div
             data-testid="document-panel"
-            className="h-[70vh] min-h-[420px] lg:sticky lg:top-[4.5rem] lg:h-[calc(100dvh-8.5rem)]"
+            className="h-[70vh] min-h-[420px] lg:sticky lg:top-[3.75rem] lg:h-[calc(100dvh-8.5rem)]"
           >
-            <Card className="flex h-full flex-col overflow-hidden rounded-none border-0 bg-card shadow-none lg:rounded-br-md">
+            <Card className="flex h-full flex-col overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
               <PurchaseInvoiceDocumentPreview filePath={invoice.file_path} />
             </Card>
           </div>
         </div>
-      </div>
       </div>
 
       <PurchaseInvoiceActionBar
