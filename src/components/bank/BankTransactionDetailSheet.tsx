@@ -53,9 +53,9 @@ function StatusBadge({ status }: { status: string }) {
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[120px_1fr] gap-2 py-1.5 items-start">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="text-sm">{children}</span>
+    <div className="grid grid-cols-[112px_1fr] gap-2 border-b border-border/60 py-1.5 items-start last:border-b-0">
+      <span className="pt-px text-xs text-muted-foreground">{label}</span>
+      <span className="text-[13px]">{children}</span>
     </div>
   );
 }
@@ -103,15 +103,15 @@ export function BankTransactionDetailSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-[480px] flex flex-col gap-0 p-0">
-        <SheetHeader className="px-6 py-4 border-b">
-          <SheetTitle className="text-base">Transactiedetails</SheetTitle>
+        <SheetHeader className="px-4 py-3 border-b">
+          <SheetTitle className="text-sm font-semibold">Transactiedetails</SheetTitle>
         </SheetHeader>
 
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {/* Amount + status */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2.5">
             <span
-              className={`text-2xl font-semibold font-mono ${
+              className={`text-xl font-semibold font-mono tabular-nums ${
                 isPositive ? "text-green-600" : "text-destructive"
               }`}
             >
@@ -154,7 +154,7 @@ export function BankTransactionDetailSheet({
                       style={{ width: `${tx.match_confidence}%` }}
                     />
                   </div>
-                  <span className="text-xs font-mono">{tx.match_confidence}%</span>
+                  <span className="text-xs font-mono tabular-nums">{tx.match_confidence}%</span>
                 </div>
               </DetailRow>
             </>
@@ -165,7 +165,7 @@ export function BankTransactionDetailSheet({
             <>
               <Separator />
               <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">
                   Koppeling
                 </p>
                 {linkedInvoice && (
@@ -214,7 +214,7 @@ export function BankTransactionDetailSheet({
         </div>
 
         {/* Action footer */}
-        <div className="border-t px-6 py-4 space-y-2">
+        <div className="border-t bg-muted/20 px-4 py-3 space-y-2">
           {isHandmatig && (
             <div className="pb-2">
               <BankTransactionPostingAction

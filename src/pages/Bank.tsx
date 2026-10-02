@@ -1907,7 +1907,7 @@ export default function Bank() {
   return (
     <>
       <h1 className="sr-only">Bankafschriften</h1>
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         <ClientMultiSelect
           clients={clients ?? []}
           value={clientSelection}
@@ -2000,7 +2000,7 @@ export default function Bank() {
       ) : (
       <>
       {(wholeSetError || salesError) && (
-        <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 flex items-center gap-3">
+        <div className="mb-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2.5 flex items-center gap-3">
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
           <p className="text-sm text-destructive flex-1">
             {wholeSetError && salesError
@@ -2018,27 +2018,27 @@ export default function Bank() {
           </Button>
         </div>
       )}
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+      <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-md border bg-border shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:grid-cols-4">
+        <Card className="rounded-none border-0 shadow-none"><CardContent className="flex items-center gap-3 px-3 py-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-success/10"><CheckCircle2 className="h-4 w-4 text-success" /></span>
           <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? matched : "–"}</p><p className="text-xs text-muted-foreground">Gematcht</p></div>
         </CardContent></Card>
-        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+        <Card className="rounded-none border-0 shadow-none"><CardContent className="flex items-center gap-3 px-3 py-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-warning/10"><Link2 className="h-4 w-4 text-warning" /></span>
           <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? suggested : "–"}</p><p className="text-xs text-muted-foreground">Suggesties</p></div>
         </CardContent></Card>
-        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+        <Card className="rounded-none border-0 shadow-none"><CardContent className="flex items-center gap-3 px-3 py-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted"><Download className="h-4 w-4 text-muted-foreground" /></span>
           <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? (transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0) : "–"}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
         </CardContent></Card>
-        <Card className="shadow-sm"><CardContent className="flex items-center gap-3 px-3 py-2.5">
+        <Card className="rounded-none border-0 shadow-none"><CardContent className="flex items-center gap-3 px-3 py-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10"><HelpCircle className="h-4 w-4 text-destructive" /></span>
           <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? unmatched : "–"}</p><p className="text-xs text-muted-foreground">Niet gematcht</p></div>
         </CardContent></Card>
       </div>
 
       {matchingReady && (autoScanPreview.autoConfirm > 0 || autoScanPreview.toReview > 0 || (lastBatch && lastBatch.length > 0)) && (
-        <div className="mb-4 rounded-lg border border-primary/40 bg-primary/5 p-4 flex flex-wrap items-center gap-3">
+        <div className="mb-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5 flex flex-wrap items-center gap-3">
           <Zap className="h-5 w-5 text-primary shrink-0" />
           <div className="flex-1 min-w-[200px]">
             <p className="text-sm font-medium">Automatisch afletteren</p>
@@ -2112,10 +2112,12 @@ export default function Bank() {
 
 
 
-      <div className="mb-3 space-y-2">
+      {/* Werkoppervlak: tabs, zoeken, filters, exportblokkades en banktabel in één kader. */}
+      <div className="overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+      <div className="space-y-2 border-b px-3 py-2">
         <div className="flex flex-col gap-2 2xl:flex-row 2xl:items-center">
         <Tabs value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-          <TabsList className="flex-wrap h-auto gap-1">
+          <TabsList className="h-auto min-h-0 flex-wrap justify-start gap-0 rounded-none border-0 bg-transparent p-0 [&>button]:min-h-9 [&>button]:rounded-none [&>button]:border-b-2 [&>button]:border-transparent [&>button]:px-3 [&>button[data-state=active]]:border-primary [&>button[data-state=active]]:bg-transparent [&>button[data-state=active]]:shadow-none [&>button[data-state=active]]:ring-0">
             <TabsTrigger value="all">
               Alle {wholeSetReady && <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums">{transactions?.length ?? 0}</span>}
             </TabsTrigger>
@@ -2167,7 +2169,7 @@ export default function Bank() {
               <button
                 key={value}
                 onClick={() => setConfidenceFilter(value)}
-                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                className={`inline-flex h-9 items-center px-3 rounded-full text-xs font-medium transition-colors sm:h-7 ${
                   confidenceFilter === value
                     ? "bg-primary text-primary-foreground"
                     : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
@@ -2186,7 +2188,7 @@ export default function Bank() {
         if (wholeSetError) return null; // the error banner above covers this
         if (!wholeSetReady) {
           return (
-            <div className="mb-4 rounded-lg border bg-muted/30 p-3 flex items-center gap-2">
+            <div className="m-3 rounded-md border bg-muted/30 px-3 py-2.5 flex items-center gap-2">
               <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />
               <p className="text-sm text-muted-foreground">Bankblokkades controleren…</p>
             </div>
@@ -2199,7 +2201,7 @@ export default function Bank() {
 
         if (rows.length === 0) {
           return (
-            <div className="mb-4 rounded-lg border border-green-500/40 bg-green-50 dark:bg-green-950/30 p-3 flex items-center gap-2">
+            <div className="m-3 rounded-md border border-green-500/40 bg-green-50 dark:bg-green-950/30 px-3 py-2.5 flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
               <p className="text-sm text-green-800 dark:text-green-300">Geen bankblokkades voor export</p>
             </div>
@@ -2207,9 +2209,9 @@ export default function Bank() {
         }
 
         return (
-          <div className="mb-4 rounded-lg border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 overflow-hidden">
+          <div className="m-3 rounded-md border border-amber-500/60 bg-amber-50 dark:bg-amber-950/40 overflow-hidden">
             {/* Header */}
-            <div className="px-4 py-3 flex items-start gap-3 border-b border-amber-500/30">
+            <div className="px-3 py-2.5 flex items-start gap-3 border-b border-amber-500/30">
               <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
@@ -2261,7 +2263,7 @@ export default function Bank() {
             {showExportBlockers && (
               <div>
                 {shown.map(({ tx, source }) => (
-                  <div key={tx.id} className="px-4 py-2 flex items-start gap-3 border-b border-amber-500/20 last:border-0">
+                  <div key={tx.id} className="px-3 py-1.5 flex items-start gap-3 border-b border-amber-500/20 last:border-0">
                     <span className="text-xs text-muted-foreground w-20 shrink-0 pt-0.5">
                       {new Date(tx.transaction_date).toLocaleDateString("nl-NL")}
                     </span>
@@ -2289,7 +2291,7 @@ export default function Bank() {
               </div>
             )}
             {showExportBlockers && remaining > 0 && (
-              <div className="px-4 py-2 border-t border-amber-500/30">
+              <div className="px-3 py-2 border-t border-amber-500/30">
                 <p className="text-xs text-amber-700 dark:text-amber-400">
                   Nog {remaining} blokkade{remaining !== 1 ? "s" : ""} niet getoond
                 </p>
@@ -2299,7 +2301,7 @@ export default function Bank() {
         );
       })()}
 
-      <Card className="overflow-hidden shadow-sm">
+      <Card className="overflow-hidden rounded-none border-0 shadow-none">
         <CardContent className="overflow-x-auto p-0">
           {tableLoading ? (
             <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
@@ -2359,7 +2361,7 @@ export default function Bank() {
                 </div>
               );
             })()}
-            <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
+            <Table className="text-[13px] [&_th]:h-8 [&_td]:py-0.5 [&_thead_tr]:bg-muted/40">
               <TableHeader>
                 <TableRow>
                   {txColumnDefs.map(col => (
@@ -2389,7 +2391,7 @@ export default function Bank() {
                   return (
                     <TableRow
                       key={t.id}
-                      className={`cursor-pointer${detailTx?.id === t.id ? " shadow-[inset_3px_0_0_hsl(var(--primary))]" : ""}`}
+                      className={`cursor-pointer${detailTx?.id === t.id ? " shadow-[inset_2px_0_0_hsl(var(--primary))]" : ""}`}
                       data-state={detailTx?.id === t.id ? "selected" : undefined}
                       onClick={() => setDetailTx(t)}
                     >
@@ -2741,7 +2743,7 @@ export default function Bank() {
             </>
           )}
           {!tableLoading && !tableError && tableTotal > 0 && (
-            <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t pt-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t px-3 py-2">
               <span className="text-sm text-muted-foreground">
                 {(page - 1) * BANK_TRANSACTIONS_PAGE_SIZE + 1}–{Math.min(page * BANK_TRANSACTIONS_PAGE_SIZE, tableTotal)} van {tableTotal} transacties
                 {computedFilterActive ? " · afgeleide filter binnen huidige selectie" : ""}
@@ -2760,6 +2762,7 @@ export default function Bank() {
           )}
         </CardContent>
       </Card>
+      </div>
 
       {/* Bulk boeken toolbar */}
       {selectedIds.size > 0 && (
