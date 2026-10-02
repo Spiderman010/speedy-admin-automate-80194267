@@ -44,6 +44,10 @@ type Props = {
   onMaakVraagpost: (tx: Tables<"bank_transactions">) => void;
 };
 
+type DetailContentProps = Omit<Props, "open" | "transaction"> & {
+  transaction: Tables<"bank_transactions">;
+};
+
 function StatusBadge({ status }: { status: string }) {
   if (status === "gematcht") return <Badge>Gematcht</Badge>;
   if (status === "handmatig_geboekt") return <Badge variant="secondary">Handmatig geboekt</Badge>;
@@ -60,8 +64,7 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-export function BankTransactionDetailSheet({
-  open,
+export function BankTransactionDetailContent({
   onOpenChange,
   transaction: tx,
   allocations,
@@ -76,8 +79,7 @@ export function BankTransactionDetailSheet({
   onUnlink,
   onOpenAfletter,
   onMaakVraagpost,
-}: Props) {
-  if (!tx) return null;
+}: DetailContentProps) {
 
   const parsed = parseMT940Description(tx.description ?? "");
   const displayDesc = getDisplayDescription(tx.description ?? "");
@@ -101,12 +103,7 @@ export function BankTransactionDetailSheet({
   const totalAllocated = allocations.reduce((s, a) => s + a.amount, 0);
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-[480px] flex flex-col gap-0 p-0">
-        <SheetHeader className="px-4 py-3 border-b">
-          <SheetTitle className="text-sm font-semibold">Transactiedetails</SheetTitle>
-        </SheetHeader>
-
+    <>
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
           {/* Amount + status */}
           <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2.5">
@@ -293,7 +290,48 @@ export function BankTransactionDetailSheet({
             </Button>
           )}
         </div>
+    </>
+  );
+}
+
+/**
+ * Mobiel en smallere desktops: de bestaande Sheet als container rond
+ * dezelfde detailinhoud.
+ */
+export function BankTransactionDetailSheet({ open, transaction, ...rest }: Props) {
+  if (!transaction) return null;
+  return (
+    <Sheet open={open} onOpenChange={rest.onOpenChange}>
+      <SheetContent side="right" className="w-full sm:max-w-[480px] flex flex-col gap-0 p-0">
+        <SheetHeader className="px-4 py-3 border-b">
+          <SheetTitle className="text-sm font-semibold">Transactiedetails</SheetTitle>
+        </SheetHeader>
+        <BankTransactionDetailContent {...rest} transaction={transaction} />
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * Brede desktop: dezelfde detailinhoud in een vast dok naast de banklijst.
+ * Leest dezelfde geselecteerde transactie en gebruikt dezelfde handlers als
+ * de Sheet; zonder selectie blijft het dok leeg.
+ */
+export function BankTransactionDetailDock({ transaction, ...rest }: Omit<Props, "open">) {
+  return (
+    <aside
+      aria-label="Transactiedetails"
+      data-testid="bank-detail-dock"
+      className="sticky top-[3.75rem] flex h-[calc(100dvh-4.75rem)] min-w-0 flex-col overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+    >
+      <div className="flex min-h-11 shrink-0 items-center border-b px-4">
+        <h2 className="text-sm font-semibold">Transactiedetails</h2>
+      </div>
+      {transaction ? (
+        <BankTransactionDetailContent {...rest} transaction={transaction} />
+      ) : (
+        <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">—</div>
+      )}
+    </aside>
   );
 }
