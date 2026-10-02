@@ -183,6 +183,10 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     fireEvent.click(rowFor("V-DOK-002"));
     const confirm = screen.getByTestId("sales-unsaved-switch");
     expect(within(confirm).getByText("Wijzigingen niet opgeslagen")).toBeInTheDocument();
+    // De gevolgen worden ook aangekondigd (Codex P2, review 3).
+    expect(screen.getByRole("alertdialog")).toHaveAccessibleDescription(
+      "De niet-opgeslagen wijzigingen in deze factuur gaan verloren.",
+    );
 
     // Terug naar factuur: niets verloren, nog steeds factuur A.
     fireEvent.click(within(confirm).getByRole("button", { name: "Terug naar factuur" }));

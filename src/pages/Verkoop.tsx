@@ -993,9 +993,10 @@ export default function Verkoop() {
       {!showDetailDock && <SalesInvoiceEditDialog {...editDetailProps} />}
 
       <AlertDialog open={!!pendingInvoice} onOpenChange={(open) => !open && setPendingInvoice(null)}>
-        <AlertDialogContent aria-describedby={undefined} data-testid="sales-unsaved-switch">
+        <AlertDialogContent data-testid="sales-unsaved-switch">
           <AlertDialogHeader>
             <AlertDialogTitle>Wijzigingen niet opgeslagen</AlertDialogTitle>
+            <AlertDialogDescription>De niet-opgeslagen wijzigingen in deze factuur gaan verloren.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Terug naar factuur</AlertDialogCancel>
