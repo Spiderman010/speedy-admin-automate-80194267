@@ -538,7 +538,25 @@ export default function Verkoop() {
     }
   };
 
-  const showDetailDock = useDetailDockLayout();
+  const dockViewport = useDetailDockLayout();
+  // Niet-opgeslagen invoer in de geopende factuur. Zolang die er is, blijft de
+  // gekozen container (dok of dialoog) staan, zodat een venstergrootte rond
+  // 1360px het formulier niet ontkoppelt en de invoer niet verloren gaat.
+  const [detailDirty, setDetailDirty] = useState(false);
+  const dockLockRef = useRef(dockViewport);
+  if (!(editOpen && detailDirty)) dockLockRef.current = dockViewport;
+  const showDetailDock = dockLockRef.current;
+  // In het dok blijft de lijst klikbaar (de dialoog blokkeerde dat). Een andere
+  // factuur kiezen met niet-opgeslagen invoer vraagt daarom eerst bevestiging.
+  const [pendingInvoice, setPendingInvoice] = useState<any>(null);
+  const openInvoice = (inv: any) => {
+    if (showDetailDock && editOpen && detailDirty && editInvoice?.id !== inv.id) {
+      setPendingInvoice(inv);
+      return;
+    }
+    setEditInvoice(inv);
+    setEditOpen(true);
+  };
   // De props van de factuurdetail, één keer opgebouwd en gedeeld door de
   // dialoog en het desktopdok: dezelfde selectie (`editInvoice`/`editOpen`),
   // dezelfde handlers.
@@ -550,6 +568,7 @@ export default function Verkoop() {
     // undefined while the duplicate set is loading/failed → the dialog
     // falls back to its own scan instead of being forced to "not duplicate".
     knownDuplicate: editInvoice && duplicateIds ? duplicateIds.has(editInvoice.id) : undefined,
+    onDirtyChange: setDetailDirty,
     onSave: async (id, updates) => {
       try {
         await updateInvoice.mutateAsync({ id, ...updates } as any);
@@ -817,7 +836,7 @@ export default function Verkoop() {
                       const isPartiallyPaid = paymentState === "partial";
                       const hasExportWarning = inv.status === "geexporteerd";
                       return (
-                        <TableRow key={inv.id} className={`cursor-pointer${editOpen && editInvoice?.id === inv.id ? " shadow-[inset_2px_0_0_hsl(var(--primary))]" : ""}`} data-state={editOpen && editInvoice?.id === inv.id ? "selected" : undefined} onClick={() => { setEditInvoice(inv); setEditOpen(true); }}>
+                        <TableRow key={inv.id} className={`cursor-pointer${editOpen && editInvoice?.id === inv.id ? " shadow-[inset_2px_0_0_hsl(var(--primary))]" : ""}`} data-state={editOpen && editInvoice?.id === inv.id ? "selected" : undefined} onClick={() => openInvoice(inv)}>
                           <TableCell className="max-w-[9rem] truncate text-sm text-muted-foreground">{getClientName(inv.client_id)}</TableCell>
                           <TableCell className="font-mono text-sm font-medium">
                             <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
@@ -899,7 +918,7 @@ export default function Verkoop() {
                                   </Tooltip>
                                 </TooltipProvider>
                               )}
-                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); setEditInvoice(inv); setEditOpen(true); }}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={(e) => { e.stopPropagation(); openInvoice(inv); }}>
                                 <Eye className="h-4 w-4" />
                               </Button>
                               <TooltipProvider>
@@ -968,6 +987,26 @@ export default function Verkoop() {
 
       {/* Eén factuurdetail, twee containers: dialoog onder 1360px, dok erboven. */}
       {!showDetailDock && <SalesInvoiceEditDialog {...editDetailProps} />}
+
+      <AlertDialog open={!!pendingInvoice} onOpenChange={(open) => !open && setPendingInvoice(null)}>
+        <AlertDialogContent aria-describedby={undefined} data-testid="sales-unsaved-switch">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Wijzigingen niet opgeslagen</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Terug naar factuur</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setEditInvoice(pendingInvoice);
+                setEditOpen(true);
+                setPendingInvoice(null);
+              }}
+            >
+              Wijzigingen verwerpen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>

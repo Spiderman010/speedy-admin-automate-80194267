@@ -152,6 +152,12 @@ interface Props {
   allInvoices?: SalesInvoice[];
   /** Server-computed duplicate signal; takes precedence over the allInvoices scan. */
   knownDuplicate?: boolean;
+  /**
+   * Meldt of het formulier afwijkt van de opgeslagen factuur (álle velden).
+   * Alleen lay-out gebruikt dit: om niet-opgeslagen invoer te bewaken bij het
+   * wisselen van factuur of container. Geen invloed op opslaan of boeken.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 /**
@@ -185,7 +191,7 @@ export function SalesInvoiceDetailDock(props: Props) {
   );
 }
 
-function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, allInvoices, knownDuplicate, layout }: Props & { layout: "dialog" | "dock" }) {
+function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, allInvoices, knownDuplicate, onDirtyChange, layout }: Props & { layout: "dialog" | "dock" }) {
   const { toast } = useToast();
   const { data: clients } = useClients();
   const { data: posting } = useSalesInvoicePosting(invoice?.id);
@@ -252,6 +258,15 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
     [invoice],
   );
   const isDirty = !!persistedForm && isPrePostStateDirty(form, persistedForm);
+  // Volledige vergelijking (ook notities en vervaldatum) — uitsluitend om
+  // niet-opgeslagen invoer te bewaken; de boekpoort hierboven blijft ongewijzigd.
+  const hasUnsavedChanges =
+    !!persistedForm &&
+    (Object.keys(persistedForm) as Array<keyof typeof persistedForm>).some((key) => form[key] !== persistedForm[key]);
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   if (!invoice) return null;
 

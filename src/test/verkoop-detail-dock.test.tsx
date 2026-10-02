@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -37,6 +37,8 @@ const invoice = {
   updated_at: "2026-04-01T00:00:00Z",
 };
 
+const invoiceB = { ...invoice, id: "si-2", customer_name: "Tweede Klant BV", invoice_number: "V-DOK-002" };
+
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: { from: vi.fn(), rpc: vi.fn(), storage: { from: vi.fn() } },
 }));
@@ -55,7 +57,7 @@ vi.mock("@/hooks/useSalesInvoices", async (importOriginal) => {
   return {
     ...actual,
     usePaginatedSalesInvoices: () => ({
-      data: { invoices: [invoice], total: 1 },
+      data: { invoices: [invoice, invoiceB], total: 2 },
       isLoading: false,
       isFetching: false,
       isError: false,
@@ -100,24 +102,37 @@ function renderVerkoop() {
 
 describe("Verkoop — desktop detaildok (>= 1360px)", () => {
   const originalMatchMedia = window.matchMedia;
+  // Bestuurbare viewport: alleen de dok-breakpoint reageert op `wide`, en een
+  // wissel wordt aan de luisteraars gemeld zoals een echte MediaQueryList doet.
+  let wide = true;
+  const listeners = new Set<() => void>();
+  const setWide = (next: boolean) => {
+    wide = next;
+    act(() => listeners.forEach((l) => l()));
+  };
 
   beforeEach(() => {
-    // Alleen de dok-breakpoint matcht; alle andere media queries blijven false.
+    wide = true;
+    listeners.clear();
     window.matchMedia = ((query: string) => ({
-      matches: query === "(min-width: 1360px)",
+      get matches() {
+        return query === "(min-width: 1360px)" && wide;
+      },
       media: query,
       onchange: null,
       addListener: () => {},
       removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
+      addEventListener: (_: string, l: () => void) => listeners.add(l),
+      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
       dispatchEvent: () => false,
-    })) as typeof window.matchMedia;
+    })) as unknown as typeof window.matchMedia;
   });
 
   afterEach(() => {
     window.matchMedia = originalMatchMedia;
   });
+
+  const rowFor = (nummer: string) => screen.getAllByRole("row").find((r) => r.textContent?.includes(nummer))!;
 
   it("toont de geselecteerde factuur in het vaste dok en opent de dialoog niet", () => {
     renderVerkoop();
@@ -144,5 +159,61 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     // De dialoog rendert/opent niet op dit desktoppad.
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getAllByText("Verkoopfactuur controleren")).toHaveLength(1);
+  });
+
+  it("wisselt zonder vraag van factuur zolang er niets is gewijzigd", () => {
+    renderVerkoop();
+    const dock = screen.getByTestId("sales-detail-dock");
+    fireEvent.click(rowFor("V-DOK-001"));
+    fireEvent.click(rowFor("V-DOK-002"));
+    expect(screen.queryByTestId("sales-unsaved-switch")).not.toBeInTheDocument();
+    expect(within(dock).getByDisplayValue("Tweede Klant BV")).toBeInTheDocument();
+  });
+
+  it("vraagt bevestiging voor een andere factuur bij niet-opgeslagen invoer (Codex P1)", () => {
+    renderVerkoop();
+    const dock = screen.getByTestId("sales-detail-dock");
+    fireEvent.click(rowFor("V-DOK-001"));
+    fireEvent.change(within(dock).getByDisplayValue("Dok Klant BV"), { target: { value: "Dok Klant BV (gewijzigd)" } });
+
+    // Andere factuur kiezen: de invoer blijft staan en er komt een bevestiging.
+    fireEvent.click(rowFor("V-DOK-002"));
+    const confirm = screen.getByTestId("sales-unsaved-switch");
+    expect(within(confirm).getByText("Wijzigingen niet opgeslagen")).toBeInTheDocument();
+
+    // Terug naar factuur: niets verloren, nog steeds factuur A.
+    fireEvent.click(within(confirm).getByRole("button", { name: "Terug naar factuur" }));
+    expect(screen.queryByTestId("sales-unsaved-switch")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Dok Klant BV (gewijzigd)")).toBeInTheDocument();
+    expect(rowFor("V-DOK-001")).toHaveAttribute("data-state", "selected");
+
+    // Opnieuw, nu verwerpen: factuur B staat in het dok.
+    fireEvent.click(rowFor("V-DOK-002"));
+    fireEvent.click(within(screen.getByTestId("sales-unsaved-switch")).getByRole("button", { name: "Wijzigingen verwerpen" }));
+    expect(screen.getByDisplayValue("Tweede Klant BV")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Dok Klant BV (gewijzigd)")).not.toBeInTheDocument();
+    expect(rowFor("V-DOK-002")).toHaveAttribute("data-state", "selected");
+  });
+
+  it("houdt de container vast bij een viewportwissel zolang er niet-opgeslagen invoer is (Codex P2)", () => {
+    renderVerkoop();
+    fireEvent.click(rowFor("V-DOK-001"));
+    fireEvent.change(
+      within(screen.getByTestId("sales-detail-dock")).getByDisplayValue("Dok Klant BV"),
+      { target: { value: "Nog niet opgeslagen" } },
+    );
+
+    // Het venster wordt smaller dan 1360px: het dok blijft, de invoer ook, er komt geen dialoog.
+    setWide(false);
+    expect(screen.getByTestId("sales-detail-dock")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Nog niet opgeslagen")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("volgt de viewport weer zodra er niets meer open staat", () => {
+    renderVerkoop();
+    expect(screen.getByTestId("sales-detail-dock")).toBeInTheDocument();
+    setWide(false);
+    expect(screen.queryByTestId("sales-detail-dock")).not.toBeInTheDocument();
   });
 });
