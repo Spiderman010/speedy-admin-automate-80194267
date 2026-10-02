@@ -101,18 +101,18 @@ function StatusCounter({
       aria-pressed={active}
       data-testid={`review-counter-${status}`}
       className={cn(
-        "flex min-w-0 items-center gap-3 rounded-lg border bg-card px-2.5 py-2 text-left sm:px-3 shadow-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        active && "ring-2 ring-primary/40",
+        "flex min-w-0 items-center gap-2.5 rounded-none bg-card px-2.5 py-1.5 text-left sm:px-3 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        active && "bg-primary/[0.06] shadow-[inset_0_-2px_0_hsl(var(--primary))]",
       )}
     >
-      <span className={cn("hidden h-8 w-8 shrink-0 items-center justify-center rounded-md sm:flex", tone)}>
+      <span className={cn("hidden h-7 w-7 shrink-0 items-center justify-center rounded-sm sm:flex", tone)}>
         <Icon className="h-4 w-4" aria-hidden="true" />
       </span>
       <span className="min-w-0">
         <span className="block break-words text-[11px] font-semibold leading-tight text-muted-foreground sm:text-xs">
           {REVIEW_STATUS_LABELS[status]}
         </span>
-        <span className={cn("block font-display text-lg font-bold leading-tight tabular-nums", text, "sm:text-foreground")}>{count}</span>
+        <span className={cn("block font-mono text-base font-semibold leading-tight tabular-nums", text, "sm:text-foreground")}>{count}</span>
       </span>
     </button>
   );
@@ -121,7 +121,7 @@ function StatusCounter({
 function ReviewToolbar({ search, onSearch }: { search: string; onSearch: (value: string) => void }) {
   return (
     <div
-      className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm"
+      className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-card px-3 py-1.5 text-sm shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
       data-testid="review-toolbar"
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -168,23 +168,23 @@ function ReviewTable({
   onSelect: (id: string) => void;
 }) {
   return (
-    <Card className="min-w-0 overflow-hidden">
-      <Table data-testid="review-table" className="text-[13px]">
+    <Card className="min-w-0 overflow-hidden rounded-none border-0 bg-transparent shadow-none">
+      <Table data-testid="review-table" className="text-[13px] [&_thead_tr]:bg-muted/40">
         <caption className="sr-only">Voorbeeldregels om te beoordelen: datum, type, relatie, omschrijving, bedrag en status.</caption>
         <TableHeader>
           <TableRow>
-            <TableHead className="hidden h-9 px-2.5 md:table-cell">Datum</TableHead>
-            <TableHead className="hidden h-9 px-2.5 md:table-cell">Type</TableHead>
-            <TableHead className="hidden h-9 px-2.5 md:table-cell">Relatie</TableHead>
-            <TableHead className="h-9 px-2.5">Omschrijving</TableHead>
-            <TableHead className="h-9 px-2.5 text-right">Bedrag</TableHead>
-            <TableHead className="h-9 px-2.5">Status</TableHead>
+            <TableHead className="hidden h-8 px-2.5 md:table-cell">Datum</TableHead>
+            <TableHead className="hidden h-8 px-2.5 md:table-cell">Type</TableHead>
+            <TableHead className="hidden h-8 px-2.5 md:table-cell">Relatie</TableHead>
+            <TableHead className="h-8 px-2.5">Omschrijving</TableHead>
+            <TableHead className="h-8 px-2.5 text-right">Bedrag</TableHead>
+            <TableHead className="h-8 px-2.5">Status</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="px-2.5 py-6 text-center text-muted-foreground">
+              <TableCell colSpan={6} className="h-24 px-2.5 text-center text-muted-foreground">
                 Geen voorbeeldregels voor deze zoekopdracht of dit filter.
               </TableCell>
             </TableRow>
@@ -198,14 +198,14 @@ function ReviewTable({
                   data-testid={`review-row-${item.id}`}
                   aria-selected={selected}
                   onClick={() => onSelect(item.id)}
-                  className={cn("cursor-pointer", selected && "shadow-[inset_3px_0_0_hsl(var(--primary))]")}
+                  className={cn("cursor-pointer", selected && "shadow-[inset_2px_0_0_hsl(var(--primary))]")}
                 >
-                  <TableCell className="hidden whitespace-nowrap px-2.5 py-2 font-mono text-xs md:table-cell">{formatDatum(item.datum)}</TableCell>
-                  <TableCell className="hidden whitespace-nowrap px-2.5 py-2 text-muted-foreground md:table-cell">
+                  <TableCell className="hidden whitespace-nowrap px-2.5 py-1 font-mono text-xs tabular-nums md:table-cell">{formatDatum(item.datum)}</TableCell>
+                  <TableCell className="hidden whitespace-nowrap px-2.5 py-1 text-muted-foreground md:table-cell">
                     {REVIEW_TYPE_LABELS[item.type]}
                   </TableCell>
-                  <TableCell className="hidden max-w-[130px] truncate px-2.5 py-2 font-medium md:table-cell">{item.relatie}</TableCell>
-                  <TableCell className="px-2.5 py-2 md:max-w-[180px]">
+                  <TableCell className="hidden max-w-[130px] truncate px-2.5 py-1 font-medium md:table-cell">{item.relatie}</TableCell>
+                  <TableCell className="px-2.5 py-1 md:max-w-[150px] 2xl:max-w-[180px]">
                     <button
                       type="button"
                       onClick={(e) => {
@@ -221,10 +221,10 @@ function ReviewTable({
                       {formatDatum(item.datum)} · {item.relatie} · {REVIEW_TYPE_LABELS[item.type]}
                     </span>
                   </TableCell>
-                  <TableCell className="px-2.5 py-2 text-right">
+                  <TableCell className="whitespace-nowrap px-2.5 py-1 text-right">
                     <AccountingAmount cents={item.bedragCents} />
                   </TableCell>
-                  <TableCell className="px-2.5 py-2">
+                  <TableCell className="whitespace-nowrap px-2.5 py-1 [&_[data-status]>span]:whitespace-nowrap">
                     <StatusBadge status={item.status} compact />
                   </TableCell>
                 </TableRow>
@@ -239,8 +239,8 @@ function ReviewTable({
 
 function DetailSection({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: React.ReactNode }) {
   return (
-    <section className="space-y-2">
-      <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <section className="space-y-1.5 border-t px-4 py-3">
+      <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         {title}
       </h3>
@@ -252,22 +252,22 @@ function DetailSection({ icon: Icon, title, children }: { icon: LucideIcon; titl
 function ReviewDetailPanel({ item }: { item: ReviewItem | null }) {
   if (!item) {
     return (
-      <Card className="xl:sticky xl:top-16" data-testid="review-detail">
-        <CardContent className="p-6 text-sm text-muted-foreground">Kies een regel om de details te bekijken.</CardContent>
+      <Card className="rounded-none border-0 border-t bg-transparent shadow-none xl:sticky xl:top-16 xl:border-l xl:border-t-0" data-testid="review-detail">
+        <CardContent className="flex h-24 items-center justify-center p-4 text-sm text-muted-foreground">Kies een regel om de details te bekijken.</CardContent>
       </Card>
     );
   }
   const totals = proposalTotals(item.voorstel);
   return (
-    <Card className="xl:sticky xl:top-16" data-testid="review-detail" aria-label={`Details: ${item.omschrijving}`}>
-      <CardHeader className="space-y-2 p-4 pb-3">
+    <Card className="rounded-none border-0 border-t bg-transparent shadow-none xl:sticky xl:top-16 xl:border-l xl:border-t-0" data-testid="review-detail" aria-label={`Details: ${item.omschrijving}`}>
+      <CardHeader className="space-y-1 bg-muted/30 px-4 py-2.5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-xs text-muted-foreground">
               {REVIEW_TYPE_LABELS[item.type]} · {formatDatum(item.datum)} · {item.referentie}
             </p>
-            <CardTitle className="mt-1 truncate text-base">{item.relatie}</CardTitle>
-            <p className="truncate text-sm text-muted-foreground">{item.omschrijving}</p>
+            <CardTitle className="mt-0.5 truncate text-sm font-semibold">{item.relatie}</CardTitle>
+            <p className="truncate text-[13px] text-muted-foreground">{item.omschrijving}</p>
           </div>
           <div className="shrink-0 text-right">
             <AccountingAmount cents={item.bedragCents} emphasis className="text-base" />
@@ -278,32 +278,32 @@ function ReviewDetailPanel({ item }: { item: ReviewItem | null }) {
         </div>
       </CardHeader>
       <Separator />
-      <CardContent className="space-y-5 p-4">
-        <AccountingNotice severity={STATUS_PRESENTATION[item.status].notice} title={REVIEW_STATUS_LABELS[item.status]}>
+      <CardContent className="p-0">
+        <AccountingNotice className="m-4 mt-3 w-auto py-2.5" severity={STATUS_PRESENTATION[item.status].notice} title={REVIEW_STATUS_LABELS[item.status]}>
           {item.reden}
         </AccountingNotice>
 
         <DetailSection icon={FileText} title="Boekingsvoorstel (voorbeeld)">
-          <div className="overflow-hidden rounded-md border">
-            <Table className="text-xs" data-testid="review-proposal">
+          <div className="overflow-hidden rounded-sm border">
+            <Table className="text-xs [&_thead_tr]:bg-muted/40" data-testid="review-proposal">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="h-8 px-2">Rekening</TableHead>
-                  <TableHead className="h-8 px-2 text-right">Debet</TableHead>
-                  <TableHead className="h-8 px-2 text-right">Credit</TableHead>
+                  <TableHead className="h-7 px-2">Rekening</TableHead>
+                  <TableHead className="h-7 px-2 text-right">Debet</TableHead>
+                  <TableHead className="h-7 px-2 text-right">Credit</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {item.voorstel.map((line, index) => (
                   <TableRow key={`${line.rekening}-${index}`}>
-                    <TableCell className="px-2 py-1.5">
+                    <TableCell className="px-2 py-1">
                       <span className="block font-medium">{line.rekening}</span>
                       <span className="block text-muted-foreground">{line.omschrijving}</span>
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 text-right">
+                    <TableCell className="px-2 py-1 text-right">
                       <AccountingAmount cents={line.debetCents} blankWhenZero />
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 text-right">
+                    <TableCell className="px-2 py-1 text-right">
                       <AccountingAmount cents={line.creditCents} blankWhenZero />
                     </TableCell>
                   </TableRow>
@@ -311,11 +311,11 @@ function ReviewDetailPanel({ item }: { item: ReviewItem | null }) {
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell className="px-2 py-1.5">Totaal</TableCell>
-                  <TableCell className="px-2 py-1.5 text-right">
+                  <TableCell className="px-2 py-1">Totaal</TableCell>
+                  <TableCell className="px-2 py-1 text-right">
                     <AccountingAmount cents={totals.debetCents} emphasis />
                   </TableCell>
-                  <TableCell className="px-2 py-1.5 text-right">
+                  <TableCell className="px-2 py-1 text-right">
                     <AccountingAmount cents={totals.creditCents} emphasis />
                   </TableCell>
                 </TableRow>
@@ -325,11 +325,11 @@ function ReviewDetailPanel({ item }: { item: ReviewItem | null }) {
         </DetailSection>
 
         <DetailSection icon={Info} title="Toelichting">
-          <p className="text-sm leading-relaxed">{item.toelichting}</p>
+          <p className="text-[13px] leading-snug">{item.toelichting}</p>
         </DetailSection>
 
         <DetailSection icon={Paperclip} title="Bijlagen">
-          <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground" data-testid="review-attachments">
+          <div className="rounded-sm border border-dashed px-2.5 py-2 text-xs text-muted-foreground" data-testid="review-attachments">
             {item.bijlagen.length === 0 ? (
               <p>Geen bijlage bij dit voorbeeld.</p>
             ) : (
@@ -350,7 +350,7 @@ function ReviewDetailPanel({ item }: { item: ReviewItem | null }) {
           <ol className="space-y-1.5 border-l pl-3 text-xs" data-testid="review-activity">
             {item.activiteit.map((regel) => (
               <li key={`${regel.moment}-${regel.tekst}`}>
-                <span className="font-mono text-muted-foreground">{regel.moment}</span>
+                <span className="font-mono tabular-nums text-muted-foreground">{regel.moment}</span>
                 <span className="ml-2">{regel.tekst}</span>
               </li>
             ))}
@@ -359,7 +359,7 @@ function ReviewDetailPanel({ item }: { item: ReviewItem | null }) {
 
         <Separator />
 
-        <div className="space-y-2">
+        <div className="space-y-2 bg-muted/20 px-4 py-3">
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled title={NO_BOOKING}>
               <CheckCircle2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
@@ -404,7 +404,7 @@ export default function Review() {
         title="Review"
         description="Beoordeel inkoop, verkoop, bank en memoriaal op één plek. Prototype met voorbeelddata — er wordt niets opgehaald of geboekt."
       >
-        <div className="grid w-full grid-cols-3 gap-2 sm:w-auto" role="group" aria-label="Filter op status">
+        <div className="grid w-full grid-cols-3 gap-px overflow-hidden rounded-md border bg-border shadow-[0_1px_2px_rgba(15,23,42,0.04)] sm:w-auto" role="group" aria-label="Filter op status">
           {STATUS_ORDER.map((status) => (
             <StatusCounter
               key={status}
@@ -417,7 +417,7 @@ export default function Review() {
         </div>
       </PageHeader>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
+      <div className="grid rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)] xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
         <ReviewTable items={visible} selectedId={selected?.id ?? null} onSelect={setSelectedId} />
         <ReviewDetailPanel item={selected} />
       </div>
