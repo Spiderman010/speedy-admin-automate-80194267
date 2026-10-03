@@ -36,6 +36,20 @@ function buildCommitMetaPlugin() {
   };
 }
 
+// Lovable's manifest extractor reads `urlPath` from a plugin whose name starts
+// with "@lovable.dev/mcp-js" and falls back to "/mcp" without one. This plugin
+// only exposes that API (no hooks, no generated Deno output) so the regenerated
+// .lovable/mcp/manifest.json keeps the Supabase function path.
+function mcpManifestPathPlugin() {
+  return {
+    name: "@lovable.dev/mcp-js:manifest-path",
+    api: {
+      mcpEntry: path.resolve(__dirname, "src/lib/mcp/index.ts"),
+      urlPath: "/functions/v1/mcp",
+    },
+  };
+}
+
 // The checked-in MCP Edge Function is intentionally type-checked and owned.
 // Do not re-enable mcpPlugin() until its generated Deno output preserves types.
 export default defineConfig(({ mode }) => ({
@@ -46,7 +60,7 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  plugins: [react(), mode === "development" && componentTagger(), buildCommitMetaPlugin()].filter(Boolean),
+  plugins: [react(), mode === "development" && componentTagger(), buildCommitMetaPlugin(), mcpManifestPathPlugin()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
