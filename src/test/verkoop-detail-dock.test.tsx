@@ -304,6 +304,14 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     expect(screen.getByTestId("sales-detail-dock")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Nog niet opgeslagen")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // Het vastgehouden dok blijft in beeld als vast paneel, niet onder de lijst (Codex P2, review 7).
+    expect(screen.getByTestId("sales-detail-dock")).toHaveAttribute("data-layout", "floating");
+    expect(screen.getByTestId("sales-detail-dock").className).toContain("fixed");
+
+    // Weer breed: terug in de kolom, invoer nog steeds aanwezig.
+    setWide(true);
+    expect(screen.getByTestId("sales-detail-dock")).toHaveAttribute("data-layout", "docked");
+    expect(screen.getByDisplayValue("Nog niet opgeslagen")).toBeInTheDocument();
   });
 
   it("volgt de viewport weer zodra er niets meer open staat", () => {

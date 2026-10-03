@@ -1035,7 +1035,7 @@ export default function Verkoop() {
         </TabsContent>
       </Tabs>
       </div>
-      {showDetailDock && <SalesInvoiceDetailDock {...editDetailProps} />}
+      {showDetailDock && <SalesInvoiceDetailDock {...editDetailProps} floating={!dockViewport} />}
       </div>
 
       <SalesInvoiceDialog

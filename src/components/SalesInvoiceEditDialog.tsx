@@ -181,13 +181,20 @@ export function SalesInvoiceEditDialog(props: Props) {
  * is geen tweede formulier- of actielogica; alleen de container verschilt.
  * Zonder geopende factuur blijft het dok leeg.
  */
-export function SalesInvoiceDetailDock(props: Props) {
+export function SalesInvoiceDetailDock({ floating = false, ...props }: Props & { floating?: boolean }) {
   const showInvoice = props.open && !!props.invoice;
   return (
     <aside
       aria-label="Verkoopfactuur controleren"
       data-testid="sales-detail-dock"
-      className="sticky top-[3.75rem] flex h-[calc(100dvh-4.75rem)] min-w-0 flex-col overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+      data-layout={floating ? "floating" : "docked"}
+      className={
+        floating
+          ? // Venster smaller geworden met niet-opgeslagen invoer: hetzelfde dok
+            // (zelfde instantie, geen verlies) als vast paneel rechts in beeld.
+            "fixed inset-y-0 right-0 z-50 flex w-full max-w-[380px] min-w-0 flex-col overflow-hidden border-l bg-card shadow-lg"
+          : "sticky top-[3.75rem] flex h-[calc(100dvh-4.75rem)] min-w-0 flex-col overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+      }
     >
       {showInvoice ? (
         <SalesInvoiceDetail {...props} layout="dock" />
