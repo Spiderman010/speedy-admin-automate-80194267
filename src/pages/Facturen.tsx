@@ -686,23 +686,20 @@ export default function Facturen() {
           <Card className="overflow-hidden">
             <CardContent className="overflow-x-auto p-0">
               {isLoading ? (
-                <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+                <div className="divide-y border-y border-border/60 px-3 sm:px-4" role="status" aria-busy="true">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="flex h-10 items-center gap-3"><Skeleton className="h-3 w-24 shrink-0" /><Skeleton className="h-3 min-w-0 flex-1" /><Skeleton className="h-3 w-20 shrink-0" /></div>)}</div>
               ) : isListError ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
                   <p className="text-sm text-destructive">Inkoopfacturen laden mislukt.</p>
                   <Button variant="outline" size="sm" onClick={() => refetchList()}>Opnieuw proberen</Button>
                 </div>
               ) : !filteredSorted.length ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 mb-4">
-                    <FileText className="h-8 w-8 text-primary" />
-                  </div>
-                  <h3 className="font-display text-lg font-semibold">
+                <div className="border-y border-border/60 px-3 py-4 text-center sm:px-4">
+                  <h3 className="text-sm font-medium">
                     {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" || routeFilter !== "all"
                       ? "Geen inkoopfacturen gevonden"
                       : "Nog geen inkoopfacturen"}
                   </h3>
-                  <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     {searchQuery || workflowFilter !== "all" || paymentFilter !== "all" || routeFilter !== "all"
                       ? "Pas je zoekterm of filters aan om meer resultaten te zien."
                       : "Upload je eerste inkoopfacturen om ze te controleren, verwerken en exporteren."}

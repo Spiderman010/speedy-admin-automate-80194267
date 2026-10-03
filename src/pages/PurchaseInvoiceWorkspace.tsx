@@ -594,7 +594,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   //     andere factuur zouden zijn, verschijnt hier het skelet en geen enkel
   //     bewerkbaar veld.
   const loadingState = (
-    <div className="space-y-4" role="status" aria-live="polite" aria-busy="true">
+    <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
       <span className="sr-only">Laden…</span>
       <div className="flex items-center gap-3">
         <Skeleton className="h-8 w-8" />
@@ -603,12 +603,9 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         <Skeleton className="ml-auto h-8 w-32" />
       </div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:grid-cols-[minmax(0,3fr)_minmax(0,6fr)_minmax(0,4fr)]">
-        <Skeleton className="hidden h-[420px] w-full xl:block" />
-        <div className="space-y-4">
-          <Skeleton className="h-64 w-full" />
-          <Skeleton className="h-48 w-full" />
-        </div>
-        <Skeleton className="h-[420px] w-full" />
+        <div className="hidden divide-y rounded-md border bg-card px-3 xl:block">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="flex h-12 items-center gap-3"><Skeleton className="h-3 min-w-0 flex-1" /><Skeleton className="h-3 w-16" /></div>)}</div>
+        <div className="divide-y rounded-md border bg-card px-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="flex h-12 items-center gap-3"><Skeleton className="h-3 w-20 shrink-0" /><Skeleton className="h-3 min-w-0 flex-1" /></div>)}</div>
+        <div className="divide-y rounded-md border bg-card px-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="flex h-12 items-center gap-3"><Skeleton className="h-3 min-w-0 flex-1" /><Skeleton className="h-3 w-16" /></div>)}</div>
       </div>
     </div>
   );
