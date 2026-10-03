@@ -595,6 +595,20 @@ export default function Verkoop() {
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [dockGuardActive]);
+  // Wisselt de administratie of organisatie, dan hoort de geopende factuur er
+  // mogelijk niet meer bij. De dialoog blokkeerde die keuzes; naast het dok
+  // blijven ze bruikbaar, dus wordt de factuur dan gesloten in plaats van
+  // bewerkbaar te blijven onder een ander werkgebied.
+  const scopeRef = useRef({ clientFilter, activeOrganizationId });
+  useEffect(() => {
+    const previous = scopeRef.current;
+    scopeRef.current = { clientFilter, activeOrganizationId };
+    if (!editOpen || !editInvoice) return;
+    const organizationChanged = previous.activeOrganizationId !== activeOrganizationId;
+    const outsideClientScope =
+      previous.clientFilter !== clientFilter && clientFilter !== "all" && editInvoice.client_id !== clientFilter;
+    if (organizationChanged || outsideClientScope) setEditOpen(false);
+  }, [clientFilter, activeOrganizationId, editOpen, editInvoice]);
   const openInvoice = (inv: any) => {
     // Dezelfde, al geopende factuur opnieuw kiezen met niet-opgeslagen invoer is
     // een no-op: na een herlading is de rij een nieuw object, en dat zou het

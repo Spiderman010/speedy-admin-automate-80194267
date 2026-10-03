@@ -43,11 +43,13 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: { from: vi.fn(), rpc: vi.fn(), storage: { from: vi.fn() } },
 }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ session: null }) }));
+// Bestuurbaar werkgebied (administratie en organisatie), voor de scopetest.
+const scope = vi.hoisted(() => ({ clientId: "all", organizationId: "org-1" }));
 vi.mock("@/hooks/useClientContext", () => ({
-  useClientContext: () => ({ selectedClientId: "all", setSelectedClientId: vi.fn() }),
+  useClientContext: () => ({ selectedClientId: scope.clientId, setSelectedClientId: vi.fn() }),
 }));
 vi.mock("@/hooks/useActiveOrganization", () => ({
-  useActiveOrganization: () => ({ activeOrganizationId: "org-1", isReady: true }),
+  useActiveOrganization: () => ({ activeOrganizationId: scope.organizationId, isReady: true }),
 }));
 vi.mock("@/hooks/useClients", () => ({
   useClients: () => ({ data: [{ id: "c-1", name: "Administratie Een" }] }),
@@ -94,7 +96,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 function renderVerkoop() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(
+  const tree = () => (
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/verkoop"]}>
         {/* Staat voor de navigatie van de app-shell (sidebar/kop) buiten de pagina. */}
@@ -106,8 +108,10 @@ function renderVerkoop() {
           <Route path="/bank" element={<p>Bankpagina</p>} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const { rerender } = render(tree());
+  return { rerenderVerkoop: () => rerender(tree()) };
 }
 
 describe("Verkoop — desktop detaildok (>= 1360px)", () => {
@@ -122,6 +126,8 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
   };
 
   beforeEach(() => {
+    scope.clientId = "all";
+    scope.organizationId = "org-1";
     wide = true;
     listeners.clear();
     window.matchMedia = ((query: string) => ({
@@ -339,5 +345,33 @@ describe("Verkoop — desktop detaildok (>= 1360px)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Export/ }));
     expect(screen.getByTestId("sales-unsaved-switch")).toBeInTheDocument();
     expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("sluit de geopende factuur als het werkgebied wisselt (Codex P1, review 6)", () => {
+    const { rerenderVerkoop } = renderVerkoop();
+    const dock = screen.getByTestId("sales-detail-dock");
+
+    // Factuur A (administratie c-1) staat open in het dok.
+    fireEvent.click(rowFor("V-DOK-001"));
+    expect(within(dock).getByDisplayValue("Dok Klant BV")).toBeInTheDocument();
+
+    // Andere administratie waar de factuur niet bij hoort: de factuur sluit.
+    scope.clientId = "c-2";
+    rerenderVerkoop();
+    expect(within(dock).queryByDisplayValue("Dok Klant BV")).not.toBeInTheDocument();
+  });
+
+  it("houdt de factuur open bij een administratie waar zij bij hoort, sluit haar bij een andere organisatie", () => {
+    const { rerenderVerkoop } = renderVerkoop();
+    const dock = screen.getByTestId("sales-detail-dock");
+    fireEvent.click(rowFor("V-DOK-001"));
+
+    scope.clientId = "c-1"; // de administratie van de factuur zelf
+    rerenderVerkoop();
+    expect(within(dock).getByDisplayValue("Dok Klant BV")).toBeInTheDocument();
+
+    scope.organizationId = "org-2";
+    rerenderVerkoop();
+    expect(within(dock).queryByDisplayValue("Dok Klant BV")).not.toBeInTheDocument();
   });
 });
