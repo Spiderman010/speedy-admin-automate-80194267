@@ -30,14 +30,21 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
 
   useEffect(() => {
     if (!filePath) { setUrl(null); return; }
+    // Een trager antwoord voor een eerder gekozen document mag het huidige
+    // document nooit vervangen (in het dok blijft dit component gemonteerd
+    // terwijl de factuur wisselt).
+    let cancelled = false;
     setLoading(true);
+    setUrl(null);
     supabase.storage.from("invoices").createSignedUrl(filePath, 3600).then(({ data, error }) => {
+      if (cancelled) return;
       if (error) console.error("Storage signed URL error:", error);
       setUrl(data?.signedUrl ?? null);
       setLoading(false);
     });
     setZoom(1);
     setRotation(0);
+    return () => { cancelled = true; };
   }, [filePath]);
 
   if (!filePath) {
@@ -152,9 +159,53 @@ interface Props {
   allInvoices?: SalesInvoice[];
   /** Server-computed duplicate signal; takes precedence over the allInvoices scan. */
   knownDuplicate?: boolean;
+  /**
+   * Meldt of het formulier afwijkt van de opgeslagen factuur (álle velden).
+   * Alleen lay-out gebruikt dit: om niet-opgeslagen invoer te bewaken bij het
+   * wisselen van factuur of container. Geen invloed op opslaan of boeken.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, onApprove, allInvoices, knownDuplicate }: Props) {
+/**
+ * De bestaande dialoog. Ongewijzigd in gedrag: dezelfde inhoud, dezelfde
+ * acties, dezelfde Dialog als container.
+ */
+export function SalesInvoiceEditDialog(props: Props) {
+  return <SalesInvoiceDetail {...props} layout="dialog" />;
+}
+
+/**
+ * Brede desktop: exact dezelfde detailinhoud (zelfde component, zelfde hooks,
+ * zelfde handlers en disabled-voorwaarden) in een vast dok naast de lijst. Er
+ * is geen tweede formulier- of actielogica; alleen de container verschilt.
+ * Zonder geopende factuur blijft het dok leeg.
+ */
+export function SalesInvoiceDetailDock({ floating = false, ...props }: Props & { floating?: boolean }) {
+  const showInvoice = props.open && !!props.invoice;
+  return (
+    <aside
+      aria-label="Verkoopfactuur controleren"
+      data-testid="sales-detail-dock"
+      data-layout={floating ? "floating" : "docked"}
+      className={
+        floating
+          ? // Venster smaller geworden met niet-opgeslagen invoer: hetzelfde dok
+            // (zelfde instantie, geen verlies) als vast paneel rechts in beeld.
+            "fixed inset-y-0 right-0 z-50 flex w-full max-w-[380px] min-w-0 flex-col overflow-hidden border-l bg-card shadow-lg"
+          : "sticky top-[3.75rem] flex h-[calc(100dvh-4.75rem)] min-w-0 flex-col overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]"
+      }
+    >
+      {showInvoice ? (
+        <SalesInvoiceDetail {...props} layout="dock" />
+      ) : (
+        <div className="flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground">—</div>
+      )}
+    </aside>
+  );
+}
+
+function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, allInvoices, knownDuplicate, onDirtyChange, layout }: Props & { layout: "dialog" | "dock" }) {
   const { toast } = useToast();
   const { data: clients } = useClients();
   const { data: posting } = useSalesInvoicePosting(invoice?.id);
@@ -221,6 +272,15 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
     [invoice],
   );
   const isDirty = !!persistedForm && isPrePostStateDirty(form, persistedForm);
+  // Volledige vergelijking (ook notities en vervaldatum) — uitsluitend om
+  // niet-opgeslagen invoer te bewaken; de boekpoort hierboven blijft ongewijzigd.
+  const hasUnsavedChanges =
+    !!persistedForm &&
+    (Object.keys(persistedForm) as Array<keyof typeof persistedForm>).some((key) => form[key] !== persistedForm[key]);
+  useEffect(() => {
+    onDirtyChange?.(hasUnsavedChanges);
+  }, [hasUnsavedChanges, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   if (!invoice) return null;
 
@@ -344,22 +404,16 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
     }
   };
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={hasFile ? "sm:max-w-5xl max-h-[90vh]" : "sm:max-w-lg"}>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+  const titleContent = (
+          <>
             Verkoopfactuur controleren
             <Badge variant={invoice.status === "concept" ? "secondary" : "default"}>
               {statusLabel[invoice.status] || invoice.status}
             </Badge>
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className={hasFile ? "grid grid-cols-2 gap-6 min-h-[450px]" : ""}>
-          {hasFile && <InvoicePreview filePath={invoice.pdf_path} />}
-
-          <div className="space-y-4 overflow-y-auto max-h-[60vh] pr-1">
+          </>
+  );
+  const fields = (
+          <>
             {isDuplicate && (
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -491,10 +545,10 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
                 <FileCode2 className="mr-2 h-4 w-4" />Download verkoop testpakket
               </Button>
             </div>
-          </div>
-        </div>
-
-        <DialogFooter className="flex-wrap gap-2">
+          </>
+  );
+  const footer = (
+          <>
           <Button variant="outline" onClick={() => setVraagpostOpen(true)} className="mr-auto">
             <HelpCircle className="mr-2 h-4 w-4" />Vraagpost maken
           </Button>
@@ -542,8 +596,10 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
           <Button onClick={handleApprove} disabled={saving || !form.customer_name || isPosted}>
             <CheckCircle2 className="mr-2 h-4 w-4" />Goedkeuren
           </Button>
-        </DialogFooter>
-      </DialogContent>
+          </>
+  );
+  const vraagpostDialog = (
+    <>
       <CreateVraagpostDialog
         open={vraagpostOpen}
         onOpenChange={setVraagpostOpen}
@@ -552,6 +608,51 @@ export function SalesInvoiceEditDialog({ invoice, open, onOpenChange, onSave, on
         clientId={invoice.client_id}
         defaultTitel={[invoice.customer_name, invoice.invoice_number].filter(Boolean).join(" — ")}
       />
+    </>
+  );
+
+  if (layout === "dock") {
+    return (
+      <>
+        <div className="flex min-h-11 shrink-0 items-center border-b px-4 py-2">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">{titleContent}</h2>
+        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+          {hasFile && (
+            <div className="h-80">
+              <InvoicePreview filePath={invoice.pdf_path} />
+            </div>
+          )}
+          {fields}
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2 border-t bg-muted/20 px-4 py-3">{footer}</div>
+        {vraagpostDialog}
+      </>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className={hasFile ? "sm:max-w-5xl max-h-[90vh]" : "sm:max-w-lg"}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {titleContent}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className={hasFile ? "grid grid-cols-2 gap-6 min-h-[450px]" : ""}>
+          {hasFile && <InvoicePreview filePath={invoice.pdf_path} />}
+
+          <div className="space-y-4 overflow-y-auto max-h-[60vh] pr-1">
+            {fields}
+          </div>
+        </div>
+
+        <DialogFooter className="flex-wrap gap-2">
+          {footer}
+        </DialogFooter>
+      </DialogContent>
+      {vraagpostDialog}
     </Dialog>
   );
 }
