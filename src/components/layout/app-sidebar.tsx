@@ -119,7 +119,7 @@ export function AppSidebar() {
                       asChild
                       isActive={isNavItemActive(item, location.pathname)}
                       tooltip={item.title}
-                      className="h-8 text-[13px] text-sidebar-foreground/80 data-[active=true]:bg-sidebar-primary/15 data-[active=true]:text-sidebar-accent-foreground data-[active=true]:shadow-[inset_3px_0_0_hsl(var(--sidebar-primary))]"
+                      className="h-8 text-[13px] text-sidebar-foreground/80 data-[active=true]:bg-primary data-[active=true]:font-semibold data-[active=true]:text-primary-foreground data-[active=true]:hover:bg-primary/90 data-[active=true]:hover:text-primary-foreground"
                     >
                       <NavLink to={item.url} end={item.exact}>
                         <item.icon className="shrink-0" />

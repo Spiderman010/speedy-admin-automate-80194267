@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,6 +18,7 @@ import {
   BarChart3,
   Building2,
   CheckCircle2,
+  ChevronRight,
   FileText,
   HelpCircle,
   Landmark,
@@ -89,21 +89,20 @@ function KpiCell({
   return (
     <Link
       to={to}
-      className={`block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${className}`}
+      className={`group block rounded-md border bg-card px-4 py-3 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-colors hover:border-primary/40 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
     >
       {loading ? (
-        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-[4.25rem] w-full" />
       ) : (
-        <div className="flex items-center gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-primary/10 text-primary">
-            <Icon className="h-4 w-4" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
-            <p className="font-display text-lg font-bold leading-tight tabular-nums">{value}</p>
-            <p className="truncate text-xs text-muted-foreground">{context}</p>
+        <>
+          <div className="flex items-center gap-2">
+            <Icon className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            <p className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">{title}</p>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
           </div>
-        </div>
+          <p className="mt-2 font-mono text-2xl font-semibold leading-none tabular-nums">{value}</p>
+          <p className="mt-1.5 truncate text-xs text-muted-foreground">{context}</p>
+        </>
       )}
     </Link>
   );
@@ -232,10 +231,12 @@ export default function Dashboard() {
   const loadingWork = loadingClients || loadingInvoices || loadingBank || loadingVraagposten || loadingGrootboek;
   const loadingAttention = loadingInvoices || loadingVraagposten;
 
+  // Sectiekader in dezelfde stijl voor het werkvlak en de zijsecties rechts.
+  const panel = "overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]";
+
   return (
     <>
-      {/* Visible page title lives in the shell's AppHeader; keep the h1 for a11y. */}
-      <h1 className="sr-only">Dashboard</h1>
+      <h1 className="mb-4 font-display text-2xl font-semibold tracking-tight">Dashboard</h1>
 
       {hasError && (
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
@@ -249,75 +250,68 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Operationele KPI's ── */}
+      {/* ── Operationele KPI's: vier gelijke werkkaarten op één rij ── */}
       <section aria-labelledby="dash-kerncijfers">
-        <h2 id="dash-kerncijfers" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <h2 id="dash-kerncijfers" className="sr-only">
           Kerncijfers
         </h2>
-      <Card className="overflow-hidden">
-        <CardContent className="p-0">
-          <div className="grid grid-cols-2 xl:grid-cols-4">
-            <KpiCell
-              title="Nog te verwerken"
-              value={pendingInvoices}
-              context="inkoopfacturen te controleren"
-              to="/facturen"
-              icon={FileText}
-              loading={loadingInvoices}
-            />
-            <KpiCell
-              title="Bank"
-              value={openBank}
-              context="transacties nog af te letteren"
-              to="/bank"
-              icon={Landmark}
-              loading={loadingBank}
-              className="border-l border-border/60"
-            />
-            <KpiCell
-              title="Vraagposten"
-              value={openVraagposten}
-              context="open of in behandeling"
-              to="/vraagposten"
-              icon={HelpCircle}
-              loading={loadingVraagposten}
-              className="border-t border-border/60 xl:border-l xl:border-t-0"
-            />
-            <KpiCell
-              title="Openstaand inkoop"
-              value={outstandingPurchase.count}
-              context={`${fmtEur(outstandingPurchase.total)} nog te betalen`}
-              to="/facturen"
-              icon={Receipt}
-              loading={loadingInvoices}
-              className="border-l border-t border-border/60 xl:border-t-0"
-            />
-          </div>
-        </CardContent>
-      </Card>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <KpiCell
+            title="Nog te verwerken"
+            value={pendingInvoices}
+            context="inkoopfacturen te controleren"
+            to="/facturen"
+            icon={FileText}
+            loading={loadingInvoices}
+          />
+          <KpiCell
+            title="Bank"
+            value={openBank}
+            context="transacties nog af te letteren"
+            to="/bank"
+            icon={Landmark}
+            loading={loadingBank}
+          />
+          <KpiCell
+            title="Vraagposten"
+            value={openVraagposten}
+            context="open of in behandeling"
+            to="/vraagposten"
+            icon={HelpCircle}
+            loading={loadingVraagposten}
+          />
+          <KpiCell
+            title="Openstaand inkoop"
+            value={outstandingPurchase.count}
+            context={`${fmtEur(outstandingPurchase.total)} nog te betalen`}
+            to="/facturen"
+            icon={Receipt}
+            loading={loadingInvoices}
+          />
+        </div>
       </section>
 
-      {/* ── Werkvoorraad + Aandacht vereist ── */}
-      <section aria-labelledby="dash-werkvoorraad" className="mt-5">
-        <h2 id="dash-werkvoorraad" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {/* ── 70/30: werkvoorraad links, aandacht en navigatie rechts ── */}
+      <section aria-labelledby="dash-werkvoorraad" className="mt-4">
+        <h2 id="dash-werkvoorraad" className="sr-only">
           Werkvoorraad en aandacht
         </h2>
-      <div className="grid gap-4 xl:grid-cols-[65fr_35fr]">
-        <Card className="overflow-hidden">
-          <CardHeader className="border-b bg-muted/30 px-4 py-3">
-            <CardTitle className="font-display text-sm">Werkvoorraad per administratie</CardTitle>
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+        <div className={panel}>
+          <div className="border-b px-4 py-3">
+            <h3 className="font-display text-[15px] font-semibold">Werkvoorraad per administratie</h3>
             <p className="text-xs text-muted-foreground">
               Openstaand werk en exportgereedheid, administraties met aandacht eerst
             </p>
-          </CardHeader>
-          <CardContent className="p-0">
+          </div>
+          <div>
             {loadingWork ? (
               <div className="space-y-2 p-4">
                 {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
               </div>
             ) : workRows.length > 0 ? (
               <div className="overflow-x-auto">
-                <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
+                <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1 [&_thead_tr]:bg-muted/50">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Administratie</TableHead>
@@ -330,8 +324,8 @@ export default function Dashboard() {
                   </TableHeader>
                   <TableBody>
                     {workRows.map(({ client, readiness }) => (
-                      <TableRow key={client.id}>
-                        <TableCell className="max-w-[10rem] sm:max-w-[14rem] lg:max-w-[220px]">
+                      <TableRow key={client.id} className="h-10">
+                        <TableCell className="max-w-[10rem] sm:max-w-[14rem] lg:max-w-[280px]">
                           <p className="truncate text-sm font-medium" title={client.name}>
                             {client.name}
                           </p>
@@ -388,83 +382,85 @@ export default function Dashboard() {
                 sub="Voeg je eerste klant toe via Administraties."
               />
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
 
-        <Card className="overflow-hidden">
-          <CardHeader className="border-b bg-muted/30 px-4 py-3">
-            <CardTitle className="font-display text-sm">Aandacht vereist</CardTitle>
-            <p className="text-xs text-muted-foreground">Oudste openstaande acties eerst</p>
-          </CardHeader>
-          <CardContent className="p-0">
-            {loadingAttention ? (
-              <div className="space-y-2 p-4">
-                {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
-              </div>
-            ) : attentionItems.length > 0 ? (
-              <div className="divide-y">
-                {attentionItems.map(item => (
-                  <Link
-                    key={item.id}
-                    to={item.to}
-                    className="flex items-start gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:py-2"
-                  >
-                    {item.kind === "vraagpost" ? (
-                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-                    ) : (
-                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{item.label}</p>
-                      <p className="break-words text-xs text-muted-foreground">
-                        {item.sub}
-                        {item.date ? ` · ${new Date(item.date).toLocaleDateString("nl-NL")}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant="outline" className="shrink-0 whitespace-nowrap text-xs">
-                      {item.kind === "inkoop" ? "Inkoop" : "Vraagpost"}
-                    </Badge>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <EmptyState
-                icon={CheckCircle2}
-                title="Geen openstaande acties"
-                sub="Er zijn geen facturen of vraagposten die aandacht nodig hebben."
-              />
-            )}
-          </CardContent>
-        </Card>
-      </div>
-      </section>
+        <div className="grid gap-4">
+          <div className={panel}>
+            <div className="border-b px-4 py-3">
+              <h3 className="font-display text-[15px] font-semibold">Aandacht vereist</h3>
+              <p className="text-xs text-muted-foreground">Oudste openstaande acties eerst</p>
+            </div>
+            <div>
+              {loadingAttention ? (
+                <div className="space-y-2 p-4">
+                  {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+                </div>
+              ) : attentionItems.length > 0 ? (
+                <div className="divide-y">
+                  {attentionItems.map(item => (
+                    <Link
+                      key={item.id}
+                      to={item.to}
+                      className="flex items-start gap-3 px-4 py-2 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    >
+                      {item.kind === "vraagpost" ? (
+                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                      ) : (
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-medium">{item.label}</p>
+                        <p className="break-words text-xs text-muted-foreground">
+                          {item.sub}
+                          {item.date ? ` · ${new Date(item.date).toLocaleDateString("nl-NL")}` : ""}
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="shrink-0 whitespace-nowrap text-xs">
+                        {item.kind === "inkoop" ? "Inkoop" : "Vraagpost"}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState
+                  icon={CheckCircle2}
+                  title="Geen openstaande acties"
+                  sub="Er zijn geen facturen of vraagposten die aandacht nodig hebben."
+                />
+              )}
+            </div>
+          </div>
 
-      {/* ── Snelle navigatie ── */}
-      <section aria-labelledby="dash-navigatie" className="mt-5">
-        <h2 id="dash-navigatie" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Snelle navigatie
-        </h2>
-      <div className="rounded-md border bg-card p-1.5">
-        <nav aria-label="Snelle navigatie" className="flex flex-wrap gap-1">
-          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
-            <Link to="/bank"><Landmark className="mr-1.5 h-3.5 w-3.5" />Bank</Link>
-          </Button>
-          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
-            <Link to="/facturen"><FileText className="mr-1.5 h-3.5 w-3.5" />Inkoop</Link>
-          </Button>
-          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
-            <Link to="/verkoop"><Receipt className="mr-1.5 h-3.5 w-3.5" />Verkoop</Link>
-          </Button>
-          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
-            <Link to="/vraagposten"><HelpCircle className="mr-1.5 h-3.5 w-3.5" />Vraagposten</Link>
-          </Button>
-          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
-            <Link to="/klanten"><Building2 className="mr-1.5 h-3.5 w-3.5" />Administraties</Link>
-          </Button>
-          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
-            <Link to="/overzichten"><BarChart3 className="mr-1.5 h-3.5 w-3.5" />Rapportages</Link>
-          </Button>
-        </nav>
+          {/* ── Snelle navigatie ── */}
+          <section aria-labelledby="dash-navigatie" className={panel}>
+            <div className="border-b px-4 py-3">
+              <h2 id="dash-navigatie" className="font-display text-[15px] font-semibold">
+                Snelle navigatie
+              </h2>
+            </div>
+            <nav aria-label="Snelle navigatie" className="divide-y">
+              {[
+                { to: "/bank", icon: Landmark, label: "Bank" },
+                { to: "/facturen", icon: FileText, label: "Inkoop" },
+                { to: "/verkoop", icon: Receipt, label: "Verkoop" },
+                { to: "/vraagposten", icon: HelpCircle, label: "Vraagposten" },
+                { to: "/klanten", icon: Building2, label: "Administraties" },
+                { to: "/overzichten", icon: BarChart3, label: "Rapportages" },
+              ].map(({ to, icon: Icon, label }) => (
+                <Link
+                  key={to}
+                  to={to}
+                  className="flex h-9 items-center gap-2.5 px-4 text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                >
+                  <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                  <span className="flex-1">{label}</span>
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                </Link>
+              ))}
+            </nav>
+          </section>
+        </div>
       </div>
       </section>
     </>
