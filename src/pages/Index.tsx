@@ -67,15 +67,16 @@ function StatusBadge({ status }: { status: ReadinessStatus }) {
   );
 }
 
-// Compact operational KPI card: title, current value, one context line and a
-// real link to the module where the work happens.
-function KpiCard({
+// Compact operational KPI cell for the horizontal strip: title, current value,
+// one context line and a real link to the module where the work happens.
+function KpiCell({
   title,
   value,
   context,
   to,
   icon: Icon,
   loading,
+  className = "",
 }: {
   title: string;
   value: string | number;
@@ -83,30 +84,27 @@ function KpiCard({
   to: string;
   icon: typeof FileText;
   loading: boolean;
+  className?: string;
 }) {
   return (
     <Link
       to={to}
-      className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={`block px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${className}`}
     >
-      <Card className="h-full transition-colors hover:border-primary/30 hover:bg-primary/[0.03]">
-        <CardContent className="p-3.5">
-          {loading ? (
-            <Skeleton className="h-14 w-full" />
-          ) : (
-            <div className="flex items-start gap-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <Icon className="h-4 w-4" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
-                <p className="mt-0.5 font-display text-2xl font-bold leading-none tabular-nums">{value}</p>
-                <p className="mt-1.5 break-words text-xs text-muted-foreground sm:truncate">{context}</p>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {loading ? (
+        <Skeleton className="h-10 w-full" />
+      ) : (
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-primary/10 text-primary">
+            <Icon className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
+            <p className="font-display text-lg font-bold leading-tight tabular-nums">{value}</p>
+            <p className="truncate text-xs text-muted-foreground">{context}</p>
+          </div>
+        </div>
+      )}
     </Link>
   );
 }
@@ -256,40 +254,47 @@ export default function Dashboard() {
         <h2 id="dash-kerncijfers" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Kerncijfers
         </h2>
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <KpiCard
-          title="Nog te verwerken"
-          value={pendingInvoices}
-          context="inkoopfacturen te controleren"
-          to="/facturen"
-          icon={FileText}
-          loading={loadingInvoices}
-        />
-        <KpiCard
-          title="Bank"
-          value={openBank}
-          context="transacties nog af te letteren"
-          to="/bank"
-          icon={Landmark}
-          loading={loadingBank}
-        />
-        <KpiCard
-          title="Vraagposten"
-          value={openVraagposten}
-          context="open of in behandeling"
-          to="/vraagposten"
-          icon={HelpCircle}
-          loading={loadingVraagposten}
-        />
-        <KpiCard
-          title="Openstaand inkoop"
-          value={outstandingPurchase.count}
-          context={`${fmtEur(outstandingPurchase.total)} nog te betalen`}
-          to="/facturen"
-          icon={Receipt}
-          loading={loadingInvoices}
-        />
-      </div>
+      <Card className="overflow-hidden">
+        <CardContent className="p-0">
+          <div className="grid grid-cols-2 xl:grid-cols-4">
+            <KpiCell
+              title="Nog te verwerken"
+              value={pendingInvoices}
+              context="inkoopfacturen te controleren"
+              to="/facturen"
+              icon={FileText}
+              loading={loadingInvoices}
+            />
+            <KpiCell
+              title="Bank"
+              value={openBank}
+              context="transacties nog af te letteren"
+              to="/bank"
+              icon={Landmark}
+              loading={loadingBank}
+              className="border-l border-border/60"
+            />
+            <KpiCell
+              title="Vraagposten"
+              value={openVraagposten}
+              context="open of in behandeling"
+              to="/vraagposten"
+              icon={HelpCircle}
+              loading={loadingVraagposten}
+              className="border-t border-border/60 xl:border-l xl:border-t-0"
+            />
+            <KpiCell
+              title="Openstaand inkoop"
+              value={outstandingPurchase.count}
+              context={`${fmtEur(outstandingPurchase.total)} nog te betalen`}
+              to="/facturen"
+              icon={Receipt}
+              loading={loadingInvoices}
+              className="border-l border-t border-border/60 xl:border-t-0"
+            />
+          </div>
+        </CardContent>
+      </Card>
       </section>
 
       {/* ── Werkvoorraad + Aandacht vereist ── */}
@@ -297,8 +302,8 @@ export default function Dashboard() {
         <h2 id="dash-werkvoorraad" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Werkvoorraad en aandacht
         </h2>
-      <div className="grid gap-4 xl:grid-cols-3">
-        <Card className="overflow-hidden xl:col-span-2">
+      <div className="grid gap-4 xl:grid-cols-[65fr_35fr]">
+        <Card className="overflow-hidden">
           <CardHeader className="border-b bg-muted/30 px-4 py-3">
             <CardTitle className="font-display text-sm">Werkvoorraad per administratie</CardTitle>
             <p className="text-xs text-muted-foreground">
@@ -439,25 +444,27 @@ export default function Dashboard() {
         <h2 id="dash-navigatie" className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Snelle navigatie
         </h2>
-      <div className="flex flex-wrap gap-2">
-        <Button asChild variant="outline" size="sm">
-          <Link to="/bank"><Landmark className="mr-2 h-4 w-4" />Bank</Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/facturen"><FileText className="mr-2 h-4 w-4" />Inkoop</Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/verkoop"><Receipt className="mr-2 h-4 w-4" />Verkoop</Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/vraagposten"><HelpCircle className="mr-2 h-4 w-4" />Vraagposten</Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/klanten"><Building2 className="mr-2 h-4 w-4" />Administraties</Link>
-        </Button>
-        <Button asChild variant="outline" size="sm">
-          <Link to="/overzichten"><BarChart3 className="mr-2 h-4 w-4" />Rapportages</Link>
-        </Button>
+      <div className="rounded-md border bg-card p-1.5">
+        <nav aria-label="Snelle navigatie" className="flex flex-wrap gap-1">
+          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
+            <Link to="/bank"><Landmark className="mr-1.5 h-3.5 w-3.5" />Bank</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
+            <Link to="/facturen"><FileText className="mr-1.5 h-3.5 w-3.5" />Inkoop</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
+            <Link to="/verkoop"><Receipt className="mr-1.5 h-3.5 w-3.5" />Verkoop</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
+            <Link to="/vraagposten"><HelpCircle className="mr-1.5 h-3.5 w-3.5" />Vraagposten</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
+            <Link to="/klanten"><Building2 className="mr-1.5 h-3.5 w-3.5" />Administraties</Link>
+          </Button>
+          <Button asChild variant="ghost" size="sm" className="h-8 px-3 text-xs">
+            <Link to="/overzichten"><BarChart3 className="mr-1.5 h-3.5 w-3.5" />Rapportages</Link>
+          </Button>
+        </nav>
       </div>
       </section>
     </>
