@@ -2353,14 +2353,14 @@ export default function Bank() {
       <Card className="overflow-hidden rounded-none border-0 shadow-none">
         <CardContent className="overflow-x-auto p-0">
           {tableLoading ? (
-            <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+            <div className="divide-y border-y border-border/60 px-3 sm:px-4" role="status" aria-busy="true">{Array.from({ length: 5 }).map((_, i) => <div key={i} className="flex h-10 items-center gap-3"><Skeleton className="h-3 w-20 shrink-0" /><Skeleton className="h-3 min-w-0 flex-1" /><Skeleton className="h-3 w-20 shrink-0" /></div>)}</div>
           ) : tableError ? (
             <div className="py-12 text-center text-muted-foreground space-y-3">
               <p className="text-destructive">Banktransacties laden mislukt.</p>
               <Button variant="outline" size="sm" onClick={() => retryTable()}>Opnieuw proberen</Button>
             </div>
           ) : !tableRows.length ? (
-            <div className="py-12 text-center text-muted-foreground">
+            <div className="border-y border-border/60 px-3 py-4 text-center text-sm text-muted-foreground sm:px-4">
               {tableTotal || transactions?.length ? "Geen transacties gevonden met deze filters." : "Nog geen transacties. Upload een bankafschrift om te beginnen."}
             </div>
           ) : (

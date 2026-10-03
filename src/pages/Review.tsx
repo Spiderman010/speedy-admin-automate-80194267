@@ -184,7 +184,7 @@ function ReviewTable({
         <TableBody>
           {items.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="h-24 px-2.5 text-center text-muted-foreground">
+              <TableCell colSpan={6} className="h-12 px-2.5 py-3 text-center text-sm text-muted-foreground">
                 Geen voorbeeldregels voor deze zoekopdracht of dit filter.
               </TableCell>
             </TableRow>

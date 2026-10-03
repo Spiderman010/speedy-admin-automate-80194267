@@ -120,15 +120,15 @@ const EMPTY_FORM: AccountForm = {
 
 function GrootboekTableSkeleton() {
   return (
-    <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
+    <div className="divide-y border-y border-border/60" role="status" aria-live="polite" aria-busy="true">
       <span className="sr-only">Rekeningschema laden…</span>
       {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="flex items-center gap-4">
+        <div key={i} className="flex h-10 items-center gap-3">
           <Skeleton className="h-4 w-12 shrink-0" />
           <Skeleton className="h-4 flex-1" />
-          <Skeleton className="hidden h-5 w-20 shrink-0 md:block" />
-          <Skeleton className="h-5 w-24 shrink-0" />
-          <Skeleton className="h-7 w-14 shrink-0" />
+          <Skeleton className="hidden h-3 w-20 shrink-0 md:block" />
+          <Skeleton className="h-3 w-24 shrink-0" />
+          <Skeleton className="h-3 w-14 shrink-0" />
         </div>
       ))}
     </div>
@@ -511,9 +511,9 @@ export default function Grootboek() {
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="p-4"><GrootboekTableSkeleton /></div>
+            <div className="px-3 sm:px-4"><GrootboekTableSkeleton /></div>
           ) : filtered.length === 0 ? (
-            <EmptyState message={emptyMessage()} />
+            <div className="border-y border-border/60 [&>div]:min-h-0 [&>div]:px-3 [&>div]:py-4"><EmptyState message={emptyMessage()} /></div>
           ) : (
             <div className="overflow-x-auto">
               <Table className="text-[13px] [&_th]:h-9 [&_td]:py-1.5">
