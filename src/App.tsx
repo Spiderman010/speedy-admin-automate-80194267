@@ -37,6 +37,7 @@ import OAuthConsent from "./pages/OAuthConsent";
 import AIChat from "./pages/AIChat";
 import Review from "./pages/Review";
 import KlantGereedheid from "./pages/KlantGereedheid";
+import BankAfstemming from "./pages/BankAfstemming";
 
 function safeNextPath(raw: string | null): string {
   if (!raw) return "/";
@@ -91,6 +92,8 @@ const App = () => (
               <Route path="/facturen/inkoop/:invoiceId" element={<PurchaseInvoiceWorkspace />} />
               <Route path="/bank" element={<Bank />} />
               <Route path="/bank/inhaalslag" element={<BankInhaalslag />} />
+              {/* Alleen lezen: bankgegevens, import en kruisposten uit bestaande leesmodellen, geen nav-item. */}
+              <Route path="/bank/afstemming" element={<BankAfstemming />} />
               <Route path="/verkoop" element={<Verkoop />} />
               <Route path="/boekingen" element={<Boekingen />} />
               <Route path="/overzichten" element={<Overzichten />} />
