@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
+import { useClientContext } from "@/hooks/useClientContext";
 import { useClients } from "@/hooks/useClients";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { useLedgerCompleteness, useOpeningBalanceCompleteness } from "@/hooks/useLedgerCompleteness";
@@ -88,7 +89,7 @@ function toRead<T>(q: { isPending: boolean; isError: boolean; error?: unknown },
   return { kind: "ok", value };
 }
 
-function EvidenceItem({ row, onRetry }: { row: EvidenceRow; onRetry?: () => void }) {
+function EvidenceItem({ row, onRetry, onNavigate }: { row: EvidenceRow; onRetry?: () => void; onNavigate: () => void }) {
   return (
     <li
       className="grid gap-x-4 gap-y-1.5 px-3 py-2.5 sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto] sm:items-start sm:px-4"
@@ -116,7 +117,7 @@ function EvidenceItem({ row, onRetry }: { row: EvidenceRow; onRetry?: () => void
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 sm:flex-col sm:items-end">
         {row.links.map((l) => (
-          <Link key={l.to} to={l.to} className="whitespace-nowrap text-[13px] font-medium text-primary underline-offset-4 hover:underline">
+          <Link key={l.to} to={l.to} onClick={onNavigate} className="whitespace-nowrap text-[13px] font-medium text-primary underline-offset-4 hover:underline">
             {l.label}
           </Link>
         ))}
@@ -134,6 +135,7 @@ export default function KlantGereedheid() {
   const { clientId: routeClientId = "" } = useParams<{ clientId: string }>();
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const orgEnabled = isReady && activeOrganizationId !== null;
+  const { setSelectedClientId } = useClientContext();
   const [year, setYear] = useState(() => new Date().getFullYear());
 
   const clientsQuery = useClients(activeOrganizationId ?? undefined, orgEnabled);
@@ -185,6 +187,7 @@ export default function KlantGereedheid() {
   const retry: Partial<Record<EvidenceRow["key"], () => void>> = {
     rekeningschema: () => accountsQuery.refetch(),
     instellingen: () => accountsQuery.refetch(),
+    beginbalans: () => openingBalance.refetch(),
     volledigheid: () => completeness.refetch(),
     historisch: () => catchup.refetch(),
     bank: () => {
@@ -204,7 +207,9 @@ export default function KlantGereedheid() {
     </Button>
   );
 
-  if (clientsQuery.isPending || !isReady) {
+  // Zonder organisatie blijft useClients uitgeschakeld (en dus "pending"); dat
+  // is geen laden maar een eindtoestand.
+  if (!isReady || (orgEnabled && clientsQuery.isPending)) {
     return (
       <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
         <span className="sr-only">Administratie laden…</span>
@@ -214,7 +219,7 @@ export default function KlantGereedheid() {
     );
   }
 
-  if (clientsQuery.isError || !client) {
+  if (!orgEnabled || clientsQuery.isError || !client) {
     return (
       <>
         <PageHeader title="Administratie-gereedheid">{back}</PageHeader>
@@ -222,9 +227,11 @@ export default function KlantGereedheid() {
           <EmptyState
             icon={CircleHelp}
             message={
-              clientsQuery.isError
-                ? "De administraties konden niet worden gelezen; de gereedheid is niet te bepalen."
-                : "Deze administratie bestaat niet in de actieve organisatie."
+              !orgEnabled
+                ? "Er is geen actieve organisatie; de gereedheid is niet te bepalen."
+                : clientsQuery.isError
+                  ? "De administraties konden niet worden gelezen; de gereedheid is niet te bepalen."
+                  : "Deze administratie bestaat niet in de actieve organisatie."
             }
           />
         </div>
@@ -267,7 +274,14 @@ export default function KlantGereedheid() {
         </div>
         <ul className="divide-y" aria-label="Bewijsregels">
           {rows.map((row) => (
-            <EvidenceItem key={row.key} row={row} onRetry={retry[row.key]} />
+            <EvidenceItem
+              key={row.key}
+              row={row}
+              onRetry={retry[row.key]}
+              // De bronschermen lezen de administratie uit ClientContext: zet daar
+              // de gevalideerde route-administratie neer vóór de navigatie.
+              onNavigate={() => setSelectedClientId(client.id)}
+            />
           ))}
         </ul>
         <p className="border-t bg-muted/20 px-3 py-2 text-xs text-muted-foreground sm:px-4" data-testid="readiness-no-verdict">

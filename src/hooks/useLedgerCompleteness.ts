@@ -182,5 +182,6 @@ export function useOpeningBalanceCompleteness(clientId: string | undefined, peri
       year,
     });
   }, [overview.data, overview.isError, year]);
-  return { data, isPending: overview.isPending, isError: overview.isError };
+  // `refetch` is alleen een nieuwe lezing van dezelfde query (koppen + claim).
+  return { data, isPending: overview.isPending, isError: overview.isError, refetch: overview.refetch };
 }

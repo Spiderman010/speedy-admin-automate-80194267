@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -20,6 +21,8 @@ const { supabaseCalls, calls } = vi.hoisted(() => ({
     opening: [] as Array<{ clientId: string | undefined; period: { from: string; toExclusive: string } }>,
     completeness: [] as Array<string | undefined>,
     bank: [] as Array<Record<string, unknown>>,
+    clients: [] as Array<{ organizationId: string | undefined; enabled: boolean | undefined }>,
+    accounts: [] as Array<Record<string, unknown>>,
   },
 }));
 
@@ -46,7 +49,8 @@ const state = {
   clients: ok([]) as Q,
   accounts: ok([]) as Q,
   completeness: ok(undefined) as Q,
-  opening: { data: undefined as unknown, isPending: false, isError: false },
+  opening: { data: undefined as unknown, isPending: false, isError: false, refetch: vi.fn() },
+  org: { activeOrganizationId: "org-1" as string | null, isReady: true },
   catchup: ok(undefined) as Q,
   bankNewest: ok({ transactions: [], total: 0 }) as Q,
   bankOldest: ok({ transactions: [], total: 0 }) as Q,
@@ -54,10 +58,20 @@ const state = {
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { id: "u1" } }) }));
 vi.mock("@/hooks/useActiveOrganization", () => ({
-  useActiveOrganization: () => ({ activeOrganizationId: "org-1", isReady: true }),
+  useActiveOrganization: () => state.org,
 }));
-vi.mock("@/hooks/useClients", () => ({ useClients: () => state.clients }));
-vi.mock("@/hooks/useGrootboekrekeningen", () => ({ useGrootboekrekeningen: () => state.accounts }));
+vi.mock("@/hooks/useClients", () => ({
+  useClients: (organizationId: string | undefined, enabled: boolean | undefined) => {
+    calls.clients.push({ organizationId, enabled });
+    return state.clients;
+  },
+}));
+vi.mock("@/hooks/useGrootboekrekeningen", () => ({
+  useGrootboekrekeningen: (opts: Record<string, unknown>) => {
+    calls.accounts.push(opts);
+    return state.accounts;
+  },
+}));
 vi.mock("@/hooks/useLedgerCompleteness", () => ({
   useLedgerCompleteness: (clientId: string | undefined) => {
     calls.completeness.push(clientId);
@@ -85,6 +99,7 @@ vi.mock("@/hooks/useBankTransactions", () => ({
 }));
 
 import KlantGereedheid, { READINESS_NO_VERDICT_NOTE } from "@/pages/KlantGereedheid";
+import { ClientProvider, useClientContext } from "@/hooks/useClientContext";
 import { NAV_SECTIONS, pageTitleForPath } from "@/components/layout/nav";
 import { computeClientReadiness } from "@/lib/client-readiness";
 import {
@@ -150,13 +165,34 @@ const onbekend = (id: string) =>
 const geboekt = (id: string) => evaluatePurchaseInvoice({ invoice: factuur(id), config: CONFIG, lines: REGELS, postingGroupId: `pg-${id}` });
 const catchupData = (records: CatchupRecord[]) => ({ records, purchase: summarize(records), sales: summarize([]) });
 
-function renderPage(path = "/klanten/c-1/gereedheid") {
+/** Een bronscherm-dubbel: toont welke administratie het uit ClientContext zou lezen. */
+function Bronscherm() {
+  const { selectedClientId } = useClientContext();
+  return <div data-testid="bron-administratie">{selectedClientId}</div>;
+}
+
+/** Zet vooraf een ANDERE administratie in de context, zoals na eerder werk in de app. */
+function EerdereSelectie({ id }: { id: string }) {
+  const { setSelectedClientId } = useClientContext();
+  useEffect(() => setSelectedClientId(id), [id, setSelectedClientId]);
+  return null;
+}
+
+const BRONROUTES = ["/grootboek", "/klanten", "/grootboek/beginbalans", "/grootboek/saldi", "/review", "/grootboek/historisch", "/bank"];
+
+function renderPage(path = "/klanten/c-1/gereedheid", eerder?: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Routes>
-        <Route path="/klanten/:clientId/gereedheid" element={<KlantGereedheid />} />
-      </Routes>
-    </MemoryRouter>,
+    <ClientProvider>
+      {eerder && <EerdereSelectie id={eerder} />}
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path="/klanten/:clientId/gereedheid" element={<KlantGereedheid />} />
+          {BRONROUTES.map((r) => (
+            <Route key={r} path={r} element={<Bronscherm />} />
+          ))}
+        </Routes>
+      </MemoryRouter>
+    </ClientProvider>,
   );
 }
 
@@ -168,10 +204,13 @@ beforeEach(() => {
   calls.opening.length = 0;
   calls.completeness.length = 0;
   calls.bank.length = 0;
+  calls.clients.length = 0;
+  calls.accounts.length = 0;
+  state.org = { activeOrganizationId: "org-1", isReady: true };
   state.clients = ok([CLIENT, { ...CLIENT, id: "c-2", name: "Andere klant" }]);
   state.accounts = ok(ACCOUNTS);
   state.completeness = ok(COMPLETENESS);
-  state.opening = { data: OPENING_NOT_SET, isPending: false, isError: false };
+  state.opening = { data: OPENING_NOT_SET, isPending: false, isError: false, refetch: vi.fn() };
   state.catchup = ok(catchupData([klaar("a"), geblokkeerd("b"), geboekt("c")]));
   state.bankNewest = ok({ transactions: [{ transaction_date: `${YEAR}-09-25` }], total: 214 });
   state.bankOldest = ok({ transactions: [{ transaction_date: `${YEAR}-01-02` }], total: 214 });
@@ -290,7 +329,7 @@ describe("Gereedheid — een mislukte bron wordt nooit In orde", () => {
   });
 
   it("12. beginbalans: leesfout of 'onbekend' uit het model → Niet te bepalen", () => {
-    state.opening = { data: unknownOpeningBalanceCompleteness(YEAR), isPending: false, isError: true };
+    state.opening = { data: unknownOpeningBalanceCompleteness(YEAR), isPending: false, isError: true, refetch: vi.fn() };
     renderPage();
     expect(rij("beginbalans")).toHaveAttribute("data-status", "niet_te_bepalen");
     expect(beginbalansRow({ kind: "ok", value: unknownOpeningBalanceCompleteness(YEAR) }).status).toBe("niet_te_bepalen");
@@ -308,7 +347,7 @@ describe("Gereedheid — een mislukte bron wordt nooit In orde", () => {
     state.completeness = laden();
     state.catchup = laden();
     state.bankNewest = laden();
-    state.opening = { data: undefined, isPending: true, isError: false };
+    state.opening = { data: undefined, isPending: true, isError: false, refetch: vi.fn() };
     renderPage();
     for (const key of ["rekeningschema", "instellingen", "beginbalans", "volledigheid", "historisch", "bank"]) {
       expect(rij(key)).toHaveAttribute("data-status", "laden");
@@ -428,6 +467,7 @@ describe("Gereedheid — alleen lezen", () => {
       .sort();
     expect(hooks).toEqual([
       "useActiveOrganization",
+      "useClientContext",
       "useClients",
       "useGrootboekrekeningen",
       "useLedgerCatchup",
@@ -435,6 +475,9 @@ describe("Gereedheid — alleen lezen", () => {
       "useOpeningBalanceCompleteness",
       "usePaginatedBankTransactions",
     ]);
+    // ClientContext is geen datahook: alleen de setter, alleen voor de bronlinks.
+    expect(strip("src/pages/KlantGereedheid.tsx")).toMatch(/const \{ setSelectedClientId \} = useClientContext\(\);/);
+    expect(strip("src/pages/KlantGereedheid.tsx").match(/setSelectedClientId\(/g)).toHaveLength(1);
   });
 
   it("23. op de pagina staat geen enkele actieknop buiten opnieuw proberen", () => {
@@ -443,5 +486,69 @@ describe("Gereedheid — alleen lezen", () => {
     // Alleen de jaarchips; terug en de bronlinks zijn links.
     expect(knoppen.every((t) => /^\d{4}$/.test(t ?? ""))).toBe(true);
     expect(supabaseCalls).toEqual([]);
+  });
+});
+
+describe("Gereedheid — Codex-review PR #237", () => {
+  it.each([
+    ["rekeningschema", "Naar rekeningschema", "/grootboek"],
+    ["beginbalans", "Naar beginbalans", "/grootboek/beginbalans"],
+    ["volledigheid", "Naar grootboeksaldi", "/grootboek/saldi"],
+    ["historisch", "Naar Review", "/review"],
+    ["historisch", "Naar historische boekingen", "/grootboek/historisch"],
+    ["bank", "Naar Bank", "/bank"],
+  ])("24. %s → '%s' opent %s met de administratie uit de route, niet de eerdere selectie", async (key, naam) => {
+    renderPage("/klanten/c-1/gereedheid", "c-2");
+    fireEvent.click(within(rij(key)).getByRole("link", { name: naam }));
+    expect(await screen.findByTestId("bron-administratie")).toHaveTextContent(/^c-1$/);
+  });
+
+  it("24b. de terugweg naar Administraties verandert de eerdere selectie niet", async () => {
+    renderPage("/klanten/c-1/gereedheid", "c-2");
+    fireEvent.click(screen.getByRole("link", { name: /Naar Administraties/ }));
+    expect(await screen.findByTestId("bron-administratie")).toHaveTextContent(/^c-2$/);
+  });
+
+  it("25. beginbalans: leesfout toont Opnieuw proberen, en die roept uitsluitend refetch van die bron aan", () => {
+    state.opening = { data: unknownOpeningBalanceCompleteness(YEAR), isPending: false, isError: true, refetch: vi.fn() };
+    renderPage();
+    expect(rij("beginbalans")).toHaveAttribute("data-status", "niet_te_bepalen");
+    fireEvent.click(within(rij("beginbalans")).getByRole("button", { name: "Opnieuw proberen" }));
+    expect(state.opening.refetch).toHaveBeenCalledTimes(1);
+    for (const q of [state.accounts, state.completeness, state.catchup, state.bankNewest, state.bankOldest]) {
+      expect(q.refetch).not.toHaveBeenCalled();
+    }
+    expect(supabaseCalls).toEqual([]);
+  });
+
+  it("25b. de hook geeft refetch door zonder iets anders te doen dan opnieuw lezen", () => {
+    const hook = readFileSync(resolve(process.cwd(), "src/hooks/useLedgerCompleteness.ts"), "utf8");
+    expect(hook).toMatch(/refetch: overview\.refetch/);
+  });
+
+  it("26. ingelogd zonder organisatie: geen laadlus, een nette melding en geen administratiegebonden lezing", () => {
+    state.org = { activeOrganizationId: null, isReady: true };
+    // Een uitgeschakelde query blijft in TanStack v5 'pending' zonder data.
+    state.clients = laden();
+    renderPage();
+    expect(screen.queryByText("Administratie laden…")).toBeNull();
+    expect(screen.getByTestId("readiness-client-missing")).toHaveTextContent(
+      "Er is geen actieve organisatie; de gereedheid is niet te bepalen.",
+    );
+    expect(screen.queryByTestId("readiness-row-rekeningschema")).toBeNull();
+    expect(calls.clients.every((c) => c.enabled === false)).toBe(true);
+    expect(calls.accounts.every((c) => c.enabled === false)).toBe(true);
+    expect(calls.catchup.every((c) => c.clientId === undefined)).toBe(true);
+    expect(calls.opening.every((c) => c.clientId === undefined)).toBe(true);
+    expect(calls.completeness.every((c) => c === undefined)).toBe(true);
+    expect(calls.bank.every((c) => c.clientId === undefined && c.enabled === false)).toBe(true);
+    expect(supabaseCalls).toEqual([]);
+  });
+
+  it("26b. zolang de organisatie nog niet bekend is, wordt er wél geladen", () => {
+    state.org = { activeOrganizationId: null, isReady: false };
+    state.clients = laden();
+    renderPage();
+    expect(screen.getByText("Administratie laden…")).toBeInTheDocument();
   });
 });
