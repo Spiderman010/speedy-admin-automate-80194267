@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,7 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Plus, Building2, Trash2, Pencil, X, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Building2, Trash2, Pencil, X, ArrowUp, ArrowDown, ClipboardCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useClients, useAddClient, useUpdateClient, useDeleteClient } from "@/hooks/useClients";
 import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
@@ -462,6 +463,11 @@ export default function Klanten() {
                             >
                               <Pencil className="mr-1 h-4 w-4" />Bewerken
                             </Button>
+                            <Button variant="outline" size="sm" className="h-9" asChild>
+                              <Link to={`/klanten/${client.id}/gereedheid`} aria-label={`Gereedheid van ${client.name}`}>
+                                <ClipboardCheck className="mr-1 h-4 w-4" />Gereedheid
+                              </Link>
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -542,6 +548,15 @@ export default function Klanten() {
                                 aria-label={`Bewerk ${client.name}`}
                               >
                                 <Pencil className="mr-1 h-4 w-4" />Bewerken
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-8 px-2 text-muted-foreground hover:text-foreground" asChild>
+                                <Link
+                                  to={`/klanten/${client.id}/gereedheid`}
+                                  title="Administratie-gereedheid bekijken"
+                                  aria-label={`Gereedheid van ${client.name}`}
+                                >
+                                  <ClipboardCheck className="mr-1 h-4 w-4" />Gereedheid
+                                </Link>
                               </Button>
                               <Button
                                 variant="ghost"
@@ -867,6 +882,13 @@ export default function Klanten() {
             </div>
           </div>
           <DialogFooter>
+            {editingId && (
+              <Button variant="link" className="mr-auto h-9 px-0" asChild>
+                <Link to={`/klanten/${editingId}/gereedheid`}>
+                  <ClipboardCheck className="mr-1 h-4 w-4" />Gereedheid bekijken
+                </Link>
+              </Button>
+            )}
             <Button variant="outline" onClick={() => { setShowDialog(false); resetForm(); }}>Annuleren</Button>
             <Button onClick={handleSave} disabled={addClient.isPending || updateClient.isPending}>
               {(addClient.isPending || updateClient.isPending) ? "Bezig..." : editingId ? "Opslaan" : "Toevoegen"}
