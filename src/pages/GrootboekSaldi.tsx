@@ -204,10 +204,11 @@ export default function GrootboekSaldi() {
         )}
       </PageHeader>
 
-      <div className="mb-3 space-y-2.5 rounded-lg border bg-card px-3 py-2.5 shadow-card">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      {/* Eén compacte toolbarband: administratie en periode, daaronder het datumbereik. */}
+      <div className="mb-3 divide-y rounded-md border bg-card">
+        <div className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4">
           <Select value={selectedClientId} onValueChange={(v) => setSelectedClientId(v)}>
-            <SelectTrigger className="h-9 w-full sm:w-64" aria-label="Administratie">
+            <SelectTrigger className="h-8 w-full text-[13px] sm:w-60" aria-label="Administratie">
               <span className="truncate">{selectedClient ? selectedClient.name : "Alle administraties"}</span>
             </SelectTrigger>
             <SelectContent>
@@ -218,7 +219,7 @@ export default function GrootboekSaldi() {
             </SelectContent>
           </Select>
           <div className="flex flex-wrap items-center gap-1.5" data-testid="period-filters">
-            <span className="w-14 shrink-0 text-xs font-medium text-muted-foreground">Periode</span>
+            <span className="mr-0.5 shrink-0 text-xs font-medium text-muted-foreground">Periode</span>
             {years.map((y) => (
               <FilterChip
                 key={y}
@@ -229,29 +230,36 @@ export default function GrootboekSaldi() {
             ))}
             <FilterChip label="Alle jaren" active={selection.kind === "all"} onClick={() => setSelection({ kind: "all" })} />
           </div>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="grid gap-1">
-            <Label htmlFor="saldi-from" className="text-xs">Van</Label>
-            <Input id="saldi-from" type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} className="h-8 w-40" />
-          </div>
-          <div className="grid gap-1">
-            <Label htmlFor="saldi-to" className="text-xs">Tot en met</Label>
-            <Input id="saldi-to" type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} className="h-8 w-40" />
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={applyRange} disabled={!rangeFrom || !rangeTo || rangeFrom > rangeTo}>
-            Periode toepassen
-          </Button>
-          <span className="text-xs text-muted-foreground" data-testid="period-label">
+          <span className="text-xs text-muted-foreground sm:ml-auto" data-testid="period-label">
             Geselecteerd: {periodLabel(selection)}
           </span>
+        </div>
+        <div className="grid grid-cols-2 gap-2 px-3 py-2 sm:flex sm:flex-wrap sm:items-center sm:gap-x-3">
+          <div className="grid min-w-0 gap-1 sm:flex sm:items-center sm:gap-1.5">
+            <Label htmlFor="saldi-from" className="text-xs font-medium text-muted-foreground">Van</Label>
+            <Input id="saldi-from" type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} className="h-8 min-w-0 text-[13px] sm:w-40" />
+          </div>
+          <div className="grid min-w-0 gap-1 sm:flex sm:items-center sm:gap-1.5">
+            <Label htmlFor="saldi-to" className="text-xs font-medium text-muted-foreground">Tot en met</Label>
+            <Input id="saldi-to" type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} className="h-8 min-w-0 text-[13px] sm:w-40" />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="col-span-2 h-8"
+            onClick={applyRange}
+            disabled={!rangeFrom || !rangeTo || rangeFrom > rangeTo}
+          >
+            Periode toepassen
+          </Button>
         </div>
       </div>
 
       {!hasSpecificClient ? (
         <NoClientBanner message="Kies eerst een specifieke administratie om het grootboek te bekijken." />
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3">
           <LedgerCompletenessNotice
             completeness={completenessQuery.data}
             isLoading={completenessQuery.isPending}
@@ -260,7 +268,7 @@ export default function GrootboekSaldi() {
             openingBalanceLoading={openingBalanceCompleteness.isPending}
             openingBalanceError={openingBalanceCompleteness.isError}
           />
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden rounded-md shadow-none">
             <CardContent className="p-3 sm:p-4">{renderBody()}</CardContent>
           </Card>
         </div>

@@ -31,19 +31,19 @@ export function GrootboekSaldiTable({
     // Horizontaal scrollen binnen de container op smalle schermen, nooit de
     // hele pagina.
     <div className="-mx-3 -mb-3 -mt-3 overflow-x-auto sm:-mx-4 sm:-mb-4 sm:-mt-4">
-      <Table className="min-w-[840px] text-[13px] [&_th]:h-9 [&_td]:py-1.5">
+      <Table className="min-w-[840px] text-[13px] leading-5 [&_td]:py-[7px] [&_th]:h-8">
         <caption className="sr-only">
           Saldilijst per grootboekrekening: beginsaldo, debet, credit en eindsaldo (debet-positief)
         </caption>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead scope="col" className="w-24">Nummer</TableHead>
+        <TableHeader className="bg-muted/60">
+          <TableRow className="border-border/80 hover:bg-transparent">
+            <TableHead scope="col" className="w-20">Nummer</TableHead>
             <TableHead scope="col">Omschrijving</TableHead>
             <TableHead scope="col" className="w-28">Categorie</TableHead>
-            <TableHead scope="col" className="w-32 text-right">Beginsaldo</TableHead>
-            <TableHead scope="col" className="w-32 text-right">Debet</TableHead>
-            <TableHead scope="col" className="w-32 text-right">Credit</TableHead>
-            <TableHead scope="col" className="w-32 text-right">Eindsaldo</TableHead>
+            <TableHead scope="col" className="w-36 text-right">Beginsaldo</TableHead>
+            <TableHead scope="col" className="w-36 text-right">Debet</TableHead>
+            <TableHead scope="col" className="w-36 text-right">Credit</TableHead>
+            <TableHead scope="col" className="w-36 text-right">Eindsaldo</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -51,10 +51,10 @@ export function GrootboekSaldiTable({
             const a = r.account;
             const label = formatLedgerAccountLabel(a);
             return (
-              <TableRow key={a.id} data-testid="saldi-row" data-account-id={a.id}>
-                <TableCell className="font-mono text-xs tabular-nums">{a.nummer ?? "—"}</TableCell>
-                <TableCell className="max-w-[320px]">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <TableRow key={a.id} data-testid="saldi-row" data-account-id={a.id} className="border-border/60">
+                <TableCell className="font-mono text-xs tabular-nums text-muted-foreground">{a.nummer ?? "—"}</TableCell>
+                <TableCell className="max-w-[360px]">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <Link
                       to={accountPath(a.id)}
                       className="truncate font-medium underline-offset-4 hover:underline focus-visible:underline"
@@ -63,15 +63,18 @@ export function GrootboekSaldiTable({
                       {a.omschrijving}
                     </Link>
                     {!a.resolved && (
-                      <Badge variant="outline" className="font-normal">Onbekende rekening</Badge>
+                      <Badge variant="outline" className="h-5 px-1.5 text-[11px] font-normal">Onbekende rekening</Badge>
                     )}
                     {a.resolved && a.actief === false && (
-                      <Badge variant="outline" className="font-normal">Inactief</Badge>
+                      <Badge variant="outline" className="h-5 px-1.5 text-[11px] font-normal">Inactief</Badge>
                     )}
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={a.categorie === "onbekend" ? "outline" : "secondary"} className="font-normal">
+                  <Badge
+                    variant={a.categorie === "onbekend" ? "outline" : "secondary"}
+                    className="h-5 rounded px-1.5 text-[11px] font-normal"
+                  >
                     {CATEGORY_LABELS[a.categorie]}
                   </Badge>
                 </TableCell>
@@ -84,8 +87,13 @@ export function GrootboekSaldiTable({
           })}
         </TableBody>
         <tfoot>
-          <TableRow className="border-t-2 bg-muted/50 font-medium hover:bg-transparent" data-testid="saldi-totals">
-            <TableCell colSpan={3}>Totaal ({rollups.length} rekening{rollups.length === 1 ? "" : "en"})</TableCell>
+          <TableRow
+            className="border-b-0 border-t border-border bg-muted/60 font-semibold hover:bg-muted/60 [&_td]:py-2"
+            data-testid="saldi-totals"
+          >
+            <TableCell colSpan={3} className="text-muted-foreground">
+              Totaal ({rollups.length} rekening{rollups.length === 1 ? "" : "en"})
+            </TableCell>
             <Money cents={totals.openingCents} />
             <Money cents={totals.periodDebitCents} />
             <Money cents={totals.periodCreditCents} />
