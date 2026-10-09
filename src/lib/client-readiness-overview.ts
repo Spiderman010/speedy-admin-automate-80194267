@@ -115,6 +115,16 @@ export function rekeningschemaRow(
       details: [],
     };
   }
+  if (actief === 0) {
+    // Inactieve rekeningen zijn niet kiesbaar (useActiveGrootboekrekeningen) en
+    // het memoriaal en de beginbalans weigeren ze; dit is dus geen "in orde".
+    return {
+      key: "rekeningschema", title, source, links: REKENINGSCHEMA_LINKS, retryable: false,
+      status: "geblokkeerd",
+      summary: `${plural(scoped.length, "grootboekrekening", "grootboekrekeningen")} voor deze administratie, maar geen enkele is actief; er kan niets op worden geboekt.`,
+      details: [],
+    };
+  }
   return {
     key: "rekeningschema", title, source, links: REKENINGSCHEMA_LINKS, retryable: false,
     status: "in_orde",

@@ -552,3 +552,15 @@ describe("Gereedheid — Codex-review PR #237", () => {
     expect(screen.getByText("Administratie laden…")).toBeInTheDocument();
   });
 });
+
+describe("Gereedheid — Codex-review PR #237, tweede ronde", () => {
+  it("27. rekeningen binnen de administratie, maar geen enkele actief → Geblokkeerd, nooit In orde", () => {
+    state.accounts = ok(ACCOUNTS.map((a) => ({ ...a, actief: false })));
+    renderPage();
+    expect(rij("rekeningschema")).toHaveAttribute("data-status", "geblokkeerd");
+    expect(rij("rekeningschema")).toHaveTextContent("4 grootboekrekeningen voor deze administratie, maar geen enkele is actief");
+    expect(rekeningschemaRow({ kind: "ok", value: [{ client_id: null, actief: false }] }, "c-1").status).toBe("geblokkeerd");
+    // Eén actieve rekening is genoeg om aanwezig te zijn.
+    expect(rekeningschemaRow({ kind: "ok", value: [{ client_id: null, actief: false }, { client_id: null, actief: true }] }, "c-1").status).toBe("in_orde");
+  });
+});
