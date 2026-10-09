@@ -130,7 +130,9 @@ export default function BankAfstemming() {
     const err = bankNewest.isError ? bankNewest.error : bankOldest.isError ? bankOldest.error : null;
     const read: SourceRead<BankImportFacts> = err
       ? { kind: "error", message: errorMessage(err) }
-      : !client || !bankNewest.data || !bankOldest.data
+      : // keepPreviousData: na een wissel van administratie is dit nog de data
+        // van de vorige administratie — dat telt als laden, nooit als feit.
+        !client || !bankNewest.data || !bankOldest.data || bankNewest.isPlaceholderData || bankOldest.isPlaceholderData
         ? { kind: "loading" }
         : {
             kind: "ok",

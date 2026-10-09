@@ -2020,12 +2020,12 @@ export default function Bank() {
             <Link to="/bank/inhaalslag">Inhaalslag grootboek</Link>
           </Button>
           <Button size="sm" variant="outline" asChild>
-            {/* Alleen lezen. Neemt de gekozen administratie mee via ClientContext. */}
+            {/* Alleen lezen. Neemt precies één gekozen administratie mee via
+                ClientContext; bij geen of meerdere administraties wordt de
+                context gewist, zodat het overzicht niet een eerdere toont. */}
             <Link
               to="/bank/afstemming"
-              onClick={() => {
-                if (singleClientId) setSelectedClientId(singleClientId);
-              }}
+              onClick={() => setSelectedClientId(singleClientId ?? "all")}
             >
               Bankafstemming
             </Link>

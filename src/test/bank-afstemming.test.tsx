@@ -318,7 +318,8 @@ describe("Bankafstemming — route, ingang en alleen lezen", () => {
     expect(app).toContain('<Route path="/bank/afstemming" element={<BankAfstemming />} />');
     assertNavKeepsSubpagesNested(["/bank/afstemming"]);
     const bank = strip("src/pages/Bank.tsx");
-    expect(bank).toMatch(/to="\/bank\/afstemming"[\s\S]{0,200}if \(singleClientId\) setSelectedClientId\(singleClientId\);[\s\S]{0,80}Bankafstemming/);
+    // Precies één administratie gaat mee; anders wordt de context gewist ("all").
+    expect(bank).toMatch(/to="\/bank\/afstemming"[\s\S]{0,120}onClick=\{\(\) => setSelectedClientId\(singleClientId \?\? "all"\)\}[\s\S]{0,40}Bankafstemming/);
   });
 
   it("16. geen schrijfhook, mutatie, RPC of databaseclient in pagina en afleidingslaag", () => {
@@ -347,5 +348,22 @@ describe("Bankafstemming — route, ingang en alleen lezen", () => {
     expect(screen.queryAllByRole("button")).toEqual([]);
     expect(screen.getByRole("combobox", { name: "Administratie" })).toBeInTheDocument();
     expect(supabaseCalls).toEqual([]);
+  });
+});
+
+describe("Bankafstemming — Codex-review PR #239", () => {
+  it("18. na een wissel van administratie telt achtergebleven bankdata (placeholder) als laden, niet als feit", () => {
+    state.bankNewest = { ...ok({ transactions: [{ transaction_date: "2026-09-25" }], total: 214 }), isPlaceholderData: true } as Q;
+    renderPage();
+    expect(sectie("import")).toHaveAttribute("data-status", "laden");
+    expect(within(sectie("import")).queryByTestId("bank-overview-count")).toBeNull();
+    expect(sectie("import")).not.toHaveTextContent("214");
+  });
+
+  it("19. zonder precies één administratie in Bank opent het overzicht zonder eerdere administratie", () => {
+    // Het effect van de Bank-link bij een multi-selectie: de context wordt "all".
+    renderPage("all");
+    expect(screen.getByText("Kies eerst een specifieke administratie om het bankoverzicht te bekijken.")).toBeInTheDocument();
+    expect(calls.bank.every((c) => c.clientId === undefined)).toBe(true);
   });
 });
