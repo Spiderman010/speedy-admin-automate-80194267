@@ -36,6 +36,7 @@ import NotFound from "./pages/NotFound";
 import OAuthConsent from "./pages/OAuthConsent";
 import AIChat from "./pages/AIChat";
 import Review from "./pages/Review";
+import KlantGereedheid from "./pages/KlantGereedheid";
 
 function safeNextPath(raw: string | null): string {
   if (!raw) return "/";
@@ -83,6 +84,8 @@ const App = () => (
               {/* Visueel prototype met voorbeelddata: geen query, geen schrijfpad. */}
               <Route path="/review" element={<Review />} />
               <Route path="/klanten" element={<Klanten />} />
+              {/* Alleen lezen: bewijsregels uit bestaande leesmodellen, geen nav-item. */}
+              <Route path="/klanten/:clientId/gereedheid" element={<KlantGereedheid />} />
               <Route path="/leveranciers" element={<Leveranciers />} />
               <Route path="/facturen" element={<Facturen />} />
               <Route path="/facturen/inkoop/:invoiceId" element={<PurchaseInvoiceWorkspace />} />

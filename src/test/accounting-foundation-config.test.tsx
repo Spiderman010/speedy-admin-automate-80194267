@@ -65,6 +65,7 @@ vi.mock("@/components/GrootboekCombobox", () => ({
 }));
 
 import Klanten from "@/pages/Klanten";
+import { MemoryRouter } from "react-router-dom";
 
 const ACCOUNTS = [
   { id: "gb-1300", nummer: 1300, omschrijving: "Debiteuren", actief: true },
@@ -109,7 +110,12 @@ const bankRekeningField = () =>
   ) as HTMLInputElement;
 
 async function openEditDialog() {
-  render(<Klanten />);
+  // Klanten linkt sinds de gereedheidspagina naar een route; daarvoor is een router nodig.
+  render(
+    <MemoryRouter>
+      <Klanten />
+    </MemoryRouter>,
+  );
   fireEvent.click(screen.getByRole("button", { name: /bewerk klant een/i }));
   await screen.findByLabelText("bv. 1300 - Debiteuren");
 }
