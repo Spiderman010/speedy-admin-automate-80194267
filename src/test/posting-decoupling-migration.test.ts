@@ -62,6 +62,16 @@ const SCHRIJVERS = [
   "post_bank_transaction",
 ] as const;
 
+/**
+ * Herdefinieert deze (commentaarloze) migratietekst functie `naam`? Alleen een
+ * daadwerkelijke definitie telt — `CREATE FUNCTION` of `CREATE OR REPLACE
+ * FUNCTION`. Een GRANT, REVOKE, ALTER FUNCTION, COMMENT ON FUNCTION of een
+ * gewone aanroep laat het lichaam ongemoeid en blokkeert dus niets.
+ */
+function herdefinieert(tekst: string, naam: string): boolean {
+  return new RegExp(`\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:"?public"?\\.)?"?${naam}"?\\s*\\(`, "i").test(tekst);
+}
+
 const GUARD = /IF v_client\.afgesloten_boekjaar IS NOT NULL AND [\w.]+ <= v_client\.afgesloten_boekjaar THEN\s*RAISE EXCEPTION 'Boekjaar % is afgesloten voor deze administratie', [\w.]+\s*USING ERRCODE = '22023'; END IF;/;
 
 const git = (...args: string[]) =>
@@ -84,9 +94,34 @@ describe("De migratie is afgeleid uit PR D", () => {
     for (const later of alle.slice(positie + 1)) {
       const tekst = code(lees(`${MIGRATION_DIR}/${later}`));
       for (const naam of namen) {
-        expect(tekst, `${later} herdefinieert ${naam}`).not.toMatch(new RegExp(`FUNCTION\\s+(public\\.)?${naam}\\s*\\(`));
+        expect(herdefinieert(tekst, naam), `${later} herdefinieert ${naam}`).toBe(false);
       }
     }
+  });
+
+  it("1b. alleen een latere functieDEFINITIE blokkeert; rechten, eigenaar, commentaar en aanroepen niet", () => {
+    const sig = "public.post_purchase_invoice(_invoice_id uuid)";
+    // Mag: raakt het lichaam niet.
+    for (const later of [
+      `REVOKE ALL ON FUNCTION ${sig} FROM PUBLIC, anon, authenticated, service_role;`,
+      `GRANT EXECUTE ON FUNCTION ${sig} TO authenticated;`,
+      `ALTER FUNCTION ${sig} OWNER TO postgres;`,
+      `COMMENT ON FUNCTION ${sig} IS 'uitleg';`,
+      `DO $$ BEGIN PERFORM public.post_purchase_invoice(gen_random_uuid()); END $$;`,
+    ]) {
+      expect(herdefinieert(code(later), "post_purchase_invoice"), later).toBe(false);
+    }
+    // Mag niet: een nieuwe definitie, in elke schrijfwijze.
+    for (const later of [
+      `CREATE OR REPLACE FUNCTION ${sig} RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;`,
+      `CREATE FUNCTION ${sig} RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;`,
+      `create or replace function post_purchase_invoice(_invoice_id uuid) returns uuid language sql as $$ select null::uuid $$;`,
+      `CREATE OR REPLACE FUNCTION "public"."post_purchase_invoice"(_invoice_id uuid) RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;`,
+    ]) {
+      expect(herdefinieert(code(later), "post_purchase_invoice"), later).toBe(true);
+    }
+    // Een andere functie met een langere naam is geen herdefinitie van deze.
+    expect(herdefinieert("CREATE OR REPLACE FUNCTION public.post_purchase_invoice_v2(x uuid)", "post_purchase_invoice")).toBe(false);
   });
 
   it("2. elke gedateerde schrijver is PR D met uitsluitend het watermerkblok weg", () => {
