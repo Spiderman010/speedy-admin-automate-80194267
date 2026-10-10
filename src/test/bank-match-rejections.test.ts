@@ -44,9 +44,19 @@ function changedFiles(): string[] | null {
 }
 
 describe("migratie 20261010120000 — vorm", () => {
-  it("1. is de nieuwste migratie en sorteert na de vorige", () => {
+  it("1. bestaat en sorteert na de migraties waarop hij leunt", () => {
+    // Bewust géén "is de nieuwste migratie": dat zou elke latere migratie laten omvallen.
     const files = readdirSync(resolve(process.cwd(), "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    expect(files.at(-1)).toBe("20261010120000_add_bank_match_rejections.sql");
+    const positie = files.indexOf("20261010120000_add_bank_match_rejections.sql");
+    expect(positie).toBeGreaterThanOrEqual(0);
+    for (const voorganger of [
+      "20260411182021_ce126469-1948-4a6f-947d-ad6dd95764cb.sql", // bank_transactions, facturen
+      "20260515120000_add-bank-transaction-allocations.sql", // afletteringen
+      "20260613001452_ac57e447-1ab9-4125-9cc8-070054d55750.sql", // has_min_role en de rolpolicies
+    ]) {
+      expect(files.indexOf(voorganger), voorganger).toBeGreaterThanOrEqual(0);
+      expect(files.indexOf(voorganger), voorganger).toBeLessThan(positie);
+    }
   });
 
   it("2. één tabel met de identiteit (transactie, soort, factuur), afgeleide organisatie/administratie en afwijzer", () => {

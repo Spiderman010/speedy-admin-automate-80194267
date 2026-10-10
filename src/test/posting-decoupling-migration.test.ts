@@ -70,11 +70,23 @@ const changed = git("diff", "--name-only", "origin/main...HEAD");
 const introducedHere = git("diff", "--name-only", "--diff-filter=A", "origin/main...HEAD").includes(MIGRATION);
 
 describe("De migratie is afgeleid uit PR D", () => {
-  it("1. bestaat, ligt na elke andere migratie en definieert precies acht functies", () => {
+  it("1. bestaat, definieert precies acht functies, en geen latere migratie herdefinieert er één", () => {
     const alle = readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((f) => f.endsWith(".sql")).sort();
-    expect(alle[alle.length - 1]).toBe("20261002120000_decouple_year_watermark_from_posting.sql");
+    // Voorheen: "ligt na elke andere migratie" — een uitspraak over de stand
+    // van de repository op het moment van PR H, geen invariant: elke latere
+    // migratie (ook een die deze functies niet raakt) liet hem omvallen. Wat
+    // hij beschermde: de lichamen hieronder zijn de LAATSTE definitie van de
+    // acht functies. Dat wordt nu rechtstreeks bewaakt.
+    const positie = alle.indexOf("20261002120000_decouple_year_watermark_from_posting.sql");
+    expect(positie).toBeGreaterThanOrEqual(0);
     const namen = [...code(sql).matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g)].map((m) => m[1]);
     expect(namen).toEqual([...SCHRIJVERS, "bank_bulk_posting_candidates"]);
+    for (const later of alle.slice(positie + 1)) {
+      const tekst = code(lees(`${MIGRATION_DIR}/${later}`));
+      for (const naam of namen) {
+        expect(tekst, `${later} herdefinieert ${naam}`).not.toMatch(new RegExp(`FUNCTION\\s+(public\\.)?${naam}\\s*\\(`));
+      }
+    }
   });
 
   it("2. elke gedateerde schrijver is PR D met uitsluitend het watermerkblok weg", () => {
