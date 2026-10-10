@@ -1305,6 +1305,23 @@ Productie-audit vooraf: 3 legacy-regels, geen recente activiteit, geen determini
 - **Ongewijzigd:** rijen, kolommen, FK's (incl. `ON DELETE CASCADE`/`SET NULL` — die draaien als tabeleigenaar en blijven werken), indexen, triggers, functies, eigenaar, RLS aan, tenant-isolatie, en elk ander tabelrecht (ook `ledger_postings`).
 - **Faalt gesloten** als de tabel ontbreekt, RLS uit staat of de SELECT-policy ontbreekt.
 
+### Bank-matchafwijzingen — PR 1 (schema + bewijs, geen UI)
+
+```
+supabase/migrations/20261010120000_add_bank_match_rejections.sql
+supabase/tests/bank-match-rejections/run-proof.sh     52 bewijzen tegen een echte PostgreSQL
+src/lib/bank-match-rejections.ts                      puur: de onderdrukkingsregel, nog zonder aanroeper
+src/test/bank-match-rejections.test.ts                contract over migratie, regel en branchgrenzen
+```
+
+**Status: ⏳ Nog niet toegepast.** Toepassen via de Lovable Cloud SQL editor van `alxlbdhpbwlehbdbfejw`, ná review; daarna `types.ts` regenereren. Pas dan volgt PR 2 (leeshook + "Afwijzen" legt de afwijzing vast + de matcher slaat afgewezen facturen over).
+
+- **Huidig model (vóór deze PR):** een suggestie staat op `bank_transactions` (`match_status = 'suggestie'`, `matched_invoice_id`, `match_confidence`) en wordt volledig client-side berekend (`rankCandidates()` in `BankMatchDialog`, de "Automatisch voorstellen"-scan in `Bank.tsx`). "Afwijzen" zet alleen die drie kolommen terug; nergens lag vast wélke factuur was afgewezen, dus de volgende scan stelde haar opnieuw voor. Er bestaat geen regel-id: de identiteit van een suggestie is (banktransactie, factuursoort, factuur).
+- **`public.bank_match_rejections`:** één rij per (banktransactie, `inkoop`|`verkoop`, factuur), UNIQUE — idempotent met `ON CONFLICT DO NOTHING`. `organization_id`/`client_id` worden door een `SECURITY DEFINER`-trigger uit de banktransactie afgeleid; een afwijkende meegestuurde waarde wordt geweigerd. De factuur moet bij dezelfde administratie horen; een factuur die al aan de transactie is gekoppeld (allocatie) kan niet worden afgewezen. Onbekend, zonder organisatie en vreemd geven één neutrale fout (`42501 | Banktransactie niet beschikbaar`).
+- **RLS:** lezen `read_only`, invoegen en weghalen `assistant` (met `rejected_by = auth.uid()`), géén UPDATE. `REVOKE ALL` → `GRANT SELECT, INSERT, DELETE` aan `authenticated`, `SELECT` aan `service_role`, niets aan `anon`.
+- **Raakt niets anders:** geen schrijfactie op `bank_transactions`, afletteringen, facturen, `ledger_postings` of markers; het bewijs vergelijkt digests van al die tabellen vóór en na. Verdwijnt een banktransactie, dan verdwijnt haar feedback mee (`ON DELETE CASCADE`).
+- **Bewijs:** `run-proof.sh` past de migratie twee keer toe en voert de rollback twee keer uit; een negatieve controle (gemuteerde migratie) laat de tenantbewijzen falen.
+
 ---
 
 ## Emergency rule
