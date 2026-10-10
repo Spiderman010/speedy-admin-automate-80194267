@@ -2019,6 +2019,17 @@ export default function Bank() {
                 bestemming: /bank/inhaalslag valt onder hetzelfde nav-item. */}
             <Link to="/bank/inhaalslag">Inhaalslag grootboek</Link>
           </Button>
+          <Button size="sm" variant="outline" asChild>
+            {/* Alleen lezen. Neemt precies één gekozen administratie mee via
+                ClientContext; bij geen of meerdere administraties wordt de
+                context gewist, zodat het overzicht niet een eerdere toont. */}
+            <Link
+              to="/bank/afstemming"
+              onClick={() => setSelectedClientId(singleClientId ?? "all")}
+            >
+              Bankafstemming
+            </Link>
+          </Button>
           <Button size="sm" onClick={() => setUploadOpen(true)}>
             <Upload className="mr-2 h-4 w-4" />Upload afschrift
           </Button>
