@@ -62,6 +62,16 @@ const SCHRIJVERS = [
   "post_bank_transaction",
 ] as const;
 
+/**
+ * Herdefinieert deze (commentaarloze) migratietekst functie `naam`? Alleen een
+ * daadwerkelijke definitie telt — `CREATE FUNCTION` of `CREATE OR REPLACE
+ * FUNCTION`. Een GRANT, REVOKE, ALTER FUNCTION, COMMENT ON FUNCTION of een
+ * gewone aanroep laat het lichaam ongemoeid en blokkeert dus niets.
+ */
+function herdefinieert(tekst: string, naam: string): boolean {
+  return new RegExp(`\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:"?public"?\\.)?"?${naam}"?\\s*\\(`, "i").test(tekst);
+}
+
 const GUARD = /IF v_client\.afgesloten_boekjaar IS NOT NULL AND [\w.]+ <= v_client\.afgesloten_boekjaar THEN\s*RAISE EXCEPTION 'Boekjaar % is afgesloten voor deze administratie', [\w.]+\s*USING ERRCODE = '22023'; END IF;/;
 
 const git = (...args: string[]) =>
@@ -70,11 +80,48 @@ const changed = git("diff", "--name-only", "origin/main...HEAD");
 const introducedHere = git("diff", "--name-only", "--diff-filter=A", "origin/main...HEAD").includes(MIGRATION);
 
 describe("De migratie is afgeleid uit PR D", () => {
-  it("1. bestaat, ligt na elke andere migratie en definieert precies acht functies", () => {
+  it("1. bestaat, definieert precies acht functies, en geen latere migratie herdefinieert er één", () => {
     const alle = readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((f) => f.endsWith(".sql")).sort();
-    expect(alle[alle.length - 1]).toBe("20261002120000_decouple_year_watermark_from_posting.sql");
+    // Voorheen: "ligt na elke andere migratie" — een uitspraak over de stand
+    // van de repository op het moment van PR H, geen invariant: elke latere
+    // migratie (ook een die deze functies niet raakt) liet hem omvallen. Wat
+    // hij beschermde: de lichamen hieronder zijn de LAATSTE definitie van de
+    // acht functies. Dat wordt nu rechtstreeks bewaakt.
+    const positie = alle.indexOf("20261002120000_decouple_year_watermark_from_posting.sql");
+    expect(positie).toBeGreaterThanOrEqual(0);
     const namen = [...code(sql).matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g)].map((m) => m[1]);
     expect(namen).toEqual([...SCHRIJVERS, "bank_bulk_posting_candidates"]);
+    for (const later of alle.slice(positie + 1)) {
+      const tekst = code(lees(`${MIGRATION_DIR}/${later}`));
+      for (const naam of namen) {
+        expect(herdefinieert(tekst, naam), `${later} herdefinieert ${naam}`).toBe(false);
+      }
+    }
+  });
+
+  it("1b. alleen een latere functieDEFINITIE blokkeert; rechten, eigenaar, commentaar en aanroepen niet", () => {
+    const sig = "public.post_purchase_invoice(_invoice_id uuid)";
+    // Mag: raakt het lichaam niet.
+    for (const later of [
+      `REVOKE ALL ON FUNCTION ${sig} FROM PUBLIC, anon, authenticated, service_role;`,
+      `GRANT EXECUTE ON FUNCTION ${sig} TO authenticated;`,
+      `ALTER FUNCTION ${sig} OWNER TO postgres;`,
+      `COMMENT ON FUNCTION ${sig} IS 'uitleg';`,
+      `DO $$ BEGIN PERFORM public.post_purchase_invoice(gen_random_uuid()); END $$;`,
+    ]) {
+      expect(herdefinieert(code(later), "post_purchase_invoice"), later).toBe(false);
+    }
+    // Mag niet: een nieuwe definitie, in elke schrijfwijze.
+    for (const later of [
+      `CREATE OR REPLACE FUNCTION ${sig} RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;`,
+      `CREATE FUNCTION ${sig} RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;`,
+      `create or replace function post_purchase_invoice(_invoice_id uuid) returns uuid language sql as $$ select null::uuid $$;`,
+      `CREATE OR REPLACE FUNCTION "public"."post_purchase_invoice"(_invoice_id uuid) RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;`,
+    ]) {
+      expect(herdefinieert(code(later), "post_purchase_invoice"), later).toBe(true);
+    }
+    // Een andere functie met een langere naam is geen herdefinitie van deze.
+    expect(herdefinieert("CREATE OR REPLACE FUNCTION public.post_purchase_invoice_v2(x uuid)", "post_purchase_invoice")).toBe(false);
   });
 
   it("2. elke gedateerde schrijver is PR D met uitsluitend het watermerkblok weg", () => {
