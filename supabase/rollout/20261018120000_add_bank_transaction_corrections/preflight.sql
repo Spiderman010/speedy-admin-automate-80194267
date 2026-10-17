@@ -230,9 +230,13 @@ SELECT
 -- ── PRE 8. De editorrol kan dit uitvoeren zoals de schrijvers (STOP-controle) ──
 -- De nieuwe functies krijgen de editorrol als eigenaar (SECURITY DEFINER: zij
 -- lezen en schrijven onder die rol); ALTER TABLE … ENABLE ALWAYS TRIGGER vereist
--- het eigenaarschap van de tabel. Verwacht: elke kolom `true`.
+-- het eigenaarschap van de tabel. Verwacht: elke booleaanse kolom `true`.
+-- `serverversie` is informatief: POST vergelijkt gedeparste definities
+-- (triggers, constraints, index), beoordeeld op PostgreSQL 16; noteer de versie
+-- zodat een eventuele afwijking in POST direct te duiden is.
 SELECT
   current_user AS editorrol,
+  current_setting('server_version') AS serverversie,
   current_user = (SELECT pg_get_userbyid(proowner) FROM pg_proc
                   WHERE oid = 'public.post_bank_transaction(uuid)'::regprocedure)            AS eigenaar_van_de_schrijvers,
   current_user = (SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'public.bank_transactions'::regclass)

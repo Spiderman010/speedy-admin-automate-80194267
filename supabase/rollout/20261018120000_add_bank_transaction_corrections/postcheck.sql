@@ -73,7 +73,11 @@ ORDER BY h.tgname;
 
 
 -- ── POST 3. De gebeurtenistabel: leeg, alleen-lezen, RLS, juiste vorm ───────
--- Verwacht: één rij, elke booleaanse kolom `true`.
+-- Verwacht: één rij, elke booleaanse kolom `true`. `constraint_definities_exact`
+-- en `request_once_exact` (en in POST 2 `definitie_exact`) vergelijken gedeparste
+-- tekst, beoordeeld op PostgreSQL 16. Is alléén zo'n kolom `false` en de rest
+-- `true`, dan kan het een opmaakverschil van een andere serverversie zijn (zie
+-- `serverversie` in PRE 8): ook dan STOP en melden, niet zelf verklaren.
 SELECT
   to_regclass('public.bank_transaction_posting_events') IS NOT NULL                     AS bestaat,
   (SELECT count(*) FROM public.bank_transaction_posting_events) = 0                     AS leeg,
