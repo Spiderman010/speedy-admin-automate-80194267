@@ -109,6 +109,61 @@ export type Database = {
           },
         ]
       }
+      bank_match_rejections: {
+        Row: {
+          bank_transaction_id: string
+          client_id: string
+          created_at: string
+          id: string
+          invoice_id: string
+          invoice_type: string
+          organization_id: string
+          rejected_by: string
+        }
+        Insert: {
+          bank_transaction_id: string
+          client_id: string
+          created_at?: string
+          id?: string
+          invoice_id: string
+          invoice_type: string
+          organization_id: string
+          rejected_by: string
+        }
+        Update: {
+          bank_transaction_id?: string
+          client_id?: string
+          created_at?: string
+          id?: string
+          invoice_id?: string
+          invoice_type?: string
+          organization_id?: string
+          rejected_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_match_rejections_bank_transaction_id_fkey"
+            columns: ["bank_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "bank_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_match_rejections_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_match_rejections_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bank_transaction_allocations: {
         Row: {
           amount: number
