@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -21,7 +22,10 @@ import {
  * migratie en de regel die de matcher straks gebruikt.
  */
 
-const MIGRATION = "supabase/migrations/20261010120000_add_bank_match_rejections.sql";
+const MIGRATION_DIR = "supabase/migrations";
+const MIGRATION = `${MIGRATION_DIR}/20261010120000_add_bank_match_rejections.sql`;
+/** SHA-256 van de migratie zoals beoordeeld, gemerged (#240) en voor productie overgedragen. */
+const REVIEWED_SHA256 = "1497e06f06b6afb28019a0b0bfc9526909bb144421ae2d692b53b0280dcf55e2";
 const raw = readFileSync(resolve(process.cwd(), MIGRATION), "utf8");
 /** Zonder commentaar: de kop beschrijft juist wat er NIET gebeurt. */
 const sql = raw
@@ -41,6 +45,16 @@ function changedFiles(): string[] | null {
   } catch {
     return null;
   }
+}
+
+/** Migraties die al op main staan en op deze branch zijn gewijzigd, verwijderd, hernoemd of van type veranderd. */
+function changedExistingMigrations(): string[] {
+  return execFileSync("git", ["diff", "--name-only", "--diff-filter=MDRT", "origin/main...HEAD", "--", MIGRATION_DIR], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  })
+    .split("\n")
+    .filter(Boolean);
 }
 
 describe("migratie 20261010120000 — vorm", () => {
@@ -136,7 +150,7 @@ describe("migratie 20261010120000 — vorm", () => {
 });
 
 describe("branch-grenzen", () => {
-  it("11. geen gegenereerde types, packages of MCP-functie; fundering en schrijvers onaangeroerd", (ctx) => {
+  it("11. geen gegenereerde types, packages of MCP-functie; fundering, schrijvers en bestaande migraties onaangeroerd", (ctx) => {
     const changed = changedFiles();
     if (!changed) return ctx.skip();
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
@@ -146,9 +160,11 @@ describe("branch-grenzen", () => {
     expect(changed).not.toContain(".lovable/mcp/manifest.json");
     assertBranchSqlKeepsLedgerFoundation(changed);
     assertBranchTouchesNoExistingWriter(changed);
-    // Precies één nieuwe migratie, en geen bestaande gewijzigd.
-    const migrations = changed.filter((f) => f.startsWith("supabase/migrations/"));
-    expect(migrations).toEqual([MIGRATION]);
+    // Geen migratie die al op main staat — deze inbegrepen — is gewijzigd, verwijderd,
+    // hernoemd of van type veranderd. Nieuwe migraties mogen; dat is gewoon later werk.
+    // (Voorheen "precies deze migratie in de diff": dat gold alleen op de branch van #240
+    // zelf en faalde na de merge op main en op elke volgende branch.)
+    expect(changedExistingMigrations()).toEqual([]);
   });
 
   it("12. geen UI-schrijfpad zonder gegenereerde types: niemand praat al met de tabel", () => {
@@ -159,6 +175,19 @@ describe("branch-grenzen", () => {
     expect(src).toEqual(["src/lib/bank-match-rejections.ts", "src/test/bank-match-rejections.test.ts"]);
     const lib = readFileSync(resolve(process.cwd(), "src/lib/bank-match-rejections.ts"), "utf8");
     expect(lib).not.toMatch(/integrations\/supabase|\.from\(|\.rpc\(|as any|: any\b/);
+  });
+});
+
+describe("onveranderbaarheid van de beoordeelde migratie", () => {
+  it("11b. byte-voor-byte de beoordeelde versie, en precies één bestand met deze naam", () => {
+    // Los van git: geldt ook op main zelf, voor ongecommitte wijzigingen en zonder origin/main.
+    // CRLF → LF, zodat een checkout met autocrlf geen valse fout geeft; de repository bewaart LF.
+    const sha256 = createHash("sha256").update(raw.replace(/\r\n/g, "\n"), "utf8").digest("hex");
+    expect(sha256).toBe(REVIEWED_SHA256);
+    const sameName = readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((f) =>
+      f.endsWith("_add_bank_match_rejections.sql"),
+    );
+    expect(sameName).toEqual(["20261010120000_add_bank_match_rejections.sql"]);
   });
 });
 
