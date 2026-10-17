@@ -35,9 +35,9 @@ FROM (VALUES
   ('enforce_bank_transaction_release_hold',            '812d151a7041cdd48b7a784cd193a159', false),
   ('prevent_bank_transaction_posting_event_mutation',  'fc27ac341d6b72c0a20afb2b306393f7', false),
   ('prevent_bank_transaction_posting_marker_mutation', '3fe50540a21d6daffd9b0ea98324a8aa', false),
-  ('reclassify_bank_transaction',                      'd9182a6428936d97e8bede8cc2cf2c76', true),
-  ('release_bank_transaction_posting',                 '7cdc30a245e1a97ae2be7f89517dbd74', true),
-  ('return_bank_transaction_to_workflow',              '99574faba96cc1a7a6906717d030744f', true)) h(naam, md5_lichaam, rpc)
+  ('reclassify_bank_transaction',                      '56433abfb8baa40335f42f394e93451d', true),
+  ('release_bank_transaction_posting',                 '30bc7aaf9bdfce2aeb0d31f00641d4ad', true),
+  ('return_bank_transaction_to_workflow',              '5334092758eb40def4c58a97403c841c', true)) h(naam, md5_lichaam, rpc)
 LEFT JOIN pg_proc p ON p.proname = h.naam AND p.pronamespace = 'public'::regnamespace
 ORDER BY h.naam;
 
@@ -106,7 +106,15 @@ SELECT
               'bank_transaction_posting_events_reversal_key', 'bank_transaction_posting_events_seq_key',
               'bank_transaction_posting_events_shape_check', 'bank_transaction_posting_events_snapshot_check',
               'bank_transaction_posting_events_superseded_key', 'bank_transaction_posting_events_type_check']
-                                                                                         AS constraints_exact;
+                                                                                         AS constraints_exact,
+  -- De definities zelf (niet alleen de namen), zoals beoordeeld.
+  (SELECT md5(string_agg(conname || ':' || pg_get_constraintdef(oid), '|' ORDER BY conname COLLATE "C"))
+   FROM pg_constraint WHERE conrelid = 'public.bank_transaction_posting_events'::regclass)
+    = '18d7dde03f4eccbe157666d0809dbb2c'                                                 AS constraint_definities_exact,
+  -- Eén request_id is één handeling.
+  pg_get_indexdef('public.bank_transaction_posting_events_request_once'::regclass)
+    = 'CREATE UNIQUE INDEX bank_transaction_posting_events_request_once ON public.bank_transaction_posting_events USING btree (actor_id, request_id) WHERE (NOT ((event_type = ''returned''::text) AND (request_kind = ''reclassify''::text)))'
+                                                                                         AS request_once_exact;
 
 
 -- ── POST 4. De acht PR H-functies en de drie PR 0-guards zijn onaangeroerd ──

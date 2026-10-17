@@ -427,4 +427,10 @@ END $$;
 
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA proof TO public;
 
+-- Zoals Supabase: nieuwe objecten in public krijgen standaard ALLE rechten voor
+-- de API-rollen. Zo zijn de REVOKE's in de migratie hier dragend, net als in productie.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
+
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);

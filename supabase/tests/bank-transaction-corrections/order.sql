@@ -55,7 +55,7 @@ SELECT proof.put('o601', proof.rc(proof.u(2), proof.uid(1000, 601), NULL, proof.
 SELECT proof.put('o602', proof.rc(proof.u(2), proof.uid(1000, 602), NULL, proof.acct(6), 21, proof.req(6020)));
 SELECT proof.put('o602r', proof.rel(proof.u(1), proof.uid(1000, 602), proof.f(proof.get('o602'), 3)::uuid, proof.req(6021)));
 SELECT proof.put('o603', proof.rc(proof.u(2), proof.uid(1000, 603), NULL, proof.acct(6), 21, proof.req(6030)));
-SELECT public.reverse_posting_group(proof.f(proof.get('o603'), 3)::uuid, DATE '2027-03-05', 'Handmatig');
+SELECT public.reverse_posting_group(proof.f(proof.get('o603'), 3)::uuid, DATE '2027-03-01', 'Handmatig');
 SELECT proof.put('o604', proof.rc(proof.u(2), proof.uid(1000, 604), NULL, proof.acct(6), 21, proof.req(6040)));
 
 SELECT proof.put('O1', proof.logged(format('SELECT proof.rc(%L, %L, %L, %L, 21, %L, ''Volgorde'')',

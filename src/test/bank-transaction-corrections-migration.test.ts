@@ -24,7 +24,7 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261018120000_add_bank_transaction_corrections.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "58369544021911a8d15a8f253d12a71977d713c4834cc3dcbd57b78df41bd74e";
+const REVIEWED_SHA256 = "0287637c8ca4b9b1ab69b4a0d98a90f01bac2e0de465309dffa654ddef2cfef6";
 const HARNESS = "supabase/tests/bank-transaction-corrections";
 const ROLLOUT = "supabase/rollout/20261018120000_add_bank_transaction_corrections";
 
@@ -173,6 +173,8 @@ describe("migratie 20261018120000 — vorm", () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS public\.bank_transaction_posting_events \(/);
     expect(sql).toMatch(/seq +bigint GENERATED ALWAYS AS IDENTITY/);
     expect(sql).toContain("UNIQUE (actor_id, request_id, event_type)");
+    // Eén request_id is één handeling (alleen het returned vóór een herboeking deelt hem).
+    expect(sql).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS bank_transaction_posting_events_request_once\s+ON public\.bank_transaction_posting_events \(actor_id, request_id\)\s+WHERE NOT \(event_type = 'returned' AND request_kind = 'reclassify'\);/);
     for (const col of ["superseded_posting_group_id", "reversal_posting_group_id", "replacement_posting_group_id", "seq"]) {
       expect(sql, col).toMatch(new RegExp(`UNIQUE \\(${col}\\)`));
     }
@@ -189,7 +191,7 @@ describe("migratie 20261018120000 — vorm", () => {
 });
 
 describe("de RPC's — volgorde van controles en mutaties", () => {
-  it("7. autorisatie vóór onthulling: argumenten → rijgrendel → leesdrempel → schrijfdrempel → herhaling op (actor, request_id) → blokkade → administratie FOR SHARE → toestand", () => {
+  it("7. autorisatie vóór onthulling: argumenten → rijgrendel → leesdrempel → schrijfdrempel → herhaling op (actor, request_id) → tenant → blokkade → administratie FOR SHARE → toestand", () => {
     for (const name of RPCS) {
       const b = body(name);
       const order = [
@@ -198,6 +200,8 @@ describe("de RPC's — volgorde van controles en mutaties", () => {
         b.search(/FROM public\.bank_transactions bt\s+WHERE bt\.id = _transaction_id\s+FOR UPDATE;/),
         b.indexOf("RAISE EXCEPTION 'Banktransactie niet beschikbaar' USING ERRCODE = '42501';"),
         b.search(/WHERE e\.actor_id = v_uid AND e\.request_id = _request_id/),
+        // Tenantconsistentie zonder grendel vóór de blokkade: die zegt of grendelt nooit iets van een andere tenant.
+        b.search(/IF NOT EXISTS \(SELECT 1 FROM public\.clients c\s+WHERE c\.id = v_tx\.client_id AND c\.organization_id = v_tx\.organization_id\) THEN\s+RAISE EXCEPTION 'Administratie hoort niet bij de organisatie van deze banktransactie' USING ERRCODE = '42501';/),
         b.indexOf("PERFORM public.assert_posting_allowed(v_tx.client_id, v_tx.transaction_date);"),
         b.search(/FROM public\.clients c\s+WHERE c\.id = v_tx\.client_id\s+FOR SHARE;/),
         b.search(/FROM public\.bank_transaction_(postings m|posting_events e\s+WHERE e\.bank_transaction_id = v_tx\.id)/),
@@ -270,6 +274,14 @@ describe("de RPC's — volgorde van controles en mutaties", () => {
     for (const name of RPCS) {
       expect(body(name), name).toMatch(/FROM public\.bank_transaction_allocations a WHERE a\.bank_transaction_id = v_tx\.id\) THEN\s+RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie'/);
     }
+  });
+
+  it("12b. een bestaande storno op een latere datum: herboeken (S2/S3), vrijgeven (S2) en terugzetten weigeren — anders staat de periode daartussen dubbel", () => {
+    const rule = /SELECT r\.posting_date INTO v_rev_date\s+FROM public\.ledger_reversal_postings r\s+WHERE r\.reversal_posting_group_id = [^;]+;\s+IF v_rev_date IS DISTINCT FROM v_tx\.transaction_date THEN\s+RAISE EXCEPTION 'De tegenboeking staat op %, niet op de transactiedatum %:[^']*memoriaalboeking\.',\s+v_rev_date, v_tx\.transaction_date\s+USING ERRCODE = '22023';/;
+    for (const name of RPCS) expect(body(name), name).toMatch(rule);
+    expect(body("reclassify_bank_transaction")).toMatch(/IF v_state IN \('S2', 'S3'\) THEN\s+SELECT r\.posting_date INTO v_rev_date/);
+    expect(body("release_bank_transaction_posting")).toMatch(/IF v_state = 'S2' THEN\s+SELECT r\.posting_date INTO v_rev_date/);
+    // De eigen storno van de RPC staat altijd op de transactiedatum (zie test 9).
   });
 
   it("13. een verouderde toestand is 55000, nooit 40001; geen 23505 uit eigen code", () => {

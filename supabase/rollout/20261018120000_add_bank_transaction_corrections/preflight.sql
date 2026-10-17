@@ -21,6 +21,7 @@
 --   • PRE 1, PRE 2 of PRE 8 ergens `false` geeft;
 --   • PRE 4 `stop = true` geeft (een bankboeking die niet de vorm van de
 --     schrijver heeft, of een directe bankgroep zonder marker);
+--   • PRE 11 `stop = true` geeft (een onbekende trigger op bank_transactions);
 --   • een query een foutmelding geeft.
 -- PRE 3, PRE 5, PRE 9 en PRE 10 zijn informatief.
 -- ═════════════════════════════════════════════════════════════════════════════
@@ -108,19 +109,21 @@ SELECT
 -- ── PRE 4. Vorm van de bestaande directe bankboekingen (STOP-controle) ──────
 -- De correctie-RPC leest het origineel als de schrijver het maakte: één regel
 -- aan de bankzijde (het bruto), aan de tegenzijde netto (+ BTW), alle regels
--- van deze transactie en op de markerdatum. Een afwijkende groep kan de RPC
+-- van deze transactie, op de markerdatum, en die markerdatum is de
+-- transactiedatum (de RPC stort op de transactiedatum). Een afwijkende groep kan de RPC
 -- niet veilig corrigeren; een directe bankgroep zonder marker breekt de
 -- lineage-aanname. Verwacht: beide 0, stop = false.
 WITH g AS (
   SELECT m.bank_transaction_id AS tx, m.posting_group_id AS grp, m.gross_amount, m.net_amount, m.btw_amount,
-         m.posting_date, bt.amount
+         m.posting_date, bt.amount, bt.transaction_date
   FROM public.bank_transaction_postings m
   JOIN public.bank_transactions bt ON bt.id = m.bank_transaction_id
 ), shape AS (
   SELECT g.grp,
          count(lp.*)                                                                             AS regels,
          count(*) FILTER (WHERE lp.source_type <> 'bank_transaction' OR lp.source_id <> g.tx
-                             OR lp.posting_date <> g.posting_date)                               AS vreemd,
+                             OR lp.posting_date <> g.posting_date
+                             OR g.posting_date <> g.transaction_date)                            AS vreemd,
          count(*) FILTER (WHERE (g.amount < 0 AND lp.credit_amount > 0) OR (g.amount > 0 AND lp.debit_amount > 0)) AS bankzijde,
          count(*) FILTER (WHERE ((g.amount < 0 AND lp.credit_amount > 0) OR (g.amount > 0 AND lp.debit_amount > 0))
                              AND lp.debit_amount + lp.credit_amount = g.gross_amount)            AS bankzijde_bruto,
@@ -149,9 +152,12 @@ SELECT
 
 
 -- ── PRE 5. Handmatig tegengeboekte directe boekingen (S2, informatief) ──────
--- Na PR 1 kunnen deze via "Opnieuw boeken" worden herboekt, zonder tweede storno.
+-- Na PR 1 kunnen deze via "Opnieuw boeken" worden herboekt, zonder tweede
+-- storno — maar alleen als de storno op de transactiedatum staat
+-- (`herboekbaar_via_rpc`). Bij een latere stornodatum weigert de RPC (22023):
+-- dan is een memoriaalboeking nodig; de eigenaar beslist.
 SELECT m.bank_transaction_id, bt.transaction_date, bt.amount, m.posting_group_id, r.reversal_posting_group_id,
-       r.posting_date AS tegenboekingsdatum, r.reason
+       r.posting_date AS tegenboekingsdatum, r.posting_date = bt.transaction_date AS herboekbaar_via_rpc, r.reason
 FROM public.bank_transaction_postings m
 JOIN public.bank_transactions bt ON bt.id = m.bank_transaction_id
 JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = m.posting_group_id
@@ -244,10 +250,36 @@ JOIN public.clients c ON c.id = bt.client_id
 WHERE bt.organization_id IS DISTINCT FROM c.organization_id;
 
 
--- ── PRE 10. Bestaande triggers op de vier banktabellen (informatief) ────────
-SELECT c.relname AS tabel, t.tgname, t.tgenabled
+-- ── PRE 10. Bestaande triggers op de vier banktabellen ──────────────────────
+-- `bekend` = de trigger staat in de keten die het harnas toepast. Een onbekende
+-- trigger op bank_transactions is een STOP (PRE 11): een BEFORE UPDATE-trigger
+-- die na de hold codering zet, zou de hold omzeilen.
+SELECT c.relname AS tabel, t.tgname, t.tgenabled,
+       (c.relname::text, t.tgname::text) IN (VALUES
+         ('bank_allocation_postings',     'validate_bank_allocation_posting_not_directly_posted_trigger'),
+         ('bank_transaction_allocations', 'prevent_org_user_rebind_trg'),
+         ('bank_transaction_allocations', 'prevent_posted_bank_allocation_mutation_trigger'),
+         ('bank_transaction_allocations', 'set_organization_id_trigger'),
+         ('bank_transaction_allocations', 'update_bank_transaction_allocations_updated_at'),
+         ('bank_transaction_allocations', 'validate_bank_allocation_not_directly_posted_trigger'),
+         ('bank_transaction_postings',    'validate_bank_direct_posting_without_allocations_trigger'),
+         ('bank_transactions',            'prevent_org_user_rebind_trg'),
+         ('bank_transactions',            'prevent_posted_bank_transaction_mutation_trigger'),
+         ('bank_transactions',            'set_organization_id_trigger'),
+         ('bank_transactions',            'update_bank_transactions_updated_at')) AS bekend
 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
 WHERE NOT t.tgisinternal
   AND c.oid IN ('public.bank_transactions'::regclass, 'public.bank_transaction_postings'::regclass,
                 'public.bank_transaction_allocations'::regclass, 'public.bank_allocation_postings'::regclass)
 ORDER BY c.relname, t.tgname;
+
+
+-- ── PRE 11. Onbekende triggers op bank_transactions (STOP-controle) ─────────
+-- Verwacht: onbekend = 0, stop = false. Onbekend op de andere drie tabellen is
+-- informatief (PRE 10).
+SELECT count(*) AS onbekend, count(*) > 0 AS stop
+FROM pg_trigger t
+WHERE NOT t.tgisinternal
+  AND t.tgrelid = 'public.bank_transactions'::regclass
+  AND t.tgname NOT IN ('prevent_org_user_rebind_trg', 'prevent_posted_bank_transaction_mutation_trigger',
+                       'set_organization_id_trigger', 'update_bank_transactions_updated_at');

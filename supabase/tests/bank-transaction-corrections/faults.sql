@@ -66,7 +66,7 @@ SELECT proof.put('f501', proof.rc(proof.u(2), proof.uid(1000, 501), NULL, proof.
 SELECT proof.put('f502', proof.rc(proof.u(2), proof.uid(1000, 502), NULL, proof.acct(6), 21, proof.req(5020)));
 SELECT proof.put('f502r', proof.rel(proof.u(1), proof.uid(1000, 502), proof.f(proof.get('f502'), 3)::uuid, proof.req(5021)));
 SELECT proof.put('f503', proof.rc(proof.u(2), proof.uid(1000, 503), NULL, proof.acct(6), 21, proof.req(5030)));
-SELECT public.reverse_posting_group(proof.f(proof.get('f503'), 3)::uuid, DATE '2027-03-05', 'Handmatig');
+SELECT public.reverse_posting_group(proof.f(proof.get('f503'), 3)::uuid, DATE '2027-03-01', 'Handmatig');
 SELECT proof.put('f504', proof.rc(proof.u(2), proof.uid(1000, 504), NULL, proof.acct(6), 21, proof.req(5040)));
 SELECT proof.put('f504r', proof.rel(proof.u(1), proof.uid(1000, 504), proof.f(proof.get('f504'), 3)::uuid, proof.req(5041)));
 SELECT proof.put('f505', proof.rc(proof.u(2), proof.uid(1000, 505), NULL, proof.acct(6), 21, proof.req(5050)));

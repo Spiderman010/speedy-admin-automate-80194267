@@ -17,6 +17,7 @@
 --   R12 twee correcties op verschillende regels van één administratie → beide
 --   R13 de bestaande cyclus bulk ↔ T→L-schrijver: één 40P01, niets half
 --   R14 correctie ↔ deactiveren van de gekozen rekening, beide volgordes
+--   R15 één request_id tegelijk op twee transacties: precies één handeling
 
 \set ON_ERROR_STOP on
 \set QUIET on
@@ -33,6 +34,7 @@ SELECT proof.plan(ARRAY[
   'R11a','R11b','R11c','R11d',
   'R12a','R13a','R13b',
   'R14a','R14b','R14c','R14d',
+  'R15a','R15b',
   'RZ']);
 
 SELECT proof.open_session('a', :'conn');
@@ -122,7 +124,7 @@ SELECT proof.record('R4a', 'R4 correctie eerst: de handmatige tegenboeking wacht
   concat_ws(' || ', waited, a, b)) FROM proof.race WHERE n = 'R4a';
 SELECT proof.record('R4b', 'R4 precies één storno van het origineel', proof.reversals(703) = 1 AND proof.events(703) = 'posted,reclassified', proof.events(703));
 
-SELECT proof.race('R4c', format($q$SELECT public.reverse_posting_group(%L, DATE '2027-03-20', 'Handmatig')::text$q$, proof.g(704)),
+SELECT proof.race('R4c', format($q$SELECT public.reverse_posting_group(%L, DATE '2027-03-01', 'Handmatig')::text$q$, proof.g(704)),
   proof.rcq(1, 704, proof.g(704), 7, 21, 72041));
 SELECT proof.record('R4c', 'R4 handmatig eerst: de correctie wacht en herboekt daarna met de bestaande storno (reposted)',
   waited = 'advisory' AND a LIKE 'ok: %' AND b LIKE 'ok: ok: reposted|f|%', concat_ws(' || ', waited, a, b)) FROM proof.race WHERE n = 'R4c';
@@ -292,6 +294,29 @@ SELECT proof.record('R14d', 'R14 en weigert daarna (23514 niet actief): geen boe
   AND proof.marker(proof.uid(1000, 724)) = proof.g(724)
   AND NOT EXISTS (SELECT 1 FROM public.ledger_postings WHERE grootboekrekening_id = '00000000-0000-0000-0000-00000000f021'),
   b) FROM proof.race WHERE n = 'R14c';
+
+-- ── R15: één request_id tegelijk op twee transacties ────────────────────────
+-- Rechtstreeks (zonder proof.call): de tweede faalt met een rauwe 23505 waarvan de
+-- DETAIL alleen de eigen actor- en request-id noemt; dat hoort niet in proof.refusal.
+CREATE FUNCTION proof.rc_raw(_user integer, _n integer, _expected uuid, _acct integer, _pct integer, _req integer, _reason text)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE v text;
+BEGIN
+  PERFORM set_config('test.user_id', proof.u(_user)::text, true);
+  SELECT outcome INTO v FROM public.reclassify_bank_transaction(proof.uid(1000, _n), _expected, proof.acct(_acct), _pct, proof.req(_req), _reason);
+  RETURN v;
+END $$;
+GRANT EXECUTE ON FUNCTION proof.rc_raw(integer, integer, uuid, integer, integer, integer, text) TO public;
+SELECT proof.tx(725, -50.00), proof.tx(726, -50.00);
+SELECT proof.put('c725', proof.rc(proof.u(2), proof.uid(1000, 725), NULL, proof.acct(6), 0, proof.req(70725)));
+SELECT proof.put('c726', proof.rc(proof.u(2), proof.uid(1000, 726), NULL, proof.acct(6), 0, proof.req(70726)));
+SELECT proof.race('R15', format('SELECT proof.rel(proof.u(1), proof.uid(1000, 725), %L::uuid, proof.req(72151), ''Zelfde request_id'')', proof.g(725)),
+  format('SELECT proof.rc_raw(1, 726, %L::uuid, 7, 0, 72151, ''Zelfde request_id'')', proof.g(726)));
+SELECT proof.record('R15a', 'R15 dezelfde request_id gelijktijdig op twee transacties: de tweede faalt als geheel (23505), één handeling',
+  a LIKE 'ok: ok: released|f|%' AND b LIKE 'fout [23505]%', a || ' || ' || left(b, 120)) FROM proof.race WHERE n = 'R15';
+SELECT proof.record('R15b', 'R15 en de tweede transactie is onaangeroerd (nog dezelfde actieve groep, geen gebeurtenis)',
+  proof.marker(proof.uid(1000, 726)) = proof.g(726) AND proof.events(726) = 'posted'
+  AND (SELECT count(*) FROM public.bank_transaction_posting_events WHERE actor_id = proof.u(1) AND request_id = proof.req(72151)) = 1);
 
 SELECT proof.record('RZ', 'na alle races: alles in balans en de lineage compleet', proof.unbalanced() = 0 AND proof.lineage_violations() = 0,
   format('uit balans %s, lineage %s', proof.unbalanced(), proof.lineage_violations()));

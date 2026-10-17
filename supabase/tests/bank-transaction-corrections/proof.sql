@@ -27,13 +27,13 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 SELECT proof.plan(ARRAY[
   'C0','C1','C2','C3','C4','C5','C6','C7','C8','C9','C10',
   'K0a','K0b','K0c','K0d','K0e','K0f','K0g','K0h','K0i','K0j','K0k','K0l','K0m','K0n',
-  'K1a','K1b','K1c','K1d','K1e','K1f','K1g','K1h','K1i','K1j','K1k','K1l','K1m','K1n','K1o','K1p','K1q',
+  'K1a','K1b','K1c','K1d','K1e','K1f','K1g','K1h','K1i','K1j','K1k','K1l','K1m','K1n','K1o','K1p','K1q','K1r',
   'K2a','K2b','K2c','K2d','K2e','K2f','K2g','K2h','K2i','K2j','K2k','K2l','K2m','K2n','K2o',
   'K3a','K3b','K3c','K3d','K3e','K3f','K3g','K3h','K3i','K3j','K3k','K3l','K3m',
   'K6a','K6b','K6c','K6d',
   'K7a','K7b','K7c','K7d','K7e','K7f','K7g',
   'K8a','K8b','K8c','K8d','K8e','K8f','K8g','K8h',
-  'K9a','K9b','K9c','K9d',
+  'K9a','K9b','K9c','K9d','K9e','K9f','K9g',
   'K10a','K10b','K10c','K10d',
   'K11a','K11b','K11c','K11d','K11e','K11f','K11g','K11h','K11i','K11j','K11k','K11l','K11m','K11n','K11o','K11p','K11q',
   'K12a','K12b','K12c',
@@ -355,6 +355,26 @@ FROM proof.rc(proof.u(1), proof.uid(1000, 2), NULL, NULL, 0, proof.req(30)) a,
      proof.rc(proof.u(1), proof.uid(1000, 2), NULL, proof.acct(7), 0, proof.req(33), 'ok', repeat('y', 501)) d,
      proof.rc(proof.u(1), proof.uid(1000, 2), proof.f(proof.get('k1_other'), 3)::uuid, proof.acct(6), 0, proof.req(34), E' \t\n ') e,
      proof.rel(proof.u(1), proof.uid(1000, 2), NULL, proof.req(35)) f;
+
+-- Een bankregel met de organisatie van A maar de administratie van B (RLS toetst
+-- alleen de organisatie op de rij). De RPC's mogen niets over B zeggen of grendelen:
+-- niet de blokkadedatum van B, niet B's administratiegrendel.
+SELECT proof.put('k1r_ins', proof.call(proof.u(2), format($q$INSERT INTO public.bank_transactions
+  (id, user_id, client_id, organization_id, transaction_date, description, amount, match_status)
+  VALUES (%L, %L, '00000000-0000-0000-0000-0000000000c3', '00000000-0000-0000-0000-00000000a001', DATE '2027-03-01', 'Vreemd', -10.00, 'niet_gematcht')
+  RETURNING id::text$q$, proof.uid(1000, 130), proof.u(2))));
+SELECT proof.put('k1r_lock', proof.call(proof.u(3), $q$SELECT changed::text FROM public.set_posting_lock('00000000-0000-0000-0000-0000000000c3', DATE '2027-06-30', 'Blokkade van B')$q$));
+SELECT proof.record('K1r', 'administratie van een andere tenant: alle drie de RPC''s geven 42501 vóór de boekingsblokkade — B''s blokkadedatum lekt niet',
+  proof.get('k1r_ins') LIKE 'ok: %' AND proof.get('k1r_lock') LIKE 'ok: %'
+  AND a LIKE 'fout [42501] Administratie hoort niet bij de organisatie van deze banktransactie%'
+  AND b LIKE 'fout [42501] Administratie hoort niet bij de organisatie van deze banktransactie%'
+  AND c LIKE 'fout [42501] Administratie hoort niet bij de organisatie van deze banktransactie%'
+  AND concat(a, b, c) NOT LIKE '%2027-06-30%',
+  concat_ws(' || ', proof.get('k1r_ins'), proof.get('k1r_lock'), a, b, c))
+FROM proof.rc(proof.u(1), proof.uid(1000, 130), NULL, proof.acct(7), 0, proof.req(36)) a,
+     proof.rel(proof.u(1), proof.uid(1000, 130), gen_random_uuid(), proof.req(37)) b,
+     proof.ret(proof.u(1), proof.uid(1000, 130), proof.req(38)) c;
+SELECT proof.call(proof.u(3), $q$SELECT changed::text FROM public.set_posting_lock('00000000-0000-0000-0000-0000000000c3', NULL, 'Blokkade van B opgeheven')$q$);
 
 -- ═══ K2. MARKER EN GEBEURTENISSEN ════════════════════════════════════════════
 
@@ -737,7 +757,7 @@ SELECT proof.tx(82, -60.00);
 SELECT proof.put('k8_s1', proof.rc(proof.u(2), proof.uid(1000, 82), NULL, proof.acct(7), 21, proof.req(820)));
 SELECT proof.tx(83, -60.00);
 SELECT proof.put('k8_s2', proof.rc(proof.u(2), proof.uid(1000, 83), NULL, proof.acct(7), 21, proof.req(830)));
-SELECT public.reverse_posting_group(proof.f(proof.get('k8_s2'), 3)::uuid, DATE '2027-04-15', 'Handmatig, na de blokkadedatum');
+SELECT public.reverse_posting_group(proof.f(proof.get('k8_s2'), 3)::uuid, DATE '2027-03-01', 'Handmatig, op de transactiedatum');
 SELECT proof.tx(84, -60.00);
 SELECT proof.put('k8_s3', proof.rc(proof.u(2), proof.uid(1000, 84), NULL, proof.acct(7), 21, proof.req(840)));
 SELECT proof.put('k8_s3rel', proof.rel(proof.u(1), proof.uid(1000, 84), proof.f(proof.get('k8_s3'), 3)::uuid, proof.req(841)));
@@ -777,21 +797,21 @@ SELECT proof.record('K8h', 'de acht PR H-lichamen zijn na dit alles onveranderd'
 
 -- ═══ K9. HANDMATIG TEGENGEBOEKT → OPNIEUW BOEKBAAR ═══════════════════════════
 
--- Regel 900 werd vóór PR 1 geboekt en handmatig tegengeboekt (pre.sql): zij zat vast.
+-- Regel 900 werd vóór PR 1 geboekt en handmatig tegengeboekt op 15-03, twee weken
+-- ná de transactie (pre.sql). Opnieuw boeken op de transactiedatum zou 01-03 t/m
+-- 14-03 dubbel boeken; de RPC weigert en verwijst naar een memoriaal.
+SELECT proof.put('k9_digest', proof.digest());
 SELECT proof.put('k9_legacy', proof.rc(proof.u(1), proof.uid(1000, 900), proof.get('nc_group')::uuid, proof.acct(7), 21, proof.req(900), 'Eindelijk opnieuw boeken'));
-SELECT proof.record('K9a', 'een vóór PR 1 handmatig tegengeboekte regel: reposted, met de bestaande storno, zonder tweede tegenboeking',
-  proof.get('k9_legacy') = format('ok: reposted|f|%s|%s|%s|%s', proof.f(proof.get('k9_legacy'), 3), proof.get('nc_group'),
-                                  proof.get('nc_reversal'), proof.f(proof.get('k9_legacy'), 6))
-  AND (SELECT count(*) FROM public.ledger_reversal_postings WHERE original_posting_group_id = proof.get('nc_group')::uuid) = 1
-  AND (SELECT count(*) FROM public.ledger_postings WHERE source_type = 'reversal' AND source_id = proof.get('nc_group')::uuid) = 3
-  AND proof.lines(proof.f(proof.get('k9_legacy'), 3)::uuid) = '4700:100.00:0.00,1520:21.00:0.00,1100:0.00:121.00',
+SELECT proof.record('K9a', 'storno op een latere datum (15-03) dan de transactie (01-03): herboeken geweigerd (22023, memoriaal), niets veranderd',
+  proof.get('k9_legacy') LIKE 'fout [22023] De tegenboeking staat op 2027-03-15, niet op de transactiedatum 2027-03-01: opnieuw boeken op de transactiedatum zou de periode daartussen dubbel boeken%'
+  AND proof.digest() = proof.get('k9_digest'),
   proof.get('k9_legacy'));
 
 SELECT proof.tx(90, -60.00);
 SELECT proof.put('k9_post', proof.rc(proof.u(2), proof.uid(1000, 90), NULL, proof.acct(7), 21, proof.req(910)));
-SELECT proof.put('k9_r', public.reverse_posting_group(proof.f(proof.get('k9_post'), 3)::uuid, DATE '2027-03-20', 'Handmatig in Grootboek')::text);
+SELECT proof.put('k9_r', public.reverse_posting_group(proof.f(proof.get('k9_post'), 3)::uuid, DATE '2027-03-01', 'Handmatig in Grootboek, op de transactiedatum')::text);
 SELECT proof.put('k9_same', proof.rc(proof.u(1), proof.uid(1000, 90), proof.f(proof.get('k9_post'), 3)::uuid, proof.acct(7), 21, proof.req(911), 'Zelfde codering, opnieuw boeken'));
-SELECT proof.record('K9b', 'ook met dezelfde codering wordt een tegengeboekte regel opnieuw geboekt (reposted), niet unchanged',
+SELECT proof.record('K9b', 'storno op de transactiedatum: opnieuw boeken lukt, ook met dezelfde codering (reposted, niet unchanged), zonder tweede storno',
   proof.get('k9_same') LIKE format('ok: reposted|f|%%|%s|%s|%%', proof.f(proof.get('k9_post'), 3), proof.get('k9_r')),
   proof.get('k9_same'));
 
@@ -807,6 +827,29 @@ SELECT public.reverse_posting_group(proof.f(proof.get('k9_p91'), 3)::uuid, DATE 
 SELECT proof.record('K9d', 'een assistent mag een tegengeboekte regel niet herboeken (accountant)',
   o LIKE 'fout [42501] Geen rechten om een geboekte banktransactie te corrigeren%', o)
 FROM proof.rc(proof.u(2), proof.uid(1000, 91), proof.f(proof.get('k9_p91'), 3)::uuid, proof.acct(6), 0, proof.req(921), 'Assistent') o;
+
+SELECT proof.put('k9_digest2', proof.digest());
+SELECT proof.record('K9e', 'storno op een latere datum: ook vrijgeven weigert (anders zat de regel vast in een vrijgave zonder uitweg)',
+  o LIKE 'fout [22023] De tegenboeking staat op 2027-03-15, niet op de transactiedatum 2027-03-01: na vrijgeven zou opnieuw boeken%'
+  AND proof.digest() = proof.get('k9_digest2'), o)
+FROM proof.rel(proof.u(1), proof.uid(1000, 900), proof.get('nc_group')::uuid, proof.req(901), 'Vrijgeven') o;
+
+-- Een vrijgave van een groep die op een latere datum is gestorneerd (hier door de
+-- eigenaar buiten de RPC's vastgelegd, met een correcte lineage): de RPC's weigeren
+-- de weg terug.
+SELECT proof.forge_step(proof.uid(1000, 5), 'released');
+SELECT proof.put('k9_digest3', proof.digest());
+SELECT proof.record('K9f', 'vrijgegeven na een latere storno: herboeken en terugzetten weigeren allebei (22023), niets veranderd',
+  a LIKE 'fout [22023] De tegenboeking staat op 2027-03-10, niet op de transactiedatum 2027-03-01%'
+  AND b LIKE 'fout [22023] De tegenboeking staat op 2027-03-10, niet op de transactiedatum 2027-03-01%'
+  AND proof.digest() = proof.get('k9_digest3'), a || ' || ' || b)
+FROM proof.rc(proof.u(1), proof.uid(1000, 5), NULL, proof.acct(7), 21, proof.req(902), 'Herboeken') a,
+     proof.ret(proof.u(1), proof.uid(1000, 5), proof.req(903)) b;
+
+SELECT proof.record('K9g', 'en de vrijgave-hold geldt voor die regel gewoon (een sjabloon die de rekening wijzigt: geweigerd)',
+  o LIKE 'fout [42501] Deze banktransactie is vrijgegeven%', o)
+FROM proof.call(proof.u(2), format($q$UPDATE public.bank_transactions SET match_status = 'handmatig_geboekt', grootboekrekening_id = %L WHERE id = %L RETURNING id::text$q$,
+                                   proof.acct(6), proof.uid(1000, 5))) o;
 
 -- ═══ K10. FACTUURKOPPELINGEN VALLEN BUITEN V1 ════════════════════════════════
 

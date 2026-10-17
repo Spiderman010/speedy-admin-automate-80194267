@@ -52,11 +52,12 @@
 --   reclassify  S0 → S1  posted                 (assistant)
 --               S1 → S1  unchanged              (accountant; zelfde codering)
 --               S1 → S1  reclassified           (accountant; storno + herboeking)
---               S2 → S1  reposted               (accountant; bestaande storno)
---               S3 → S1  reposted_after_release (accountant; returned + posted)
+--               S2 → S1  reposted               (accountant; bestaande storno *)
+--               S3 → S1  reposted_after_release (accountant; returned + posted *)
 --   release     S1 → S3  released               (accountant; storno, geen herboeking)
---               S2 → S3  released               (accountant; bestaande storno)
---   return      S3 → S0  returned               (accountant)
+--               S2 → S3  released               (accountant; bestaande storno *)
+--   return      S3 → S0  returned               (accountant *)
+--   * alleen als de bestaande storno op de transactiedatum staat (zie hieronder).
 --   Elke andere combinatie: 55000 "De boekingstoestand is gewijzigd".
 --
 -- BOEKHOUDKUNDIG
@@ -72,6 +73,13 @@
 --   • De boekingsblokkade geldt voor elke handeling (assert_posting_allowed op
 --     de transactiedatum); een afgesloten jaar zonder blokkade mag (D8, PR H).
 --   • Factuurkoppelingen vallen buiten v1: elke koppeling → 22023.
+--   • Een bestaande storno (handmatig via het grootboek) op een LATERE datum dan
+--     de transactie: opnieuw boeken op de transactiedatum zou bank, kosten en
+--     BTW in de periode daartussen dubbel boeken (de totalen kloppen, de
+--     perioden niet). Daarom weigeren herboeken (S2, S3), vrijgeven (S2) en
+--     terugzetten (S3) dan met 22023 en een verwijzing naar een memoriaalboeking.
+--     Een storno op de transactiedatum — zoals deze RPC's er zelf een maken —
+--     laat alles toe.
 --   • De omschrijving van de herboeking is de omschrijving van de bankregel,
 --     zoals bij elke boeking door de schrijver; _description zet die vooraf,
 --     net als de dialoog "handmatig boeken". De oude tekst blijft in de
@@ -267,6 +275,15 @@ CREATE TABLE IF NOT EXISTS public.bank_transaction_posting_events (
       AND requested_grootboekrekening_id IS NULL AND requested_btw_percentage IS NULL
       AND requested_description IS NULL AND replacement_description IS NULL AND reason IS NOT NULL))
 );
+
+-- Eén request_id is één handeling. Alleen het `returned` dat een herboeking na
+-- vrijgave voorafgaat, deelt zijn request_id met de `posted` die erop volgt;
+-- verder heeft elke (actor, request_id) precies één gebeurtenis. Zo kan één
+-- request_id nooit twee handelingen dekken, ook niet bij gelijktijdig gebruik op
+-- twee transacties (de tweede faalt dan als geheel).
+CREATE UNIQUE INDEX IF NOT EXISTS bank_transaction_posting_events_request_once
+  ON public.bank_transaction_posting_events (actor_id, request_id)
+  WHERE NOT (event_type = 'returned' AND request_kind = 'reclassify');
 
 CREATE INDEX IF NOT EXISTS idx_bank_transaction_posting_events_tx_seq
   ON public.bank_transaction_posting_events (bank_transaction_id, seq);
@@ -785,6 +802,8 @@ DECLARE
   v_vat_acct    uuid;
   v_new_group   uuid;
   v_event       uuid;
+  v_last_rev    uuid;
+  v_rev_date    date;
 BEGIN
   -- (0) Alleen de argumenten: niets over opgeslagen gegevens.
   IF v_uid IS NULL THEN
@@ -866,6 +885,14 @@ BEGIN
     RETURN;
   END IF;
 
+  -- De administratie moet bij de organisatie van de transactie horen — vóór de
+  -- boekingsblokkade, zodat die nooit iets over een andere tenant zegt of
+  -- grendelt (RLS toetst alleen de organisatie op de bankregel zelf).
+  IF NOT EXISTS (SELECT 1 FROM public.clients c
+                 WHERE c.id = v_tx.client_id AND c.organization_id = v_tx.organization_id) THEN
+    RAISE EXCEPTION 'Administratie hoort niet bij de organisatie van deze banktransactie' USING ERRCODE = '42501';
+  END IF;
+
   -- (5) De boekingsblokkade op de transactiedatum; neemt eerst de
   --     administratiegrendel, zodat een blokkade niet tussendoor kan wijzigen.
   PERFORM public.assert_posting_allowed(v_tx.client_id, v_tx.transaction_date);
@@ -893,7 +920,7 @@ BEGIN
     WHERE r.original_posting_group_id = v_marker.posting_group_id;
     v_state := CASE WHEN v_reversal IS NULL THEN 'S1' ELSE 'S2' END;
   ELSE
-    SELECT e.event_type INTO v_last
+    SELECT e.event_type, e.reversal_posting_group_id INTO v_last, v_last_rev
     FROM public.bank_transaction_posting_events e
     WHERE e.bank_transaction_id = v_tx.id
     ORDER BY e.seq DESC
@@ -922,6 +949,21 @@ BEGIN
     END IF;
     IF v_reason IS NULL THEN
       RAISE EXCEPTION 'Een toelichting (1 tot 500 tekens) is verplicht bij het corrigeren van een geboekte banktransactie' USING ERRCODE = '22023';
+    END IF;
+  END IF;
+
+  -- (7c') Een bestaande storno op een latere datum dan de transactie: opnieuw
+  --       boeken op de transactiedatum zou bank, kosten en BTW in de periode
+  --       daartussen dubbel boeken. Alleen een storno op de transactiedatum
+  --       (zoals deze RPC er zelf een maakt) laat herboeken toe.
+  IF v_state IN ('S2', 'S3') THEN
+    SELECT r.posting_date INTO v_rev_date
+    FROM public.ledger_reversal_postings r
+    WHERE r.reversal_posting_group_id = CASE WHEN v_state = 'S2' THEN v_reversal ELSE v_last_rev END;
+    IF v_rev_date IS DISTINCT FROM v_tx.transaction_date THEN
+      RAISE EXCEPTION 'De tegenboeking staat op %, niet op de transactiedatum %: opnieuw boeken op de transactiedatum zou de periode daartussen dubbel boeken. Corrigeer dit met een memoriaalboeking.',
+        v_rev_date, v_tx.transaction_date
+        USING ERRCODE = '22023';
     END IF;
   END IF;
 
@@ -1091,7 +1133,7 @@ GRANT EXECUTE ON FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, n
   TO authenticated;
 
 COMMENT ON FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, numeric, uuid, text, text) IS
-'Boekt een directe banktransactie met de opgegeven grootboekrekening, BTW (0/9/21) en optioneel een nieuwe omschrijving. Niet geboekt (S0): eerste boeking (assistant). Geboekt (S1): storno + herboeking op de transactiedatum, of unchanged bij dezelfde codering. Handmatig tegengeboekt (S2): herboeking zonder tweede storno. Vrijgegeven (S3): returned + herboeking. S1–S3 vereisen accountant en een toelichting. _expected_posting_group_id = de actieve groep (NULL = niet geboekt), anders 55000. Idempotent per (auth.uid(), _request_id). Grootboekregels alleen via reverse_posting_group en post_bank_transaction.';
+'Boekt een directe banktransactie met de opgegeven grootboekrekening, BTW (0/9/21) en optioneel een nieuwe omschrijving. Niet geboekt (S0): eerste boeking (assistant). Geboekt (S1): storno + herboeking op de transactiedatum, of unchanged bij dezelfde codering. Handmatig tegengeboekt (S2): herboeking zonder tweede storno. Vrijgegeven (S3): returned + herboeking. S2 en S3 alleen als de bestaande storno op de transactiedatum staat (anders 22023: memoriaal). S1–S3 vereisen accountant en een toelichting. _expected_posting_group_id = de actieve groep (NULL = niet geboekt), anders 55000. Idempotent per (auth.uid(), _request_id). Grootboekregels alleen via reverse_posting_group en post_bank_transaction.';
 
 CREATE OR REPLACE FUNCTION public.release_bank_transaction_posting(
   _transaction_id            uuid,
@@ -1124,6 +1166,7 @@ DECLARE
   v_reversal uuid;
   v_state    text;
   v_event    uuid;
+  v_rev_date date;
 BEGIN
   IF v_uid IS NULL THEN
     RAISE EXCEPTION 'Niet ingelogd' USING ERRCODE = '28000';
@@ -1177,6 +1220,14 @@ BEGIN
     RETURN;
   END IF;
 
+  -- De administratie moet bij de organisatie van de transactie horen — vóór de
+  -- boekingsblokkade, zodat die nooit iets over een andere tenant zegt of
+  -- grendelt (RLS toetst alleen de organisatie op de bankregel zelf).
+  IF NOT EXISTS (SELECT 1 FROM public.clients c
+                 WHERE c.id = v_tx.client_id AND c.organization_id = v_tx.organization_id) THEN
+    RAISE EXCEPTION 'Administratie hoort niet bij de organisatie van deze banktransactie' USING ERRCODE = '42501';
+  END IF;
+
   PERFORM public.assert_posting_allowed(v_tx.client_id, v_tx.transaction_date);
 
   SELECT * INTO v_client
@@ -1203,6 +1254,20 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = v_tx.id) THEN
     RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
+  END IF;
+
+  -- Een bestaande storno op een latere datum: na vrijgeven zou opnieuw boeken
+  -- (op de transactiedatum) de periode daartussen dubbel boeken; dan heeft
+  -- vrijgeven geen uitweg en weigert het.
+  IF v_state = 'S2' THEN
+    SELECT r.posting_date INTO v_rev_date
+    FROM public.ledger_reversal_postings r
+    WHERE r.reversal_posting_group_id = v_reversal;
+    IF v_rev_date IS DISTINCT FROM v_tx.transaction_date THEN
+      RAISE EXCEPTION 'De tegenboeking staat op %, niet op de transactiedatum %: na vrijgeven zou opnieuw boeken de periode daartussen dubbel boeken. Corrigeer dit met een memoriaalboeking.',
+        v_rev_date, v_tx.transaction_date
+        USING ERRCODE = '22023';
+    END IF;
   END IF;
 
   SELECT lp.description INTO v_old_desc
@@ -1283,9 +1348,11 @@ DECLARE
   v_reason text;
   v_tx     public.bank_transactions%ROWTYPE;
   v_client public.clients%ROWTYPE;
-  v_prev   public.bank_transaction_posting_events%ROWTYPE;
-  v_last   text;
-  v_event  uuid;
+  v_prev     public.bank_transaction_posting_events%ROWTYPE;
+  v_last     text;
+  v_last_rev uuid;
+  v_rev_date date;
+  v_event    uuid;
 BEGIN
   IF v_uid IS NULL THEN
     RAISE EXCEPTION 'Niet ingelogd' USING ERRCODE = '28000';
@@ -1337,6 +1404,14 @@ BEGIN
     RETURN;
   END IF;
 
+  -- De administratie moet bij de organisatie van de transactie horen — vóór de
+  -- boekingsblokkade, zodat die nooit iets over een andere tenant zegt of
+  -- grendelt (RLS toetst alleen de organisatie op de bankregel zelf).
+  IF NOT EXISTS (SELECT 1 FROM public.clients c
+                 WHERE c.id = v_tx.client_id AND c.organization_id = v_tx.organization_id) THEN
+    RAISE EXCEPTION 'Administratie hoort niet bij de organisatie van deze banktransactie' USING ERRCODE = '42501';
+  END IF;
+
   -- Ook terugzetten valt onder de boekingsblokkade: een vrijgegeven regel gaat
   -- pas terug naar de werkstroom als zij daar ook geboekt kan worden, zodat er
   -- geen herboeking klaarligt die vanzelf verloopt zodra een blokkade wordt
@@ -1352,7 +1427,7 @@ BEGIN
     RAISE EXCEPTION 'Administratie hoort niet bij de organisatie van deze banktransactie' USING ERRCODE = '42501';
   END IF;
 
-  SELECT e.event_type INTO v_last
+  SELECT e.event_type, e.reversal_posting_group_id INTO v_last, v_last_rev
   FROM public.bank_transaction_posting_events e
   WHERE e.bank_transaction_id = v_tx.id
   ORDER BY e.seq DESC
@@ -1361,6 +1436,17 @@ BEGIN
   IF EXISTS (SELECT 1 FROM public.bank_transaction_postings m WHERE m.bank_transaction_id = v_tx.id)
      OR v_last IS DISTINCT FROM 'released' THEN
     RAISE EXCEPTION 'De boekingstoestand is gewijzigd; ververs en probeer opnieuw' USING ERRCODE = '55000';
+  END IF;
+
+  -- Terug in de werkstroom boekt de schrijver op de transactiedatum; met een
+  -- storno op een latere datum zou dat de periode daartussen dubbel boeken.
+  SELECT r.posting_date INTO v_rev_date
+  FROM public.ledger_reversal_postings r
+  WHERE r.reversal_posting_group_id = v_last_rev;
+  IF v_rev_date IS DISTINCT FROM v_tx.transaction_date THEN
+    RAISE EXCEPTION 'De tegenboeking staat op %, niet op de transactiedatum %: opnieuw boeken op de transactiedatum zou de periode daartussen dubbel boeken. Corrigeer dit met een memoriaalboeking.',
+      v_rev_date, v_tx.transaction_date
+      USING ERRCODE = '22023';
   END IF;
 
   IF EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = v_tx.id) THEN
