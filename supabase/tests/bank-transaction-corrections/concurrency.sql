@@ -16,6 +16,7 @@
 --   R11 correctie ↔ boekingsblokkade, beide volgordes
 --   R12 twee correcties op verschillende regels van één administratie → beide
 --   R13 de bestaande cyclus bulk ↔ T→L-schrijver: één 40P01, niets half
+--   R14 correctie ↔ deactiveren van de gekozen rekening, beide volgordes
 
 \set ON_ERROR_STOP on
 \set QUIET on
@@ -31,6 +32,7 @@ SELECT proof.plan(ARRAY[
   'R10a','R10b',
   'R11a','R11b','R11c','R11d',
   'R12a','R13a','R13b',
+  'R14a','R14b','R14c','R14d',
   'RZ']);
 
 SELECT proof.open_session('a', :'conn');
@@ -263,6 +265,33 @@ SELECT proof.record('R13b', 'R13 en niets half: regel 720 heeft precies één ac
    WHERE lp.source_type = 'bank_transaction' AND lp.source_id = proof.uid(1000, 720)
      AND NOT EXISTS (SELECT 1 FROM public.ledger_reversal_postings r WHERE r.original_posting_group_id = lp.posting_group_id)) = 1
   AND proof.unbalanced() = 0 AND proof.lineage_violations() = 0);
+
+-- ── R14: correctie ↔ deactiveren van de gekozen rekening ────────────────────
+-- De schrijver toetst `actief` niet; de RPC wel, en houdt de rekening FOR SHARE tot COMMIT.
+INSERT INTO public.grootboekrekeningen (id, organization_id, client_id, nummer, omschrijving, categorie, actief) VALUES
+  ('00000000-0000-0000-0000-00000000f020', '00000000-0000-0000-0000-00000000a001', NULL, 4710, 'Te deactiveren A', 'kosten', true),
+  ('00000000-0000-0000-0000-00000000f021', '00000000-0000-0000-0000-00000000a001', NULL, 4711, 'Te deactiveren B', 'kosten', true);
+SELECT proof.tx(723, -50.00), proof.tx(724, -50.00);
+SELECT proof.put('c723', proof.rc(proof.u(2), proof.uid(1000, 723), NULL, proof.acct(6), 0, proof.req(70723)));
+SELECT proof.put('c724', proof.rc(proof.u(2), proof.uid(1000, 724), NULL, proof.acct(6), 0, proof.req(70724)));
+
+SELECT proof.race('R14a', proof.rcq(1, 723, proof.g(723), 20, 0, 72141),
+  $$UPDATE public.grootboekrekeningen SET actief = false WHERE id = '00000000-0000-0000-0000-00000000f020' RETURNING id::text$$);
+SELECT proof.record('R14a', 'R14 correctie eerst: het deactiveren van de gekozen rekening wacht (FOR SHARE tot COMMIT)',
+  waited IN ('transactionid', 'tuple'), waited) FROM proof.race WHERE n = 'R14a';
+SELECT proof.record('R14b', 'R14 en de correctie staat op een rekening die op dat moment actief was; daarna is zij gedeactiveerd',
+  a LIKE 'ok: ok: reclassified|f|%' AND b LIKE 'ok: %'
+  AND (SELECT NOT actief FROM public.grootboekrekeningen WHERE id = '00000000-0000-0000-0000-00000000f020'),
+  a || ' || ' || b) FROM proof.race WHERE n = 'R14a';
+
+SELECT proof.race('R14c', $$UPDATE public.grootboekrekeningen SET actief = false WHERE id = '00000000-0000-0000-0000-00000000f021' RETURNING id::text$$,
+  proof.rcq(1, 724, proof.g(724), 21, 0, 72142));
+SELECT proof.record('R14c', 'R14 deactiveren eerst: de correctie wacht op de rekening', waited IN ('transactionid', 'tuple'), waited) FROM proof.race WHERE n = 'R14c';
+SELECT proof.record('R14d', 'R14 en weigert daarna (23514 niet actief): geen boeking op een gedeactiveerde rekening',
+  b LIKE 'ok: fout [23514] De gekozen grootboekrekening is niet actief%'
+  AND proof.marker(proof.uid(1000, 724)) = proof.g(724)
+  AND NOT EXISTS (SELECT 1 FROM public.ledger_postings WHERE grootboekrekening_id = '00000000-0000-0000-0000-00000000f021'),
+  b) FROM proof.race WHERE n = 'R14c';
 
 SELECT proof.record('RZ', 'na alle races: alles in balans en de lineage compleet', proof.unbalanced() = 0 AND proof.lineage_violations() = 0,
   format('uit balans %s, lineage %s', proof.unbalanced(), proof.lineage_violations()));

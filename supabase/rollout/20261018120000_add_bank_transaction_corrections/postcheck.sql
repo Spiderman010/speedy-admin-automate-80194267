@@ -35,7 +35,7 @@ FROM (VALUES
   ('enforce_bank_transaction_release_hold',            '812d151a7041cdd48b7a784cd193a159', false),
   ('prevent_bank_transaction_posting_event_mutation',  'fc27ac341d6b72c0a20afb2b306393f7', false),
   ('prevent_bank_transaction_posting_marker_mutation', '3fe50540a21d6daffd9b0ea98324a8aa', false),
-  ('reclassify_bank_transaction',                      'd2514112ec28fa1344e4d5d172b19e69', true),
+  ('reclassify_bank_transaction',                      'd9182a6428936d97e8bede8cc2cf2c76', true),
   ('release_bank_transaction_posting',                 '7cdc30a245e1a97ae2be7f89517dbd74', true),
   ('return_bank_transaction_to_workflow',              '99574faba96cc1a7a6906717d030744f', true)) h(naam, md5_lichaam, rpc)
 LEFT JOIN pg_proc p ON p.proname = h.naam AND p.pronamespace = 'public'::regnamespace

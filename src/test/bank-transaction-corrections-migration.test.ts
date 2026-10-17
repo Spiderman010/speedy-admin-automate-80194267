@@ -24,7 +24,7 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261018120000_add_bank_transaction_corrections.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "3896b81e48d44f2ef99ac3ae43a0480f6f909630ea1d6430f87ab741caf0e3cd";
+const REVIEWED_SHA256 = "58369544021911a8d15a8f253d12a71977d713c4834cc3dcbd57b78df41bd74e";
 const HARNESS = "supabase/tests/bank-transaction-corrections";
 const ROLLOUT = "supabase/rollout/20261018120000_add_bank_transaction_corrections";
 
@@ -259,7 +259,12 @@ describe("de RPC's — volgorde van controles en mutaties", () => {
     const rc = body("reclassify_bank_transaction");
     expect(rc).toContain("IF _btw_percentage NOT IN (0, 9, 21) THEN");
     expect(rc).toMatch(/IF COALESCE\(v_client\.btw_vrijgesteld, false\) AND _btw_percentage <> 0 THEN/);
-    expect(rc).toContain("IF NOT COALESCE(v_account.actief, false) THEN");
+    expect(rc).toMatch(/IF NOT FOUND OR NOT COALESCE\(v_account\.actief, false\) THEN/);
+    // De rekening FOR SHARE tot COMMIT, ná de reikwijdtetoets: geen deactivering tussen toets en boeking.
+    const scope = rc.indexOf("IF NOT public.posting_account_ok(_grootboekrekening_id, v_tx.organization_id, v_tx.client_id) THEN");
+    const lock = rc.search(/FROM public\.grootboekrekeningen g\s+WHERE g\.id = _grootboekrekening_id\s+FOR SHARE;/);
+    expect(scope).toBeGreaterThan(0);
+    expect(lock).toBeGreaterThan(scope);
     expect(rc).toContain("IF v_line_acct IS DISTINCT FROM v_client.bank_rekening_id THEN");
     expect(rc).toContain("IF v_line_acct IS DISTINCT FROM v_vat_acct THEN");
     for (const name of RPCS) {

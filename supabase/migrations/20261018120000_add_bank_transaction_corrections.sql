@@ -79,8 +79,10 @@
 --
 -- GELIJKTIJDIGHEID
 --   Grendelvolgorde van elke RPC: banktransactie (FOR UPDATE) →
---   administratiegrendel (assert_posting_allowed) → administratie (FOR SHARE).
---   Dat is de bestaande volgorde A → T → I → L → C → Y. Een tweede verzoek op
+--   administratiegrendel (assert_posting_allowed) → administratie (FOR SHARE)
+--   → bij herclassificeren de gekozen grootboekrekening (FOR SHARE). Dat volgt
+--   de bestaande volgorde A → T → I → L → C → Y; een rekening wordt door geen
+--   enkel pad vóór T, L of C gegrendeld. Een tweede verzoek op
 --   dezelfde transactie wacht op de rijgrendel en ziet daarna de nieuwe
 --   toestand: verwachte groep wijkt af → 55000, of dezelfde request_id →
 --   dezelfde uitkomst met replayed = true. Alle RPC's en triggers weigeren
@@ -923,14 +925,18 @@ BEGIN
     END IF;
   END IF;
 
-  -- (7d) De nieuwe codering.
-  SELECT g.* INTO v_account
-  FROM public.grootboekrekeningen g
-  WHERE g.id = _grootboekrekening_id;
-  IF NOT FOUND OR NOT public.posting_account_ok(_grootboekrekening_id, v_tx.organization_id, v_tx.client_id) THEN
+  -- (7d) De nieuwe codering. Eerst de reikwijdte (zonder grendel: een rekening
+  --      van een andere tenant wordt nooit gegrendeld), dan de rekening FOR
+  --      SHARE tot COMMIT: een gelijktijdige deactivering kan niet tussen deze
+  --      toets en de boeking vallen — de schrijver toetst `actief` zelf niet.
+  IF NOT public.posting_account_ok(_grootboekrekening_id, v_tx.organization_id, v_tx.client_id) THEN
     RAISE EXCEPTION 'De gekozen grootboekrekening hoort niet bij deze organisatie of administratie' USING ERRCODE = '23514';
   END IF;
-  IF NOT COALESCE(v_account.actief, false) THEN
+  SELECT g.* INTO v_account
+  FROM public.grootboekrekeningen g
+  WHERE g.id = _grootboekrekening_id
+  FOR SHARE;
+  IF NOT FOUND OR NOT COALESCE(v_account.actief, false) THEN
     RAISE EXCEPTION 'De gekozen grootboekrekening is niet actief' USING ERRCODE = '23514';
   END IF;
   IF COALESCE(v_client.btw_vrijgesteld, false) AND _btw_percentage <> 0 THEN
