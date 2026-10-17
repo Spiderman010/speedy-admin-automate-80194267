@@ -14,7 +14,7 @@ import {
  * Het échte gedrag (de weigeringen door de echte schrijvers en guards, rechten,
  * twee gelijktijdige sessies, de negatieve controle zonder PR 0, rollback en
  * opnieuw toepassen) wordt bewezen tegen een echte PostgreSQL in
- * supabase/tests/bank-direct-allocation-guard/ (101 bewijzen). CI heeft geen
+ * supabase/tests/bank-direct-allocation-guard/ (125 bewijzen). CI heeft geen
  * PostgreSQL; deze test bewaakt de vorm van de migratie, haar grenzen en de
  * samenhang met het harnas en de uitrolcontroles.
  */
@@ -23,7 +23,7 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261017120000_guard_direct_bank_posting_against_allocations.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 /** SHA-256 van de migratie zoals beoordeeld en voor productie overgedragen. */
-const REVIEWED_SHA256 = "4b7935627c3a9bd4eb433ae4015cd7208f0ade55173abebe94e3f563b3207450";
+const REVIEWED_SHA256 = "d1fa9bae418a200cfd2ae46408690535913778df96b8d6acdd39c19eaf8ebd97";
 const HARNESS = "supabase/tests/bank-direct-allocation-guard";
 const ROLLOUT = "supabase/rollout/20261017120000_guard_direct_bank_posting_against_allocations";
 
@@ -39,16 +39,21 @@ const GUARDS = {
     trigger: "validate_bank_allocation_not_directly_posted_trigger",
     table: "bank_transaction_allocations",
     timing: "AFTER INSERT OR UPDATE OF bank_transaction_id",
+    // Het app-pad: botst met elke FOR UPDATE, blokkeert gewone UPDATEs niet.
+    lock: "FOR KEY SHARE",
   },
   enforce_bank_allocation_posting_not_directly_posted: {
     trigger: "validate_bank_allocation_posting_not_directly_posted_trigger",
     table: "bank_allocation_postings",
     timing: "BEFORE INSERT",
+    // Wat de schrijvers al houden; daarbuiten botst hij met guards 1 en 3.
+    lock: "FOR UPDATE",
   },
   enforce_bank_direct_posting_without_allocations: {
     trigger: "validate_bank_direct_posting_without_allocations_trigger",
     table: "bank_transaction_postings",
     timing: "BEFORE INSERT",
+    lock: "FOR UPDATE",
   },
 } as const;
 type GuardName = keyof typeof GUARDS;
@@ -141,23 +146,40 @@ describe("migratie 20261017120000 — vorm", () => {
 });
 
 describe("de guards — wat zij toetsen", () => {
-  it("6. alle drie serialiseren op de banktransactie (FOR KEY SHARE) vóórdat zij een marker of koppeling tellen", () => {
+  it("6. alle drie grendelen de banktransactie vóórdat zij een marker of koppeling tellen; guards 2 en 3 met FOR UPDATE", () => {
     for (const name of NAMES) {
       const b = body(name);
-      const lock = b.indexOf("FROM public.bank_transactions bt\n  WHERE bt.id = NEW.bank_transaction_id\n  FOR KEY SHARE;");
+      const lock = b.indexOf(`FROM public.bank_transactions bt\n  WHERE bt.id = NEW.bank_transaction_id\n  ${GUARDS[name].lock};`);
       expect(lock, name).toBeGreaterThan(0);
       const firstRead = b.search(/IF EXISTS \(/);
       expect(firstRead, name).toBeGreaterThan(lock);
+      // Precies één grendel op de banktransactie per guard.
+      expect(b.match(/FROM public\.bank_transactions bt/g), name).toHaveLength(1);
     }
+    // Elk paar botsende routes heeft minstens één kant met FOR UPDATE: twee
+    // FOR KEY SHARE-grendels zouden elkaar niet tegenhouden.
+    expect(NAMES.filter((n) => GUARDS[n].lock === "FOR KEY SHARE")).toEqual(["enforce_bank_allocation_not_directly_posted"]);
   });
 
-  it("7. guard 1: alleen bij INSERT of een echte verplaatsing, alleen READ COMMITTED, weigert een directe marker", () => {
+  it("7. alle drie alleen onder READ COMMITTED, getoetst vóór de grendel; guard 1 alleen bij INSERT of een echte verplaatsing", () => {
+    for (const name of NAMES) {
+      const b = body(name);
+      expect(b, name).toMatch(/IF current_setting\('transaction_isolation'\) <> 'read committed' THEN[\s\S]*?USING ERRCODE = '25000';/);
+      expect(b.indexOf("transaction_isolation"), name).toBeLessThan(b.indexOf(GUARDS[name].lock));
+    }
     const b = body("enforce_bank_allocation_not_directly_posted");
     expect(b).toMatch(/IF TG_OP = 'UPDATE' AND NEW\.bank_transaction_id IS NOT DISTINCT FROM OLD\.bank_transaction_id THEN\s+RETURN NULL;/);
-    expect(b).toMatch(/IF current_setting\('transaction_isolation'\) <> 'read committed' THEN[\s\S]*?USING ERRCODE = '25000';/);
     expect(b).toMatch(/FROM public\.bank_transaction_postings m\s+WHERE m\.bank_transaction_id = NEW\.bank_transaction_id/);
-    // De isolatietoets staat vóór de grendel: onder een ander niveau wordt niets gelezen.
-    expect(b.indexOf("transaction_isolation")).toBeLessThan(b.indexOf("FOR KEY SHARE"));
+  });
+
+  it("7b. guard 1 toetst eerst tenantconsistentie, met één neutrale weigering, vóór de boekingsstaat", () => {
+    const b = body("enforce_bank_allocation_not_directly_posted");
+    expect(b).toMatch(/SELECT bt\.organization_id, bt\.client_id INTO v_tx_org, v_tx_client\s+FROM public\.bank_transactions bt/);
+    const tenant = b.search(
+      /IF NOT FOUND\s+OR NEW\.organization_id IS DISTINCT FROM v_tx_org\s+OR NEW\.client_id IS DISTINCT FROM v_tx_client THEN\s+RAISE EXCEPTION 'Banktransactie niet beschikbaar' USING ERRCODE = '42501';/,
+    );
+    expect(tenant).toBeGreaterThan(b.indexOf("FOR KEY SHARE"));
+    expect(tenant).toBeLessThan(b.indexOf("FROM public.bank_transaction_postings m"));
   });
 
   it("8. guard 2: de transactie komt uit de koppeling zelf (FOR SHARE), niet uit de marker", () => {
@@ -173,11 +195,20 @@ describe("de guards — wat zij toetsen", () => {
     expect(b).toMatch(/FROM public\.bank_transaction_allocations a\s+WHERE a\.bank_transaction_id = NEW\.bank_transaction_id/);
   });
 
-  it("10. weigeringen gebruiken 23514 (of 25000), nooit 23505: de schrijvers vangen rond hun marker alleen unique_violation", () => {
+  it("10. weigeringen gebruiken 23514, 25000 of de neutrale 42501, nooit 23505: de schrijvers vangen rond hun marker alleen unique_violation", () => {
     for (const name of NAMES) {
       const codes = [...body(name).matchAll(/ERRCODE = '(\w+)'/g)].map((m) => m[1]);
       expect(codes.length, name).toBeGreaterThan(0);
-      for (const code of codes) expect(["23514", "25000"], `${name}: ${code}`).toContain(code);
+      for (const code of codes) expect(["23514", "25000", "42501"], `${name}: ${code}`).toContain(code);
+    }
+    // 42501 alleen in guard 1, en alleen met de neutrale tekst van de schrijvers.
+    for (const name of NAMES) {
+      const neutral = body(name).match(/RAISE EXCEPTION '([^']*)' USING ERRCODE = '42501'/g) ?? [];
+      expect(neutral, name).toEqual(
+        name === "enforce_bank_allocation_not_directly_posted"
+          ? ["RAISE EXCEPTION 'Banktransactie niet beschikbaar' USING ERRCODE = '42501'"]
+          : [],
+      );
     }
   });
 

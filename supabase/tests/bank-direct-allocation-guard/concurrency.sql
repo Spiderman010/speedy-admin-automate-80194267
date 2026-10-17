@@ -9,10 +9,14 @@
 --   C3  aflettering boeken   ↔ directe boeking   (koppeling + boeken in één transactie)
 --   C4  de vooraf bestaande deadlock uit NC2: met PR 0 identiek — één 40P01,
 --       niets half — want guard 1 neemt dezelfde KEY SHARE als de foreign key.
+--   C6  paden buiten de schrijvers: een eigenaar die markers zelf schrijft.
+--       Directe marker ↔ koppeling + afletteringsmarker, in drie volgordes.
+--   C7  guard 2 leest de koppeling FOR SHARE: verplaatsen tijdens het zetten
+--       van haar afletteringsmarker wacht en wordt daarna geweigerd.
 --
 -- Grendelvolgorde (alle paden): koppeling → banktransactie → factuur →
--- administratiegrendel. Guard 1 neemt alleen KEY SHARE op de banktransactie
--- (zoals de foreign key); guards 2 en 3 nemen binnen de schrijvers niets nieuws.
+-- administratiegrendel. Guard 1 neemt KEY SHARE op de banktransactie (zoals de
+-- foreign key); guards 2 en 3 nemen FOR UPDATE, wat de schrijvers al houden.
 
 \set ON_ERROR_STOP on
 \set QUIET on
@@ -159,6 +163,113 @@ FROM proof.c4;
 SELECT proof.expect_true('C4b', 'en er blijft niets half staan: één koppeling, één keer op de bank', $$
   (SELECT count(*) FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 108)) = 1
   AND proof.routes(proof.uid(1000, 108)) = 'allocation' AND proof.bank_legs(proof.uid(1000, 108)) = 1 $$);
+
+-- ── C6: paden buiten de schrijvers (eigenaar/onderhoud schrijft markers zelf) ─
+-- Guards 2 en 3 nemen FOR UPDATE; daardoor kunnen een directe marker en een
+-- koppeling + afletteringsmarker elkaar ook buiten de schrijvers niet missen.
+-- (Markers zonder grootboekregels: hier gaat het om de markerinvariant.)
+CREATE FUNCTION proof.raw_direct_marker(_tx uuid)
+RETURNS text LANGUAGE sql AS $$
+  INSERT INTO public.bank_transaction_postings (bank_transaction_id, posting_group_id, organization_id, client_id,
+    grootboekrekening_id, posting_date, boekjaar, gross_amount, net_amount, btw_amount, user_id)
+  VALUES (_tx, gen_random_uuid(), '00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-0000000000c1',
+    '00000000-0000-0000-0000-00000000f006', DATE '2027-03-01', 2027, 40.00, 40.00, 0, '00000000-0000-0000-0000-0000000000e1')
+  RETURNING 'direct';
+$$;
+CREATE FUNCTION proof.raw_alloc_marker(_alloc uuid)
+RETURNS text LANGUAGE sql AS $$
+  INSERT INTO public.bank_allocation_postings (allocation_id, posting_group_id, organization_id, client_id,
+    bank_transaction_id, invoice_id, invoice_type, amount, user_id)
+  SELECT a.id, gen_random_uuid(), a.organization_id, a.client_id, a.bank_transaction_id, a.invoice_id,
+         a.invoice_type, a.amount, a.user_id
+  FROM public.bank_transaction_allocations a WHERE a.id = _alloc
+  RETURNING 'aflettering';
+$$;
+GRANT EXECUTE ON FUNCTION proof.raw_direct_marker(uuid), proof.raw_alloc_marker(uuid) TO public;
+
+SELECT proof.tx(161, -40.00), proof.purchase(161, 40.00);
+SELECT proof.tx(162, -40.00), proof.purchase(162, 40.00);
+SELECT proof.tx(163, -40.00), proof.purchase(163, 40.00);
+
+-- C6a: directe marker eerst; koppeling + afletteringsmarker wacht, dan geweigerd.
+SELECT dblink_exec('a', 'BEGIN');
+INSERT INTO proof.race (n, a) SELECT 'C6a', proof.remote_run('a', $$SELECT proof.raw_direct_marker(proof.uid(1000, 161))$$);
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_send_query('b', $$SELECT proof.alloc(161, proof.uid(1000, 161), 'inkoop', proof.uid(2000, 161), 40.00)::text
+                                    || ' / ' || proof.raw_alloc_marker(proof.uid(4000, 161))$$);
+SELECT pg_sleep(0.5);
+SELECT proof.record('C6a', 'C6 buiten de schrijvers, directe marker eerst: koppeling + afletteringsmarker wacht', dblink_is_busy('b') = 1);
+SELECT dblink_exec('a', 'COMMIT');
+UPDATE proof.race SET b = proof.remote_outcome('b') WHERE n = 'C6a';
+SELECT dblink_exec('b', 'ROLLBACK');
+SELECT proof.record('C6b', 'en wordt daarna geweigerd',
+  b LIKE 'fout [23514] Deze banktransactie is al rechtstreeks%', b) FROM proof.race WHERE n = 'C6a';
+SELECT proof.expect_true('C6c', 'alleen de directe marker, geen koppeling', $$
+  proof.routes(proof.uid(1000, 161)) = 'direct'
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 161)) $$);
+
+-- C6d: koppeling + afletteringsmarker eerst; directe marker wacht, dan geweigerd.
+SELECT dblink_exec('a', 'BEGIN');
+INSERT INTO proof.race (n, a) SELECT 'C6d', proof.remote_run('a',
+  $$SELECT proof.alloc(162, proof.uid(1000, 162), 'inkoop', proof.uid(2000, 162), 40.00)::text
+           || ' / ' || proof.raw_alloc_marker(proof.uid(4000, 162))$$);
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_send_query('b', $$SELECT proof.raw_direct_marker(proof.uid(1000, 162))$$);
+SELECT pg_sleep(0.5);
+SELECT proof.record('C6d', 'C6 buiten de schrijvers, afletteringsmarker eerst: de directe marker wacht', dblink_is_busy('b') = 1);
+SELECT dblink_exec('a', 'COMMIT');
+UPDATE proof.race SET b = proof.remote_outcome('b') WHERE n = 'C6d';
+SELECT dblink_exec('b', 'ROLLBACK');
+SELECT proof.record('C6e', 'en wordt daarna geweigerd',
+  b LIKE 'fout [23514] Deze banktransactie heeft een geboekte aflettering%', b) FROM proof.race WHERE n = 'C6d';
+SELECT proof.expect_true('C6f', 'alleen de afletteringsmarker', $$ proof.routes(proof.uid(1000, 162)) = 'allocation' $$);
+
+-- C6g: koppeling eerst (KEY SHARE), directe marker wacht, dan pas de
+-- afletteringsmarker in de eerste transactie (opwaardering naar FOR UPDATE op
+-- een eigen grendel). De eerste slaagt, de directe marker wordt geweigerd.
+SELECT dblink_exec('a', 'BEGIN');
+INSERT INTO proof.race (n, a) SELECT 'C6g', proof.remote_run('a',
+  $$SELECT proof.alloc(163, proof.uid(1000, 163), 'inkoop', proof.uid(2000, 163), 40.00)::text$$);
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_send_query('b', $$SELECT proof.raw_direct_marker(proof.uid(1000, 163))$$);
+SELECT pg_sleep(0.5);
+SELECT proof.record('C6g', 'C6 koppeling eerst: de directe marker wacht al op de KEY SHARE van de koppeling', dblink_is_busy('b') = 1);
+UPDATE proof.race SET a = a || ' | ' || proof.remote_run('a', $$SELECT proof.raw_alloc_marker(proof.uid(4000, 163))$$) WHERE n = 'C6g';
+SELECT dblink_exec('a', 'COMMIT');
+UPDATE proof.race SET b = proof.remote_outcome('b') WHERE n = 'C6g';
+SELECT dblink_exec('b', 'ROLLBACK');
+SELECT proof.record('C6h', 'de eerste transactie boekt haar aflettering (opwaardering zonder deadlock), de directe marker wordt geweigerd',
+  a LIKE 'ok: % | ok: aflettering' AND b LIKE 'fout [23514] Deze banktransactie heeft een geboekte aflettering%',
+  format('a = %s | b = %s', a, left(b, 70))) FROM proof.race WHERE n = 'C6g';
+SELECT proof.expect_true('C6i', 'nergens beide markers, en geen deadlock of time-out in C6', $$
+  proof.routes(proof.uid(1000, 163)) = 'allocation'
+  AND NOT EXISTS (SELECT 1 FROM proof.race WHERE n LIKE 'C6%'
+                  AND (a NOT LIKE 'ok: %' OR b LIKE 'fout [40P01]%' OR b LIKE 'fout [57014]%' OR b LIKE 'fout [55P03]%')) $$);
+
+-- ── C7: guard 2 leest de koppeling FOR SHARE ────────────────────────────────
+-- Terwijl haar afletteringsmarker wordt gezet, kan de koppeling niet naar een
+-- andere transactie worden verplaatst: de verplaatsing wacht en wordt daarna
+-- door de bestaande bevriezing geweigerd. Vandaag dwingt de foreign key van de
+-- marker naar de koppeling dit ook al af (verplaatsen raakt een unieke index en
+-- vraagt FOR UPDATE); C7 legt het gedrag vast, los van welke grendel het draagt.
+SELECT proof.tx(171, -40.00), proof.tx(1711, -40.00), proof.purchase(171, 40.00);
+SELECT proof.alloc(171, proof.uid(1000, 171), 'inkoop', proof.uid(2000, 171), 40.00);
+
+SELECT dblink_exec('a', 'BEGIN');
+INSERT INTO proof.race (n, a) SELECT 'C7a', proof.remote_run('a', $$SELECT proof.raw_alloc_marker(proof.uid(4000, 171))$$);
+SELECT dblink_exec('b', 'BEGIN');
+SELECT dblink_send_query('b', $$UPDATE public.bank_transaction_allocations SET bank_transaction_id = proof.uid(1000, 1711)
+                                 WHERE id = proof.uid(4000, 171) RETURNING id::text$$);
+SELECT pg_sleep(0.5);
+SELECT proof.record('C7a', 'C7 afletteringsmarker eerst: het verplaatsen van die koppeling wacht (FOR SHARE)', dblink_is_busy('b') = 1);
+SELECT dblink_exec('a', 'COMMIT');
+UPDATE proof.race SET b = proof.remote_outcome('b') WHERE n = 'C7a';
+SELECT dblink_exec('b', 'ROLLBACK');
+SELECT proof.record('C7b', 'en wordt daarna door de bevriezing van een geboekte koppeling geweigerd',
+  b LIKE 'fout [42501] Deze bankkoppeling is geboekt%', b) FROM proof.race WHERE n = 'C7a';
+SELECT proof.expect_true('C7c', 'koppeling en afletteringsmarker wijzen naar dezelfde transactie', $$
+  (SELECT bank_transaction_id FROM public.bank_transaction_allocations WHERE id = proof.uid(4000, 171)) = proof.uid(1000, 171)
+  AND (SELECT bank_transaction_id FROM public.bank_allocation_postings WHERE allocation_id = proof.uid(4000, 171)) = proof.uid(1000, 171) $$);
 
 SELECT dblink_disconnect('a');
 SELECT dblink_disconnect('b');

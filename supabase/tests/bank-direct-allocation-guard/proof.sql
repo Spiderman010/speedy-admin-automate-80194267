@@ -159,6 +159,22 @@ SELECT proof.expect_ok('G2d', 'een upsert zoals de app die doet (bank_transactio
     SET amount = EXCLUDED.amount, bank_transaction_id = EXCLUDED.bank_transaction_id
 $$);
 
+SET ROLE authenticated;
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
+SELECT proof.expect_ok('G2e', 'de upsert van de app (bank_transaction_id in de SET-lijst) op de legacy-koppeling van een direct geboekte transactie blijft werken: geen verplaatsing, dus geen weigering', $$
+  INSERT INTO public.bank_transaction_allocations (id, bank_transaction_id, invoice_type, invoice_id, client_id, amount, user_id)
+  VALUES (gen_random_uuid(), proof.uid(1000, 9), 'inkoop', proof.uid(2000, 9), '00000000-0000-0000-0000-0000000000c1', 79.00,
+          '00000000-0000-0000-0000-0000000000e1')
+  ON CONFLICT (bank_transaction_id, invoice_id) DO UPDATE
+    SET amount = EXCLUDED.amount, bank_transaction_id = EXCLUDED.bank_transaction_id,
+        invoice_type = EXCLUDED.invoice_type, client_id = EXCLUDED.client_id, user_id = EXCLUDED.user_id
+$$);
+RESET ROLE;
+SELECT proof.expect_true('G2f', 'en zij bleef dezelfde legacy-koppeling, met het nieuwe bedrag, nog steeds ongeboekt', $$
+  (SELECT amount FROM public.bank_transaction_allocations WHERE id = proof.uid(4000, 9)) = 79.00
+  AND (SELECT count(*) FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 9)) = 1
+  AND NOT EXISTS (SELECT 1 FROM public.bank_allocation_postings WHERE allocation_id = proof.uid(4000, 9)) $$);
+
 -- ── G3: een al bestaande koppeling boeken terwijl de directe boeking bestaat ─
 
 INSERT INTO proof.state VALUES ('digest_before_G3', proof.digest());
@@ -266,6 +282,19 @@ $$);
 SELECT proof.expect_error('G7c', 'na de tegenboeking kan de transactie nog steeds niet direct worden geboekt',
   $$ SELECT proof.post_direct(proof.uid(1000, 15)) $$, '22023', 'aan een factuur gekoppeld');
 
+-- Bekende grens: een TEGENGEBOEKTE directe boeking houdt haar marker.
+SELECT proof.tx(22, -35.00), proof.purchase(22, 35.00);
+INSERT INTO proof.state
+SELECT 'group_22', proof.post_direct(proof.uid(1000, 22))::text;
+SELECT public.reverse_posting_group((SELECT value::uuid FROM proof.state WHERE key = 'group_22'),
+                                    DATE '2027-03-31', 'Bewijs: tegenboeking van een directe boeking');
+SELECT proof.expect_error('G7d', 'bekende grens: ook na tegenboeking van de directe boeking blijft koppelen geweigerd, met een melding die dat zegt',
+  $$ SELECT proof.alloc(22, proof.uid(1000, 22), 'inkoop', proof.uid(2000, 22), 35.00) $$,
+  '23514', 'ook als die directe boeking is tegengeboekt');
+SELECT proof.expect_true('G7e', 'de bank netto 0 (boeking en tegenboeking), geen koppeling, de marker blijft', $$
+  proof.bank_net(proof.uid(1000, 22)) = 0 AND proof.routes(proof.uid(1000, 22)) = 'direct'
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 22)) $$);
+
 -- ── G8: service_role en API-achtige aanroepen ───────────────────────────────
 
 SET ROLE service_role;
@@ -300,6 +329,34 @@ SET ROLE authenticated;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e2', false);
 SELECT proof.expect_ok('G8d', 'de assistent kan via RLS gewoon een koppeling op een ongeboekte transactie maken',
   $$ SELECT proof.alloc(18, proof.uid(1000, 18), 'inkoop', proof.uid(2000, 18), 70.00) $$);
+RESET ROLE;
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
+
+-- Tenantconsistentie: een buitenstaander stuurt zijn EIGEN organisatie mee
+-- (RLS toetst alleen die), plus de juiste transactie, eigenaar en administratie.
+SET ROLE authenticated;
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e3', false);
+SELECT proof.expect_error('G8f', 'buitenstaander met eigen organisatie op een direct geboekte transactie: neutrale weigering', $$
+  INSERT INTO public.bank_transaction_allocations (bank_transaction_id, invoice_type, invoice_id, client_id, organization_id, amount, user_id)
+  VALUES (proof.uid(1000, 10), 'inkoop', gen_random_uuid(), '00000000-0000-0000-0000-0000000000c1',
+          '00000000-0000-0000-0000-00000000a002', 10.00, '00000000-0000-0000-0000-0000000000e1') $$,
+  '42501', 'Banktransactie niet beschikbaar');
+SELECT proof.expect_error('G8g', 'en op een NIET geboekte transactie exact dezelfde weigering (geen orakel, en geen koppeling op andermans transactie)', $$
+  INSERT INTO public.bank_transaction_allocations (bank_transaction_id, invoice_type, invoice_id, client_id, organization_id, amount, user_id)
+  VALUES (proof.uid(1000, 18), 'inkoop', gen_random_uuid(), '00000000-0000-0000-0000-0000000000c1',
+          '00000000-0000-0000-0000-00000000a002', 10.00, '00000000-0000-0000-0000-0000000000e1') $$,
+  '42501', 'Banktransactie niet beschikbaar');
+RESET ROLE;
+SELECT proof.expect_true('G8g2', 'G8f en G8g gaven letterlijk dezelfde melding', $$
+  (SELECT count(DISTINCT detail) FROM proof.result WHERE n IN ('G8f', 'G8g')) = 1 $$);
+
+SELECT proof.tx(23, -15.00), proof.purchase(23, 15.00);
+SET ROLE authenticated;
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
+SELECT proof.expect_ok('G8h', 'een legitieme rij met de juiste organisatie expliciet meegestuurd blijft toegestaan', $$
+  INSERT INTO public.bank_transaction_allocations (bank_transaction_id, invoice_type, invoice_id, client_id, organization_id, amount, user_id)
+  VALUES (proof.uid(1000, 23), 'inkoop', proof.uid(2000, 23), '00000000-0000-0000-0000-0000000000c1',
+          '00000000-0000-0000-0000-00000000a001', 15.00, '00000000-0000-0000-0000-0000000000e1') $$);
 RESET ROLE;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
@@ -344,7 +401,8 @@ SELECT proof.post_direct(proof.uid(1000, 19));
 INSERT INTO proof.state VALUES ('digest_before_G10', proof.digest());
 
 SET ROLE authenticated;
-SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e2', false);
+-- Als de eigenaar van de transactie, zoals de app (user_id = auth.uid()).
+SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 -- Stap 1 van Facturen.tsx (upsertAllocation). De app wacht op deze aanroep en
 -- gaat bij een fout niet verder naar stap 2 (restbedrag) en 3 (banktransactie).
 SELECT proof.expect_error('G10', 'scenario 10: de eerste schrijfactie van Facturen (koppeling-upsert) wordt al geweigerd', $$
@@ -386,6 +444,24 @@ COMMIT;
 BEGIN ISOLATION LEVEL REPEATABLE READ;
 SELECT proof.expect_ok('G13c', 'een bedragwijziging zonder verplaatsing mag onder elk niveau',
   $$ UPDATE public.bank_transaction_allocations SET amount = 69.00 WHERE id = proof.uid(4000, 18) $$);
+COMMIT;
+
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT proof.expect_error('G13d', 'een directe marker vastleggen onder REPEATABLE READ wordt geweigerd (guard 3), ook voor de eigenaar', $$
+  INSERT INTO public.bank_transaction_postings (bank_transaction_id, posting_group_id, organization_id, client_id,
+    grootboekrekening_id, posting_date, boekjaar, gross_amount, net_amount, btw_amount, user_id)
+  VALUES (proof.uid(1000, 20), gen_random_uuid(), '00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-0000000000c1',
+    '00000000-0000-0000-0000-00000000f006', DATE '2027-03-01', 2027, 30.00, 30.00, 0, '00000000-0000-0000-0000-0000000000e1')
+$$, '25000', 'alleen in een READ COMMITTED transactie');
+COMMIT;
+
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT proof.expect_error('G13e', 'een afletteringsmarker vastleggen onder REPEATABLE READ wordt geweigerd (guard 2), ook voor de eigenaar', $$
+  INSERT INTO public.bank_allocation_postings (allocation_id, posting_group_id, organization_id, client_id,
+    bank_transaction_id, invoice_id, invoice_type, amount, user_id)
+  VALUES (proof.uid(4000, 18), gen_random_uuid(), '00000000-0000-0000-0000-00000000a001', '00000000-0000-0000-0000-0000000000c1',
+    proof.uid(1000, 18), proof.uid(2000, 18), 'inkoop', 69.00, '00000000-0000-0000-0000-0000000000e1')
+$$, '25000', 'alleen in een READ COMMITTED transactie');
 COMMIT;
 
 SELECT proof.expect_ok('G14', 'een koppeling op een ongeboekte transactie maken en boeken werkt gewoon (READ COMMITTED)', $$

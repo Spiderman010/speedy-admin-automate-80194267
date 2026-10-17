@@ -16,20 +16,21 @@
 -- ── POST 1. De drie guardfuncties: exact het beoordeelde lichaam en veilig ──
 -- Verwacht: 3 rijen, elke booleaanse kolom `true`.
 SELECT h.naam,
-       md5(p.prosrc) = h.md5_lichaam                                          AS lichaam_exact,
-       p.prosecdef                                                            AS security_definer,
-       p.proconfig = ARRAY['search_path=public']                              AS search_path_vast,
-       p.provolatile = 'v'                                                    AS volatile,
-       p.proowner = (SELECT proowner FROM pg_proc
-                     WHERE oid = 'public.post_bank_transaction(uuid)'::regprocedure) AS eigenaar_als_schrijvers,
-       NOT has_function_privilege('anon',          p.oid, 'EXECUTE')
+       coalesce(md5(p.prosrc) = h.md5_lichaam, false)                         AS lichaam_exact,
+       coalesce(p.prosecdef, false)                                           AS security_definer,
+       coalesce(p.proconfig = ARRAY['search_path=public'], false)             AS search_path_vast,
+       coalesce(p.provolatile = 'v', false)                                   AS volatile,
+       coalesce(p.proowner = (SELECT proowner FROM pg_proc
+                     WHERE oid = 'public.post_bank_transaction(uuid)'::regprocedure), false) AS eigenaar_als_schrijvers,
+       p.oid IS NOT NULL
+       AND NOT has_function_privilege('anon',          p.oid, 'EXECUTE')
        AND NOT has_function_privilege('authenticated', p.oid, 'EXECUTE')
        AND NOT has_function_privilege('service_role',  p.oid, 'EXECUTE')
        AND NOT EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS geen_uitvoerrecht
 FROM (VALUES
-  ('enforce_bank_allocation_not_directly_posted',         '84097cea905288c5b6d9aea5c3ef8a55'),
-  ('enforce_bank_allocation_posting_not_directly_posted', '9add7f0705f7228addc776dbbfcdb57a'),
-  ('enforce_bank_direct_posting_without_allocations',     '40937abcc75869096153dd1d68ae119e')) h(naam, md5_lichaam)
+  ('enforce_bank_allocation_not_directly_posted',         '8855c971ecaa5bab46579c3ca5af5e58'),
+  ('enforce_bank_allocation_posting_not_directly_posted', 'fb390f45211a7c4e909e4fc8590389b0'),
+  ('enforce_bank_direct_posting_without_allocations',     '2c5174b792b86c1ee007c853be0602c7')) h(naam, md5_lichaam)
 LEFT JOIN pg_proc p ON p.proname = h.naam AND p.pronamespace = 'public'::regnamespace
 ORDER BY h.naam;
 
@@ -37,8 +38,8 @@ ORDER BY h.naam;
 -- ── POST 2. De drie triggers: exacte definitie, ingeschakeld ───────────────
 -- Verwacht: 3 rijen, `definitie_exact` en `ingeschakeld` overal `true`.
 SELECT h.tgname,
-       pg_get_triggerdef(t.oid) = h.definitie AS definitie_exact,
-       t.tgenabled = 'O'                      AS ingeschakeld
+       coalesce(pg_get_triggerdef(t.oid) = h.definitie, false) AS definitie_exact,
+       coalesce(t.tgenabled = 'O', false)                      AS ingeschakeld
 FROM (VALUES
   ('validate_bank_allocation_not_directly_posted_trigger',
    'CREATE TRIGGER validate_bank_allocation_not_directly_posted_trigger AFTER INSERT OR UPDATE OF bank_transaction_id ON public.bank_transaction_allocations FOR EACH ROW EXECUTE FUNCTION enforce_bank_allocation_not_directly_posted()'),
@@ -52,7 +53,7 @@ ORDER BY h.tgname;
 
 -- ── POST 3. De acht PR H-functies zijn onaangeroerd ─────────────────────────
 -- Verwacht: 8 rijen, `gelijk` overal `true` (dezelfde query als PRE 2).
-SELECT h.naam, md5(p.prosrc) AS md5_productie, h.verwacht, md5(p.prosrc) = h.verwacht AS gelijk
+SELECT h.naam, md5(p.prosrc) AS md5_productie, h.verwacht, coalesce(md5(p.prosrc) = h.verwacht, false) AS gelijk
 FROM (VALUES
   ('post_purchase_invoice',        '6366f052209d9a171f197de77eaf477a'),
   ('post_sales_invoice',           'cb467b35301239c3051c8b918662ea45'),
@@ -140,3 +141,18 @@ SELECT
                                                        AS actief_dubbel_geboekt,
   EXISTS (SELECT 1 FROM direct d JOIN posted p ON p.bank_transaction_id = d.bank_transaction_id)
                                                        AS stop;
+
+
+-- ── POST 8. Tenantconsistentie en bestaande afwijkingen onveranderd ─────────
+-- Exact dezelfde aantallen als PRE 8 en PRE 9.
+SELECT
+  (SELECT count(*) FROM public.bank_transactions bt
+   JOIN public.clients c ON c.id = bt.client_id
+   WHERE bt.organization_id IS DISTINCT FROM c.organization_id)     AS transacties_met_afwijkende_tenant,
+  (SELECT count(*) FROM public.bank_transaction_allocations a
+   JOIN public.bank_transactions bt ON bt.id = a.bank_transaction_id
+   WHERE a.organization_id IS DISTINCT FROM bt.organization_id OR a.client_id <> bt.client_id)
+                                                                    AS koppelingen_met_afwijkende_tenant,
+  (SELECT count(*) FROM public.bank_allocation_postings p
+   JOIN public.bank_transaction_allocations a ON a.id = p.allocation_id
+   WHERE a.bank_transaction_id <> p.bank_transaction_id)            AS afletteringsmarkers_op_andere_transactie;

@@ -27,9 +27,16 @@
 --      faalt als geheel, dus dit is de vroegste weigering, vóór enig ander
 --      schrijfwerk van de app (bv. het restbedrag van een factuur).
 --      AFTER en niet BEFORE: RLS (WITH CHECK) en de foreign key oordelen
---      eerst. Zo krijgt wie niet mag schrijven de RLS-weigering en nooit de
---      melding "al direct geboekt" — anders kon een buitenstaander die een
---      transactie-id kent de boekingsstaat van een andere tenant aflezen.
+--      eerst. Daarna eerst tenantconsistentie: een rij waarvan organisatie of
+--      administratie afwijkt van de banktransactie krijgt één neutrale
+--      weigering (42501 "Banktransactie niet beschikbaar"), of de transactie nu
+--      geboekt is of niet. Zo leest geen buitenstaander de boekingsstaat van
+--      een andere tenant af — ook niet door zijn eigen organisatie mee te
+--      sturen (RLS toetst alleen de organisatie op de rij zelf).
+--      Bekende grens: ook een TEGENGEBOEKTE directe boeking houdt haar marker,
+--      dus zo'n transactie kan daarna niet aan een factuur worden gekoppeld.
+--      Dat is bedoeld: de vrijgave van een directe boeking hoort bij de latere
+--      bankcorrecties, niet bij een losse koppeling.
 --   2. bank_allocation_postings, BEFORE INSERT: weigert het boeken van een
 --      koppeling op een direct geboekte transactie — ook van een koppeling die
 --      vóór deze migratie al bestond. Leidt de transactie af uit de koppeling
@@ -39,28 +46,41 @@
 --      dezelfde regel die de schrijver al toetst, nu ook als database-invariant.
 --
 --   De grootboekinvariant — "geen banktransactie heeft zowel een directe als
---   een afletteringsmarker" — rust op 2 en 3: die draaien binnen de schrijvers,
---   onder hun eigen FOR UPDATE op de banktransactie en in READ COMMITTED (het
---   grootboek weigert elk ander niveau). Guard 1 houdt de rij zelf schoon.
+--   een afletteringsmarker" — rust op 2 en 3, ook voor de eigenaar en elk pad
+--   buiten de schrijvers. Guard 1 houdt de koppelingsrij zelf schoon.
 --
 -- GELIJKTIJDIGHEID EN ISOLATIE
---   • Guard 1 neemt FOR KEY SHARE op de banktransactie, vóór het lezen van de
---     marker. Dat botst met de FOR UPDATE van beide schrijvers: wie eerst komt,
---     maakt de ander wachten. Na het wachten leest de volgende opdracht in de
---     triggerfunctie (VOLATILE, READ COMMITTED) een verse snapshot en ziet de
---     zojuist gecommitte marker. Het is dezelfde grendel die de foreign key van
---     de koppeling in dezelfde opdracht al neemt, dus geen nieuwe
---     grendelvolgorde. FOR KEY SHARE blokkeert gewone UPDATEs van de
---     banktransactie niet.
---   • Onder REPEATABLE READ of SERIALIZABLE ververst de snapshot NIET na het
---     wachten; dan zou guard 1 een net gecommitte marker missen. Daarom weigert
---     guard 1, net als het grootboek zelf (6C-b2), elk ander niveau dan READ
---     COMMITTED. De app (PostgREST) werkt in READ COMMITTED.
---   • Guards 2 en 3 nemen binnen de schrijvers geen nieuwe grendel: de
---     schrijver houdt de banktransactie al FOR UPDATE (en de koppeling FOR
---     UPDATE), en een zwakkere grendel op een eigen rij wacht nooit.
---   • De weigeringen gebruiken SQLSTATE 23514, nooit 23505: beide schrijvers
+--   Elke guard grendelt de banktransactie vóórdat zij leest, en elk paar
+--   botsende routes heeft minstens één kant met FOR UPDATE — zodat twee
+--   botsende schrijfacties nooit allebei "niets gezien" kunnen hebben:
+--   • Guards 2 en 3 (de markers) nemen FOR UPDATE, dezelfde grendel als de
+--     schrijvers. Binnen post_bank_transaction() en post_bank_allocation()
+--     houdt de transactie die grendel al (en de koppeling FOR UPDATE), dus daar
+--     verandert niets aan de grendelvolgorde. Buiten de schrijvers — een
+--     eigenaar of onderhoudspad dat zelf markers schrijft — serialiseert dit
+--     een directe marker tegen een afletteringsmarker en tegen guard 1.
+--   • Guard 1 (de koppelingsrij, het app-pad) neemt FOR KEY SHARE: dat botst
+--     met elke FOR UPDATE hierboven, maar blokkeert gewone UPDATEs van de
+--     banktransactie niet. Het is dezelfde grendel die de foreign key van de
+--     koppeling in dezelfde opdracht al neemt, dus geen nieuwe grendelvolgorde.
+--   • Na het wachten leest de volgende opdracht in de triggerfunctie
+--     (VOLATILE, READ COMMITTED) een verse snapshot en ziet de zojuist
+--     gecommitte marker of koppeling. Onder REPEATABLE READ of SERIALIZABLE
+--     ververst de snapshot NIET na het wachten. Daarom weigeren alle drie de
+--     guards, net als het grootboek zelf (6C-b2), elk ander niveau dan READ
+--     COMMITTED. De app (PostgREST) werkt in READ COMMITTED; de schrijvers
+--     konden toch al alleen in READ COMMITTED boeken.
+--   • De weigeringen gebruiken SQLSTATE 23514 (25000 voor het niveau, 42501
+--     voor een tenantafwijking in guard 1), nooit 23505: beide schrijvers
 --     vangen rond hun marker-INSERT uitsluitend unique_violation op.
+--   • Guard 2 leest de koppeling FOR SHARE: zo kan zij niet tegelijk naar een
+--     andere transactie worden verplaatst terwijl haar marker wordt gezet.
+--     Vandaag houdt de foreign key van de marker naar de koppeling dat ook al
+--     tegen (verplaatsen raakt de unieke index op (bank_transaction_id,
+--     invoice_id) en vraagt dus FOR UPDATE); FOR SHARE maakt de guard daar
+--     onafhankelijk van. Hetzelfde geldt voor de FOR KEY SHARE van guard 1
+--     (de foreign key van de koppeling) en de FOR UPDATE van guard 2 (die van
+--     guard 3 dekt elk paar al): verdediging in de diepte, geen meerkosten.
 --
 -- WAT DEZE MIGRATIE NADRUKKELIJK NIET DOET
 --   - Geen wijziging aan bestaande data, markers, grootboekregels of
@@ -75,6 +95,10 @@
 --     restore in replica-modus mogelijk blijft — hetzelfde patroon als de
 --     INSERT-triggers van het grootboek (20260914120000). Applicatierollen
 --     kunnen session_replication_role niet zetten.
+--   - Geen UPDATE-bewaking op de markertabellen: een eigenaar die een marker
+--     met UPDATE naar een andere transactie verplaatst, valt buiten deze guards.
+--     Dat bestond al, is alleen voor de eigenaar mogelijk (applicatierollen
+--     hebben uitsluitend SELECT op de markers) en valt buiten PR 0.
 --
 -- PRODUCTIE
 --   Toepassen uitsluitend via de Lovable Cloud SQL editor van project
@@ -130,6 +154,9 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_tx_org    uuid;
+  v_tx_client uuid;
 BEGIN
   -- AFTER-trigger: de rij heeft RLS en de foreign key al gepasseerd; een
   -- weigering hier breekt de hele opdracht af. De returnwaarde telt niet.
@@ -154,15 +181,29 @@ BEGIN
   -- (ook een AFTER-trigger, die eerder vuurt) dezelfde grendel al; deze regel
   -- maakt de guard daar onafhankelijk van — van het bestaan van die foreign
   -- key én van de volgorde waarin triggers vuren.
-  PERFORM 1 FROM public.bank_transactions bt
+  SELECT bt.organization_id, bt.client_id INTO v_tx_org, v_tx_client
+  FROM public.bank_transactions bt
   WHERE bt.id = NEW.bank_transaction_id
   FOR KEY SHARE;
+
+  -- Tenantconsistentie, vóór alles wat van de boekingsstaat afhangt. RLS toetst
+  -- de organisatie die de rij zelf draagt, en set_organization_id() laat een
+  -- meegestuurde waarde staan: een buitenstaander kan dus een rij met zijn
+  -- eigen organisatie op andermans transactie richten. Zo'n rij is nooit
+  -- legitiem (de app laat de organisatie uit de administratie afleiden) en
+  -- krijgt één neutrale weigering, ongeacht of de transactie geboekt is —
+  -- geen orakel over de boekingsstaat van een andere tenant.
+  IF NOT FOUND
+     OR NEW.organization_id IS DISTINCT FROM v_tx_org
+     OR NEW.client_id IS DISTINCT FROM v_tx_client THEN
+    RAISE EXCEPTION 'Banktransactie niet beschikbaar' USING ERRCODE = '42501';
+  END IF;
 
   IF EXISTS (
     SELECT 1 FROM public.bank_transaction_postings m
     WHERE m.bank_transaction_id = NEW.bank_transaction_id
   ) THEN
-    RAISE EXCEPTION 'Deze banktransactie is al rechtstreeks in het grootboek geboekt; een factuurkoppeling zou haar dubbel boeken. Corrigeer eerst de directe boeking.'
+    RAISE EXCEPTION 'Deze banktransactie is al rechtstreeks in het grootboek geboekt; een factuurkoppeling zou haar dubbel boeken. Dat geldt ook als die directe boeking is tegengeboekt: zij blijft aan de transactie verbonden.'
       USING ERRCODE = '23514';
   END IF;
 
@@ -173,7 +214,7 @@ $$;
 REVOKE ALL ON FUNCTION public.enforce_bank_allocation_not_directly_posted() FROM PUBLIC, anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public.enforce_bank_allocation_not_directly_posted() IS
-'Integriteitsguard (PR 0): weigert een factuurkoppeling op, of het verplaatsen van een koppeling naar, een banktransactie die al rechtstreeks is geboekt (bank_transaction_postings). AFTER-trigger per rij, zodat RLS en de foreign key eerst oordelen; neemt FOR KEY SHARE op de banktransactie; alleen READ COMMITTED. Geen rol- of auth.uid()-toets.';
+'Integriteitsguard (PR 0): weigert een factuurkoppeling op, of het verplaatsen van een koppeling naar, een banktransactie die al rechtstreeks is geboekt (bank_transaction_postings). AFTER-trigger per rij, zodat RLS en de foreign key eerst oordelen; neemt FOR KEY SHARE op de banktransactie; weigert neutraal (42501) een rij waarvan organisatie of administratie afwijkt van de transactie; alleen READ COMMITTED. Geen rol- of auth.uid()-toets.';
 
 DROP TRIGGER IF EXISTS validate_bank_allocation_not_directly_posted_trigger ON public.bank_transaction_allocations;
 CREATE TRIGGER validate_bank_allocation_not_directly_posted_trigger
@@ -191,10 +232,17 @@ AS $$
 DECLARE
   v_alloc_tx uuid;
 BEGIN
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'Een aflettering kan alleen in een READ COMMITTED transactie worden vastgelegd (huidig niveau: %)',
+      current_setting('transaction_isolation')
+      USING ERRCODE = '25000';
+  END IF;
+
   -- De banktransactie komt uit de koppeling zelf, niet uit de marker: een
   -- marker die naar een andere transactie wijst dan haar koppeling, wordt
   -- geweigerd. FOR SHARE houdt een gelijktijdige verplaatsing van de koppeling
-  -- tegen; binnen de schrijver houdt die de koppeling al FOR UPDATE.
+  -- tegen (vandaag ook de foreign key van de marker naar de koppeling); binnen
+  -- de schrijver houdt die de koppeling al FOR UPDATE.
   SELECT a.bank_transaction_id INTO v_alloc_tx
   FROM public.bank_transaction_allocations a
   WHERE a.id = NEW.allocation_id
@@ -205,9 +253,11 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
+  -- FOR UPDATE, dezelfde grendel als de schrijvers: binnen post_bank_allocation()
+  -- al in bezit, daarbuiten botst hij met guard 3 en guard 1.
   PERFORM 1 FROM public.bank_transactions bt
   WHERE bt.id = NEW.bank_transaction_id
-  FOR KEY SHARE;
+  FOR UPDATE;
 
   IF EXISTS (
     SELECT 1 FROM public.bank_transaction_postings m
@@ -224,7 +274,7 @@ $$;
 REVOKE ALL ON FUNCTION public.enforce_bank_allocation_posting_not_directly_posted() FROM PUBLIC, anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public.enforce_bank_allocation_posting_not_directly_posted() IS
-'Integriteitsguard (PR 0): weigert een afletteringsmarker (bank_allocation_postings) voor een banktransactie die al rechtstreeks is geboekt, ook voor een koppeling die al vóór de guard bestond. De transactie wordt uit de koppeling afgeleid. Geen rol- of auth.uid()-toets.';
+'Integriteitsguard (PR 0): weigert een afletteringsmarker (bank_allocation_postings) voor een banktransactie die al rechtstreeks is geboekt, ook voor een koppeling die al vóór de guard bestond. De transactie wordt uit de koppeling afgeleid; neemt FOR UPDATE op de banktransactie; alleen READ COMMITTED. Geen rol- of auth.uid()-toets.';
 
 DROP TRIGGER IF EXISTS validate_bank_allocation_posting_not_directly_posted_trigger ON public.bank_allocation_postings;
 CREATE TRIGGER validate_bank_allocation_posting_not_directly_posted_trigger
@@ -240,11 +290,18 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  -- Binnen de schrijver is de rij al FOR UPDATE van deze transactie; buiten de
-  -- schrijver serialiseert dit met guard 1 en met de afletteringsschrijver.
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'Een directe bankboeking kan alleen in een READ COMMITTED transactie worden vastgelegd (huidig niveau: %)',
+      current_setting('transaction_isolation')
+      USING ERRCODE = '25000';
+  END IF;
+
+  -- FOR UPDATE, dezelfde grendel als de schrijvers: binnen post_bank_transaction()
+  -- al in bezit, daarbuiten botst hij met guard 1, guard 2 en de
+  -- afletteringsschrijver.
   PERFORM 1 FROM public.bank_transactions bt
   WHERE bt.id = NEW.bank_transaction_id
-  FOR KEY SHARE;
+  FOR UPDATE;
 
   IF EXISTS (
     SELECT 1 FROM public.bank_allocation_postings p
@@ -269,7 +326,7 @@ $$;
 REVOKE ALL ON FUNCTION public.enforce_bank_direct_posting_without_allocations() FROM PUBLIC, anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public.enforce_bank_direct_posting_without_allocations() IS
-'Integriteitsguard (PR 0): weigert een directe bankboekingsmarker (bank_transaction_postings) voor een banktransactie met een factuurkoppeling of een geboekte aflettering. Geen rol- of auth.uid()-toets.';
+'Integriteitsguard (PR 0): weigert een directe bankboekingsmarker (bank_transaction_postings) voor een banktransactie met een factuurkoppeling of een geboekte aflettering. Neemt FOR UPDATE op de banktransactie; alleen READ COMMITTED. Geen rol- of auth.uid()-toets.';
 
 DROP TRIGGER IF EXISTS validate_bank_direct_posting_without_allocations_trigger ON public.bank_transaction_postings;
 CREATE TRIGGER validate_bank_direct_posting_without_allocations_trigger

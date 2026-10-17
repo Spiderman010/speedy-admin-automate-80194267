@@ -46,6 +46,16 @@ SELECT proof.expect_true('I6', 'elke tegenboekingsregel wijst naar een bestaande
               WHERE r.reversal_of_posting_id IS NOT NULL
                 AND NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.id = r.reversal_of_posting_id)) $$);
 
+SELECT proof.expect_true('I8', 'elke afletteringsmarker wijst naar de banktransactie van haar eigen koppeling', $$
+  NOT EXISTS (SELECT 1 FROM public.bank_allocation_postings p
+              JOIN public.bank_transaction_allocations a ON a.id = p.allocation_id
+              WHERE a.bank_transaction_id <> p.bank_transaction_id) $$);
+
+SELECT proof.expect_true('I9', 'geen koppeling waarvan organisatie of administratie afwijkt van haar banktransactie', $$
+  NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations a
+              JOIN public.bank_transactions t ON t.id = a.bank_transaction_id
+              WHERE a.organization_id IS DISTINCT FROM t.organization_id OR a.client_id <> t.client_id) $$);
+
 SELECT proof.expect_true('I7', 'de schrijvers zijn niet herdefinieerd: de acht PR H-lichamen staan er nog exact', $$
   (SELECT bool_and(md5(p.prosrc) = h.na) AND count(*) = 8
    FROM (VALUES

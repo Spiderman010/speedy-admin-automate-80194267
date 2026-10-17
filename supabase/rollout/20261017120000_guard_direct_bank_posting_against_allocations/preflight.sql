@@ -12,10 +12,21 @@
 -- de uitkomst van PRE 6 en PRE 7: POST 5 en POST 6 moeten er letterlijk gelijk
 -- aan zijn.
 --
+-- MOMENT: voer PRE, migratie en POST direct na elkaar uit op een rustig moment
+-- (geen gebruikers actief in BoekAssist). POST 5 en POST 7 vergelijken byte-
+-- voor-byte met PRE; elke boeking of koppeling door een gebruiker daartussen
+-- geeft een afwijking. Ook dan: STOP en melden, niet zelf verklaren of
+-- herhalen. Zet vóór de migratie in dezelfde editorsessie `SET lock_timeout =
+-- '5s';` — bij een time-out is er niets toegepast (alles of niets): STOP en
+-- melden.
+--
 -- STOP (niet uitvoeren, niets herstellen, uitkomst doorgeven) als:
 --   • PRE 1 of PRE 2 ergens `false` geeft;
 --   • PRE 4 `stop = true` geeft (een banktransactie is al zowel direct als via
---     een aflettering geboekt — een bestaande dubbele boeking).
+--     een aflettering geboekt — een bestaande dubbele boeking);
+--   • PRE 8 `stop = true` geeft (een banktransactie hoort bij een andere
+--     organisatie dan haar administratie: guard 1 zou daar een legitieme
+--     koppeling neutraal weigeren).
 -- Een koppeling op een direct geboekte transactie ZONDER geboekte aflettering
 -- (PRE 4 `ongeboekte_koppelingen_op_direct_geboekt` > 0) is géén STOP: zij kan
 -- na deze migratie niet meer worden geboekt. PRE 5 noemt ze voor de eigenaar;
@@ -60,7 +71,7 @@ SELECT
 -- ── PRE 2. De acht PR H-functies hebben exact het beoordeelde lichaam ───────
 -- Verwacht: 8 rijen, `gelijk` overal `true`. De proeven draaiden tegen precies
 -- deze lichamen; een afwijking betekent een onbekende versie in productie.
-SELECT h.naam, md5(p.prosrc) AS md5_productie, h.verwacht, md5(p.prosrc) = h.verwacht AS gelijk
+SELECT h.naam, md5(p.prosrc) AS md5_productie, h.verwacht, coalesce(md5(p.prosrc) = h.verwacht, false) AS gelijk
 FROM (VALUES
   ('post_purchase_invoice',        '6366f052209d9a171f197de77eaf477a'),
   ('post_sales_invoice',           'cb467b35301239c3051c8b918662ea45'),
@@ -159,3 +170,38 @@ SELECT
    FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p'))         AS tabelrechten_digest,
   (SELECT md5(string_agg(polname || ':' || polrelid::regclass::text, ',' ORDER BY polrelid::regclass::text, polname))
    FROM pg_policy)                                                                                     AS policies_digest;
+
+
+-- ── PRE 8. Tenantconsistentie van de banktransacties (STOP-controle) ────────
+-- Guard 1 weigert een koppeling waarvan organisatie of administratie afwijkt
+-- van haar banktransactie. De app laat de organisatie uit de administratie
+-- afleiden; dat klopt alleen als elke banktransactie bij de organisatie van
+-- haar eigen administratie hoort. Verwacht: afwijkend = 0, stop = false.
+SELECT count(*) AS afwijkend, count(*) > 0 AS stop
+FROM public.bank_transactions bt
+JOIN public.clients c ON c.id = bt.client_id
+WHERE bt.organization_id IS DISTINCT FROM c.organization_id;
+
+
+-- ── PRE 9. Bestaande afwijkingen (informatief, verwacht 0) ──────────────────
+-- Bestaande rijen blijven ongemoeid; alleen een nieuwe koppeling of een
+-- verplaatsing wordt getoetst. Een waarde > 0 is een bestaand datapunt voor de
+-- eigenaar, geen reden om iets te herstellen.
+SELECT
+  (SELECT count(*) FROM public.bank_transaction_allocations a
+   JOIN public.bank_transactions bt ON bt.id = a.bank_transaction_id
+   WHERE a.organization_id IS DISTINCT FROM bt.organization_id OR a.client_id <> bt.client_id)
+                                                       AS koppelingen_met_afwijkende_tenant,
+  (SELECT count(*) FROM public.bank_allocation_postings p
+   JOIN public.bank_transaction_allocations a ON a.id = p.allocation_id
+   WHERE a.bank_transaction_id <> p.bank_transaction_id)
+                                                       AS afletteringsmarkers_op_andere_transactie;
+
+
+-- ── PRE 10. Policies op de koppelingen (informatief) ────────────────────────
+-- Verwacht exact vier: role_bank_transaction_allocations_select (read_only),
+-- _insert en _update (assistant), _delete (accountant), alle TO authenticated.
+SELECT policyname, cmd, roles, qual, with_check
+FROM pg_policies
+WHERE schemaname = 'public' AND tablename = 'bank_transaction_allocations'
+ORDER BY policyname;

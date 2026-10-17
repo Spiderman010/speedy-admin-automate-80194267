@@ -263,9 +263,10 @@ $$;
 --   _kind = 'insert'   direct boeken, daarna een koppeling INSERTen en boeken
 --   _kind = 'repoint'  ongeboekte koppeling op _other, direct boeken van _tx,
 --                      koppeling met UPDATE naar _tx verplaatsen en boeken
---   _kind = 'facturen' de schrijfvolgorde van Facturen.tsx als assistent via
---                      RLS: koppeling (upsert), restbedrag factuur, dan pas de
---                      banktransactie (die de bevriezing weigert), dan boeken
+--   _kind = 'facturen' de schrijfvolgorde van Facturen.tsx via RLS, als de
+--                      eigenaar van de transactie (zoals de app: user_id =
+--                      auth.uid()): koppeling (upsert), restbedrag factuur, dan
+--                      pas de banktransactie (die de bevriezing weigert), dan boeken
 --   _kind = 'verkoop'  idem voor Verkoop.tsx met een verkoopfactuur
 CREATE FUNCTION proof.attack(_kind text, _tx uuid, _inv uuid, _other uuid DEFAULT NULL)
 RETURNS text LANGUAGE plpgsql AS $$
@@ -297,8 +298,10 @@ BEGIN
     ELSIF _kind = 'repoint' THEN
       UPDATE public.bank_transaction_allocations SET bank_transaction_id = _tx WHERE id = v_alloc;
     ELSE
-      -- Als de assistent, via RLS, in de volgorde van de schermen.
-      PERFORM set_config('test.user_id', '00000000-0000-0000-0000-0000000000e2', true);
+      -- Via RLS, in de volgorde van de schermen, zoals de app het doet: de app
+      -- schrijft user_id = auth.uid(), en de samengestelde foreign key eist dat
+      -- dat de eigenaar van de banktransactie is (hier e1).
+      PERFORM set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', true);
       SET LOCAL ROLE authenticated;
       INSERT INTO public.bank_transaction_allocations AS a
         (id, bank_transaction_id, invoice_type, invoice_id, client_id, amount, user_id)
@@ -349,7 +352,10 @@ BEGIN
   PERFORM * FROM dblink(_name, $q$SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)$q$) AS t(x text);
 END $$;
 
-/** Uitkomst van een eerder verstuurde (async) opdracht: 'ok: …' of 'fout [SQLSTATE] …'. */
+/** Uitkomst van een eerder verstuurde (async) opdracht: 'ok: …' of 'fout [SQLSTATE] …'.
+    query_canceled (57014, de statement_timeout van de sessie) wordt expliciet
+    gevangen: WHEN others vangt die niet, en een hangende race moet een FAIL
+    opleveren in plaats van het harnas af te breken. */
 CREATE FUNCTION proof.remote_outcome(_conn text)
 RETURNS text LANGUAGE plpgsql AS $$
 DECLARE v text; v_state text; v_msg text;
@@ -358,12 +364,12 @@ BEGIN
     SELECT x INTO v FROM dblink_get_result(_conn) AS t(x text);
     PERFORM * FROM dblink_get_result(_conn) AS t(x text);
     RETURN 'ok: ' || coalesce(v, '');
-  EXCEPTION WHEN others THEN
+  EXCEPTION WHEN query_canceled OR others THEN
     GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
   END;
   BEGIN
     PERFORM * FROM dblink_get_result(_conn) AS t(x text);
-  EXCEPTION WHEN others THEN NULL;
+  EXCEPTION WHEN query_canceled OR others THEN NULL;
   END;
   RETURN format('fout [%s] %s', v_state, v_msg);
 END $$;
@@ -375,7 +381,7 @@ DECLARE v text;
 BEGIN
   SELECT x INTO v FROM dblink(_conn, _sql) AS t(x text);
   RETURN 'ok: ' || coalesce(v, '');
-EXCEPTION WHEN others THEN
+EXCEPTION WHEN query_canceled OR others THEN
   RETURN format('fout [%s] %s', SQLSTATE, SQLERRM);
 END $$;
 
