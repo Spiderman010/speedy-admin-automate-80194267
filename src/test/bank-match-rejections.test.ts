@@ -158,13 +158,15 @@ describe("branch-grenzen", () => {
     expect(changed).not.toContain("package-lock.json");
     expect(changed).not.toContain("supabase/functions/mcp/index.ts");
     expect(changed).not.toContain(".lovable/mcp/manifest.json");
-    assertBranchSqlKeepsLedgerFoundation(changed);
-    assertBranchTouchesNoExistingWriter(changed);
     // Geen migratie die al op main staat — deze inbegrepen — is gewijzigd, verwijderd,
     // hernoemd of van type veranderd. Nieuwe migraties mogen; dat is gewoon later werk.
     // (Voorheen "precies deze migratie in de diff": dat gold alleen op de branch van #240
     // zelf en faalde na de merge op main en op elke volgende branch.)
+    // Vóór de hulpcontroles, zodat een verwijderde migratie hier met een duidelijke
+    // melding faalt in plaats van als leesfout in de helper.
     expect(changedExistingMigrations()).toEqual([]);
+    assertBranchSqlKeepsLedgerFoundation(changed);
+    assertBranchTouchesNoExistingWriter(changed);
   });
 
   it("12. geen UI-schrijfpad zonder gegenereerde types: niemand praat al met de tabel", () => {
@@ -181,8 +183,8 @@ describe("branch-grenzen", () => {
 describe("onveranderbaarheid van de beoordeelde migratie", () => {
   it("11b. byte-voor-byte de beoordeelde versie, en precies één bestand met deze naam", () => {
     // Los van git: geldt ook op main zelf, voor ongecommitte wijzigingen en zonder origin/main.
-    // CRLF → LF, zodat een checkout met autocrlf geen valse fout geeft; de repository bewaart LF.
-    const sha256 = createHash("sha256").update(raw.replace(/\r\n/g, "\n"), "utf8").digest("hex");
+    // Over de ruwe bytes, dus exact gelijk aan `sha256sum` van het bestand.
+    const sha256 = createHash("sha256").update(readFileSync(resolve(process.cwd(), MIGRATION))).digest("hex");
     expect(sha256).toBe(REVIEWED_SHA256);
     const sameName = readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((f) =>
       f.endsWith("_add_bank_match_rejections.sql"),
