@@ -14,7 +14,8 @@
 --   post_bank_transaction() voor de (her)boeking. Hier komt bij:
 --
 --   1. public.bank_transaction_posting_events — append-only gebeurtenissen per
---      banktransactie: posted, reclassified, reposted, released, returned. Elke
+--      banktransactie: posted, reclassified, reposted, released, returned, en
+--      unchanged (een herclassificatie die niets hoefde te doen). Elke
 --      correctie legt vast welke groep zij verving, welke tegenboeking daarbij
 --      hoort, welke groep ervoor in de plaats kwam, wie, waarom, en een
 --      momentopname van de vervangen boeking. UNIQUE (actor_id, request_id,
@@ -50,7 +51,8 @@
 --   S3  geen marker, laatste gebeurtenis `released`    → vrijgegeven (hold)
 --
 --   reclassify  S0 → S1  posted                 (assistant)
---               S1 → S1  unchanged              (accountant; zelfde codering)
+--               S1 → S1  unchanged              (accountant; zelfde codering — vastgelegd,
+--                                                zodat een herhaling exact dit antwoord geeft)
 --               S1 → S1  reclassified           (accountant; storno + herboeking)
 --               S2 → S1  reposted               (accountant; bestaande storno *)
 --               S3 → S1  reposted_after_release (accountant; returned + posted *)
@@ -220,7 +222,7 @@ CREATE TABLE IF NOT EXISTS public.bank_transaction_posting_events (
   CONSTRAINT bank_transaction_posting_events_kind_check
     CHECK (request_kind IN ('reclassify', 'release', 'return')),
   CONSTRAINT bank_transaction_posting_events_type_check
-    CHECK (event_type IN ('posted', 'reclassified', 'reposted', 'released', 'returned')),
+    CHECK (event_type IN ('posted', 'reclassified', 'reposted', 'released', 'returned', 'unchanged')),
   CONSTRAINT bank_transaction_posting_events_percentage_check
     CHECK (requested_btw_percentage IS NULL OR requested_btw_percentage IN (0, 9, 21)),
   CONSTRAINT bank_transaction_posting_events_description_check
@@ -273,7 +275,15 @@ CREATE TABLE IF NOT EXISTS public.bank_transaction_posting_events (
       AND superseded_posting_group_id IS NULL AND reversal_posting_group_id IS NULL
       AND replacement_posting_group_id IS NULL
       AND requested_grootboekrekening_id IS NULL AND requested_btw_percentage IS NULL
-      AND requested_description IS NULL AND replacement_description IS NULL AND reason IS NOT NULL))
+      AND requested_description IS NULL AND replacement_description IS NULL AND reason IS NOT NULL)
+    OR
+    -- Een herclassificatie die niets hoefde te doen: alleen de aanvraag, zodat
+    -- haar request_id verbruikt is en een herhaling exact dit antwoord geeft.
+    (event_type = 'unchanged' AND request_kind = 'reclassify'
+      AND superseded_posting_group_id IS NULL AND reversal_posting_group_id IS NULL
+      AND replacement_posting_group_id IS NULL AND expected_posting_group_id IS NOT NULL
+      AND requested_grootboekrekening_id IS NOT NULL AND requested_btw_percentage IS NOT NULL
+      AND replacement_description IS NULL AND reason IS NOT NULL))
 );
 
 -- Eén request_id is één handeling. Alleen het `returned` dat een herboeking na
@@ -306,7 +316,7 @@ CREATE POLICY role_bank_transaction_posting_events_select
   USING (public.has_min_role(auth.uid(), organization_id, 'read_only'));
 
 COMMENT ON TABLE public.bank_transaction_posting_events IS
-'Append-only geschiedenis van directe bankboekingen per banktransactie (Bankcorrecties v1.1): posted, reclassified, reposted, released, returned. Elke vervangen boekingsgroep staat hier precies één keer, met haar tegenboeking, haar opvolger (NULL bij vrijgeven) en een momentopname. De marker in bank_transaction_postings is de ene actieve directe boeking. Alleen de correctie-RPC''s schrijven; UNIQUE (actor_id, request_id, event_type) is de idempotentiesleutel, seq de volgorde.';
+'Append-only geschiedenis van directe bankboekingen per banktransactie (Bankcorrecties v1.1): posted, reclassified, reposted, released, returned en unchanged. Elke vervangen boekingsgroep staat hier precies één keer, met haar tegenboeking, haar opvolger (NULL bij vrijgeven) en een momentopname. De marker in bank_transaction_postings is de ene actieve directe boeking. Alleen de correctie-RPC''s schrijven; UNIQUE (actor_id, request_id, event_type) is de idempotentiesleutel, seq de volgorde.';
 
 -- ── 2. Bewaking van de gebeurtenissen ───────────────────────────────────────
 
@@ -443,6 +453,12 @@ BEGIN
     IF NEW.replacement_description IS DISTINCT FROM v_desc THEN
       RAISE EXCEPTION 'De omschrijving van de vervangende boeking wijkt af van haar grootboekregels' USING ERRCODE = '23514';
     END IF;
+  ELSIF NEW.event_type = 'unchanged' THEN
+    -- Niets vervangen: de verwachte groep is de actieve, niet tegengeboekte marker.
+    IF v_marker_group IS DISTINCT FROM NEW.expected_posting_group_id
+       OR EXISTS (SELECT 1 FROM public.ledger_reversal_postings r WHERE r.original_posting_group_id = v_marker_group) THEN
+      RAISE EXCEPTION 'Een ongewijzigde herclassificatie hoort bij de actieve, niet tegengeboekte boeking' USING ERRCODE = '23514';
+    END IF;
   ELSIF v_marker_group IS NOT NULL THEN
     RAISE EXCEPTION 'Na vrijgeven of terugzetten heeft een banktransactie geen actieve directe boeking' USING ERRCODE = '23514';
   END IF;
@@ -461,7 +477,7 @@ $$;
 REVOKE ALL ON FUNCTION public.enforce_bank_transaction_posting_event() FROM PUBLIC, anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public.enforce_bank_transaction_posting_event() IS
-'BEFORE INSERT op bank_transaction_posting_events: stempelt transactie en moment, grendelt de banktransactie, en toetst de lineage — de vervangen groep is een directe bankboeking van deze transactie met exact deze tegenboeking en niet meer actief; de opvolger is de actieve marker en in deze transactie geboekt; returned alleen na released; posted niet direct na released.';
+'BEFORE INSERT op bank_transaction_posting_events: stempelt transactie en moment, grendelt de banktransactie, en toetst de lineage — de vervangen groep is een directe bankboeking van deze transactie met exact deze tegenboeking en niet meer actief; de opvolger is de actieve marker en in deze transactie geboekt; unchanged hoort bij de actieve, niet tegengeboekte marker; returned alleen na released; posted niet direct na released.';
 
 DROP TRIGGER IF EXISTS enforce_bank_transaction_posting_event_trigger ON public.bank_transaction_posting_events;
 CREATE TRIGGER enforce_bank_transaction_posting_event_trigger
@@ -857,7 +873,7 @@ BEGIN
   IF FOUND THEN
     IF v_prev.bank_transaction_id IS DISTINCT FROM v_tx.id
        OR v_prev.request_kind <> 'reclassify'
-       OR v_prev.event_type NOT IN ('posted', 'reclassified', 'reposted')
+       OR v_prev.event_type NOT IN ('posted', 'reclassified', 'reposted', 'unchanged')
        OR v_prev.expected_posting_group_id IS DISTINCT FROM _expected_posting_group_id
        OR v_prev.requested_grootboekrekening_id IS DISTINCT FROM _grootboekrekening_id
        OR v_prev.requested_btw_percentage IS DISTINCT FROM _btw_percentage
@@ -878,7 +894,8 @@ BEGIN
                         WHERE e.actor_id = v_uid AND e.request_id = _request_id AND e.event_type = 'returned')
            THEN 'reposted_after_release' ELSE v_prev.event_type END,
       true,
-      v_prev.replacement_posting_group_id,
+      COALESCE(v_prev.replacement_posting_group_id,
+               CASE WHEN v_prev.event_type = 'unchanged' THEN v_prev.expected_posting_group_id END),
       v_prev.superseded_posting_group_id,
       v_prev.reversal_posting_group_id,
       v_prev.id;
@@ -1044,11 +1061,28 @@ BEGIN
       END IF;
     END IF;
 
-    -- (7f) Effectief dezelfde codering en omschrijving: niets te doen.
+    -- (7f) Effectief dezelfde codering en omschrijving: niets te boeken. De
+    --      aanvraag wordt wel vastgelegd, zodat haar request_id verbruikt is:
+    --      een herhaling (bv. na een verloren antwoord) geeft exact dit antwoord,
+    --      ook als de boeking inmiddels handmatig is tegengeboekt.
     IF v_marker.grootboekrekening_id = _grootboekrekening_id
        AND COALESCE(v_marker.btw_percentage, 0) = _btw_percentage
        AND v_old_desc IS NOT DISTINCT FROM v_new_desc THEN
-      RETURN QUERY SELECT 'unchanged'::text, false, v_marker.posting_group_id, NULL::uuid, NULL::uuid, NULL::uuid;
+      INSERT INTO public.bank_transaction_posting_events (
+        request_id, actor_id, request_kind, event_type,
+        bank_transaction_id, organization_id, client_id,
+        expected_posting_group_id,
+        requested_grootboekrekening_id, requested_btw_percentage, requested_description,
+        reason, created_xact_id
+      ) VALUES (
+        _request_id, v_uid, 'reclassify', 'unchanged',
+        v_tx.id, v_tx.organization_id, v_tx.client_id,
+        _expected_posting_group_id,
+        _grootboekrekening_id, _btw_percentage, v_desc_arg,
+        v_reason, pg_current_xact_id()
+      )
+      RETURNING id INTO v_event;
+      RETURN QUERY SELECT 'unchanged'::text, false, v_marker.posting_group_id, NULL::uuid, NULL::uuid, v_event;
       RETURN;
     END IF;
   END IF;
@@ -1133,7 +1167,7 @@ GRANT EXECUTE ON FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, n
   TO authenticated;
 
 COMMENT ON FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, numeric, uuid, text, text) IS
-'Boekt een directe banktransactie met de opgegeven grootboekrekening, BTW (0/9/21) en optioneel een nieuwe omschrijving. Niet geboekt (S0): eerste boeking (assistant). Geboekt (S1): storno + herboeking op de transactiedatum, of unchanged bij dezelfde codering. Handmatig tegengeboekt (S2): herboeking zonder tweede storno. Vrijgegeven (S3): returned + herboeking. S2 en S3 alleen als de bestaande storno op de transactiedatum staat (anders 22023: memoriaal). S1–S3 vereisen accountant en een toelichting. _expected_posting_group_id = de actieve groep (NULL = niet geboekt), anders 55000. Idempotent per (auth.uid(), _request_id). Grootboekregels alleen via reverse_posting_group en post_bank_transaction.';
+'Boekt een directe banktransactie met de opgegeven grootboekrekening, BTW (0/9/21) en optioneel een nieuwe omschrijving. Niet geboekt (S0): eerste boeking (assistant). Geboekt (S1): storno + herboeking op de transactiedatum, of unchanged bij dezelfde codering (vastgelegd, zodat een herhaling exact dat antwoord geeft). Handmatig tegengeboekt (S2): herboeking zonder tweede storno. Vrijgegeven (S3): returned + herboeking. S2 en S3 alleen als de bestaande storno op de transactiedatum staat (anders 22023: memoriaal). S1–S3 vereisen accountant en een toelichting. _expected_posting_group_id = de actieve groep (NULL = niet geboekt), anders 55000. Idempotent per (auth.uid(), _request_id). Grootboekregels alleen via reverse_posting_group en post_bank_transaction.';
 
 CREATE OR REPLACE FUNCTION public.release_bank_transaction_posting(
   _transaction_id            uuid,

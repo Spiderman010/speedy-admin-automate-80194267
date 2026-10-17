@@ -24,7 +24,7 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261018120000_add_bank_transaction_corrections.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "0287637c8ca4b9b1ab69b4a0d98a90f01bac2e0de465309dffa654ddef2cfef6";
+const REVIEWED_SHA256 = "ced5d808c7115bcf9f08fd0bcea8004bb2fff50f7e867399b81f58cd3668faf4";
 const HARNESS = "supabase/tests/bank-transaction-corrections";
 const ROLLOUT = "supabase/rollout/20261018120000_add_bank_transaction_corrections";
 
@@ -173,6 +173,7 @@ describe("migratie 20261018120000 — vorm", () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS public\.bank_transaction_posting_events \(/);
     expect(sql).toMatch(/seq +bigint GENERATED ALWAYS AS IDENTITY/);
     expect(sql).toContain("UNIQUE (actor_id, request_id, event_type)");
+    expect(sql).toContain("CHECK (event_type IN ('posted', 'reclassified', 'reposted', 'released', 'returned', 'unchanged'))");
     // Eén request_id is één handeling (alleen het returned vóór een herboeking deelt hem).
     expect(sql).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS bank_transaction_posting_events_request_once\s+ON public\.bank_transaction_posting_events \(actor_id, request_id\)\s+WHERE NOT \(event_type = 'returned' AND request_kind = 'reclassify'\);/);
     for (const col of ["superseded_posting_group_id", "reversal_posting_group_id", "replacement_posting_group_id", "seq"]) {
@@ -282,6 +283,15 @@ describe("de RPC's — volgorde van controles en mutaties", () => {
     expect(body("reclassify_bank_transaction")).toMatch(/IF v_state IN \('S2', 'S3'\) THEN\s+SELECT r\.posting_date INTO v_rev_date/);
     expect(body("release_bank_transaction_posting")).toMatch(/IF v_state = 'S2' THEN\s+SELECT r\.posting_date INTO v_rev_date/);
     // De eigen storno van de RPC staat altijd op de transactiedatum (zie test 9).
+  });
+
+  it("12c. ook een herclassificatie die niets hoeft te doen legt haar aanvraag vast: een herhaling geeft exact dat antwoord", () => {
+    const rc = body("reclassify_bank_transaction");
+    const insert = rc.indexOf("_request_id, v_uid, 'reclassify', 'unchanged',");
+    const answer = rc.indexOf("RETURN QUERY SELECT 'unchanged'::text, false, v_marker.posting_group_id, NULL::uuid, NULL::uuid, v_event;");
+    expect(insert).toBeGreaterThan(0);
+    expect(answer).toBeGreaterThan(insert);
+    expect(rc).toContain("v_prev.event_type NOT IN ('posted', 'reclassified', 'reposted', 'unchanged')");
   });
 
   it("13. een verouderde toestand is 55000, nooit 40001; geen 23505 uit eigen code", () => {

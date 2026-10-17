@@ -26,7 +26,7 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY[
   'C0','C1','C2','C3','C4','C5','C6','C7','C8','C9','C10',
-  'K0a','K0b','K0c','K0d','K0e','K0f','K0g','K0h','K0i','K0j','K0k','K0l','K0m','K0n',
+  'K0a','K0b','K0c','K0d','K0e','K0f','K0g','K0h','K0h2','K0h3','K0i','K0j','K0k','K0l','K0m','K0n',
   'K1a','K1b','K1c','K1d','K1e','K1f','K1g','K1h','K1i','K1j','K1k','K1l','K1m','K1n','K1o','K1p','K1q','K1r',
   'K2a','K2b','K2c','K2d','K2e','K2f','K2g','K2h','K2i','K2j','K2k','K2l','K2m','K2n','K2o',
   'K3a','K3b','K3c','K3d','K3e','K3f','K3g','K3h','K3i','K3j','K3k','K3l','K3m',
@@ -214,13 +214,41 @@ SELECT proof.expect_true('K0g', 'de gebeurtenis legt vast: wie, waarom, welke gr
             AND e.reason = 'Verkeerde rekening: 8250 moet 4700 zijn'
             AND e.organization_id = '00000000-0000-0000-0000-00000000a001' AND e.client_id = '00000000-0000-0000-0000-0000000000c1') $$);
 
--- Dezelfde codering nog eens: niets te doen.
-SELECT proof.put('k0_digest', proof.digest());
+-- Dezelfde codering nog eens: niets te boeken, maar de aanvraag wordt vastgelegd.
+CREATE FUNCTION proof.books_digest() RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT md5(concat_ws('|',
+    (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t.id), '')) FROM public.ledger_postings t),
+    (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t.original_posting_group_id), '')) FROM public.ledger_reversal_postings t),
+    (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t.bank_transaction_id), '')) FROM public.bank_transaction_postings t),
+    (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t.id), '')) FROM public.bank_transactions t)));
+$$;
+GRANT EXECUTE ON FUNCTION proof.books_digest() TO public;
+SELECT proof.put('k0_books', proof.books_digest());
 SELECT proof.put('k0_same', proof.rc(proof.u(1), proof.uid(1000, 1), proof.get('k0_g2')::uuid, proof.acct(7), 21, proof.req(3), 'Nog eens'));
-SELECT proof.record('K0h', 'dezelfde codering en omschrijving: unchanged, geen gebeurtenis, geen enkele rij veranderd',
-  proof.get('k0_same') = format('ok: unchanged|f|%s|||', proof.get('k0_g2'))
-  AND proof.digest() = proof.get('k0_digest'),
+SELECT proof.record('K0h', 'dezelfde codering en omschrijving: unchanged — geen boeking, geen marker- of bankregelwijziging; wel één gebeurtenis unchanged',
+  proof.get('k0_same') LIKE format('ok: unchanged|f|%s|||%%', proof.get('k0_g2'))
+  AND proof.f(proof.get('k0_same'), 6) IS NOT NULL
+  AND proof.books_digest() = proof.get('k0_books')
+  AND EXISTS (SELECT 1 FROM public.bank_transaction_posting_events e WHERE e.id = proof.f(proof.get('k0_same'), 6)::uuid
+              AND e.event_type = 'unchanged' AND e.expected_posting_group_id = proof.get('k0_g2')::uuid
+              AND e.superseded_posting_group_id IS NULL AND e.replacement_posting_group_id IS NULL),
   proof.get('k0_same'));
+
+-- Codex: een verloren antwoord op een unchanged, intussen een handmatige storno,
+-- dan dezelfde aanvraag opnieuw — die mag niet alsnog herboeken.
+SELECT proof.tx(8, -30.00, _date => DATE '2027-03-01');
+SELECT proof.put('k0h_post', proof.rc(proof.u(2), proof.uid(1000, 8), NULL, proof.acct(7), 0, proof.req(80)));
+SELECT proof.put('k0h_same', proof.rc(proof.u(1), proof.uid(1000, 8), proof.f(proof.get('k0h_post'), 3)::uuid, proof.acct(7), 0, proof.req(81), 'Controle'));
+SELECT public.reverse_posting_group(proof.f(proof.get('k0h_post'), 3)::uuid, DATE '2027-03-01', 'Handmatig, door een collega');
+SELECT proof.put('k0h_books', proof.books_digest());
+SELECT proof.put('k0h_retry', proof.rc(proof.u(1), proof.uid(1000, 8), proof.f(proof.get('k0h_post'), 3)::uuid, proof.acct(7), 0, proof.req(81), 'Controle'));
+SELECT proof.record('K0h2', 'herhaling van een unchanged na een tussentijdse handmatige storno: exact het oude antwoord (replayed), geen herboeking',
+  proof.get('k0h_retry') = replace(proof.get('k0h_same'), '|f|', '|t|')
+  AND proof.books_digest() = proof.get('k0h_books'),
+  proof.get('k0h_same') || ' || ' || proof.get('k0h_retry'));
+SELECT proof.record('K0h3', 'een nieuwe, expliciete aanvraag herboekt wél (reposted, zonder tweede storno)',
+  o LIKE 'ok: reposted|f|%', o)
+FROM proof.rc(proof.u(1), proof.uid(1000, 8), proof.f(proof.get('k0h_post'), 3)::uuid, proof.acct(7), 0, proof.req(82), 'Bewust opnieuw') o;
 
 -- BTW 21 → 9.
 SELECT proof.put('k0_vat', proof.rc(proof.u(1), proof.uid(1000, 1), proof.get('k0_g2')::uuid, proof.acct(7), 9, proof.req(4), 'BTW is 9%'));
@@ -248,11 +276,12 @@ SELECT proof.expect_true('K0j', 'alleen de omschrijving corrigeren: storno + her
                 AND e.requested_description = 'Kantoorartikelen maart' AND e.replacement_description = 'Kantoorartikelen maart'
                 AND e.superseded_description = 'Kantoor maart') $$);
 
-SELECT proof.expect_true('K0k', 'vier generaties vormen één keten G1 → G2 → G3 → G4, in seq-volgorde; precies één niet-tegengeboekte groep', $$
+SELECT proof.expect_true('K0k', 'vier generaties vormen één keten G1 → G2 → G3 → G4 (met de vastgelegde unchanged ertussen), in seq-volgorde; precies één niet-tegengeboekte groep', $$
   (SELECT array_agg(format('%s:%s>%s', e.event_type, e.superseded_posting_group_id, e.replacement_posting_group_id) ORDER BY e.seq)
    FROM public.bank_transaction_posting_events e WHERE e.bank_transaction_id = proof.uid(1000, 1))
   = ARRAY[format('posted:>%s', proof.get('k0_g1')),
           format('reclassified:%s>%s', proof.get('k0_g1'), proof.get('k0_g2')),
+          'unchanged:>',
           format('reclassified:%s>%s', proof.get('k0_g2'), proof.get('k0_g3')),
           format('reclassified:%s>%s', proof.get('k0_g3'), proof.get('k0_g4'))]
   AND (SELECT count(DISTINCT lp.posting_group_id) FROM public.ledger_postings lp
