@@ -1322,6 +1322,28 @@ src/test/bank-match-rejections.test.ts                contract over migratie, re
 - **Raakt niets anders:** geen schrijfactie op `bank_transactions`, afletteringen, facturen, `ledger_postings` of markers; het bewijs vergelijkt digests van al die tabellen vóór en na. Verdwijnt een banktransactie, dan verdwijnt haar feedback mee (`ON DELETE CASCADE`).
 - **Bewijs:** `run-proof.sh` past de migratie twee keer toe en voert de rollback twee keer uit; een negatieve controle (gemuteerde migratie) laat de tenantbewijzen falen.
 
+### Bank: geen dubbele boeking via directe boeking én factuurkoppeling — PR 0 (guard)
+
+```
+supabase/migrations/20261017120000_guard_direct_bank_posting_against_allocations.sql
+supabase/tests/bank-direct-allocation-guard/run-proof.sh      101 bewijzen tegen een echte PostgreSQL, met de echte keten
+supabase/rollout/20261017120000_guard_direct_bank_posting_against_allocations/preflight.sql   PRE, alleen lezen
+supabase/rollout/20261017120000_guard_direct_bank_posting_against_allocations/postcheck.sql   POST, alleen lezen
+src/test/bank-direct-allocation-guard-migration.test.ts       contract over migratie, harnas, uitrolcontroles en branchgrenzen
+```
+
+**Status: ⏳ Nog niet toegepast.** Toepassen via de Lovable Cloud SQL editor van `alxlbdhpbwlehbdbfejw`, ná review en pas nadat `20261010120000` aantoonbaar is toegepast: PRE → de ongewijzigde migratie (SHA-256 `4b7935627c3a9bd4eb433ae4015cd7208f0ade55173abebe94e3f563b3207450`) → POST. Geen typesynchronisatie nodig: er komt geen tabel, kolom of RPC bij.
+
+- **Het gat:** een banktransactie kan direct (`post_bank_transaction` → `bank_transaction_postings`) én via factuurkoppelingen (`post_bank_allocation` → `bank_allocation_postings`) worden geboekt; beide boeken de bankrekening. Alleen de richting "koppeling eerst" was afgedekt (de schrijver weigert een gekoppelde transactie). Open waren: een koppeling INSERTen of met UPDATE verplaatsen naar een direct geboekte transactie, en die koppeling daarna boeken. Facturen en Verkoop schrijven eerst de koppeling en pas daarna de banktransactie (die de bevriezing weigert), dus het gat was via de UI bereikbaar. Het harnas bewijst het: zonder PR 0 staat de bank in alle vier de varianten twee keer geboekt, ook onder gelijktijdigheid.
+- **Drie integriteitstriggers, geen schrijver herdefinieerd:**
+  1. `bank_transaction_allocations`, **AFTER** INSERT OR UPDATE OF `bank_transaction_id`: weigert een koppeling op een direct geboekte transactie. AFTER zodat RLS en de foreign key eerst oordelen: wie niet mag schrijven krijgt de RLS-weigering, nooit "al direct geboekt" (geen boekingsstaat-orakel voor een andere tenant). Alleen READ COMMITTED (`25000` anders), omdat een vasthoudende snapshot een net gecommitte marker zou missen.
+  2. `bank_allocation_postings`, BEFORE INSERT: weigert het boeken van een koppeling op een direct geboekte transactie — ook een koppeling van vóór PR 0. De transactie komt uit de koppeling zelf (`FOR SHARE`), niet uit de marker.
+  3. `bank_transaction_postings`, BEFORE INSERT: weigert een directe marker bij een koppeling of geboekte aflettering — de regel van de schrijver nu ook als database-invariant.
+- **Gelijktijdigheid:** elke guard neemt `FOR KEY SHARE` op de banktransactie vóór het lezen; dat botst met de `FOR UPDATE` van beide schrijvers. Het is dezelfde grendel die de foreign key van de koppeling al neemt, dus geen nieuwe grendelvolgorde (koppeling → banktransactie → factuur → administratiegrendel). Bewezen met twee echte sessies, in beide volgordes: de tweede wacht, daarna precies één route, één bankmutatie, geen deadlock. De enige 40P01 (twee sessies maken elk een koppeling op dezelfde transactie en boeken die in dezelfde transactie) bestond al zonder PR 0 en is ongewijzigd; er blijft niets half staan.
+- **Foutcodes:** `23514` (en `25000`), nooit `23505`: beide schrijvers vangen rond hun marker alleen `unique_violation`. De bulk geeft `23514`/`22023` ongewijzigd door.
+- **Wat het niet doet:** geen data, geen backfill, geen automatische correctie, geen nieuw recht, geen ENABLE ALWAYS (INSERT-triggers blijven ORIGIN, zoals die van het grootboek). Een al bestaande koppeling op een direct geboekte transactie blijft staan maar kan niet meer worden geboekt; de PRE telt en noemt ze. Een bestaande dubbele boeking (directe marker + afletteringsmarker) is een STOP in de PRE.
+- **Bewijs (101):** de echte keten `20260904120000` … `20261010120000` (inkoop-, verkoop-, afletterings-, directe en bulkboeking, tegenboekingsmotor, PR H) op een bootstrap zonder stubs voor markers of schrijvers; negatieve controle vóór de migratie; scenario's 1–10; idempotentie; isolatie; catalogus- en rechtenvergelijking; de rollback twee keer (daarna is het gat aantoonbaar terug) en opnieuw toepassen; invarianten over de hele database. Mutatietoetsen: elke guard en elke ontwerpkeuze (AFTER, READ COMMITTED, transactie uit de koppeling) is dragend; alleen de expliciete `FOR KEY SHARE` in guard 1 is vandaag redundant met de foreign key en staat er als verdediging in de diepte.
+
 ---
 
 ## Emergency rule
