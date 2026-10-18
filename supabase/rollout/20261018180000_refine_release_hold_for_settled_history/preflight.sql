@@ -81,7 +81,7 @@ SELECT current_user AS editorrol,
 --   origineel fb1d2550-9a9e-4e09-8a31-e05e59bf3a4a, storno ff598a0f-e4e3-4b82-968a-9666b54c5ad8,
 --   actuele groep 0b1aec4c-1bd1-42f3-b392-6a6125da98e3.
 -- Verwacht: bewezen = 1, onverklaard = 0, bekende_storno_bewezen = true,
--- andere_bewezen = 0, stop = false. Een tweede bewezen historische storno is
+-- andere_bewezen = 0, bekende_storno_in_verleden = true, stop = false. Een tweede bewezen historische storno is
 -- ook STOP: die is niet beoordeeld.
 WITH kandidaat AS (
   SELECT DISTINCT lp.source_id AS tx, lp.posting_group_id AS grp
@@ -131,9 +131,14 @@ WITH kandidaat AS (
               AND b.storno = 'ff598a0f-e4e3-4b82-968a-9666b54c5ad8'
               AND b.actuele_groep = '0b1aec4c-1bd1-42f3-b392-6a6125da98e3')                                       AS bekende_storno_bewezen,
     (SELECT count(DISTINCT grp) FROM bewijs b
-     WHERE b.bewezen AND b.grp <> 'fb1d2550-9a9e-4e09-8a31-e05e59bf3a4a')                                       AS andere_bewezen
+     WHERE b.bewezen AND b.grp <> 'fb1d2550-9a9e-4e09-8a31-e05e59bf3a4a')                                       AS andere_bewezen,
+    -- (8) vergelijkt straks met de eerste gebeurtenis: de bekende rijen moeten nu al in het verleden liggen.
+    coalesce((SELECT max(x.created_at) FROM public.ledger_postings x
+              WHERE x.posting_group_id IN ('fb1d2550-9a9e-4e09-8a31-e05e59bf3a4a', 'ff598a0f-e4e3-4b82-968a-9666b54c5ad8')) < now()
+             AND (SELECT r.created_at FROM public.ledger_reversal_postings r
+                  WHERE r.original_posting_group_id = 'fb1d2550-9a9e-4e09-8a31-e05e59bf3a4a') < now(), false)       AS bekende_storno_in_verleden
 )
-SELECT t.*, (t.onverklaard > 0 OR NOT t.bekende_storno_bewezen OR t.andere_bewezen > 0) AS stop
+SELECT t.*, (t.onverklaard > 0 OR NOT t.bekende_storno_bewezen OR t.andere_bewezen > 0 OR NOT t.bekende_storno_in_verleden) AS stop
 FROM telling t;
 
 
@@ -168,7 +173,13 @@ SELECT
 
 -- ── PRE B9. Proef: verstuurt de editor geneste dollar-aanhalingstekens heel? ──
 -- uitvoering.sql is één DO-opdracht met daarin de drie migraties tussen eigen
--- dollar-aanhalingstekens. Deze ene SELECT bevat dezelfde vorm (een ; binnen
--- geneste aanhalingstekens). Alleen lezen. Verwacht: één rij, `heel` = true.
--- Een foutmelding of een rij 'GESPLITST — STOP': de editor knipt de tekst; STOP.
-SELECT $buiten$ $binnen$; SELECT 'GESPLITST — STOP' AS proef; $binnen$ $buiten$ IS NOT NULL AS heel;
+-- dollar-aanhalingstekens. Deze ene SELECT bevat dezelfde vorm: puntkomma's
+-- binnen geneste aanhalingstekens, ook aan het eind van een regel. Alleen
+-- lezen. Plak het hele blok in één uitvoering.
+-- Verwacht: één rij, `heel` = true. Een foutmelding of een rij
+-- 'GESPLITST — STOP': de editor knipt de tekst; STOP.
+SELECT $buiten$
+$binnen$;
+SELECT 'GESPLITST — STOP' AS proef;
+$binnen$
+$buiten$ IS NOT NULL AS heel;

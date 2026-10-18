@@ -270,11 +270,14 @@ SQL
 
 # PRE B9: de proef op geneste dollar-aanhalingstekens, als één bericht (zoals de editor) en via psql -f.
 awk 'index($0, "-- ── PRE B9.") == 1 { f = 1 } f && !/^--/ { print }' "$R3/preflight.sql" > "$TMP/b9.sql"
-[ "$(grep -c . "$TMP/b9.sql")" = "1" ] || { echo "PRE B9 niet gevonden" >&2; exit 1; }
+[ "$(grep -c . "$TMP/b9.sql")" = "5" ] || { echo "PRE B9 niet gevonden" >&2; exit 1; }
 B9_EEN="$(one_exec "$DB3" "$TMP/b9.sql" | tail -1)"
 B9_F="$(psql -X -q -At -d "$DB3" -f "$TMP/b9.sql" 2>&1 | tail -1)"
-run3 -v een="$B9_EEN" -v f="$B9_F" > /dev/null <<'SQL'
-SELECT proof.put('a_b9_een', :'een'), proof.put('a_b9_f', :'f');
+# Een editor die knipt bij elke regel die op ';' eindigt, en elk stuk los verstuurt.
+B9_KNIP="$(awk '{ buf = buf $0 "\n" } /;[[:space:]]*$/ { printf "%s%c", buf, 0; buf = "" }' "$TMP/b9.sql" \
+           | xargs -0 -I{} psql -X -q -At -d "$DB3" -c {} 2>&1 || true)"
+run3 -v een="$B9_EEN" -v f="$B9_F" -v knip="$B9_KNIP" > /dev/null <<'SQL'
+SELECT proof.put('a_b9_een', :'een'), proof.put('a_b9_f', :'f'), proof.put('a_b9_knip', :'knip');
 SQL
 
 # Kopieën, vóór elke poging: voor het zichtbaarheidsbewijs en voor opdracht-voor-opdracht.

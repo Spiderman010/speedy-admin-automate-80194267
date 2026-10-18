@@ -30,7 +30,7 @@ const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 const PR1_FILE = "20261018120000_add_bank_transaction_corrections.sql";
 const PR2_FILE = "20261018150000_keep_bank_description_on_correction.sql";
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "4f61a9cf675db61f03c806258870f90bd74938cdc42831c60d3025af243d147d";
+const REVIEWED_SHA256 = "1d7f0aa272a66ad4a67138eddfb561fc13cd5b469030185ceae2986ffda18ba8";
 const PR1_HOLD_MD5 = "812d151a7041cdd48b7a784cd193a159";
 const FIX_HOLD_MD5 = "43347fb9f48ed4c161e291fa769577c2";
 const HELPER_MD5 = "697f9413067e9c5b73323b792c51cda9";
@@ -276,7 +276,10 @@ describe("de voorwaardencontrole", () => {
                          "'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at'"]) {
       expect(prereq, kolom).toContain(kolom);
     }
-    expect((prereq.match(/USING ERRCODE = '55000'/g) ?? []).length).toBe(8);
+    expect((prereq.match(/USING ERRCODE = '55000'/g) ?? []).length).toBe(9);
+    // Een nieuwe hulpfunctie krijgt de uitvoerende rol als eigenaar: die moet de eigenaar van de schrijver zijn (Codex).
+    expect(prereq).toContain("RAISE EXCEPTION 'Voorwaarde: voer deze migratie uit als de eigenaar van post_bank_transaction");
+    expect(prereq).toContain("(SELECT r.oid FROM pg_roles r WHERE r.rolname = current_user)");
     // Een object dat (nog) niet bestaat geeft geen fout bij het plannen: to_regprocedure, geen ::regprocedure.
     expect(prereq).not.toMatch(/'::regprocedure/);
     expect(raw.indexOf("DO $migratie$")).toBeLessThan(raw.indexOf(HELPER));
@@ -376,11 +379,14 @@ describe("uitrolcontroles", () => {
       for (const stmt of topLevelStatements(text)) expect(stmt, f).toMatch(/^(SELECT|WITH)\b/i);
     }
     // PRE B9: de proef op geneste dollar-aanhalingstekens, zoals in uitvoering.sql.
-    expect(pre).toContain("SELECT $buiten$ $binnen$; SELECT 'GESPLITST — STOP' AS proef; $binnen$ $buiten$ IS NOT NULL AS heel;");
+    expect(pre).toContain("SELECT $buiten$\n$binnen$;\nSELECT 'GESPLITST — STOP' AS proef;\n$binnen$\n$buiten$ IS NOT NULL AS heel;");
   });
 
-  it("17. PRE B6 en POST C4 kennen de beoordeelde historische storno; POST C pint de hulpfunctie, de hold en de trigger", () => {
+  it("17. PRE B6 en POST C4 kennen de beoordeelde historische storno (en eisen dat zij in het verleden ligt); POST C pint de hulpfunctie, de hold en de trigger", () => {
     for (const id of KNOWN) expect(pre, id).toContain(id);
+    expect(pre).toContain("AS bekende_storno_in_verleden");
+    expect(pre).toContain("OR NOT t.bekende_storno_in_verleden) AS stop");
+    expect(post).toContain("AS in_verleden");
     expect(post).toContain(KNOWN[0]);
     expect(post).toContain(`md5(p.prosrc) = '${HELPER_MD5}'`);
     expect(post).toContain(`md5(p.prosrc) = '${FIX_HOLD_MD5}'`);

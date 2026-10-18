@@ -22,7 +22,7 @@
 -- dollar-aanhalingstekens byte-gelijk dat bestand is):
 --   20261018120000_add_bank_transaction_corrections.sql  6117f64382e7951af650f3a09d74c675e7ad1070b7e298ce46e9d5faa490f2fc
 --   20261018150000_keep_bank_description_on_correction.sql  1cc32885a3d095ec2fa0bb36e16d4337cb5fdf8f95f59440175ee9b6ff3fe54d
---   20261018180000_refine_release_hold_for_settled_history.sql  4f61a9cf675db61f03c806258870f90bd74938cdc42831c60d3025af243d147d
+--   20261018180000_refine_release_hold_for_settled_history.sql  1d7f0aa272a66ad4a67138eddfb561fc13cd5b469030185ceae2986ffda18ba8
 --
 -- Verwacht als (laatste) uitkomst: één rij met `uitkomst` =
 -- 'gecombineerde uitrol voltooid'. Elke foutmelding, of 'NIET VOLTOOID — STOP':
@@ -2209,10 +2209,10 @@ $pr2_20261018150000$;
 --     gold, en daarnaast voor een vrijgegeven regel met bewezen geschiedenis.
 --   • Een lopende correctie kan nooit als historische storno gelden. Haar groep
 --     was tot in deze transactie de actieve boeking, dus na haar storno bestaat
---     nog geen nieuwe boeking: (7) is onwaar. Bovendien is haar storno niet
---     ouder dan de eerste gebeurtenis van de transactie: (8) is onwaar — ook in
---     F2 (een groep geboekt tijdens een functionele rollback), want die
---     correctie begon pas nadat de vrijgave was gecommit.
+--     nog geen nieuwe boeking: (7) is onwaar — altijd. Heeft de transactie al
+--     gebeurtenissen (zoals in F2, een groep geboekt tijdens een functionele
+--     rollback), dan is bovendien (8) onwaar: die correctie begon pas nadat de
+--     vrijgave was gecommit.
 --   • Een groep die niet aan alles voldoet, gedraagt zich als onder PR 1; de
 --     uitrolcontroles geven daarop STOP (PRE 4, POST 8).
 --   • Omgekeerd kan een ten onrechte "historisch" oordeel de hold alleen
@@ -2300,6 +2300,16 @@ BEGIN
                    AND t.tgfoid = to_regprocedure('public.enforce_bank_transaction_release_hold()')
                    AND t.tgenabled = 'A' AND NOT t.tgisinternal) THEN
     RAISE EXCEPTION 'Voorwaarde: de hold-trigger op bank_transactions ontbreekt of is niet ENABLE ALWAYS' USING ERRCODE = '55000';
+  END IF;
+
+  -- Een nieuwe hulpfunctie krijgt de uitvoerende rol als eigenaar, en de hold
+  -- (SECURITY DEFINER, eigenaar = die van de schrijver) moet haar kunnen aanroepen
+  -- terwijl iedereen anders het uitvoerrecht mist (Codex).
+  IF to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NULL
+     AND (SELECT r.oid FROM pg_roles r WHERE r.rolname = current_user)
+         IS DISTINCT FROM
+         (SELECT p.proowner FROM pg_proc p WHERE p.oid = to_regprocedure('public.post_bank_transaction(uuid)')) THEN
+    RAISE EXCEPTION 'Voorwaarde: voer deze migratie uit als de eigenaar van post_bank_transaction (de nieuwe hulpfunctie krijgt de uitvoerende rol als eigenaar)' USING ERRCODE = '55000';
   END IF;
 
   -- De hulpfunctie bestaat nog niet, of is exact deze (tweede toepassing), met dezelfde eigenaar.

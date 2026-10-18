@@ -150,10 +150,10 @@ voer daarom elk blok apart uit en noteer de uitkomst.
 | PRE B3 | 4 rijen, `bekend` overal true, `stop` overal false | STOP |
 | PRE B4 | `stop` = false (geen RULE, geen publicatie) | STOP |
 | PRE B5 | `gelijk` = true (de editorrol is eigenaar van de schrijver) | STOP |
-| PRE B6 | `bewezen` = 1, `onverklaard` = 0, `bekende_storno_bewezen` = true, `andere_bewezen` = 0, `stop` = false | STOP |
+| PRE B6 | `bewezen` = 1, `onverklaard` = 0, `bekende_storno_bewezen` = true, `andere_bewezen` = 0, `bekende_storno_in_verleden` = true, `stop` = false | STOP |
 | PRE B7 | 0 rijen | wachten, opnieuw; blijft het: STOP |
 | PRE B8 | **bewaren** (POST 4 van PR 2 en POST C6 vergelijken ermee) | — |
-| PRE B9 | één rij, `heel` = true (de editor knipt geneste dollar-aanhalingstekens niet, zoals in `uitvoering.sql`) | STOP |
+| PRE B9 | het hele blok (vijf regels) in één uitvoering: één rij, `heel` = true (de editor knipt geneste dollar-aanhalingstekens niet, ook niet bij een puntkomma aan het regeleinde, zoals in `uitvoering.sql`) | STOP |
 
 De PRE van PR 2 (`20261018150000_…/preflight.sql`) wordt **niet** uitgevoerd:
 die verwacht PR 1 al in productie. Haar voorwaarden zijn gedekt door PRE B2–B5
@@ -211,7 +211,7 @@ stukken, nooit opnieuw na een geslaagde uitvoering (de bewaking weigert dan).
 | blok | verwacht | anders |
 |---|---|---|
 | POST C1, C2, C3 | één rij, elke kolom `true` | STOP |
-| POST C4 | één rij: groep `fb1d2550-…`, `bewezen_historisch` = true, `vervangen` = false, `bekend` = true | STOP |
+| POST C4 | één rij: groep `fb1d2550-…`, `bewezen_historisch` = true, `vervangen` = false, `bekend` = true, `in_verleden` = true | STOP |
 | POST C5 | één rij: `actuele_groep` `0b1aec4c-…`, `hold_dekt_na_vrijgave` = true | STOP |
 | POST C6 | t.o.v. PRE B8: data gelijk, `functies_public` + 11, `triggers` + 9 | STOP |
 
@@ -221,7 +221,25 @@ getest door te schrijven (geen testdata); het gedrag is bewezen in het harnas.
 ## 8. Rollback (alleen met akkoord van de eigenaar; data-neutraal)
 
 Altijd in deze volgorde, elk als eigen uitvoering, met BoekAssist dicht van de
-eerste tot en met de laatste stap:
+eerste tot en met de laatste stap. Voer ná elke stap deze controle uit (alleen
+lezen) en ga alleen door als de uitkomst de verwachte is — de editor toont van
+een meervoudige uitvoering alleen het laatste resultaat, dus een weigering kan
+onopgemerkt blijven:
+
+```sql
+SELECT
+  (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))                     AS hold,
+  (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)')) AS correctie_rpc,
+  to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NOT NULL                                        AS hulpfunctie;
+```
+
+| na stap | `hold` | `correctie_rpc` | `hulpfunctie` |
+|---|---|---|---|
+| 1 | `812d151a7041cdd48b7a784cd193a159` | `067939e0c44a672c26ec8883717ef6d2` | false |
+| 2 | `812d151a7041cdd48b7a784cd193a159` | `a931207c1a4e97f06e7797ed105c0264` | false |
+| 3 | leeg | leeg | false |
+
+Elke andere uitkomst: STOP, niets herstellen, melden.
 
 1. `supabase/rollout/20261018180000_refine_release_hold_for_settled_history/rollback.sql`
    — één opdracht: bewaking, de hold terug naar PR 1, en daarna pas de
@@ -231,8 +249,9 @@ eerste tot en met de laatste stap:
 2. `supabase/rollout/20261018150000_keep_bank_description_on_correction/rollback.sql`
    — de correctie-RPC terug naar PR 1. Weigert zolang stap 1 niet gedaan is.
    Dit bestand is een bewaking gevolgd door losse opdrachten: plak het in zijn
-   geheel in één uitvoering (dan draait een weigering alles terug, zie PRE B9)
-   en STOP bij elke foutmelding.
+   geheel in één uitvoering en STOP bij elke foutmelding. Zou de editor de
+   opdrachten los versturen en na een fout doorgaan, dan vangt de controle
+   hierboven dat op (`correctie_rpc` = `a931…` terwijl `hulpfunctie` nog true is).
 3. Het ROLLBACK-blok uit de kop van `20261018120000_add_bank_transaction_corrections.sql`.
 
 Gebeurtenissen en grootboekregels blijven bij elke rollback staan. Na een

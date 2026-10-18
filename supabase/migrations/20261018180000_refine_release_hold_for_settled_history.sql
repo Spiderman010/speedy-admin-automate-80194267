@@ -41,10 +41,10 @@
 --     gold, en daarnaast voor een vrijgegeven regel met bewezen geschiedenis.
 --   • Een lopende correctie kan nooit als historische storno gelden. Haar groep
 --     was tot in deze transactie de actieve boeking, dus na haar storno bestaat
---     nog geen nieuwe boeking: (7) is onwaar. Bovendien is haar storno niet
---     ouder dan de eerste gebeurtenis van de transactie: (8) is onwaar — ook in
---     F2 (een groep geboekt tijdens een functionele rollback), want die
---     correctie begon pas nadat de vrijgave was gecommit.
+--     nog geen nieuwe boeking: (7) is onwaar — altijd. Heeft de transactie al
+--     gebeurtenissen (zoals in F2, een groep geboekt tijdens een functionele
+--     rollback), dan is bovendien (8) onwaar: die correctie begon pas nadat de
+--     vrijgave was gecommit.
 --   • Een groep die niet aan alles voldoet, gedraagt zich als onder PR 1; de
 --     uitrolcontroles geven daarop STOP (PRE 4, POST 8).
 --   • Omgekeerd kan een ten onrechte "historisch" oordeel de hold alleen
@@ -132,6 +132,16 @@ BEGIN
                    AND t.tgfoid = to_regprocedure('public.enforce_bank_transaction_release_hold()')
                    AND t.tgenabled = 'A' AND NOT t.tgisinternal) THEN
     RAISE EXCEPTION 'Voorwaarde: de hold-trigger op bank_transactions ontbreekt of is niet ENABLE ALWAYS' USING ERRCODE = '55000';
+  END IF;
+
+  -- Een nieuwe hulpfunctie krijgt de uitvoerende rol als eigenaar, en de hold
+  -- (SECURITY DEFINER, eigenaar = die van de schrijver) moet haar kunnen aanroepen
+  -- terwijl iedereen anders het uitvoerrecht mist (Codex).
+  IF to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NULL
+     AND (SELECT r.oid FROM pg_roles r WHERE r.rolname = current_user)
+         IS DISTINCT FROM
+         (SELECT p.proowner FROM pg_proc p WHERE p.oid = to_regprocedure('public.post_bank_transaction(uuid)')) THEN
+    RAISE EXCEPTION 'Voorwaarde: voer deze migratie uit als de eigenaar van post_bank_transaction (de nieuwe hulpfunctie krijgt de uitvoerende rol als eigenaar)' USING ERRCODE = '55000';
   END IF;
 
   -- De hulpfunctie bestaat nog niet, of is exact deze (tweede toepassing), met dezelfde eigenaar.

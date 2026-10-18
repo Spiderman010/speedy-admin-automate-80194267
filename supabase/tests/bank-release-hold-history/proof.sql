@@ -18,7 +18,7 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY[
   'C1','C2','C3','C4','C5','C6','C7','C8',
-  'V0','V1','V2','V2b','V2c','V2d','V3','V4','V5','V6','V7','V8','V9','V10','V11',
+  'V0','V1','V2','V2b','V2c','V2d','V3','V4','V5','V6','V7','V8','V9','V10','V11','V12',
   'H1','H2a','H2b','H2c','H2d','H2e','H2f','H2g','H2h','H2i','H2j','H2k','H2l','H2m','H2n','H2o','H3','H4','H5','H6','H7',
   'Q1','Q2','Q3','Q4',
   'D1','D2a','D2b','D2c','D2d','D2e','D3a','D3b','D3c','D3d','D3e','D4a','D4b','D4c','D5','D6','D7','D8',
@@ -115,6 +115,8 @@ SELECT proof.prereq_refuses('V10', 'weigert als de hulpfunctie al in een andere 
   :'prereq', 'bestaat al in een andere vorm');
 SELECT proof.prereq_refuses('V11', 'weigert als de hulpfunctie een andere eigenaar heeft',
   'ALTER FUNCTION public.bank_transaction_group_is_settled_history(uuid, uuid) OWNER TO authenticated', :'prereq', 'bestaat al in een andere vorm');
+SELECT proof.prereq_refuses('V12', 'weigert een eerste toepassing door een andere rol dan de eigenaar van de schrijver (de hold zou de hulpfunctie dan niet mogen aanroepen; Codex)',
+  'DROP FUNCTION public.bank_transaction_group_is_settled_history(uuid, uuid); SET LOCAL ROLE authenticated', :'prereq', 'eigenaar van post_bank_transaction');
 
 -- ═══ H. HET OORDEEL VAN DE HULPFUNCTIE ═══════════════════════════════════════
 

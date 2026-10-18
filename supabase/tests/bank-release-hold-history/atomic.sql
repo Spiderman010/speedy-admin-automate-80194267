@@ -26,7 +26,7 @@ SET client_min_messages = warning;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
 SELECT proof.plan(ARRAY[
-  'A0','A1','A2','A3','A4','A5','A6','A7','A8','A9','A10','A11','A12',
+  'A0','A1','A2','A3','A4','A5','A6','A7','A8','A9','A10','A11','A12','A13',
   'A20','A21','A22','A23','A24','A25',
   'A30','A31','A32','A33','A34','A35','A36','A37','A38','A39','A40','A41','A42','A43','A44','A45','A46','A47']);
 
@@ -67,12 +67,14 @@ SELECT proof.record('A10', 'PRE B3 en B4: de vier bekende triggers, geen RULE, g
   proof.all_bools('a_b3', true, ARRAY['stop']) AND proof.all_bools('a_b3', false, ARRAY['bekend']) AND (SELECT count(*) FROM proof.a_b3) = 4
   AND (SELECT NOT stop FROM proof.a_b4));
 SELECT proof.record('A11', 'PRE B6: precies de bekende historische storno, niets anders — geen STOP',
-  NOT stop AND bewezen = 1 AND onverklaard = 0 AND bekende_storno_bewezen AND andere_bewezen = 0,
+  NOT stop AND bewezen = 1 AND onverklaard = 0 AND bekende_storno_bewezen AND andere_bewezen = 0 AND bekende_storno_in_verleden,
   format('%s/%s/%s/%s/%s', bewezen, onverklaard, bekende_storno_bewezen, andere_bewezen, stop))
 FROM proof.a_b6;
 SELECT proof.record('A12', 'PRE B7: geen lopende applicatieverzoeken; PRE B9: geneste dollar-aanhalingstekens komen heel aan (één bericht en psql -f: één rij, heel)',
   (SELECT count(*) FROM proof.a_b7) = 0 AND proof.get('a_b9_een') = 't' AND proof.get('a_b9_f') = 't',
   concat_ws(' / ', proof.get('a_b9_een'), proof.get('a_b9_f')));
+SELECT proof.record('A13', 'PRE B9 vangt een editor die knipt bij een puntkomma aan het regeleinde (zo''n editor zou uitvoering.sql in stukken uitvoeren): foutmelding',
+  proof.get('a_b9_knip') LIKE '%unterminated dollar-quoted string%', left(proof.get('a_b9_knip'), 160));
 
 -- ── geweigerde of mislukte uitvoeringen: niets toegepast ───────────────────
 SELECT proof.record('A20', 'opdracht voor opdracht, doorgaan na een fout, lock_timeout al 5s op de sessie, eindcontrole gesaboteerd: niets toegepast en de laatste rij zegt NIET VOLTOOID',
@@ -133,7 +135,7 @@ FROM proof.a_b8 b, proof.p2_post4 q;
 SELECT proof.record('A43', 'POST C1, C2, C3: hulpfunctie, hold en hold-trigger exact en veilig',
   proof.all_bools('c_c1', true) AND proof.all_bools('c_c2', true) AND proof.all_bools('c_c3', true));
 SELECT proof.record('A44', 'POST C4: één rij, de bekende groep, bewezen historisch, niet vervangen',
-  (SELECT count(*) FROM proof.c_c4) = 1 AND bekend AND bewezen_historisch AND NOT vervangen)
+  (SELECT count(*) FROM proof.c_c4) = 1 AND bekend AND bewezen_historisch AND NOT vervangen AND in_verleden)
 FROM proof.c_c4;
 SELECT proof.record('A45', 'POST C5: de hold dekt de bekende regel na een vrijgave',
   (SELECT count(*) FROM proof.c_c5) = 1 AND hold_dekt_na_vrijgave AND actuele_groep = '0b1aec4c-1bd1-42f3-b392-6a6125da98e3')
