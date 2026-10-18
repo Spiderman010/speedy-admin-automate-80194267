@@ -30,7 +30,7 @@ SELECT proof.plan(ARRAY[
   'D21a','D21b','D21c','D21d','D21e',
   'D22',
   'D23a','D23b',
-  'D24','D25']);
+  'D24','D25','D26','D27','D28']);
 
 -- ═══ C. CATALOGUS ════════════════════════════════════════════════════════════
 
@@ -491,14 +491,15 @@ SELECT proof.btx(115, -60.00, 'Geblokkeerd S0');
 SELECT proof.put('d20_s1', proof.rcw(proof.u(2), 114, NULL, proof.acct(7), 21, 1141, NULL, 'Boekingstekst'));
 SELECT proof.put('d20_lock', proof.call(proof.u(1), format('SELECT changed::text FROM public.set_posting_lock(%L, DATE ''2027-03-31'', ''Aangifte Q1'')', '00000000-0000-0000-0000-0000000000c1')));
 SELECT proof.put('d20_digest', proof.digest());
+-- Elke aanroep één opdracht; de toets in de volgende (een nieuwe momentopname).
+SELECT proof.put('d20b_a', proof.rcw(proof.u(1), 114, proof.m(114), proof.acct(6), 21, 1142, 'Geblokkeerd', 'Andere tekst'));
+SELECT proof.put('d20b_b', proof.rcw(proof.u(2), 115, NULL, proof.acct(7), 21, 1151, NULL, 'Andere tekst'));
 SELECT proof.record('D20b', 'boekingsblokkade: een correctie (S1) en een eerste boeking (S0) met omschrijving worden geweigerd (22023); niets veranderd, bankregels byte-gelijk',
   proof.get('d20_lock') LIKE 'ok: %'
-  AND a LIKE 'fout [22023] Boekingsdatum 2027-03-01 valt binnen de boekingsblokkade%'
-  AND b LIKE 'fout [22023] Boekingsdatum 2027-03-01 valt binnen de boekingsblokkade%'
+  AND proof.get('d20b_a') LIKE 'fout [22023] Boekingsdatum 2027-03-01 valt binnen de boekingsblokkade%'
+  AND proof.get('d20b_b') LIKE 'fout [22023] Boekingsdatum 2027-03-01 valt binnen de boekingsblokkade%'
   AND proof.digest() = proof.get('d20_digest') AND proof.intact(114) AND proof.intact(115),
-  concat_ws(' || ', a, b))
-FROM proof.rcw(proof.u(1), 114, proof.m(114), proof.acct(6), 21, 1142, 'Geblokkeerd', 'Andere tekst') a,
-     proof.rcw(proof.u(2), 115, NULL, proof.acct(7), 21, 1151, NULL, 'Andere tekst') b;
+  concat_ws(' || ', proof.get('d20b_a'), proof.get('d20b_b')));
 SELECT proof.put('d20_unlock', proof.call(proof.u(1), format('SELECT changed::text FROM public.set_posting_lock(%L, NULL, ''Opgeheven'')', '00000000-0000-0000-0000-0000000000c1')));
 SELECT proof.put('d20c', proof.rcw(proof.u(1), 114, proof.m(114), proof.acct(6), 21, 1143, 'Na opheffen', 'Andere tekst'));
 SELECT proof.record('D20c', 'na het opheffen van de blokkade lukt dezelfde correctie (nieuwe request_id); bankregel byte-gelijk',
@@ -522,12 +523,14 @@ INSERT INTO public.bank_transaction_allocations (id, bank_transaction_id, invoic
 VALUES (proof.uid(4000, 119), proof.uid(1000, 119), 'inkoop', proof.uid(2000, 119), '00000000-0000-0000-0000-0000000000c1', 40.00, proof.u(1));
 SELECT proof.put('d21_digest', proof.digest());
 
+SELECT proof.put('d21a', proof.rcw(proof.u(2), 116, NULL, proof.acct(7), 0, 1161, NULL, 'Tekst'));
 SELECT proof.record('D21a', 'gematcht zonder koppelingsrij: 22023, ook met omschrijving; niets veranderd',
-  o LIKE 'fout [22023] Deze banktransactie is via de match aan een factuur gekoppeld%' AND proof.digest() = proof.get('d21_digest') AND proof.intact(116), o)
-FROM proof.rcw(proof.u(2), 116, NULL, proof.acct(7), 0, 1161, NULL, 'Tekst') o;
+  proof.get('d21a') LIKE 'fout [22023] Deze banktransactie is via de match aan een factuur gekoppeld%'
+  AND proof.digest() = proof.get('d21_digest') AND proof.intact(116), proof.get('d21a'));
+SELECT proof.put('d21b', proof.rcw(proof.u(2), 119, NULL, proof.acct(7), 0, 1191, NULL, 'Tekst'));
 SELECT proof.record('D21b', 'met een koppelingsrij: 22023; niets veranderd',
-  o LIKE 'fout [22023] Deze banktransactie is aan een factuur gekoppeld%' AND proof.digest() = proof.get('d21_digest') AND proof.intact(119), o)
-FROM proof.rcw(proof.u(2), 119, NULL, proof.acct(7), 0, 1191, NULL, 'Tekst') o;
+  proof.get('d21b') LIKE 'fout [22023] Deze banktransactie is aan een factuur gekoppeld%'
+  AND proof.digest() = proof.get('d21_digest') AND proof.intact(119), proof.get('d21b'));
 SELECT proof.put('d21c', proof.rcw(proof.u(1), 117, proof.m(117), proof.acct(6), 0, 1171, 'Correctie', 'Nieuwe tekst'));
 SELECT proof.record('D21c', 'handmatig geboekt met een achtergebleven match: correctie met omschrijving lukt; match en factuur ongemoeid, bankregel byte-gelijk',
   proof.get('d21c') LIKE 'ok: reclassified|f|%'
@@ -541,10 +544,12 @@ SELECT proof.record('D21d', 'een onbevestigde suggestie met omschrijving boeken:
   AND (SELECT matched_invoice_id IS NULL AND match_confidence IS NULL FROM public.bank_transactions WHERE id = proof.uid(1000, 118))
   AND proof.text_of(proof.m(118)) = 'Toch iets anders' AND proof.intact(118),
   proof.get('d21d'));
-SELECT proof.record('D21e', 'vrijgeven van de regel met achtergebleven match blijft geweigerd (PR 1); match en bankregel ongemoeid',
-  o LIKE 'fout [22023] Deze banktransactie draagt nog een factuurmatch%' AND proof.intact(117)
-  AND (SELECT matched_invoice_id FROM public.bank_transactions WHERE id = proof.uid(1000, 117)) = proof.uid(2000, 117), o)
-FROM proof.rel(proof.u(1), proof.uid(1000, 117), proof.m(117), proof.req(1172)) o;
+SELECT proof.put('d21e_digest', proof.digest());
+SELECT proof.put('d21e', proof.rel(proof.u(1), proof.uid(1000, 117), proof.m(117), proof.req(1172)));
+SELECT proof.record('D21e', 'vrijgeven van de regel met achtergebleven match blijft geweigerd (PR 1); match en bankregel ongemoeid, niets veranderd',
+  proof.get('d21e') LIKE 'fout [22023] Deze banktransactie draagt nog een factuurmatch%' AND proof.intact(117)
+  AND proof.digest() = proof.get('d21e_digest')
+  AND (SELECT matched_invoice_id FROM public.bank_transactions WHERE id = proof.uid(1000, 117)) = proof.uid(2000, 117), proof.get('d21e'));
 
 -- D22: tenant en rollen.
 SELECT proof.put('d22_ins', proof.call(proof.u(2), format($q$INSERT INTO public.bank_transactions
@@ -554,31 +559,91 @@ SELECT proof.put('d22_ins', proof.call(proof.u(2), format($q$INSERT INTO public.
 INSERT INTO proof.original SELECT id, description, convert_to(description, 'UTF8'), NULL FROM public.bank_transactions WHERE id = proof.uid(1000, 120);
 UPDATE proof.original SET dedup = proof.dedup_key(120) WHERE tx = proof.uid(1000, 120);
 SELECT proof.put('d22_digest', proof.digest());
+SELECT proof.put('d22a', proof.rcw(proof.u(3), 101, proof.m(101), proof.acct(7), 21, 1201, 'Vreemd', 'Gekaapt'));
+SELECT proof.put('d22b', proof.rcw(proof.u(2), 101, proof.m(101), proof.acct(7), 21, 1202, 'Assistent', 'Gekaapt'));
+SELECT proof.put('d22c', proof.rcw(proof.u(4), 101, proof.m(101), proof.acct(7), 21, 1203, 'Lezer', 'Gekaapt'));
+SELECT proof.put('d22d', proof.call(NULL, format('SELECT outcome FROM public.reclassify_bank_transaction(%L, %L, %L, 21, %L, %L, %L)',
+                                    proof.uid(1000, 101), proof.m(101), proof.acct(7), proof.req(1204), 'Anon', 'Gekaapt'), 'anon'));
+SELECT proof.put('d22e', proof.rcw(proof.u(1), 120, NULL, proof.acct(7), 0, 1205, NULL, 'Gekaapt'));
 SELECT proof.record('D22', 'tenant en rollen: andere organisatie, assistent op een geboekte regel, alleen-lezen, anon en een vreemde administratie — alle geweigerd, niets veranderd, bankregels byte-gelijk',
-  a LIKE 'fout [42501] Banktransactie niet beschikbaar%'
-  AND b LIKE 'fout [42501] Geen rechten om een geboekte banktransactie te corrigeren (accountant vereist)%'
-  AND c LIKE 'fout [42501] Geen rechten om te boeken voor deze organisatie%'
-  AND d LIKE 'fout [42501] permission denied for function reclassify_bank_transaction%'
-  AND e LIKE 'fout [42501] Administratie hoort niet bij de organisatie van deze banktransactie%'
+  proof.get('d22a') LIKE 'fout [42501] Banktransactie niet beschikbaar%'
+  AND proof.get('d22b') LIKE 'fout [42501] Geen rechten om een geboekte banktransactie te corrigeren (accountant vereist)%'
+  AND proof.get('d22c') LIKE 'fout [42501] Geen rechten om te boeken voor deze organisatie%'
+  AND proof.get('d22d') LIKE 'fout [42501] permission denied for function reclassify_bank_transaction%'
+  AND proof.get('d22e') LIKE 'fout [42501] Administratie hoort niet bij de organisatie van deze banktransactie%'
   AND proof.digest() = proof.get('d22_digest') AND proof.intact(101) AND proof.intact(120),
-  concat_ws(' || ', a, b, c, d, e))
-FROM proof.rcw(proof.u(3), 101, proof.m(101), proof.acct(7), 21, 1201, 'Vreemd', 'Gekaapt') a,
-     proof.rcw(proof.u(2), 101, proof.m(101), proof.acct(7), 21, 1202, 'Assistent', 'Gekaapt') b,
-     proof.rcw(proof.u(4), 101, proof.m(101), proof.acct(7), 21, 1203, 'Lezer', 'Gekaapt') c,
-     proof.call(NULL, format('SELECT outcome FROM public.reclassify_bank_transaction(%L, %L, %L, 21, %L, %L, %L)',
-                             proof.uid(1000, 101), proof.m(101), proof.acct(7), proof.req(1204), 'Anon', 'Gekaapt'), 'anon') d,
-     proof.rcw(proof.u(1), 120, NULL, proof.acct(7), 0, 1205, NULL, 'Gekaapt') e;
+  concat_ws(' || ', proof.get('d22a'), proof.get('d22b'), proof.get('d22c'), proof.get('d22d'), proof.get('d22e')));
 
 -- D23: ongeldige of lege omschrijving.
 SELECT proof.put('d23_digest', proof.digest());
+SELECT proof.put('d23a', proof.rcw(proof.u(1), 101, proof.m(101), proof.acct(6), 21, 1231, 'Te lang', repeat('x', 501)));
 SELECT proof.record('D23a', 'een omschrijving van 501 tekens: 22023, niets veranderd',
-  o LIKE 'fout [22023] De omschrijving is te lang (maximaal 500 tekens)%' AND proof.digest() = proof.get('d23_digest') AND proof.intact(101), o)
-FROM proof.rcw(proof.u(1), 101, proof.m(101), proof.acct(6), 21, 1231, 'Te lang', repeat('x', 501)) o;
+  proof.get('d23a') LIKE 'fout [22023] De omschrijving is te lang (maximaal 500 tekens)%'
+  AND proof.digest() = proof.get('d23_digest') AND proof.intact(101), proof.get('d23a'));
 SELECT proof.put('d23b', proof.rcw(proof.u(1), 101, proof.m(101), proof.acct(7), 21, 1232, 'Leeg', E' \t\r\n '));
 SELECT proof.record('D23b', 'een omschrijving van alleen witruimte telt als geen omschrijving: de boekingsomschrijving blijft (geen terugval)',
   proof.get('d23b') LIKE 'ok: reclassified|f|%' AND proof.text_of(proof.m(101)) = 'Albert Heijn 1234 AMSTERDAM' AND proof.intact(101)
   AND proof.last_event(101) = 'reclassified|∅|Albert Heijn 1234 AMSTERDAM|Albert Heijn 1234 AMSTERDAM',
   proof.get('d23b'));
+
+-- D26: geld erbij (eerste regel = bank, BTW-regel als laatste): S0 → S1 → S3 → S4 zonder omschrijving.
+SELECT proof.btx(130, 121.00, 'OMZET KLANT 42 FACTUUR 2027-010');
+CREATE TABLE proof.d26 (seq serial, step text, outcome text, text_now text, texts text, intact boolean);
+GRANT ALL ON proof.d26 TO public;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA proof TO public;
+INSERT INTO proof.d26 (step, outcome) VALUES ('s0', proof.rcw(proof.u(2), 130, NULL, proof.acct(8), 21, 1301, NULL, 'Omzet maart'));
+UPDATE proof.d26 SET text_now = proof.text_of(proof.m(130)), texts = proof.texts_of(proof.m(130)), intact = proof.intact(130) WHERE intact IS NULL;
+INSERT INTO proof.d26 (step, outcome) VALUES ('s1', proof.rcw(proof.u(1), 130, proof.m(130), proof.acct(8), 9, 1302, 'Laag tarief'));
+UPDATE proof.d26 SET text_now = proof.text_of(proof.m(130)), texts = proof.texts_of(proof.m(130)), intact = proof.intact(130) WHERE intact IS NULL;
+INSERT INTO proof.d26 (step, outcome) VALUES ('rel', proof.rel(proof.u(1), proof.uid(1000, 130), proof.m(130), proof.req(1303)));
+UPDATE proof.d26 SET intact = proof.intact(130) WHERE intact IS NULL;
+INSERT INTO proof.d26 (step, outcome) VALUES ('s3', proof.rcw(proof.u(1), 130, NULL, proof.acct(8), 21, 1304, 'Na vrijgave'));
+UPDATE proof.d26 SET text_now = proof.text_of(proof.m(130)), texts = proof.texts_of(proof.m(130)), intact = proof.intact(130) WHERE intact IS NULL;
+INSERT INTO proof.d26 (step, outcome) VALUES ('rel2', proof.rel(proof.u(1), proof.uid(1000, 130), proof.m(130), proof.req(1305)));
+UPDATE proof.d26 SET intact = proof.intact(130) WHERE intact IS NULL;
+INSERT INTO proof.d26 (step, outcome) VALUES ('ret', proof.ret(proof.u(1), proof.uid(1000, 130), proof.req(1306)));
+UPDATE proof.d26 SET intact = proof.intact(130) WHERE intact IS NULL;
+INSERT INTO proof.d26 (step, outcome) VALUES ('s4', proof.rcw(proof.u(2), 130, NULL, proof.acct(8), 21, 1307));
+UPDATE proof.d26 SET text_now = proof.text_of(proof.m(130)), texts = proof.texts_of(proof.m(130)), intact = proof.intact(130) WHERE intact IS NULL;
+SELECT proof.record('D26', 'geld erbij met BTW (bankregel eerst, BTW-regel als laatste): de boekingstekst loopt door S1, S3 en S4 zonder ''BTW''-voorvoegsel; de bankregel na elke stap byte-gelijk',
+  (SELECT bool_and(outcome LIKE 'ok: %' AND intact) AND count(*) = 7 FROM proof.d26)
+  AND (SELECT bool_and(text_now = 'Omzet maart' AND texts = 'Omzet maart / Omzet maart / BTW Omzet maart')
+       FROM proof.d26 WHERE step IN ('s0', 's1', 's3', 's4')),
+  (SELECT string_agg(step || '=' || left(outcome, 28) || '/' || coalesce(texts, '-') || '/' || intact, ' ; ' ORDER BY seq) FROM proof.d26));
+
+-- D27: door de app geboekt (met een Toelichting die de bankregel overschreef), daarna de
+-- banktekst teruggezet, dan vrijgegeven via de RPC: S3 en S4 houden de boekingstekst
+-- van die app-boeking — er is dan geen gebeurtenis met een vervangende groep.
+SELECT proof.tx(131, -121.00, _description => 'BOL.COM BESTELLING 1234');
+SELECT proof.tx(132, -121.00, _description => 'BOL.COM BESTELLING 5678');
+UPDATE public.bank_transactions SET description = 'Toelichting van de app', match_status = 'handmatig_geboekt',
+  grootboekrekening_id = proof.acct(7), btw_percentage = 21
+WHERE id IN (proof.uid(1000, 131), proof.uid(1000, 132));
+SELECT public.post_bank_transaction(proof.uid(1000, 131)), public.post_bank_transaction(proof.uid(1000, 132));
+UPDATE public.bank_transactions SET description = 'BOL.COM BESTELLING 1234' WHERE id = proof.uid(1000, 131);
+UPDATE public.bank_transactions SET description = 'BOL.COM BESTELLING 5678' WHERE id = proof.uid(1000, 132);
+SELECT proof.put('d27_rel131', proof.rel(proof.u(1), proof.uid(1000, 131), proof.m(131), proof.req(1311)));
+SELECT proof.put('d27_rel132', proof.rel(proof.u(1), proof.uid(1000, 132), proof.m(132), proof.req(1321)));
+SELECT proof.put('d27_ret132', proof.ret(proof.u(1), proof.uid(1000, 132), proof.req(1322)));
+SELECT proof.put('d27_s3', proof.rc(proof.u(1), proof.uid(1000, 131), NULL, proof.acct(6), 21, proof.req(1312), 'Herboeken'));
+SELECT proof.put('d27_s4', proof.rc(proof.u(2), proof.uid(1000, 132), NULL, proof.acct(6), 21, proof.req(1323)));
+SELECT proof.record('D27', 'app-boeking → vrijgegeven via de RPC → S3 en S4 zonder omschrijving: de tekst van de app-boeking, niet de (teruggezette) banktekst; de bankregel ongemoeid',
+  proof.get('d27_rel131') LIKE 'ok: released|f|%' AND proof.get('d27_ret132') LIKE 'ok: returned|f|%'
+  AND proof.get('d27_s3') LIKE 'ok: reposted_after_release|f|%' AND proof.get('d27_s4') LIKE 'ok: posted|f|%'
+  AND proof.text_of(proof.m(131)) = 'Toelichting van de app' AND proof.text_of(proof.m(132)) = 'Toelichting van de app'
+  AND (SELECT description FROM public.bank_transactions WHERE id = proof.uid(1000, 131)) = 'BOL.COM BESTELLING 1234'
+  AND (SELECT description FROM public.bank_transactions WHERE id = proof.uid(1000, 132)) = 'BOL.COM BESTELLING 5678',
+  concat_ws(' || ', proof.get('d27_s3'), proof.get('d27_s4')));
+
+-- D28: een lege bankomschrijving ('') blijft leeg — niet NULL.
+SELECT proof.btx(133, -12.10, '');
+SELECT proof.put('d28a', proof.rcw(proof.u(2), 133, NULL, proof.acct(7), 21, 1331));
+SELECT proof.put('d28b', proof.rcw(proof.u(1), 133, proof.m(133), proof.acct(6), 21, 1332, 'Tekst', 'Kosten'));
+SELECT proof.record('D28', 'lege bankomschrijving: eerste boeking ''Bankboeking'', correctie met tekst; de bankregel blijft '''' (geen NULL)',
+  proof.get('d28a') LIKE 'ok: posted|f|%' AND proof.get('d28b') LIKE 'ok: reclassified|f|%'
+  AND proof.text_of(proof.m(133)) = 'Kosten' AND proof.intact(133)
+  AND (SELECT description = '' AND description IS NOT NULL FROM public.bank_transactions WHERE id = proof.uid(1000, 133)),
+  concat_ws(' || ', proof.get('d28a'), proof.get('d28b')));
 
 -- D24: de gebeurtenissen zijn consistent met het grootboek.
 SELECT proof.expect_true('D24', 'elke gebeurtenis: de geboekte omschrijving = de eerste regel van de vervangende groep, de vervangen omschrijving = die van de vervangen groep, de gevraagde leeg of gelijk aan de geboekte', $$

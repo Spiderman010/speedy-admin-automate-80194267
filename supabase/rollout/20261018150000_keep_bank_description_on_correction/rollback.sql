@@ -10,6 +10,19 @@
 -- Verwacht na afloop: md5(prosrc) van reclassify_bank_transaction =
 -- a931207c1a4e97f06e7797ed105c0264 (de POST-pin van PR 1).
 
+-- Alleen vanuit de beoordeelde toestand: de functie is die van PR 2 (of al die
+-- van PR 1, bij een tweede uitvoering). Anders gebeurt er niets.
+DO $rollback$
+DECLARE v_md5 text;
+BEGIN
+  SELECT md5(p.prosrc) INTO v_md5 FROM pg_proc p
+  WHERE p.oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)');
+  IF v_md5 IS NULL OR v_md5 NOT IN ('067939e0c44a672c26ec8883717ef6d2', 'a931207c1a4e97f06e7797ed105c0264') THEN
+    RAISE EXCEPTION 'Rollback geweigerd: reclassify_bank_transaction is niet de beoordeelde versie (md5 %)', v_md5 USING ERRCODE = '55000';
+  END IF;
+END
+$rollback$;
+
 CREATE OR REPLACE FUNCTION public.reclassify_bank_transaction(
   _transaction_id            uuid,
   _expected_posting_group_id uuid,

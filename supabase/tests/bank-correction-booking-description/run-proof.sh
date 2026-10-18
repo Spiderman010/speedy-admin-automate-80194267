@@ -119,7 +119,9 @@ run -v conn="$CONN" -f "$HERE/concurrency.sql"                                  
 run -c "INSERT INTO proof.state VALUES ('digest_before_rollback', proof.digest()), ('rest_before_rollback', proof.rest_digest());" > /dev/null
 run -f "$ROLLOUT/rollback.sql"                                                     > /dev/null
 run -f "$ROLLOUT/rollback.sql"                                                     > /dev/null
-run -f "$HERE/after-rollback.sql"                                                  > /dev/null
+RBGUARD="$(sed -n '/^DO \$rollback\$$/,/^\$rollback\$;$/p' "$ROLLOUT/rollback.sql")"
+[ -n "$RBGUARD" ] || { echo "rollbackbewaking niet gevonden" >&2; exit 1; }
+run -v rbguard="$RBGUARD" -f "$HERE/after-rollback.sql"                            > /dev/null
 run -f "$M"                                                                        > /dev/null
 run -f "$HERE/final.sql"                                                           > /dev/null
 

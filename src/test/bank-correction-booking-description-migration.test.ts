@@ -159,7 +159,7 @@ function grantsAfter(text: string): string {
 function topLevelStatements(text: string): string[] {
   return text
     .replace(/AS \$\$[\s\S]*?\$\$;/g, "AS $$ … $$;")
-    .replace(/\$migratie\$[\s\S]*?\$migratie\$/g, "…")
+    .replace(/\$(migratie|rollback)\$[\s\S]*?\$\1\$/g, "…")
     .split("\n")
     .filter((l) => !l.trimStart().startsWith("--"))
     .join("\n")
@@ -292,11 +292,16 @@ describe("het gedrag in de code", () => {
 });
 
 describe("rollback, harnas en uitrolcontroles", () => {
-  it("12. rollback.sql zet de functie byte-gelijk terug naar PR 1, met haar rechten en commentaar — en doet verder niets", () => {
+  it("12. rollback.sql zet de functie byte-gelijk terug naar PR 1, met haar rechten en commentaar — alleen vanuit PR 2 of PR 1, en doet verder niets", () => {
     const rb = read(`${ROLLOUT}/rollback.sql`);
     expect(definition(rb)).toBe(pr1Def);
     expect(grantsAfter(rb)).toBe(grantsAfter(pr1));
+    const guard = rb.slice(rb.indexOf("DO $rollback$"), rb.indexOf("$rollback$;"));
+    expect(guard).toContain(`v_md5 NOT IN ('${PR2_BODY_MD5}', '${PR1_BODY_MD5}')`);
+    expect(guard).toContain("USING ERRCODE = '55000'");
+    expect(rb.indexOf("DO $rollback$")).toBeLessThan(rb.indexOf("CREATE OR REPLACE FUNCTION"));
     expect(topLevelStatements(rb).map((s) => s.split(/\s+/).slice(0, 2).join(" ").toUpperCase())).toEqual([
+      "DO …",
       "CREATE OR",
       "REVOKE ALL",
       "GRANT EXECUTE",
@@ -362,6 +367,29 @@ describe("rollback, harnas en uitrolcontroles", () => {
       const defined = [...read(`${MIGRATION_DIR}/${f}`).matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(\w+)\s*\(/gi)].map((m) => m[1]);
       const overlap = defined.filter((n) => pr1Functions.includes(n));
       expect(overlap, f).toEqual(f === FILE ? ["reclassify_bank_transaction"] : []);
+    }
+  });
+});
+
+describe("na deze migratie", () => {
+  it("20. struikeldraad: geen latere migratie zet een trigger, RULE of publicatie op bank_transactions of herdefinieert een van de vastgepinde functies", () => {
+    // Het veiligheidsargument van de tijdelijke omschrijving (geen trigger schrijft
+    // haar ergens weg, niets zendt haar uit) geldt voor de catalogus van nu. Een
+    // latere migratie die dat raakt, moet het argument opnieuw laten beoordelen en
+    // de pins in deze migratie, PRE/POST en deze test bijwerken.
+    const pinned = ["post_bank_transaction", "reclassify_bank_transaction", ...BANK_TRIGGERS.map(([, fn]) => fn)];
+    for (const f of readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((x) => x.endsWith(".sql") && x > FILE)) {
+      const code = read(`${MIGRATION_DIR}/${f}`)
+        .split("\n")
+        .filter((l) => !l.trimStart().startsWith("--"))
+        .join("\n");
+      expect(code, f).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER[^;]*\bON\s+(?:public\.)?bank_transactions\b/i);
+      expect(code, f).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?RULE[^;]*\bbank_transactions\b/i);
+      expect(code, f).not.toMatch(/PUBLICATION[^;]*\bbank_transactions\b|FOR\s+ALL\s+TABLES/i);
+      expect(code, f).not.toMatch(/ALTER\s+TABLE[^;]*\bbank_transactions\b[^;]*TRIGGER/i);
+      for (const fn of pinned) {
+        expect(code, `${f}: ${fn}`).not.toMatch(new RegExp(`FUNCTION\\s+(?:public\\.)?${fn}\\s*\\(`, "i"));
+      }
     }
   });
 });

@@ -10,7 +10,7 @@
 SET client_min_messages = warning;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
-SELECT proof.plan(ARRAY['B1', 'B2', 'B3', 'B4']);
+SELECT proof.plan(ARRAY['B1', 'B2', 'B3', 'B4', 'B5', 'B6']);
 
 SELECT proof.expect_true('B1', 'na de rollback: elke functie (lichaam, SECURITY DEFINER, volatiliteit, instellingen, eigenaar, rechten, uitkomsttype) exact als vóór PR 2; reclassify = de PR 1-pin', $$
   NOT EXISTS ((SELECT * FROM proof.cat_functions
@@ -59,3 +59,10 @@ SELECT proof.record('B4', 'na de rollback geldt weer PR 1: de correctie schrijft
   proof.get('b_fix') LIKE 'ok: reclassified|f|%' AND NOT proof.intact(500)
   AND (SELECT description FROM public.bank_transactions WHERE id = proof.uid(1000, 500)) = 'Overschreven',
   proof.get('b_fix'));
+
+-- De bewaking van rollback.sql: alleen vanuit PR 2 (of PR 1) — anders weigert zij.
+SELECT proof.prereq_refuses('B5', 'rollback.sql weigert (55000) als reclassify_bank_transaction noch PR 1 noch PR 2 is',
+  $s$DO $d$ BEGIN EXECUTE regexp_replace(pg_get_functiondef('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'::regprocedure), 'BEGIN', 'BEGIN -- proof'); END $d$$s$,
+  :'rbguard', 'Rollback geweigerd');
+SELECT proof.record('B6', 'en vanuit PR 1 (hier, na de rollback) laat zij een tweede uitvoering toe', o = 'ok', o)
+FROM proof.prereq_passes(:'rbguard') o;

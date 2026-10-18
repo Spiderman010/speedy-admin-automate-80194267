@@ -12,7 +12,12 @@
 --     publicatie die bank_transactions uitzendt) — de migratie zou dan ook zelf
 --     weigeren, maar dan is eerst een nieuwe beoordeling nodig;
 --   • een query een foutmelding geeft.
--- PRE 6 en PRE 7 zijn informatief; bewaar de uitkomst van PRE 7 voor POST 4.
+-- PRE 6, PRE 7 en PRE 8 zijn informatief; bewaar de uitkomst van PRE 7 voor POST 4.
+-- Voer PRE, migratie en POST direct na elkaar uit op een rustig moment: een
+-- import of bewerking tussen PRE 7 en POST 4 laat die vingerafdruk verschillen
+-- zonder dat de migratie iets wijzigde (functies en triggers tellen dan nog
+-- steeds gelijk). Liefst in hetzelfde venster als 20261018120000 (PR 1), zodat
+-- er geen correctie met omschrijving onder PR 1 kan plaatsvinden (PRE 8).
 -- ═════════════════════════════════════════════════════════════════════════════
 
 
@@ -94,7 +99,8 @@ SELECT current_user                                                         AS e
 
 
 -- ── PRE 7. Vingerafdruk van de data (bewaar voor POST 4) ────────────────────
--- De migratie wijzigt geen enkele rij; POST 4 moet exact dezelfde waarden geven.
+-- De migratie wijzigt geen enkele rij; POST 4 moet exact dezelfde waarden geven
+-- (zie de kop: alleen als er tussendoor niets werd geïmporteerd of bewerkt).
 SELECT
   (SELECT count(*) FROM public.bank_transactions)                                         AS banktransacties,
   (SELECT md5(coalesce(string_agg(id::text || '=' || coalesce(encode(convert_to(description, 'UTF8'), 'hex'), '-'), ',' ORDER BY id), ''))
@@ -105,3 +111,20 @@ SELECT
   (SELECT count(*) FROM public.bank_transaction_posting_events)                           AS gebeurtenissen,
   (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace)              AS functies_public,
   (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal)                                AS triggers;
+
+
+-- ── PRE 8. Correcties met omschrijving onder PR 1 (informatief) ─────────────
+-- Onder PR 1 schreef een correctie met omschrijving die tekst in de bankregel.
+-- Verwacht: 0 rijen. Elke rij: meld haar aan de eigenaar — de geïmporteerde
+-- bankomschrijving van die regel is dan overschreven en wordt door deze
+-- migratie niet hersteld (bij CAMT-imports staat zij mogelijk nog in camt_*).
+SELECT e.bank_transaction_id, e.event_type, e.created_at,
+       e.requested_description,
+       bt.description                                       AS bankomschrijving_nu,
+       bt.description IS NOT DISTINCT FROM e.requested_description AS waarschijnlijk_overschreven,
+       to_jsonb(bt) ->> 'camt_ustrd'                         AS camt_ustrd,
+       to_jsonb(bt) ->> 'camt_addtl_ntry_inf'                AS camt_addtl_ntry_inf
+FROM public.bank_transaction_posting_events e
+JOIN public.bank_transactions bt ON bt.id = e.bank_transaction_id
+WHERE e.request_kind = 'reclassify' AND e.requested_description IS NOT NULL
+ORDER BY e.seq;

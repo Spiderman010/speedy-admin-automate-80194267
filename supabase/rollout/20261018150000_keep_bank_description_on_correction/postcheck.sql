@@ -75,6 +75,8 @@ ORDER BY 1;
 -- ── POST 4. Geen rij veranderd: exact dezelfde waarden als PRE 7 ────────────
 -- Verwacht: elke kolom gelijk aan de uitkomst van PRE 7 (de migratie wijzigt
 -- alleen een functielichaam; het aantal functies en triggers blijft gelijk).
+-- Werd er tussen PRE en POST geïmporteerd of bewerkt, dan mogen de
+-- datakolommen daardoor verschillen; `functies_public` en `triggers` niet.
 SELECT
   (SELECT count(*) FROM public.bank_transactions)                                         AS banktransacties,
   (SELECT md5(coalesce(string_agg(id::text || '=' || coalesce(encode(convert_to(description, 'UTF8'), 'hex'), '-'), ',' ORDER BY id), ''))
