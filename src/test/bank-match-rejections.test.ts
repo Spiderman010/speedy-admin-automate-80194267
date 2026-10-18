@@ -170,9 +170,14 @@ describe("branch-grenzen", () => {
   });
 
   it("12. geen UI-schrijfpad zonder gegenereerde types: niemand praat al met de tabel", () => {
+    // De gegenereerde types.ts beschrijft de tabel sinds de regeneratie (dd4a3a1); dat is
+    // schema, geen aanroeper. Alleen dat ene pad is vrijgesteld: elk ander bestand onder
+    // src/ dat de tabel noemt, laat deze test falen.
+    const GENERATED_TYPES = "src/integrations/supabase/types.ts";
     const src = execFileSync("git", ["grep", "-l", "bank_match_rejections", "--", "src"], { encoding: "utf8" })
       .split("\n")
       .filter(Boolean)
+      .filter((f) => f !== GENERATED_TYPES)
       .sort();
     expect(src).toEqual(["src/lib/bank-match-rejections.ts", "src/test/bank-match-rejections.test.ts"]);
     const lib = readFileSync(resolve(process.cwd(), "src/lib/bank-match-rejections.ts"), "utf8");
