@@ -11,35 +11,32 @@ SET client_min_messages = warning;
 
 SELECT proof.plan(ARRAY['P0', 'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P3d', 'P3e', 'P3f', 'P3g', 'P3h', 'P3i', 'P3j', 'P3k', 'P3l', 'P4']);
 
-/** Een SELECT uit een rolloutbestand als tabel vastleggen. */
-CREATE FUNCTION proof.capture(_name text, _sql text) RETURNS void LANGUAGE plpgsql AS $$
-BEGIN
-  EXECUTE format('CREATE TABLE proof.%I AS %s', _name, regexp_replace(_sql, ';\s*$', ''));
-  EXECUTE format('GRANT SELECT ON proof.%I TO public', _name);
-END $$;
-GRANT EXECUTE ON FUNCTION proof.capture(text, text) TO public;
+-- De grootboekhistorie van vóór PR 1, voor de append-only-toets aan het eind (I4).
+CREATE TABLE proof.ledger_before_pr1 AS SELECT * FROM public.ledger_postings;
+CREATE TABLE proof.reversals_before_pr1 AS SELECT * FROM public.ledger_reversal_postings;
+GRANT SELECT ON proof.ledger_before_pr1, proof.reversals_before_pr1 TO public;
 
 SELECT proof.capture('pre4_oud', :'pre4_oud');
 SELECT proof.record('P0', 'de oorspronkelijke PRE 4 (main 3669a94) geeft voor deze geschiedenis STOP, zonder onderscheid — zoals in productie',
-  stop AND afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 20, format('%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, stop))
+  stop AND afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 21, format('%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, stop))
 FROM proof.pre4_oud;
 
 SELECT proof.capture('pre4', :'pre4');
 SELECT proof.capture('pre4b', :'pre4b');
 
-SELECT proof.record('P1', 'PRE 4: vorm in orde, 20 groepen zonder marker — 9 bewezen historische storno''s en 11 onverklaard — dus STOP',
-  afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 20 AND waarvan_historische_storno = 9 AND waarvan_onverklaard = 11 AND stop,
+SELECT proof.record('P1', 'PRE 4: vorm in orde, 21 groepen zonder marker — 10 bewezen historische storno''s en 11 onverklaard — dus STOP',
+  afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 21 AND waarvan_historische_storno = 10 AND waarvan_onverklaard = 11 AND stop,
   format('%s/%s/%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, waarvan_historische_storno, waarvan_onverklaard, stop))
 FROM proof.pre4;
 
-SELECT proof.record('P2', 'PRE 4b: elke geldige historische groep (10–17, bij 15 twee) is bewezen, met elk bewijsstuk waar',
+SELECT proof.record('P2', 'PRE 4b: elke geldige historische groep (10–18, bij 15 twee) is bewezen, met elk bewijsstuk waar',
   (SELECT count(*) FROM proof.pre4b b
-   WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17]) n)
+   WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n)
      AND b.bewezen AND b.b1_zelfde_transactie AND b.b2_reversalketen AND b.b3_transactiedatum AND b.b4_neutraal
      AND b.b5_storno_geldig AND b.b6_actuele_marker_daarna
-     AND b.toestand LIKE 'bewezen historische storno%') = 9
+     AND b.toestand LIKE 'bewezen historische storno%') = 10
   AND (SELECT count(*) FROM proof.pre4b b
-       WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17]) n)) = 9);
+       WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n)) = 10);
 
 /** Rij van PRE 4b voor testregel _n, als "b1b2b3b4b5b6/bewezen". */
 CREATE FUNCTION proof.p4b(_n integer) RETURNS text LANGUAGE sql STABLE AS $$

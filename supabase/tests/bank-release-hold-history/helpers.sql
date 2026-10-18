@@ -111,4 +111,93 @@ RETURNS text LANGUAGE sql AS $$
   SELECT proof.call(_user, format('SELECT public.post_bank_transaction(%L)::text', proof.uid(1000, _n)));
 $$;
 
+/** Een SELECT uit een rolloutbestand, letterlijk, als tabel vastleggen. */
+CREATE FUNCTION proof.capture(_name text, _sql text) RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+  EXECUTE format('CREATE TABLE proof.%I AS %s', _name, regexp_replace(_sql, ';\s*$', ''));
+  EXECUTE format('GRANT SELECT ON proof.%I TO public', _name);
+END $$;
+
+/** Vrijgeven (RPC) en daarna de app-codering van testregel _n, in een
+    subtransactie die wordt teruggedraaid: toont of de hold de regel dekt,
+    zonder iets te veranderen. */
+CREATE FUNCTION proof.gap_probe(_n integer) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE v_rel text; v_app text;
+BEGIN
+  BEGIN
+    v_rel := proof.rel(proof.u(1), proof.uid(1000, _n), proof.m(_n), proof.req(900000 + _n), 'Vrijgeven (teruggedraaid)');
+    v_app := proof.app_code(_n);
+    RAISE EXCEPTION USING ERRCODE = 'P0003', MESSAGE = 'terugdraaien';
+  EXCEPTION WHEN SQLSTATE 'P0003' THEN NULL;
+  END;
+  RETURN concat_ws(' || ', v_rel, v_app);
+END $$;
+
+/** De catalogus van public als rijen: functies, triggers, relaties, policies,
+    constraints, indexen en functiecommentaar. */
+CREATE FUNCTION proof.catalog()
+RETURNS TABLE (kind text, name text, def text) LANGUAGE sql STABLE AS $$
+  SELECT 'function', p.oid::regprocedure::text,
+         concat_ws('|', md5(p.prosrc), p.prosecdef, p.provolatile::text, coalesce(p.proconfig::text, ''), pg_get_userbyid(p.proowner),
+                   coalesce(p.proacl::text, ''), pg_get_function_result(p.oid), p.prolang)
+  FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'trigger', t.tgrelid::regclass::text || '/' || t.tgname, t.tgenabled::text || '|' || pg_get_triggerdef(t.oid)
+  FROM pg_trigger t WHERE NOT t.tgisinternal
+  UNION ALL
+  SELECT 'relation', c.oid::regclass::text, concat_ws('|', c.relkind::text, coalesce(c.relacl::text, ''), c.relrowsecurity, c.relforcerowsecurity,
+         (SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull, ',' ORDER BY a.attnum)
+          FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped))
+  FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'policy', polrelid::regclass::text || '/' || polname,
+         concat_ws('|', polcmd::text, polroles::text, coalesce(pg_get_expr(polqual, polrelid), ''), coalesce(pg_get_expr(polwithcheck, polrelid), ''))
+  FROM pg_policy
+  UNION ALL
+  SELECT 'constraint', conrelid::regclass::text || '/' || conname, pg_get_constraintdef(oid)
+  FROM pg_constraint WHERE connamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'index', indexrelid::regclass::text, pg_get_indexdef(indexrelid)
+  FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid WHERE c.relnamespace = 'public'::regnamespace
+  UNION ALL
+  SELECT 'comment', d.objoid::regprocedure::text, d.description
+  FROM pg_description d WHERE d.classoid = 'pg_proc'::regclass AND d.objsubid = 0
+    AND d.objoid IN (SELECT oid FROM pg_proc WHERE pronamespace = 'public'::regnamespace);
+$$;
+
+CREATE FUNCTION proof.catalog_digest() RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT md5(string_agg(kind || '=' || name || '=' || coalesce(def, ''), E'\n' ORDER BY kind, name, def)) FROM proof.catalog();
+$$;
+
+/** Lineage met geschiedenis, voor de testregels _ns (0 = in orde):
+    - elke directe bankgroep is de actieve marker, staat precies één keer als
+      vervangen in een gebeurtenis, of is bewezen geschiedenis (de hulpfunctie);
+    - per transactie hoogstens één niet-tegengeboekte directe groep, en die is de marker. */
+CREATE FUNCTION proof.hist_lineage_violations(_ns integer[]) RETURNS integer LANGUAGE plpgsql STABLE AS $$
+DECLARE v integer;
+BEGIN
+  WITH g AS (
+    SELECT DISTINCT lp.source_id AS tx, lp.posting_group_id AS grp
+    FROM public.ledger_postings lp
+    WHERE lp.source_type = 'bank_transaction'
+      AND lp.source_id IN (SELECT proof.uid(1000, n) FROM unnest(_ns) n)
+  ), bad AS (
+    SELECT g.tx FROM g
+    WHERE NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m WHERE m.bank_transaction_id = g.tx AND m.posting_group_id = g.grp)
+      AND (SELECT count(*) FROM public.bank_transaction_posting_events e
+           WHERE e.bank_transaction_id = g.tx AND e.superseded_posting_group_id = g.grp) <> 1
+      AND NOT public.bank_transaction_group_is_settled_history(g.tx, g.grp)
+    UNION ALL
+    SELECT g.tx FROM g
+    WHERE NOT EXISTS (SELECT 1 FROM public.ledger_reversal_postings r WHERE r.original_posting_group_id = g.grp)
+    GROUP BY g.tx HAVING count(*) > 1
+    UNION ALL
+    SELECT g.tx FROM g
+    WHERE NOT EXISTS (SELECT 1 FROM public.ledger_reversal_postings r WHERE r.original_posting_group_id = g.grp)
+      AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m WHERE m.bank_transaction_id = g.tx AND m.posting_group_id = g.grp)
+  )
+  SELECT count(*) INTO v FROM bad;
+  RETURN v;
+END $$;
+
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA proof TO public;

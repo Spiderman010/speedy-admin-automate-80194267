@@ -11,6 +11,7 @@
 --   15  twee keer gestorneerd en opnieuw geboekt (twee historische groepen)
 --   16  voor het terugzetten naar de werkstroom
 --   17  voor de bekende-storno-controle (PRE B6) in een schone database
+--   18  daarna ook de nieuwe boeking handmatig gestorneerd, marker behouden (S2)
 -- Corrupt (precies één bewijsstuk onwaar):
 --   20  niet gestorneerd              21  storno op een latere datum
 --   22  geen nieuwe boeking/marker    23  storno zelf tegengeboekt (nagebootst)
@@ -29,14 +30,17 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 -- ── geldig ──────────────────────────────────────────────────────────────────
 SELECT proof.h_post(10, -3993.00), proof.h_post(11, 121.00, 21), proof.h_post(12, -500.00), proof.h_post(13, -250.00),
-       proof.h_post(14, -300.00), proof.h_post(15, -150.00), proof.h_post(16, -175.00), proof.h_post(17, -99.00);
-SELECT proof.h_reverse(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17]) n;
-SELECT proof.h_unmark(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17]) n;
-SELECT proof.h_repost(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17]) n;
+       proof.h_post(14, -300.00), proof.h_post(15, -150.00), proof.h_post(16, -175.00), proof.h_post(17, -99.00),
+       proof.h_post(18, -60.50);
+SELECT proof.h_reverse(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n;
+SELECT proof.h_unmark(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n;
+SELECT proof.h_repost(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n;
 -- 15 nog een keer
 SELECT proof.h_reverse(15);
 SELECT proof.h_unmark(15);
 SELECT proof.h_repost(15);
+-- 18: ook de nieuwe boeking handmatig gestorneerd, de marker blijft (S2 in PR 1)
+SELECT proof.h_reverse(18);
 
 -- ── corrupt, met de schrijvers ──────────────────────────────────────────────
 SELECT proof.h_post(20, -20.00), proof.h_post(21, -21.00), proof.h_post(22, -22.00);
