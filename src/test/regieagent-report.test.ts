@@ -48,6 +48,20 @@ describe("Regieagent v2 — read-only advisory contracts", () => {
     expect(incomplete.next).toContain("gepagineerd");
     expect(incomplete.vercel).not.toBe("Geen bekende Vercel-fout");
     expect(classifyPr(makePr(), check(), { statuses: visible }).state).toBe("STOP");
+
+    const malformed = [
+      { statuses: null, total_count: 0 },
+      { statuses: "not-an-array", total_count: 0 },
+      { statuses: [], total_count: -1 },
+      { statuses: [], total_count: 1 },
+      { statuses: [{ context: "Vercel", state: "success" }], total_count: 0 },
+      { statuses: [], total_count: "0" },
+    ];
+    for (const value of malformed) {
+      const pr = classifyPr(makePr(), check(), value);
+      expect(pr.state).toBe("STOP");
+      expect(pr.vercel).toContain("ONVOLLEDIG");
+    }
   });
 
   it("detects Vercel errors beyond GitHub's default 30-status page", () => {
