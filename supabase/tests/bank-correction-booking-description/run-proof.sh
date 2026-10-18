@@ -33,7 +33,8 @@
 #   concurrency.sql         races with two real sessions
 #   rollout rollback.sql (TWICE) + after-rollback.sql, re-apply + final.sql
 #
-# Mutation testing: point CORR2_MIGRATION at a modified copy of the migration.
+# Mutation testing: point CORR2_MIGRATION at a modified copy of the migration
+# (and CORR2_ROLLBACK at a rollback.sql whose guard accepts the mutant's body).
 
 set -euo pipefail
 
@@ -46,6 +47,8 @@ MIG="$REPO/supabase/migrations"
 PR1="$MIG/20261018120000_add_bank_transaction_corrections.sql"
 M="${CORR2_MIGRATION:-$MIG/20261018150000_keep_bank_description_on_correction.sql}"
 ROLLOUT="$REPO/supabase/rollout/20261018150000_keep_bank_description_on_correction"
+# Bij mutatietoetsen: een rollback.sql waarvan de bewaking het lichaam van de mutant kent.
+RB="${CORR2_ROLLBACK:-$ROLLOUT/rollback.sql}"
 
 CONN="host=${PGHOST:?set PGHOST} port=${PGPORT:-5432} dbname=$DB user=${PGUSER:-postgres}"
 
@@ -117,9 +120,9 @@ run -v conn="$CONN" -f "$HERE/concurrency.sql"                                  
 
 # De gedocumenteerde rollback, TWEE keer, en dan weer vooruit.
 run -c "INSERT INTO proof.state VALUES ('digest_before_rollback', proof.digest()), ('rest_before_rollback', proof.rest_digest());" > /dev/null
-run -f "$ROLLOUT/rollback.sql"                                                     > /dev/null
-run -f "$ROLLOUT/rollback.sql"                                                     > /dev/null
-RBGUARD="$(sed -n '/^DO \$rollback\$$/,/^\$rollback\$;$/p' "$ROLLOUT/rollback.sql")"
+run -f "$RB"                                                                       > /dev/null
+run -f "$RB"                                                                       > /dev/null
+RBGUARD="$(sed -n '/^DO \$rollback\$$/,/^\$rollback\$;$/p' "$RB")"
 [ -n "$RBGUARD" ] || { echo "rollbackbewaking niet gevonden" >&2; exit 1; }
 run -v rbguard="$RBGUARD" -f "$HERE/after-rollback.sql"                            > /dev/null
 run -f "$M"                                                                        > /dev/null

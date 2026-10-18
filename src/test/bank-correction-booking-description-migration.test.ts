@@ -338,7 +338,8 @@ describe("rollback, harnas en uitrolcontroles", () => {
     expect(run).toContain(`PR1="$MIG/${PR1_FILE}"`);
     expect(run).toContain("20260411182021_ce126469-1948-4a6f-947d-ad6dd95764cb.sql");
     expect(run).toContain("20260616014119_379a0719-29c0-4ba7-a513-06777db1dbc3.sql");
-    const order = ["pre.sql", "snapshot.sql", 'run -f "$M"', "proof.sql", "isolation.sql", "faults.sql", "concurrency.sql", "rollback.sql", "after-rollback.sql", "final.sql"];
+    expect(run).toContain('RB="${CORR2_ROLLBACK:-$ROLLOUT/rollback.sql}"');
+    const order = ["pre.sql", "snapshot.sql", 'run -f "$M"', "proof.sql", "isolation.sql", "faults.sql", "concurrency.sql", 'run -f "$RB"', "after-rollback.sql", "final.sql"];
     let at = run.indexOf("run -f \"$HERE/helpers.sql\"");
     for (const step of order) {
       const next = run.indexOf(step, at);
