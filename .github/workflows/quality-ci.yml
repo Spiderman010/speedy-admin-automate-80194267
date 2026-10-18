@@ -39,10 +39,16 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Safety stop — live Supabase test isolation required
+      - name: Unit and contract tests (offline, no production credentials)
+        env:
+          VITE_SUPABASE_URL: http://127.0.0.1:54321
+          VITE_SUPABASE_PUBLISHABLE_KEY: ""
+          VITE_SUPABASE_ANON_KEY: ""
         run: |
-          echo '::error::STOP: committed .env may enable production-connected Vitest tests. Disable or isolate before executing any tests.'
-          exit 1
+          # Repository .env would otherwise enable live integration tests against production.
+          # This only changes the ephemeral CI checkout; never delete .env from the repo.
+          rm -f .env .env.local .env.test .env.test.local
+          npm run test
 
       - name: Production build
         run: npm run build
