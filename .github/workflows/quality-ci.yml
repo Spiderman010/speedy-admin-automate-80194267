@@ -39,8 +39,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Unit and contract tests
-        run: npm run test
+      - name: Safety stop — live Supabase test isolation required
+        run: |
+          echo '::error::STOP: committed .env may enable production-connected Vitest tests. Disable or isolate before executing any tests.'
+          exit 1
 
       - name: Production build
         run: npm run build
