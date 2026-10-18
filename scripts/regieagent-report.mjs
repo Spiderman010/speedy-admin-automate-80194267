@@ -24,9 +24,10 @@ export function classifyPr(pr, checks, combinedStatus) {
   // GitHub combined-status responses are paginated (30 statuses by default).
   // Treat incomplete or malformed coverage as STOP; never infer a clean Vercel status.
   const statuses = Array.isArray(combinedStatus?.statuses) ? combinedStatus.statuses : [];
-  const statusesComplete = Number.isSafeInteger(combinedStatus?.total_count)
+  const statusesComplete = Array.isArray(combinedStatus?.statuses)
+    && Number.isSafeInteger(combinedStatus.total_count)
     && combinedStatus.total_count >= 0
-    && combinedStatus.total_count <= statuses.length;
+    && combinedStatus.total_count === statuses.length;
   const hasVercelFailure = statuses
     .some((s) => s.context === "Vercel" && ["failure", "error"].includes(s.state));
   const base = pr.base?.ref === "main";
