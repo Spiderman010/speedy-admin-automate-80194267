@@ -64,18 +64,20 @@ Een PR is pas `READY_FOR_MERGE` nadat de regieagent **direct vooraf** verifieert
 
 ## 5. Productiepoort — afzonderlijk
 
-Een merge is nooit toestemming voor deployment of SQL. Voor iedere productiestap is nodig: de exacte omgeving en ref zichtbaar bevestigd, read-only PRE, expliciete eigenaar-GO op het volledige uitvoerplan, afgebakende uitvoering, POST met STOP-criteria en herstelplan. Gebruik uitsluitend de Lovable Cloud SQL-editor. **Geen automatische SQL-aanroepen vanuit agents of GitHub Actions.**
+Een merge is nooit toestemming voor deployment of SQL. Voor iedere productiestap is nodig: de exacte omgeving en projectref zichtbaar bevestigd, een passend read-only preflight-/impactonderzoek, **apart expliciet eigenaar-GO** op het uitvoerplan, afgebakende uitvoering, controle achteraf met STOP-criteria en een herstelplan. **Productie-SQL en migraties uitsluitend via de zichtbare Lovable Cloud SQL-editor.** Frontend- en Edge Function-deployments zijn andere handelingen: gebruik daarvoor uitsluitend de voor dat onderdeel goedgekeurde Lovable Cloud-route; voor Edge Functions staat `AGENTS.md` ook `supabase functions deploy <name> --project-ref alxlbdhpbwlehbdbfejw` toe, na afzonderlijk deployment-GO. Gebruik de SQL-editor niet als deploymentkanaal en de CLI niet voor productie-SQL. **Geen automatische productie-SQL of deployment vanuit agents of GitHub Actions.**
 
 Voor de reeds gemergede bankcorrecties #243/#244/#245 bestaat een afzonderlijk gecombineerd, atomair uitrolplan. Het blijft `ROLLOUT_PENDING` tot een apart productie-GO en de in het plan vereiste controles; pas dat niet stilzwijgend toe als losse migraties.
 
 ## 6. Bewijs, uitzonderingen en rapportage
 
-Een taakrapport bevat alleen:
+Ieder taakrapport behoudt de **vier verplichte secties uit `AGENTS.md`**, ook bij een kleine PR:
 
-- **Gedaan:** issue/PR, actuele SHA, gewijzigde bestanden en migraties (`None` indien geen).
-- **Bewijs:** `npx tsc --noEmit`, `npx tsc -p tsconfig.app.json --noEmit`, `npm run lint`, `npm run test` en build indien van toepassing; of de betreffende GitHub CI-run. Maak duidelijk wat **niet** is uitgevoerd.
-- **Risico/STOP:** actuele onopgeloste bevindingen, skips, productie-afhankelijkheden, uitzonderingen met verwijzing naar eigenaarsbesluit.
-- **Volgende actie:** één concreet voorstel; vraag de eigenaar uitsluitend om een noodzakelijke beslissing.
+1. **Reviewed Files:** alle onderzochte of gelezen bestanden, óók de ongewijzigde.
+2. **Changed Files:** alle aangemaakte of gewijzigde bestanden, met per bestand een korte toelichting; vermeld issue/PR en actuele head-SHA.
+3. **Migrations:** bestandsnaam en doel, of expliciet `None`.
+4. **Test Results:** uitslag van `npx tsc --noEmit`, de aanvullende app-controle `npx tsc -p tsconfig.app.json --noEmit`, `npm run lint`, `npm run test` en build indien van toepassing, met een link naar de betreffende CI-run of de concrete beperking als een controle niet draaide.
+
+Sluit **daarna** kort af met **Risico/STOP** (open bevindingen, overgeslagen tests, productieafhankelijkheden en eigenaarsuitzonderingen) en **Volgende actie** (één voorstel; alleen noodzakelijke eigenaarsbeslissingen). Dit is een aanvulling op, geen vervanging van, het verplichte rapport.
 
 Gebruik controlelinks en commit-SHA's als bewijs. Claim nooit dat een review, merge, SQL-apply of deploy is uitgevoerd zonder een bijbehorende controle. Vermijd herhaalde statusberichten: meld pas een verandering, bevinding of eigenaarsbeslissing.
 
