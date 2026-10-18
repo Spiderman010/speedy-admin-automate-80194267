@@ -34,6 +34,8 @@ describe("Regieagent v2 — read-only advisory contracts", () => {
     const result = classifyPr(makePr(), check(), { statuses: [{ context: "Vercel", state: "failure" }] });
     expect(result.vercel).toContain("apart GO");
     expect(result.state).toBe("REVIEW_REQUIRED");
+    const integrationError = classifyPr(makePr(), check(), { statuses: [{ context: "Vercel", state: "error" }] });
+    expect(integrationError.vercel).toContain("apart GO");
   });
 
   it("renders only advisory summaries and sanitizes issue/PR titles", () => {
@@ -45,6 +47,8 @@ describe("Regieagent v2 — read-only advisory contracts", () => {
       prTotal: 1, issueTotal: 1, incomplete: false,
     });
     expect(report).toContain("nooit een merge- of productie-GO");
+    expect(report).toContain(sha);
+    expect(report).toContain("Gecontroleerde head-SHA");
     expect(report).toContain("NIET GECONTROLEERD");
     expect(report).not.toContain("PR | <unsafe>");
   });
