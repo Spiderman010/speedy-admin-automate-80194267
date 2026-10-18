@@ -11,7 +11,8 @@
 -- a931207c1a4e97f06e7797ed105c0264 (de POST-pin van PR 1).
 
 -- Alleen vanuit de beoordeelde toestand: de functie is die van PR 2 (of al die
--- van PR 1, bij een tweede uitvoering). Anders gebeurt er niets.
+-- van PR 1, bij een tweede uitvoering), met de eigenaar van de schrijver.
+-- Anders gebeurt er niets.
 DO $rollback$
 DECLARE v_md5 text;
 BEGIN
@@ -19,6 +20,12 @@ BEGIN
   WHERE p.oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)');
   IF v_md5 IS NULL OR v_md5 NOT IN ('067939e0c44a672c26ec8883717ef6d2', 'a931207c1a4e97f06e7797ed105c0264') THEN
     RAISE EXCEPTION 'Rollback geweigerd: reclassify_bank_transaction is niet de beoordeelde versie (md5 %)', v_md5 USING ERRCODE = '55000';
+  END IF;
+  IF (SELECT p.proowner FROM pg_proc p
+      WHERE p.oid = 'public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'::regprocedure)
+     IS DISTINCT FROM
+     (SELECT p.proowner FROM pg_proc p WHERE p.oid = 'public.post_bank_transaction(uuid)'::regprocedure) THEN
+    RAISE EXCEPTION 'Rollback geweigerd: reclassify_bank_transaction heeft een andere eigenaar dan de schrijver post_bank_transaction' USING ERRCODE = '55000';
   END IF;
 END
 $rollback$;

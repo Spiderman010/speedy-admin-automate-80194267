@@ -25,13 +25,20 @@ const FILE = "20261018150000_keep_bank_description_on_correction.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 const PR1_FILE = "20261018120000_add_bank_transaction_corrections.sql";
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "c537a83cd52285b819926afdc0331549b353a7ad46b61ac1d7f610d5acea5822";
+const REVIEWED_SHA256 = "1cc32885a3d095ec2fa0bb36e16d4337cb5fdf8f95f59440175ee9b6ff3fe54d";
 const PR1_BODY_MD5 = "a931207c1a4e97f06e7797ed105c0264";
 const PR2_BODY_MD5 = "067939e0c44a672c26ec8883717ef6d2";
 const WRITER_MD5 = "2369978c713ac78a0c039dd5c3e5eb4c";
 const HARNESS = "supabase/tests/bank-correction-booking-description";
 const ROLLOUT = "supabase/rollout/20261018150000_keep_bank_description_on_correction";
 const SIGNATURE = "uuid, uuid, uuid, numeric, uuid, text, text";
+/** De eigenaar van de RPC moet die van de schrijver zijn: CREATE OR REPLACE behoudt de eigenaar. */
+const OWNER_CHECK =
+  "  IF (SELECT p.proowner FROM pg_proc p\n" +
+  "      WHERE p.oid = 'public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'::regprocedure)\n" +
+  "     IS DISTINCT FROM\n" +
+  "     (SELECT p.proowner FROM pg_proc p WHERE p.oid = 'public.post_bank_transaction(uuid)'::regprocedure) THEN\n";
+
 
 /** De vijf triggers op bank_transactions en de lichamen van hun functies, zoals in de migraties. */
 const BANK_TRIGGERS: [string, string, string, string][] = [
@@ -266,8 +273,9 @@ describe("het gedrag in de code", () => {
     expect(newBody.indexOf("v_new_desc := COALESCE(v_desc_arg")).toBeLessThan(newBody.indexOf("AND v_old_desc IS NOT DISTINCT FROM v_new_desc THEN"));
   });
 
-  it("10. de voorwaardencontrole pint de RPC (PR 1 of deze), de schrijver, de vijf triggers met hun functielichamen, en weigert RULE's en publicaties", () => {
+  it("10. de voorwaardencontrole pint de RPC (PR 1 of deze) en haar eigenaar, de schrijver, de vijf triggers met hun functielichamen, en weigert RULE's en publicaties", () => {
     const pre = raw.slice(raw.indexOf("DO $migratie$"), raw.indexOf("$migratie$;"));
+    expect(pre).toContain(OWNER_CHECK);
     expect(pre).toContain(`IF v_md5 NOT IN ('${PR1_BODY_MD5}', '${PR2_BODY_MD5}') THEN`);
     expect(pre).toContain(`IS DISTINCT FROM '${WRITER_MD5}' THEN`);
     for (const [tg, fn, h, modus] of BANK_TRIGGERS) {
@@ -276,7 +284,7 @@ describe("het gedrag in de code", () => {
     expect(pre).toContain("FROM pg_rules r WHERE r.schemaname = 'public' AND r.tablename = 'bank_transactions'");
     expect(pre).toContain("FROM pg_publication p WHERE p.puballtables");
     expect(pre).toContain("pt.schemaname = 'public' AND pt.tablename = 'bank_transactions'");
-    expect((pre.match(/USING ERRCODE = '55000'/g) ?? []).length).toBeGreaterThanOrEqual(6);
+    expect((pre.match(/USING ERRCODE = '55000'/g) ?? []).length).toBeGreaterThanOrEqual(7);
   });
 
   it("11. de pins van de triggerfuncties zijn die van hun echte migraties (niet van een testkopie)", () => {
@@ -299,6 +307,7 @@ describe("rollback, harnas en uitrolcontroles", () => {
     const guard = rb.slice(rb.indexOf("DO $rollback$"), rb.indexOf("$rollback$;"));
     expect(guard).toContain(`v_md5 NOT IN ('${PR2_BODY_MD5}', '${PR1_BODY_MD5}')`);
     expect(guard).toContain("USING ERRCODE = '55000'");
+    expect(guard).toContain(OWNER_CHECK);
     expect(rb.indexOf("DO $rollback$")).toBeLessThan(rb.indexOf("CREATE OR REPLACE FUNCTION"));
     expect(topLevelStatements(rb).map((s) => s.split(/\s+/).slice(0, 2).join(" ").toUpperCase())).toEqual([
       "DO …",
@@ -386,7 +395,10 @@ describe("na deze migratie", () => {
         .join("\n");
       expect(code, f).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER[^;]*\bON\s+(?:public\.)?bank_transactions\b/i);
       expect(code, f).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?RULE[^;]*\bbank_transactions\b/i);
-      expect(code, f).not.toMatch(/PUBLICATION[^;]*\bbank_transactions\b|FOR\s+ALL\s+TABLES/i);
+      expect(code, f).not.toMatch(/PUBLICATION[^;]*\bbank_transactions\b|FOR\s+ALL\s+TABLES|TABLES\s+IN\s+SCHEMA/i);
+      // Ook via dynamische SQL (zo kwam set_organization_id_trigger ooit op bank_transactions): elke
+      // CREATE TRIGGER binnen een EXECUTE in een latere migratie vraagt om dezelfde herbeoordeling.
+      expect(code, f).not.toMatch(/EXECUTE\s+(?:format\s*\()?\s*'[^;]*CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER/i);
       expect(code, f).not.toMatch(/ALTER\s+TABLE[^;]*\bbank_transactions\b[^;]*TRIGGER/i);
       for (const fn of pinned) {
         expect(code, `${f}: ${fn}`).not.toMatch(new RegExp(`FUNCTION\\s+(?:public\\.)?${fn}\\s*\\(`, "i"));

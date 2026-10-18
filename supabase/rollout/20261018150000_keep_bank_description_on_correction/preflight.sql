@@ -30,7 +30,11 @@ SELECT
                                                                                             AS reclassify_is_pr1,
   coalesce((SELECT md5(prosrc) <> '067939e0c44a672c26ec8883717ef6d2' FROM pg_proc
             WHERE oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)')), false)
-                                                                                            AS pr2_nog_afwezig;
+                                                                                            AS pr2_nog_afwezig,
+  coalesce((SELECT proowner FROM pg_proc
+            WHERE oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'))
+           = (SELECT proowner FROM pg_proc WHERE oid = to_regprocedure('public.post_bank_transaction(uuid)')), false)
+                                                                                            AS eigenaar_als_schrijver;
 
 
 -- ── PRE 2. De schrijver en de twee andere RPC's van PR 1: exact beoordeeld ──

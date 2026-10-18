@@ -44,7 +44,9 @@
 --     geen enkele schrijft elders iets weg. Er is geen RULE, geen audittrigger
 --     en geen publicatie op de tabel (logische replicatie of realtime zou óók
 --     de tussenversie uitzenden). De voorwaardencontrole hieronder pint precies
---     dat — triggers, hun functies, RULE's, publicaties — en weigert anders.
+--     dat — triggers, hun functies, RULE's, publicaties — en weigert anders,
+--     net als bij een andere eigenaar dan die van de schrijver (CREATE OR
+--     REPLACE behoudt de eigenaar; SECURITY DEFINER draait met diens rechten).
 --
 -- NIET
 --   post_bank_transaction en elke andere schrijver blijven byte-gelijk, net als
@@ -93,6 +95,15 @@ BEGIN
      OR (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = 'public.post_bank_transaction(uuid)'::regprocedure)
         IS DISTINCT FROM '2369978c713ac78a0c039dd5c3e5eb4c' THEN
     RAISE EXCEPTION 'Voorwaarde: post_bank_transaction is niet de beoordeelde schrijver' USING ERRCODE = '55000';
+  END IF;
+
+  -- En met dezelfde eigenaar als de schrijver: CREATE OR REPLACE behoudt de
+  -- eigenaar, en als SECURITY DEFINER draait de RPC met diens rechten.
+  IF (SELECT p.proowner FROM pg_proc p
+      WHERE p.oid = 'public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'::regprocedure)
+     IS DISTINCT FROM
+     (SELECT p.proowner FROM pg_proc p WHERE p.oid = 'public.post_bank_transaction(uuid)'::regprocedure) THEN
+    RAISE EXCEPTION 'Voorwaarde: reclassify_bank_transaction heeft een andere eigenaar dan de schrijver post_bank_transaction' USING ERRCODE = '55000';
   END IF;
 
   -- Precies deze triggers op bank_transactions, met precies deze functies:

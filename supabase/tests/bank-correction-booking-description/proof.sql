@@ -19,7 +19,7 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY[
   'C1','C2','C3','C4','C5','C6','C7',
-  'C8a','C8b','C8c','C8d','C8e','C8f','C8g','C8h','C8i',
+  'C8a','C8b','C8c','C8d','C8e','C8f','C8g','C8h','C8i','C8j',
   'D1','D2','D3a','D3b','D4','D5','D6','D7a','D7b',
   'D8a','D8b','D9','D10a','D10b','D11a','D11b','D11c',
   'D12','D13a','D13b',
@@ -165,6 +165,10 @@ SELECT proof.prereq_refuses('C8g', 'voorwaarde: een gewijzigde schrijver post_ba
 SELECT proof.prereq_refuses('C8h', 'voorwaarde: een reclassify_bank_transaction die noch PR 1 noch PR 2 is → 55000',
   $s$DO $d$ BEGIN EXECUTE regexp_replace(pg_get_functiondef('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'::regprocedure), 'BEGIN', 'BEGIN -- proof'); END $d$$s$,
   :'prereq', 'niet de beoordeelde versie');
+
+SELECT proof.prereq_refuses('C8j', 'voorwaarde: reclassify_bank_transaction met een andere eigenaar dan de schrijver → 55000 (CREATE OR REPLACE zou die eigenaar behouden)',
+  $s$ALTER FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, numeric, uuid, text, text) OWNER TO authenticated$s$,
+  :'prereq', 'andere eigenaar');
 
 CREATE FUNCTION proof.prereq_passes(_prereq text) RETURNS text LANGUAGE plpgsql AS $$
 BEGIN
