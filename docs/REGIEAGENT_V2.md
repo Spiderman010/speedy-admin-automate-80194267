@@ -14,9 +14,9 @@ Na de merge moet de nieuwe workflow eerst op de standaardbranch aanwezig zijn vo
 ## Wat het rapport wel en niet doet
 
 - Leest maximaal de 20 recent bijgewerkte open PR's en 20 open Issues. Een GitHub-respons met 100 records of meer dan de zichtbare limiet wordt als **onvolledig** gemarkeerd; dit is geen volledige backlog-export.
-- Haalt voor iedere getoonde PR de GitHub check-runs en commit-status op en matcht de kwaliteitscheck op de **exacte PR-head-SHA**.
+- Haalt voor iedere getoonde PR de GitHub check-runs en commit-status op, matcht de kwaliteitscheck op de **exacte PR-head-SHA** en toont die 40-cijferige SHA in het rapport om verouderde snapshots herkenbaar te maken.
 - Geeft `STOP` bij rode CI of een verkeerde basisbranch; `WAIT_CI` bij ontbrekende/lopende CI; `DRAFT` bij een concept-PR; anders **`REVIEW_REQUIRED`**, nooit automatisch `GO`.
-- Markeert een rode Vercel-status als **afwijking** die alleen de eigenaar per PR kan accepteren. Een eerder geaccepteerde uitzondering wordt niet hergebruikt.
+- Markeert Vercel-commitstatus `failure` **én** `error` als **afwijking** die alleen de eigenaar per PR kan accepteren. Een eerder geaccepteerde uitzondering wordt niet hergebruikt.
 - Controleert **niet**: reviewthreads, afzonderlijke Codex-bevindingen, mergeability, CI-skips, financiële invarianten, eigenaars-GO of productiestatus. Die controles blijven verplicht vóór een merge.
 - Weigert bij API- of authenticatiefouten een stilzwijgend groen resultaat. Rapportages tonen beknopte status en geen GitHub-token.
 
