@@ -95,8 +95,13 @@ ORDER BY h.naam;
 
 -- ── PRE 3. Omvang (informatief) ─────────────────────────────────────────────
 -- `direct_geboekt_met_oude_factuurmatch`: direct geboekte regels die nog een
--- matched_invoice_id dragen; de correctie-RPC's weigeren die (22023), want zij
--- herrekenen geen facturen.
+-- matched_invoice_id dragen (meestal een achtergebleven suggestie).
+-- Herclassificeren laat die match staan; vrijgeven weigert ze (22023), want
+-- het zou de match wissen zonder de factuur te herrekenen.
+-- `waarvan_factuur_niet_meer_volledig_open`: daarvan de regels waarvan de
+-- gematchte factuur betaald of deels betaald is (of niet bestaat) — mogelijk
+-- een echte oudere koppeling; voor de eigenaar ter beoordeling.
+-- `gematcht_zonder_koppelingsrij`: herclassificeren weigert die (22023).
 SELECT
   (SELECT count(*) FROM public.bank_transactions)            AS banktransacties,
   (SELECT count(*) FROM public.bank_transaction_postings)    AS directe_boekingen,
@@ -106,6 +111,24 @@ SELECT
   (SELECT count(*) FROM public.bank_transaction_postings m
    JOIN public.bank_transactions bt ON bt.id = m.bank_transaction_id
    WHERE bt.matched_invoice_id IS NOT NULL)                AS direct_geboekt_met_oude_factuurmatch,
+  (SELECT count(*) FROM public.bank_transaction_postings m
+   JOIN public.bank_transactions bt ON bt.id = m.bank_transaction_id
+   WHERE bt.matched_invoice_id IS NOT NULL
+     AND NOT EXISTS (
+       SELECT 1 FROM (
+         SELECT pi.status, pi.remaining_amount, coalesce(pi.amount_incl, pi.amount_excl) AS totaal
+         FROM public.purchase_invoices pi WHERE pi.id = bt.matched_invoice_id
+         UNION ALL
+         SELECT si.status, si.remaining_amount, coalesce(si.amount_incl, si.amount_excl)
+         FROM public.sales_invoices si WHERE si.id = bt.matched_invoice_id
+       ) f
+       WHERE f.status IS DISTINCT FROM 'betaald'
+         AND coalesce(f.remaining_amount, f.totaal) IS NOT DISTINCT FROM f.totaal))
+                                                             AS waarvan_factuur_niet_meer_volledig_open,
+  (SELECT count(*) FROM public.bank_transactions bt
+   WHERE bt.match_status = 'gematcht'
+     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = bt.id))
+                                                             AS gematcht_zonder_koppelingsrij,
   (SELECT count(*) FROM public.bank_transaction_allocations) AS koppelingen,
   (SELECT count(*) FROM public.bank_allocation_postings)     AS geboekte_afletteringen,
   (SELECT count(*) FROM public.ledger_postings)              AS grootboekregels,

@@ -24,7 +24,7 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261018120000_add_bank_transaction_corrections.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "4d297951c1da5a5c3147c42d24d869d488f73aae264cd9b8c0e8507803c92bf2";
+const REVIEWED_SHA256 = "6117f64382e7951af650f3a09d74c675e7ad1070b7e298ce46e9d5faa490f2fc";
 const HARNESS = "supabase/tests/bank-transaction-corrections";
 const ROLLOUT = "supabase/rollout/20261018120000_add_bank_transaction_corrections";
 
@@ -275,10 +275,13 @@ describe("de RPC's — volgorde van controles en mutaties", () => {
     for (const name of RPCS) {
       expect(body(name), name).toMatch(/FROM public\.bank_transaction_allocations a WHERE a\.bank_transaction_id = v_tx\.id\) THEN\s+RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie'/);
     }
-    // Ook een oudere koppeling via de match (geen koppelingsrij): de RPC herrekent geen facturen.
-    for (const name of ["reclassify_bank_transaction", "release_bank_transaction_posting"]) {
-      expect(body(name), name).toMatch(/IF v_tx\.matched_invoice_id IS NOT NULL AND v_tx\.match_status IS DISTINCT FROM 'suggestie' THEN\s+RAISE EXCEPTION 'Deze banktransactie is via de match aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';/);
-    }
+    // Ook een gematchte regel zonder koppelingsrij (oudere koppeling via de match): de RPC herrekent geen facturen.
+    expect(rc).toMatch(/IF v_tx\.match_status = 'gematcht' THEN\s+RAISE EXCEPTION 'Deze banktransactie is via de match aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';/);
+    // Een factuurmatch op een handmatig geboekte regel blijft staan; alleen een onbevestigde suggestie vervalt.
+    expect(rc).toContain("matched_invoice_id   = CASE WHEN v_tx.match_status = 'suggestie' THEN NULL ELSE bt.matched_invoice_id END,");
+    expect(rc).toContain("match_confidence     = CASE WHEN v_tx.match_status = 'suggestie' THEN NULL ELSE bt.match_confidence END,");
+    // Vrijgeven moet de match wissen en weigert dus zolang de regel er een draagt.
+    expect(body("release_bank_transaction_posting")).toMatch(/IF v_tx\.matched_invoice_id IS NOT NULL THEN\s+RAISE EXCEPTION 'Deze banktransactie draagt nog een factuurmatch \(mogelijk een oude suggestie\);[^']*' USING ERRCODE = '22023';/);
   });
 
   it("12b. een bestaande storno op een latere datum: herboeken (S2/S3), vrijgeven (S2) en terugzetten weigeren — anders staat de periode daartussen dubbel", () => {

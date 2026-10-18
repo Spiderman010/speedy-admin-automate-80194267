@@ -75,8 +75,11 @@
 --   • De boekingsblokkade geldt voor elke handeling (assert_posting_allowed op
 --     de transactiedatum); een afgesloten jaar zonder blokkade mag (D8, PR H).
 --   • Factuurkoppelingen vallen buiten v1: elke koppeling → 22023, ook een
---     oudere koppeling via de match (matched_invoice_id zonder koppelingsrij,
---     behalve een onbevestigde suggestie): de RPC herrekent geen facturen.
+--     gematchte regel zonder koppelingsrij (een oudere koppeling via de match).
+--     De RPC herrekent geen facturen en laat een factuurmatch op een handmatig
+--     geboekte regel (een achtergebleven suggestie) ongemoeid; alleen een
+--     onbevestigde suggestie vervalt bij boeken. Vrijgeven zou de match moeten
+--     wissen en weigert daarom zolang de regel er nog een draagt.
 --   • Een bestaande storno (handmatig via het grootboek) op een LATERE datum dan
 --     de transactie: opnieuw boeken op de transactiedatum zou bank, kosten en
 --     BTW in de periode daartussen dubbel boeken (de totalen kloppen, de
@@ -961,11 +964,12 @@ BEGIN
     RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
   END IF;
 
-  -- (7b') Ook een oudere koppeling via de match — matched_invoice_id zonder
-  --       koppelingsrij — is een factuurkoppeling: het restbedrag van die factuur
-  --       is erop afgestemd, en de RPC zou de koppeling wissen zonder de factuur
-  --       te herrekenen. Alleen een onbevestigde suggestie mag worden overschreven.
-  IF v_tx.matched_invoice_id IS NOT NULL AND v_tx.match_status IS DISTINCT FROM 'suggestie' THEN
+  -- (7b') Ook een gematchte transactie zonder koppelingsrij (een oudere koppeling
+  --       via de match) is een factuurkoppeling. Dat kan alleen in S0: een
+  --       directe boeking staat altijd op handmatig_geboekt. Een factuurmatch op
+  --       een handmatig geboekte regel (een achtergebleven suggestie) laat de RPC
+  --       ongemoeid; alleen een onbevestigde suggestie wordt gewist (zie de UPDATE).
+  IF v_tx.match_status = 'gematcht' THEN
     RAISE EXCEPTION 'Deze banktransactie is via de match aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
   END IF;
 
@@ -1117,12 +1121,14 @@ BEGIN
     );
   END IF;
 
+  -- De factuurmatch blijft zoals hij is (de RPC herrekent geen facturen), behalve
+  -- een onbevestigde suggestie: die vervalt, zoals bij bulk boeken.
   UPDATE public.bank_transactions bt SET
     match_status         = 'handmatig_geboekt',
     grootboekrekening_id = _grootboekrekening_id,
     btw_percentage       = _btw_percentage,
-    matched_invoice_id   = NULL,
-    match_confidence     = NULL,
+    matched_invoice_id   = CASE WHEN v_tx.match_status = 'suggestie' THEN NULL ELSE bt.matched_invoice_id END,
+    match_confidence     = CASE WHEN v_tx.match_status = 'suggestie' THEN NULL ELSE bt.match_confidence END,
     description          = COALESCE(v_desc_arg, bt.description)
   WHERE bt.id = v_tx.id;
 
@@ -1300,12 +1306,12 @@ BEGIN
     RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
   END IF;
 
-  -- (7b') Ook een oudere koppeling via de match — matched_invoice_id zonder
-  --       koppelingsrij — is een factuurkoppeling: het restbedrag van die factuur
-  --       is erop afgestemd, en de RPC zou de koppeling wissen zonder de factuur
-  --       te herrekenen. Alleen een onbevestigde suggestie mag worden overschreven.
-  IF v_tx.matched_invoice_id IS NOT NULL AND v_tx.match_status IS DISTINCT FROM 'suggestie' THEN
-    RAISE EXCEPTION 'Deze banktransactie is via de match aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
+  -- Vrijgeven zet de regel terug op niet_gematcht en moet daarom de factuurmatch
+  -- wissen (handleConfirm zou hem anders bevestigen). Of die match een oude
+  -- suggestie of een oudere koppeling is, ziet de RPC niet, en een factuur
+  -- herrekent hij niet: dan weigert vrijgeven.
+  IF v_tx.matched_invoice_id IS NOT NULL THEN
+    RAISE EXCEPTION 'Deze banktransactie draagt nog een factuurmatch (mogelijk een oude suggestie); vrijgeven zou die wissen zonder de factuur te herrekenen en valt daarom buiten deze functie' USING ERRCODE = '22023';
   END IF;
 
   -- Een bestaande storno op een latere datum: na vrijgeven zou opnieuw boeken
