@@ -237,7 +237,7 @@ SELECT
 |---|---|---|---|
 | 1 | `812d151a7041cdd48b7a784cd193a159` | `067939e0c44a672c26ec8883717ef6d2` | false |
 | 2 | `812d151a7041cdd48b7a784cd193a159` | `a931207c1a4e97f06e7797ed105c0264` | false |
-| 3 | leeg | leeg | false |
+| 3 | leeg (NULL) | leeg (NULL) | false |
 
 Elke andere uitkomst: STOP, niets herstellen, melden.
 

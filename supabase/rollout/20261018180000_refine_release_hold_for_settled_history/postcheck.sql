@@ -68,8 +68,8 @@ WHERE t.tgrelid = 'public.bank_transactions'::regclass AND t.tgname = 'enforce_b
 -- Per directe bankgroep zonder marker: het oordeel van de hulpfunctie (die de
 -- hold gebruikt). Verwacht: één rij voor de bekende groep
 -- fb1d2550-9a9e-4e09-8a31-e05e59bf3a4a met `bewezen_historisch` = true,
--- `vervangen` = false en `in_verleden` = true (origineel en storno liggen vóór
--- nu, dus vóór elke gebeurtenis die nog komt). Direct na de uitrol zijn er nog geen gebeurtenissen;
+-- `vervangen` = false en `in_verleden` = true (origineel, storno en claim
+-- liggen vóór nu, dus vóór elke gebeurtenis die nog komt). Direct na de uitrol zijn er nog geen gebeurtenissen;
 -- elke andere rij is STOP.
 SELECT k.tx AS banktransactie, k.grp AS groep,
        EXISTS (SELECT 1 FROM public.bank_transaction_posting_events e WHERE e.superseded_posting_group_id = k.grp) AS vervangen,
@@ -78,7 +78,9 @@ SELECT k.tx AS banktransactie, k.grp AS groep,
        coalesce((SELECT max(x.created_at) FROM public.ledger_postings x
                  WHERE x.posting_group_id = k.grp
                     OR x.posting_group_id = (SELECT r.reversal_posting_group_id FROM public.ledger_reversal_postings r
-                                             WHERE r.original_posting_group_id = k.grp)) < now(), false)           AS in_verleden
+                                             WHERE r.original_posting_group_id = k.grp)) < now()
+                AND coalesce((SELECT r.created_at FROM public.ledger_reversal_postings r
+                              WHERE r.original_posting_group_id = k.grp) < now(), true), false)                    AS in_verleden
 FROM (SELECT DISTINCT lp.source_id AS tx, lp.posting_group_id AS grp
       FROM public.ledger_postings lp
       WHERE lp.source_type = 'bank_transaction'
