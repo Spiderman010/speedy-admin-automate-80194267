@@ -24,6 +24,18 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261018150000_keep_bank_description_on_correction.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 const PR1_FILE = "20261018120000_add_bank_transaction_corrections.sql";
+/**
+ * De opvolgende fix van de vrijgave-hold. Zij herdefinieert de hold-trigger-
+ * functie op bank_transactions — precies wat test 17 en 20 hieronder bewaken.
+ * Het veiligheidsargument van deze migratie is daarvoor herbeoordeeld: de nieuwe
+ * hold voegt één leesvoorwaarde toe (een STABLE hulpfunctie), schrijft niets en
+ * zendt niets uit (test 20). De hold-pin hieronder blijft die van PR 1: deze
+ * migratie draait vóór de fix (de fix eist PR 2), en haar voorwaardencontrole
+ * moet de PR 1-hold blijven eisen.
+ */
+const HOLD_FIX_FILE = "20261018180000_refine_release_hold_for_settled_history.sql";
+const HOLD_FIX_BODY_MD5 = "43347fb9f48ed4c161e291fa769577c2";
+const HOLD_FIX_HELPER_MD5 = "697f9413067e9c5b73323b792c51cda9";
 /** SHA-256 van de migratie zoals beoordeeld. */
 const REVIEWED_SHA256 = "1cc32885a3d095ec2fa0bb36e16d4337cb5fdf8f95f59440175ee9b6ff3fe54d";
 const PR1_BODY_MD5 = "a931207c1a4e97f06e7797ed105c0264";
@@ -370,13 +382,15 @@ describe("rollback, harnas en uitrolcontroles", () => {
     expect(read(`${HARNESS}/run-proof.sh`)).toMatch(/THROWAWAY DATABASE ONLY/);
   });
 
-  it("17. na PR 1 vervangt alleen deze migratie een functie van PR 1, en alleen reclassify_bank_transaction", () => {
+  it("17. na PR 1 vervangt alleen deze migratie een functie van PR 1 (reclassify_bank_transaction), en de hold-fix alleen de hold", () => {
     const pr1Functions = [...pr1.matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.(\w+)\s*\(/gi)].map((m) => m[1]);
     expect(pr1Functions).toContain("reclassify_bank_transaction");
     for (const f of readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((x) => x.endsWith(".sql") && x > PR1_FILE)) {
       const defined = [...read(`${MIGRATION_DIR}/${f}`).matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(\w+)\s*\(/gi)].map((m) => m[1]);
       const overlap = defined.filter((n) => pr1Functions.includes(n));
-      expect(overlap, f).toEqual(f === FILE ? ["reclassify_bank_transaction"] : []);
+      expect(overlap, f).toEqual(
+        f === FILE ? ["reclassify_bank_transaction"] : f === HOLD_FIX_FILE ? ["enforce_bank_transaction_release_hold"] : [],
+      );
     }
   });
 });
@@ -401,9 +415,34 @@ describe("na deze migratie", () => {
       expect(code, f).not.toMatch(/EXECUTE\s+(?:format\s*\()?\s*'[^;]*CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER/i);
       expect(code, f).not.toMatch(/ALTER\s+TABLE[^;]*\bbank_transactions\b[^;]*TRIGGER/i);
       for (const fn of pinned) {
+        // Herbeoordeeld: de hold-fix mag (alleen) de hold herdefiniëren — zie hieronder.
+        if (f === HOLD_FIX_FILE && fn === "enforce_bank_transaction_release_hold") continue;
         expect(code, `${f}: ${fn}`).not.toMatch(new RegExp(`FUNCTION\\s+(?:public\\.)?${fn}\\s*\\(`, "i"));
       }
     }
+  });
+
+  it("20b. herbeoordeling van de hold-fix: de nieuwe hold en haar hulpfunctie schrijven niets en zenden niets uit", () => {
+    const fix = read(`${MIGRATION_DIR}/${HOLD_FIX_FILE}`);
+    const bodyAfter = (header: string) => {
+      const start = fix.indexOf(header);
+      expect(start, header).toBeGreaterThan(0);
+      const from = fix.indexOf("AS $$", start) + "AS $$".length;
+      return fix.slice(from, fix.indexOf("$$;", from));
+    };
+    const hold = bodyAfter("CREATE OR REPLACE FUNCTION public.enforce_bank_transaction_release_hold()");
+    const helper = bodyAfter("CREATE OR REPLACE FUNCTION public.bank_transaction_group_is_settled_history(");
+    expect(md5(hold)).toBe(HOLD_FIX_BODY_MD5);
+    expect(md5(helper)).toBe(HOLD_FIX_HELPER_MD5);
+    const code = (b: string) =>
+      b.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n").replace(/'(?:[^']|'')*'/g, "''");
+    for (const [naam, b] of [["hold", hold], ["hulpfunctie", helper]] as const) {
+      expect(code(b), naam).not.toMatch(/\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|COPY|NOTIFY|pg_notify|dblink\w*|EXECUTE|PERFORM)\b/i);
+    }
+    expect(fix).toMatch(/bank_transaction_group_is_settled_history\([\s\S]*?\)\s+RETURNS boolean\s+LANGUAGE sql\s+STABLE\s+SET search_path = public\s+AS \$\$/);
+    // Geen nieuwe trigger, RULE of publicatie: de fix voegt alleen een voorwaarde toe aan een bestaande triggerfunctie.
+    const top = fix.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n").replace(/AS \$\$[\s\S]*?\$\$;/g, "");
+    expect(top).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER|RULE|PUBLICATION|ALTER\s+TABLE/i);
   });
 });
 

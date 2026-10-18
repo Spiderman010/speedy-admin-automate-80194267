@@ -10,13 +10,29 @@
 --
 -- Bij ELKE afwijking: STOP, niets herstellen, uitkomst doorgeven. De rollback
 -- staat in de kop van de migratie en vraagt akkoord van de eigenaar.
+--
+-- GECOMBINEERDE UITROL (PR 1 + PR 2 + 20261018180000 in één uitvoering, zie
+-- supabase/rollout/20261018180000_refine_release_hold_for_settled_history/uitvoerplan.md):
+-- dan draagt reclassify_bank_transaction het lichaam van PR 2 en
+-- enforce_bank_transaction_release_hold dat van 20261018180000. POST 1 noemt
+-- per functie welke beoordeelde versie er staat (`lichaam_versie`); POST 7 en
+-- POST 8 houden rekening met de hulpfunctie van 20261018180000.
 -- ═════════════════════════════════════════════════════════════════════════════
 
 
 -- ── POST 1. De tien nieuwe functies: exact het beoordeelde lichaam en veilig ──
--- Verwacht: 10 rijen, elke booleaanse kolom `true`.
+-- Verwacht: 10 rijen, elke booleaanse kolom `true`. `lichaam_versie` = 'PR 1',
+-- of in de gecombineerde uitrol 'PR 2' (reclassify_bank_transaction) en
+-- '20261018180000' (enforce_bank_transaction_release_hold).
 SELECT h.naam,
-       coalesce(md5(p.prosrc) = h.md5_lichaam, false)                          AS lichaam_exact,
+       coalesce(md5(p.prosrc) = h.md5_lichaam
+                OR (h.naam = 'reclassify_bank_transaction' AND md5(p.prosrc) = '067939e0c44a672c26ec8883717ef6d2')
+                OR (h.naam = 'enforce_bank_transaction_release_hold' AND md5(p.prosrc) = '43347fb9f48ed4c161e291fa769577c2'),
+                false)                                                         AS lichaam_exact,
+       CASE md5(p.prosrc) WHEN h.md5_lichaam THEN 'PR 1'
+                          WHEN '067939e0c44a672c26ec8883717ef6d2' THEN 'PR 2'
+                          WHEN '43347fb9f48ed4c161e291fa769577c2' THEN '20261018180000'
+                          ELSE 'ONBEKEND' END                                  AS lichaam_versie,
        coalesce(p.prosecdef, false)                                            AS security_definer,
        coalesce(p.proconfig = ARRAY['search_path=public'], false)              AS search_path_vast,
        coalesce(p.provolatile = 'v', false)                                    AS volatile,
@@ -174,8 +190,9 @@ FROM public.ledger_reversal_postings t;
 
 -- ── POST 7. Catalogus: precies de nieuwe objecten, verder letterlijk gelijk ──
 -- Exact dezelfde query als PRE 7. Verwacht t.o.v. PRE 7:
---   publieke_functies + 10, triggers_public + 9, tabellen + 1, sequences + 1,
---   policies + 1; ALLE andere kolommen letterlijk gelijk.
+--   publieke_functies + 10 (+ 11 in de gecombineerde uitrol: de hulpfunctie
+--   bank_transaction_group_is_settled_history), triggers_public + 9,
+--   tabellen + 1, sequences + 1, policies + 1; ALLE andere kolommen letterlijk gelijk.
 SELECT
   (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace)                            AS publieke_functies,
   (SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
@@ -202,7 +219,7 @@ SELECT
      'enforce_bank_transaction_posting_event', 'prevent_bank_transaction_posting_event_mutation',
      'prevent_bank_transaction_posting_marker_mutation', 'enforce_bank_transaction_posting_marker_delete',
      'enforce_bank_transaction_posting_marker_lineage', 'enforce_bank_transaction_release_hold',
-     'enforce_bank_allocation_not_released'))                                                          AS bestaande_functies_digest,
+     'enforce_bank_allocation_not_released', 'bank_transaction_group_is_settled_history'))            AS bestaande_functies_digest,
   (SELECT md5(coalesce(string_agg(format('%s|%s|%s', t.tgrelid::regclass, t.tgname, t.tgenabled),
                                   ',' ORDER BY t.tgrelid::regclass::text, t.tgname), ''))
    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
@@ -214,12 +231,88 @@ SELECT
      'validate_bank_allocation_not_released_trigger'))                                                 AS bestaande_triggers_digest;
 
 
--- ── POST 8. Lineage-nulpunt: elke directe bankgroep is de actieve marker ────
--- Zonder gebeurtenissen moet elke directe bankgroep de groep van haar marker
--- zijn; dan is de hold voor elke bestaande regel inactief. Verwacht: 0 en 0.
-SELECT
-  (SELECT count(DISTINCT lp.posting_group_id) FROM public.ledger_postings lp
-   WHERE lp.source_type = 'bank_transaction'
-     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m
-                     WHERE m.bank_transaction_id = lp.source_id AND m.posting_group_id = lp.posting_group_id)) AS groepen_zonder_marker,
-  (SELECT count(*) FROM public.bank_transaction_posting_events)                                               AS gebeurtenissen;
+-- ── POST 8. Lineage-nulpunt: elke directe bankgroep is verklaard ─────────────
+-- Elke directe bankgroep moet de groep van haar marker zijn, als vervangen in
+-- een gebeurtenis staan, of een BEWEZEN historische storno zijn (dezelfde
+-- bewijsstukken als PRE 4b, plus: in geen gebeurtenis genoemd en strikt ouder
+-- dan elke gebeurtenis van die transactie, op tijd én op transactievolgorde
+-- (created_xact_id). Dat is strenger dan de hold zelf
+-- (bank_transaction_group_is_settled_history toetst alleen de tijd, zodat een
+-- vergissing de hold alleen strenger maakt): wat niet in beide volgordes
+-- ouder is, is hier onverklaard. Na een logische restore (nieuwe xid-reeks)
+-- kan POST 8 daardoor STOP geven op een bewezen groep terwijl de hold haar
+-- blijft dekken — melden, niet negeren. Een groep van een banktransactie die
+-- niet meer bestaat, is nooit bewezen. Alles daarbuiten is STOP.
+-- `hold_versie` zegt of 20261018180000 er al is; alleen dan dekt de
+-- vrijgave-hold een regel met een historische storno.
+-- Verwacht direct na de migratie: waarvan_onverklaard = 0, gebeurtenissen = 0,
+-- en `toestand` = 'IN ORDE'. 'TIJDELIJK …' betekent: PR 1 staat er zonder de
+-- fix terwijl er een historische storno is — dat mag alleen binnen de
+-- gecombineerde uitrol voorkomen en nooit zichtbaar worden (STOP, melden).
+WITH kandidaat AS (
+  SELECT DISTINCT lp.source_id AS tx, lp.posting_group_id AS grp
+  FROM public.ledger_postings lp
+  WHERE lp.source_type = 'bank_transaction'
+    AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m
+                    WHERE m.bank_transaction_id = lp.source_id AND m.posting_group_id = lp.posting_group_id)
+), bewijs AS (
+  SELECT k.tx, k.grp,
+    EXISTS (SELECT 1 FROM public.bank_transaction_posting_events e WHERE e.superseded_posting_group_id = k.grp) AS vervangen,
+    coalesce(
+      bt.id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
+                  AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx))
+      AND (SELECT count(*) FROM public.ledger_reversal_postings r1 WHERE r1.original_posting_group_id = k.grp) = 1
+      AND r.original_source_type = 'bank_transaction'
+      AND (SELECT count(*) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id)
+          = (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id
+                      AND (v.source_type <> 'reversal' OR v.source_id IS DISTINCT FROM k.grp OR v.reversal_of_posting_id IS NULL
+                           OR NOT EXISTS (SELECT 1 FROM public.ledger_postings o
+                                          WHERE o.posting_group_id = k.grp AND o.id = v.reversal_of_posting_id)))
+      AND (SELECT count(DISTINCT v.reversal_of_posting_id) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id)
+          = (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings x
+                      WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id) AND x.posting_date <> bt.transaction_date)
+      AND r.posting_date = bt.transaction_date AND r.original_posting_date = bt.transaction_date
+      AND NOT EXISTS (SELECT x.grootboekrekening_id FROM public.ledger_postings x
+                      WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id)
+                      GROUP BY x.grootboekrekening_id HAVING sum(x.debit_amount - x.credit_amount) <> 0)
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_reversal_postings r2 WHERE r2.original_posting_group_id = r.reversal_posting_group_id)
+      AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_posting_events e
+                      WHERE e.superseded_posting_group_id = k.grp OR e.replacement_posting_group_id = k.grp)
+      AND EXISTS (SELECT 1 FROM public.ledger_postings g2
+                  WHERE g2.source_type = 'bank_transaction' AND g2.source_id = k.tx AND g2.posting_group_id <> k.grp
+                    AND g2.created_at >= (SELECT max(v.created_at) FROM public.ledger_postings v
+                                          WHERE v.posting_group_id = r.reversal_posting_group_id))
+      AND NOT EXISTS (SELECT 1
+                      FROM public.bank_transaction_posting_events f,
+                           (SELECT x.created_at, x.created_xact_id FROM public.ledger_postings x
+                            WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id)
+                            UNION ALL SELECT r.created_at, NULL::xid8) y
+                      WHERE f.bank_transaction_id = k.tx
+                        AND (y.created_at >= f.created_at OR y.created_xact_id >= f.created_xact_id)),
+      false) AS historisch
+  FROM kandidaat k
+  LEFT JOIN public.bank_transactions bt ON bt.id = k.tx
+  LEFT JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = k.grp
+), telling AS (
+  SELECT
+    (SELECT count(DISTINCT grp) FROM kandidaat)                                                   AS groepen_zonder_marker,
+    (SELECT count(DISTINCT grp) FROM bewijs b WHERE b.vervangen
+       AND NOT EXISTS (SELECT 1 FROM bewijs b2 WHERE b2.grp = b.grp AND NOT b2.vervangen))        AS waarvan_vervangen,
+    (SELECT count(DISTINCT grp) FROM bewijs b WHERE NOT b.vervangen AND b.historisch
+       AND NOT EXISTS (SELECT 1 FROM bewijs b2 WHERE b2.grp = b.grp AND NOT b2.historisch))       AS waarvan_historische_storno,
+    (SELECT count(DISTINCT grp) FROM bewijs b WHERE NOT b.vervangen AND NOT b.historisch)          AS waarvan_onverklaard,
+    (SELECT count(*) FROM public.bank_transaction_posting_events)                                 AS gebeurtenissen,
+    CASE (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
+      WHEN '812d151a7041cdd48b7a784cd193a159' THEN 'PR 1'
+      WHEN '43347fb9f48ed4c161e291fa769577c2' THEN '20261018180000'
+      ELSE 'ONBEKEND' END                                                                         AS hold_versie
+)
+SELECT t.*,
+       CASE WHEN t.waarvan_onverklaard > 0 OR t.hold_versie = 'ONBEKEND' THEN 'STOP'
+            WHEN t.waarvan_historische_storno > 0 AND t.hold_versie = 'PR 1'
+              THEN 'TIJDELIJK — de hold dekt de historische storno nog niet; geen gebruikersactiviteit tot 20261018180000 (STOP, melden)'
+            ELSE 'IN ORDE' END                                                                    AS toestand
+FROM telling t;

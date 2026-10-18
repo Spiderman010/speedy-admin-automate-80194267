@@ -11,8 +11,8 @@
 -- a931207c1a4e97f06e7797ed105c0264 (de POST-pin van PR 1).
 
 -- Alleen vanuit de beoordeelde toestand: de functie is die van PR 2 (of al die
--- van PR 1, bij een tweede uitvoering), met de eigenaar van de schrijver.
--- Anders gebeurt er niets.
+-- van PR 1, bij een tweede uitvoering), met de eigenaar van de schrijver, en
+-- 20261018180000 is al teruggedraaid. Anders gebeurt er niets.
 DO $rollback$
 DECLARE v_md5 text;
 BEGIN
@@ -26,6 +26,11 @@ BEGIN
      IS DISTINCT FROM
      (SELECT p.proowner FROM pg_proc p WHERE p.oid = 'public.post_bank_transaction(uuid)'::regprocedure) THEN
     RAISE EXCEPTION 'Rollback geweigerd: reclassify_bank_transaction heeft een andere eigenaar dan de schrijver post_bank_transaction' USING ERRCODE = '55000';
+  END IF;
+  -- Staat 20261018180000 er nog (de hulpfunctie), dan eerst die terugdraaien:
+  -- PR 2 en de fix kunnen anders niet meer opnieuw worden toegepast.
+  IF to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NOT NULL THEN
+    RAISE EXCEPTION 'Rollback geweigerd: 20261018180000 is nog toegepast; draai eerst die terug (zijn rollback.sql)' USING ERRCODE = '55000';
   END IF;
 END
 $rollback$;

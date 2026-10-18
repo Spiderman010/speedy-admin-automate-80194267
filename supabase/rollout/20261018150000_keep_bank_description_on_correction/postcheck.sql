@@ -10,6 +10,14 @@
 --
 -- Bij ELKE afwijking: STOP, niets herstellen, uitkomst doorgeven. De rollback
 -- (rollback.sql in deze map) vraagt akkoord van de eigenaar.
+--
+-- GECOMBINEERDE UITROL (PR 1 + PR 2 + 20261018180000 in één uitvoering, zie
+-- supabase/rollout/20261018180000_refine_release_hold_for_settled_history/uitvoerplan.md):
+-- dan draagt enforce_bank_transaction_release_hold het lichaam van
+-- 20261018180000; POST 2 en POST 3 erkennen dat expliciet (`versie`). POST 4
+-- vergelijkt dan met PRE B8 van 20261018180000 (dezelfde kolommen, zonder de
+-- gebeurtenissen): de datakolommen gelijk, `gebeurtenissen` = 0,
+-- `functies_public` + 11 en `triggers` + 9 (PR 1 en de hulpfunctie).
 -- ═════════════════════════════════════════════════════════════════════════════
 
 
@@ -37,7 +45,12 @@ WHERE p.oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid
 
 -- ── POST 2. Alle andere functies van PR 1 en de schrijver: ongewijzigd ──────
 -- Verwacht: 10 rijen, `gelijk` overal `true`.
-SELECT h.naam, coalesce(md5(p.prosrc) = h.verwacht, false) AS gelijk
+SELECT h.naam,
+       coalesce(md5(p.prosrc) = h.verwacht
+                OR (h.naam = 'enforce_bank_transaction_release_hold' AND md5(p.prosrc) = '43347fb9f48ed4c161e291fa769577c2'), false) AS gelijk,
+       CASE WHEN md5(p.prosrc) = h.verwacht THEN 'beoordeeld'
+            WHEN h.naam = 'enforce_bank_transaction_release_hold' AND md5(p.prosrc) = '43347fb9f48ed4c161e291fa769577c2' THEN '20261018180000'
+            ELSE 'ONBEKEND' END AS versie
 FROM (VALUES
   ('post_bank_transaction',                            '2369978c713ac78a0c039dd5c3e5eb4c'),
   ('release_bank_transaction_posting',                 '2c3a2e8b93292336ea319fa512b7e09b'),
@@ -67,7 +80,11 @@ actueel AS (
   WHERE t.tgrelid = 'public.bank_transactions'::regclass AND NOT t.tgisinternal)
 SELECT coalesce(a.tgname, b.tgname) AS tgname,
        (a.tgname IS NOT NULL AND b.tgname IS NOT NULL
-        AND a.functie = b.functie AND a.md5 = b.md5 AND a.ingeschakeld = b.ingeschakeld) AS bekend
+        AND a.functie = b.functie AND a.ingeschakeld = b.ingeschakeld
+        AND (a.md5 = b.md5 OR (a.functie = 'enforce_bank_transaction_release_hold' AND a.md5 = '43347fb9f48ed4c161e291fa769577c2'))) AS bekend,
+       CASE WHEN a.md5 = b.md5 THEN 'beoordeeld'
+            WHEN a.functie = 'enforce_bank_transaction_release_hold' AND a.md5 = '43347fb9f48ed4c161e291fa769577c2' THEN '20261018180000'
+            ELSE 'ONBEKEND' END AS versie
 FROM actueel a FULL JOIN bekend b ON b.tgname = a.tgname
 ORDER BY 1;
 
