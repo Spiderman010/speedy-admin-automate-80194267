@@ -85,8 +85,8 @@ FROM proof.pre4b_now b
 WHERE b.groep = proof.get('w_g19')::uuid;
 
 SELECT proof.capture('post8_reapply', :'post8');
-SELECT proof.record('W3e', 'POST 8 noemt beide groepen uit de tussentijd onverklaard: 16 onverklaard (14 corrupt + 12 + 19) — STOP',
-  waarvan_onverklaard = 16 AND toestand = 'STOP' AND hold_versie = '20261018180000',
+SELECT proof.record('W3e', 'POST 8 noemt beide groepen uit de tussentijd onverklaard: 18 onverklaard (16 corrupt + 12 + 19) — STOP',
+  waarvan_onverklaard = 18 AND toestand = 'STOP' AND hold_versie = '20261018180000',
   format('%s/%s/%s/%s/%s', groepen_zonder_marker, waarvan_vervangen, waarvan_historische_storno, waarvan_onverklaard, toestand))
 FROM proof.post8_reapply;
 

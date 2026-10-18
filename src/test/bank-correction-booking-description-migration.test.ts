@@ -35,7 +35,7 @@ const PR1_FILE = "20261018120000_add_bank_transaction_corrections.sql";
  */
 const HOLD_FIX_FILE = "20261018180000_refine_release_hold_for_settled_history.sql";
 const HOLD_FIX_BODY_MD5 = "43347fb9f48ed4c161e291fa769577c2";
-const HOLD_FIX_HELPER_MD5 = "c97cc25d4fb1849831528c6dc2d43501";
+const HOLD_FIX_HELPER_MD5 = "9e4593fcda07e2994459a7d3ac440ce6";
 /** SHA-256 van de migratie zoals beoordeeld. */
 const REVIEWED_SHA256 = "1cc32885a3d095ec2fa0bb36e16d4337cb5fdf8f95f59440175ee9b6ff3fe54d";
 const PR1_BODY_MD5 = "a931207c1a4e97f06e7797ed105c0264";

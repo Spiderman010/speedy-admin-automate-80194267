@@ -7,16 +7,13 @@
 -- nooit olumcwneiejjefhkzgmz of ycuofllsdssoezwwpqmv), ná de PRE van PR 1
 -- (supabase/rollout/20261018120000_add_bank_transaction_corrections/preflight.sql)
 -- en vóór de ene uitvoering met de drie migraties. Zie uitvoerplan.md.
--- Alles hieronder is ALLEEN LEZEN: elke opdracht is een SELECT, behalve de
--- SET LOCAL in PRE B9 (die geldt alleen binnen die ene uitvoering en wijzigt
--- niets). Voer de blokken één voor één uit en bewaar de uitkomst van PRE B8
--- voor de POST's.
+-- Alles hieronder is ALLEEN LEZEN: elke opdracht is een SELECT. Voer de
+-- blokken één voor één uit en bewaar de uitkomst van PRE B8 voor de POST's.
 --
 -- STOP (niets uitvoeren, uitkomst doorgeven) als:
 --   • PRE B1, B2 of B5 ergens `false` geeft;
 --   • PRE B3, B4 of B6 `stop = true` geeft;
 --   • PRE B7 actieve applicatiesessies toont (wacht, en voer B7 opnieuw uit);
---   • PRE B9 `een_transactie` = false geeft (de editor splitst een uitvoering);
 --   • een query een foutmelding geeft.
 -- ═════════════════════════════════════════════════════════════════════════════
 
@@ -94,7 +91,8 @@ WITH kandidaat AS (
 ), bewijs AS (
   SELECT k.tx, k.grp, r.reversal_posting_group_id AS storno, m.posting_group_id AS actuele_groep,
     coalesce(
-      NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
+      bt.id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
                   AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx))
       AND (SELECT count(*) FROM public.ledger_reversal_postings r1 WHERE r1.original_posting_group_id = k.grp) = 1
       AND r.original_source_type = 'bank_transaction'
@@ -118,7 +116,7 @@ WITH kandidaat AS (
           >= (SELECT max(v.created_at) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id),
       false) AS bewezen
   FROM kandidaat k
-  JOIN public.bank_transactions bt ON bt.id = k.tx
+  LEFT JOIN public.bank_transactions bt ON bt.id = k.tx
   LEFT JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = k.grp
   LEFT JOIN public.bank_transaction_postings m ON m.bank_transaction_id = k.tx
 ), telling AS (
@@ -165,12 +163,3 @@ SELECT
    FROM public.ledger_postings)                                                           AS grootboektekst_md5,
   (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace)              AS functies_public,
   (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal)                                AS triggers;
-
-
--- ── PRE B9. Proef: draait de editor één uitvoering als één transactie? ───────
--- Plak deze TWEE regels samen en voer ze in ÉÉN uitvoering uit. SET LOCAL
--- werkt alleen binnen een transactie en vervalt daarna vanzelf; er verandert
--- niets. uitvoering.sql steunt op precies dit gedrag (en weigert anders).
--- Verwacht: lock_timeout = 4321ms en een_transactie = true. Anders: STOP.
-SET LOCAL lock_timeout = '4321ms';
-SELECT current_setting('lock_timeout') AS lock_timeout, current_setting('lock_timeout') = '4321ms' AS een_transactie;

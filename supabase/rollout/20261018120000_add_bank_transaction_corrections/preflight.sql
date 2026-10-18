@@ -28,6 +28,9 @@
 --   • PRE 4 `stop = true` geeft (een bankboeking die niet de vorm van de
 --     schrijver heeft, of een directe bankgroep zonder marker die geen bewezen
 --     historische storno is — PRE 4b noemt welke en waarom);
+--   • PRE 4 `stop_losse_uitrol = true` geeft en u deze migratie LOS wilt
+--     uitvoeren: dan niet; alleen de gecombineerde uitrol (uitvoerplan.md)
+--     verwacht precies `stop = false` met `stop_losse_uitrol = true`;
 --   • PRE 11 `stop = true` geeft (een onbekende trigger op bank_transactions);
 --   • een query een foutmelding geeft.
 -- PRE 3, PRE 4b, PRE 5, PRE 9 en PRE 10 zijn informatief (PRE 4b licht PRE 4 toe).
@@ -156,8 +159,9 @@ SELECT
 -- actieve marker draagt. Alleen een eerdere datum of het ontbreken van een
 -- marker is nooit genoeg.
 -- Verwacht: afwijkende_vorm = 0 en waarvan_onverklaard = 0, stop = false.
--- waarvan_historische_storno > 0 is geen STOP, maar dan alleen de gecombineerde
--- uitrol (zie de kop).
+-- `stop_losse_uitrol` is ook waar zodra er een directe bankgroep zonder marker
+-- is — ook een bewezen historische storno: dan NIET deze migratie los
+-- uitvoeren, maar alleen de gecombineerde uitrol (zie de kop).
 WITH g AS (
   SELECT m.bank_transaction_id AS tx, m.posting_group_id AS grp, m.gross_amount, m.net_amount, m.btw_amount,
          m.posting_date, bt.amount, bt.transaction_date
@@ -185,8 +189,9 @@ WITH g AS (
 ), bewijs AS (
   SELECT k.tx, k.grp,
     coalesce(
-      -- (1) dezelfde banktransactie
-      NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
+      -- (1) dezelfde banktransactie (die bestaat nog)
+      bt.id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
                   AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx))
       -- (2) de reversalketen
       AND (SELECT count(*) FROM public.ledger_reversal_postings r1 WHERE r1.original_posting_group_id = k.grp) = 1
@@ -215,7 +220,7 @@ WITH g AS (
           >= (SELECT max(v.created_at) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id),
       false) AS bewezen
   FROM kandidaat k
-  JOIN public.bank_transactions bt ON bt.id = k.tx
+  LEFT JOIN public.bank_transactions bt ON bt.id = k.tx
   LEFT JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = k.grp
   LEFT JOIN public.bank_transaction_postings m ON m.bank_transaction_id = k.tx
 )
@@ -228,6 +233,11 @@ SELECT
    WHERE b.bewezen AND NOT EXISTS (SELECT 1 FROM bewijs b2 WHERE b2.grp = b.grp AND NOT b2.bewezen))
                                                                            AS waarvan_historische_storno,
   (SELECT count(DISTINCT grp) FROM bewijs b WHERE NOT b.bewezen)           AS waarvan_onverklaard,
+  -- Ook elke bewezen historische storno: dan mag PR 1 NIET los worden uitgevoerd.
+  EXISTS (SELECT 1 FROM shape
+          WHERE regels NOT BETWEEN 2 AND 3 OR vreemd > 0 OR bankzijde <> 1 OR bankzijde_bruto <> 1
+             OR tegenzijde <> CASE WHEN btw > 0 THEN 2 ELSE 1 END)
+  OR EXISTS (SELECT 1 FROM kandidaat)                                      AS stop_losse_uitrol,
   EXISTS (SELECT 1 FROM shape
           WHERE regels NOT BETWEEN 2 AND 3 OR vreemd > 0 OR bankzijde <> 1 OR bankzijde_bruto <> 1
              OR tegenzijde <> CASE WHEN btw > 0 THEN 2 ELSE 1 END)
@@ -249,8 +259,9 @@ WITH kandidaat AS (
     (SELECT min(v.posting_date) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id) AS stornodatum,
     (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)                           AS regels,
     (SELECT sum(o.debit_amount) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)                AS debet,
-    coalesce(NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
-                         AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx)), false) AS b1_zelfde_transactie,
+    coalesce(bt.id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
+                      AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx)), false) AS b1_zelfde_transactie,
     coalesce((SELECT count(*) FROM public.ledger_reversal_postings r1 WHERE r1.original_posting_group_id = k.grp) = 1
       AND r.original_source_type = 'bank_transaction'
       AND (SELECT count(*) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id)
@@ -276,7 +287,7 @@ WITH kandidaat AS (
           >= (SELECT max(v.created_at) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id), false)
                                                                                                                 AS b6_actuele_marker_daarna
   FROM kandidaat k
-  JOIN public.bank_transactions bt ON bt.id = k.tx
+  LEFT JOIN public.bank_transactions bt ON bt.id = k.tx
   LEFT JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = k.grp
   LEFT JOIN public.bank_transaction_postings m ON m.bank_transaction_id = k.tx
 )
@@ -288,6 +299,7 @@ SELECT f.tx AS banktransactie, f.grp AS groep, f.storno, f.actuele_groep,
        CASE WHEN f.b1_zelfde_transactie AND f.b2_reversalketen AND f.b3_transactiedatum AND f.b4_neutraal
                  AND f.b5_storno_geldig AND f.b6_actuele_marker_daarna
             THEN 'bewezen historische storno — alleen via de gecombineerde uitrol (PR 1 + PR 2 + 20261018180000)'
+            WHEN f.transaction_date IS NULL THEN 'STOP — de banktransactie bestaat niet meer'
             WHEN f.storno IS NULL THEN 'STOP — niet gestorneerd'
             WHEN f.actuele_groep IS NULL THEN 'STOP — geen actuele marker'
             ELSE 'STOP — onverklaard (zie de onware bewijsstukken)' END                                          AS toestand

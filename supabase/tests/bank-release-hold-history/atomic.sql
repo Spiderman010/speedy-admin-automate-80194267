@@ -5,13 +5,18 @@
 --   1. preflight.sql van PR 1 en van de fix VOLLEDIG gedraaid in een
 --      read-only transactie (default_transaction_read_only = on) — en elk
 --      STOP-blok letterlijk vastgelegd (a_*);
---   2. uitvoering.sql opdracht voor opdracht gedraaid (zoals een editor die
---      splitst): geweigerd vóór de eerste migratie;
+--   2. uitvoering.sql opdracht voor opdracht (zoals een editor die splitst en
+--      na een fout doorgaat), met lock_timeout = 5s al op de sessie en een
+--      gesaboteerde eindcontrole: niets toegepast, en de laatste rij zegt
+--      'NIET VOLTOOID — STOP' (nooit 'voltooid');
 --   3. uitvoering.sql als één uitvoering terwijl een andere sessie een
---      rijgrendel op bank_transactions vasthield: lock_timeout, niets toegepast;
+--      grendel op bank_transactions vasthield: lock_timeout, niets toegepast;
 --   4. uitvoering.sql met een gesaboteerde eindcontrole: niets toegepast,
 --      óók niet de drie migraties die al waren gelopen;
---   5. uitvoering.sql als één uitvoering (zoals de editor): voltooid;
+--   4b. een afgekapte plak (halverwege PR 2): syntaxfout, niets toegepast;
+--   5. uitvoering.sql als één uitvoering (zoals de editor): voltooid; en op een
+--      kopie opdracht voor opdracht: ook voltooid, want de migraties zijn één
+--      DO-opdracht;
 --   6. postcheck.sql van PR 1, PR 2 en de fix VOLLEDIG read-only gedraaid en
 --      elk blok vastgelegd (p1_*, p2_*, c_*).
 
@@ -22,7 +27,7 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY[
   'A0','A1','A2','A3','A4','A5','A6','A7','A8','A9','A10','A11','A12',
-  'A20','A21','A22','A23',
+  'A20','A21','A22','A23','A24','A25',
   'A30','A31','A32','A33','A34','A35','A36','A37','A38','A39','A40','A41','A42','A43','A44','A45','A46','A47']);
 
 /** Heeft elke rij van tabel _t in elke booleaanse kolom (behalve _except) de waarde _v? En is er minstens één rij? */
@@ -45,9 +50,9 @@ SELECT proof.record('A1', 'beide preflight.sql-bestanden draaien foutloos in een
   proof.get('a_pre_readonly') = 'ok', proof.get('a_pre_readonly'));
 SELECT proof.record('A2', 'PRE 1 (PR 1): elke kolom waar', proof.all_bools('a_pre1', true));
 SELECT proof.record('A3', 'PRE 2 (PR 1): 11 rijen, gelijk', proof.all_bools('a_pre2', true) AND (SELECT count(*) FROM proof.a_pre2) = 11);
-SELECT proof.record('A4', 'PRE 4 (PR 1): geen STOP — één bewezen historische storno, niets onverklaard',
-  NOT stop AND afwijkende_vorm = 0 AND waarvan_historische_storno = 1 AND waarvan_onverklaard = 0,
-  format('%s/%s/%s/%s', afwijkende_vorm, waarvan_historische_storno, waarvan_onverklaard, stop))
+SELECT proof.record('A4', 'PRE 4 (PR 1): geen STOP voor de gecombineerde uitrol — één bewezen historische storno, niets onverklaard — en stop_losse_uitrol: PR 1 niet los',
+  NOT stop AND stop_losse_uitrol AND afwijkende_vorm = 0 AND waarvan_historische_storno = 1 AND waarvan_onverklaard = 0,
+  format('%s/%s/%s/%s/%s', afwijkende_vorm, waarvan_historische_storno, waarvan_onverklaard, stop, stop_losse_uitrol))
 FROM proof.a_pre4;
 SELECT proof.record('A5', 'PRE 4b (PR 1): één rij — de bekende groep, storno en actuele groep — bewezen',
   (SELECT count(*) FROM proof.a_pre4b) = 1 AND bewezen AND groep = 'fb1d2550-9a9e-4e09-8a31-e05e59bf3a4a'
@@ -65,24 +70,29 @@ SELECT proof.record('A11', 'PRE B6: precies de bekende historische storno, niets
   NOT stop AND bewezen = 1 AND onverklaard = 0 AND bekende_storno_bewezen AND andere_bewezen = 0,
   format('%s/%s/%s/%s/%s', bewezen, onverklaard, bekende_storno_bewezen, andere_bewezen, stop))
 FROM proof.a_b6;
-SELECT proof.record('A12', 'PRE B7: geen lopende applicatieverzoeken; PRE B9: de proef op één transactie slaagt bij één uitvoering en faalt bij losse opdrachten',
-  (SELECT count(*) FROM proof.a_b7) = 0 AND proof.get('a_b9_een') = '4321ms|t' AND proof.get('a_b9_los') = '0|f',
-  concat_ws(' / ', proof.get('a_b9_een'), proof.get('a_b9_los')));
+SELECT proof.record('A12', 'PRE B7: geen lopende applicatieverzoeken', (SELECT count(*) FROM proof.a_b7) = 0);
 
 -- ── geweigerde of mislukte uitvoeringen: niets toegepast ───────────────────
-SELECT proof.record('A20', 'uitvoering.sql opdracht voor opdracht (een editor die splitst): geweigerd vóór de eerste migratie',
-  proof.get('a_split') LIKE '%Uitrol geweigerd: deze uitvoering is niet één transactie%'
-  AND proof.get('a_split_catalog') = proof.get('a_catalog_pre'), left(proof.get('a_split'), 200));
+SELECT proof.record('A20', 'opdracht voor opdracht, doorgaan na een fout, lock_timeout al 5s op de sessie, eindcontrole gesaboteerd: niets toegepast en de laatste rij zegt NIET VOLTOOID',
+  proof.get('a_split') LIKE '%Uitrol geweigerd: na de drie migraties is de eindtoestand niet de beoordeelde%'
+  AND proof.get('a_split_last') = 'NIET VOLTOOID — STOP|0|0'
+  AND proof.get('a_split_catalog') = proof.get('a_catalog_pre'), concat_ws(' / ', proof.get('a_split_last'), left(proof.get('a_split'), 160)));
 SELECT proof.record('A21', 'één uitvoering terwijl de app een grendel op bank_transactions vasthoudt: lock_timeout na 5 s, niets toegepast',
   proof.get('a_lock') LIKE '%lock timeout%' AND proof.get('a_lock_catalog') = proof.get('a_catalog_pre'), left(proof.get('a_lock'), 200));
 SELECT proof.record('A22', 'een fout ná alle drie migraties (gesaboteerde eindcontrole): alles teruggedraaid, ook PR 1 en PR 2',
   proof.get('a_sabotage') LIKE '%Uitrol geweigerd: na de drie migraties is de eindtoestand niet de beoordeelde%'
   AND proof.get('a_sabotage_catalog') = proof.get('a_catalog_pre'), left(proof.get('a_sabotage'), 200));
-SELECT proof.record('A23', 'en geen enkele rij veranderde door de drie mislukte pogingen', proof.get('a_digest_na_pogingen') = proof.get('a_digest_pre'));
+SELECT proof.record('A24', 'een afgekapte plak (halverwege PR 2): syntaxfout, niets toegepast',
+  proof.get('a_kort') LIKE '%unterminated dollar-quoted string%' AND proof.get('a_kort_catalog') = proof.get('a_catalog_pre'),
+  left(proof.get('a_kort'), 200));
+SELECT proof.record('A23', 'en geen enkele rij veranderde door de vier mislukte pogingen', proof.get('a_digest_na_pogingen') = proof.get('a_digest_pre'));
 
 -- ── na de ene uitvoering ────────────────────────────────────────────────────
-SELECT proof.record('A30', 'uitvoering.sql als één uitvoering: voltooid (laatste uitkomst), nul gebeurtenissen',
-  proof.get('a_uitkomst') LIKE 'gecombineerde uitrol voltooid|%|0', proof.get('a_uitkomst'));
+SELECT proof.record('A30', 'uitvoering.sql als één uitvoering: voltooid (laatste uitkomst: hulpfunctie en gebeurtenistabel aanwezig), nul gebeurtenissen',
+  proof.get('a_uitkomst') = 'gecombineerde uitrol voltooid|1|1' AND (SELECT count(*) FROM public.bank_transaction_posting_events) = 0,
+  proof.get('a_uitkomst'));
+SELECT proof.record('A25', 'op een kopie opdracht voor opdracht uitgevoerd: ook voltooid — de drie migraties zijn één opdracht',
+  proof.get('a_los_uitkomst') = 'gecombineerde uitrol voltooid|1|1', proof.get('a_los_uitkomst'));
 SELECT proof.record('A31', 'alle drie postcheck.sql-bestanden draaien foutloos in een read-only transactie',
   proof.get('a_post_readonly') = 'ok', proof.get('a_post_readonly'));
 SELECT proof.record('A32', 'POST 1 (PR 1): tien functies exact en veilig — reclassify in de versie van PR 2, de hold in die van de fix',

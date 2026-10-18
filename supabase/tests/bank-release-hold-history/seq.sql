@@ -18,9 +18,9 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY['Z1','Z2','Z3','Z4','Z5','Z6','Z7','Z8']);
 
-SELECT proof.record('Z1', '(a) PRE 4: één bewezen historische storno, niets onverklaard — geen STOP',
-  afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 1 AND waarvan_historische_storno = 1 AND waarvan_onverklaard = 0 AND NOT stop,
-  format('%s/%s/%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, waarvan_historische_storno, waarvan_onverklaard, stop))
+SELECT proof.record('Z1', '(a) PRE 4: één bewezen historische storno, niets onverklaard — geen STOP voor de gecombineerde uitrol, wél STOP voor PR 1 los',
+  afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 1 AND waarvan_historische_storno = 1 AND waarvan_onverklaard = 0 AND NOT stop AND stop_losse_uitrol,
+  format('%s/%s/%s/%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, waarvan_historische_storno, waarvan_onverklaard, stop, stop_losse_uitrol))
 FROM proof.z_pre4;
 
 SELECT proof.record('Z2', '(a) PRE 4b: die ene groep, elk bewijsstuk waar, "alleen via de gecombineerde uitrol"',

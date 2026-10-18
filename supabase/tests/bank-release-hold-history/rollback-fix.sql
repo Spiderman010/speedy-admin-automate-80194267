@@ -9,7 +9,7 @@
 SET client_min_messages = warning;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
-SELECT proof.plan(ARRAY['W1a','W1b','W1c','W1d','W1e']);
+SELECT proof.plan(ARRAY['W1a','W1b','W1c','W1d','W1e','W1f']);
 
 SELECT proof.record('W1a', 'de catalogus is exact die van vóór de fix: hold van PR 1 (lichaam, rechten, commentaar), geen hulpfunctie',
   proof.catalog_digest() = proof.get('catalog_before_fix')
@@ -29,3 +29,7 @@ SELECT proof.prereq_refuses('W1d', 'de rollback weigert als de hold een andere e
 SELECT proof.record('W1e', 'gedocumenteerd gevolg van de rollback: de historische regel valt na vrijgeven weer buiten de hold (teruggedraaid)',
   o LIKE 'ok: released|f||% || ok: %', o)
 FROM proof.gap_probe(10) o;
+
+-- Vóór deze rollback (run-proof.sh): de rollback van PR 2 terwijl de fix er nog was.
+SELECT proof.record('W1f', 'de rollback van PR 2 weigerde zolang de fix er nog stond (55000) — de volgorde fix → PR 2 → PR 1 is afgedwongen',
+  :'pr2rb_err' LIKE '%Rollback geweigerd: 20261018180000 is nog toegepast%', left(:'pr2rb_err', 160));

@@ -25,6 +25,8 @@
 --   32  een stornoregel keert een regel van een andere groep om (nagebootst)
 --   33  een stornoregel noemt een andere bron dan het origineel (nagebootst)
 --   34  de stornoregels op een andere datum dan de claim (nagebootst)
+--   35  gestorneerd, marker weg, opnieuw geboekt, die marker ook weg, en daarna de
+--       banktransactie zelf verwijderd (kon vóór PR 1)
 -- Gewoon (geen geschiedenis): 40 en 41.
 
 \set ON_ERROR_STOP on
@@ -108,6 +110,14 @@ SELECT proof.forge(format($f$
   proof.storno_of(proof.h_orig(33))));
 -- 34: de stornoregels staan op een andere datum dan de transactie (de claim niet).
 SELECT proof.forge(format($f$ UPDATE public.ledger_postings SET posting_date = DATE '2025-11-26' WHERE posting_group_id = %L $f$, proof.storno_of(proof.h_orig(34))));
+
+-- 35: de banktransactie bestaat niet meer (een rol die mocht verwijderen, vóór PR 1).
+SELECT proof.h_post(35, -35.00);
+SELECT proof.h_reverse(35);
+SELECT proof.h_unmark(35);
+SELECT proof.h_repost(35);
+SELECT proof.h_unmark(35);
+DELETE FROM public.bank_transactions WHERE id = proof.uid(1000, 35);
 
 -- ── gewoon (geen geschiedenis) ──────────────────────────────────────────────
 UPDATE public.bank_transactions SET match_status = 'handmatig_geboekt', grootboekrekening_id = proof.acct(7), btw_percentage = 0

@@ -122,4 +122,14 @@ REVOKE ALL ON FUNCTION public.enforce_bank_transaction_release_hold() FROM PUBLI
 COMMENT ON FUNCTION public.enforce_bank_transaction_release_hold() IS
 'D12 — BEFORE UPDATE OR DELETE op bank_transactions (ENABLE ALWAYS). Zonder marker en met boekingsgeschiedenis: verwijderen en identiteitswijzigingen geweigerd; na een vrijgave (laatste gebeurtenis released) ook status, rekening, BTW en factuurmatch, voor elke rol en elk pad. Kijkt niet naar rollen.';
 
-DROP FUNCTION IF EXISTS public.bank_transaction_group_is_settled_history(uuid, uuid);
+-- De hulpfunctie pas weg als de hold weer exact die van PR 1 is (die haar niet
+-- aanroept); anders zou een hold die haar wél aanroept achterblijven.
+DO $rollback_hulp$
+BEGIN
+  IF (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
+     IS DISTINCT FROM '812d151a7041cdd48b7a784cd193a159' THEN
+    RAISE EXCEPTION 'Rollback onvolledig: enforce_bank_transaction_release_hold is niet die van PR 1; de hulpfunctie blijft staan' USING ERRCODE = '55000';
+  END IF;
+  DROP FUNCTION IF EXISTS public.bank_transaction_group_is_settled_history(uuid, uuid);
+END
+$rollback_hulp$;

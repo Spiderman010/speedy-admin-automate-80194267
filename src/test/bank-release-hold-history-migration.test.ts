@@ -30,10 +30,10 @@ const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 const PR1_FILE = "20261018120000_add_bank_transaction_corrections.sql";
 const PR2_FILE = "20261018150000_keep_bank_description_on_correction.sql";
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "c12c3e6e18fdf2dcbdffcb521ae647674009477328502f4a8b8a8057656230b9";
+const REVIEWED_SHA256 = "a23977588d304ec4e5c92c805489405088a9a95324acc9b541ca164d93d94196";
 const PR1_HOLD_MD5 = "812d151a7041cdd48b7a784cd193a159";
 const FIX_HOLD_MD5 = "43347fb9f48ed4c161e291fa769577c2";
-const HELPER_MD5 = "c97cc25d4fb1849831528c6dc2d43501";
+const HELPER_MD5 = "9e4593fcda07e2994459a7d3ac440ce6";
 const PR2_RECLASSIFY_MD5 = "067939e0c44a672c26ec8883717ef6d2";
 const HARNESS = "supabase/tests/bank-release-hold-history";
 const ROLLOUT = "supabase/rollout/20261018180000_refine_release_hold_for_settled_history";
@@ -102,7 +102,7 @@ function rightsAndComment(text: string, header: string): string {
 function topLevelStatements(text: string): string[] {
   return text
     .replace(/AS \$\$[\s\S]*?\$\$;/g, "AS $$ … $$;")
-    .replace(/\$(migratie|rollback|uitrol)\$[\s\S]*?\$\1\$/g, "…")
+    .replace(/\$(migratie|rollback|rollback_hulp|uitrol_20261018180000)\$[\s\S]*?\$\1\$/g, "…")
     .split("\n")
     .filter((l) => !l.trimStart().startsWith("--"))
     .join("\n")
@@ -237,11 +237,16 @@ describe("de hulpfunctie", () => {
       "WHERE e.superseded_posting_group_id = _posting_group_id\n                       OR e.replacement_posting_group_id = _posting_group_id)",
       // (7) daarna een nieuwe directe boeking
       "AND g.created_at >= (SELECT max(v.created_at) FROM rev v))",
-      // (8) alles strikt ouder dan de eerste gebeurtenis
-      "WHERE f.at IS NOT NULL AND x.created_at >= f.at);",
+      // (8) alles strikt ouder dan elke gebeurtenis, op tijd én op transactievolgorde
+      "WHERE x.created_at >= f.created_at OR x.created_xact_id >= f.created_xact_id);",
     ];
     for (const p of parts) expect(helperBody, p.slice(0, 60)).toContain(p);
-    expect(helperBody).toContain("UNION ALL SELECT v.created_at FROM rev v\n                          UNION ALL SELECT c.created_at FROM claim c) x");
+    expect(helperBody).toContain(
+      "(SELECT o.created_at, o.created_xact_id FROM orig o\n" +
+        "                          UNION ALL SELECT v.created_at, v.created_xact_id FROM rev v\n" +
+        "                          UNION ALL SELECT c.created_at, NULL::xid8 FROM claim c) x",
+    );
+    expect(helperBody).toContain("SELECT e.created_at, e.created_xact_id\n    FROM public.bank_transaction_posting_events e");
     // Eén keten van AND's: geen OR op het hoogste niveau die een bewijsstuk kan omzeilen.
     const select = codeOf(helperBody.slice(helperBody.lastIndexOf("  SELECT\n")));
     const depth0 = select.replace(/\((?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*\)/g, "( )");
@@ -258,7 +263,9 @@ describe("de voorwaardencontrole", () => {
     expect(prereq).toContain("AND t.tgenabled = 'A' AND NOT t.tgisinternal");
     for (const kolom of ["'public.ledger_postings'::regclass AND a.attname = 'created_at'", "a.attname = 'reversal_of_posting_id'",
                          "'public.ledger_reversal_postings'::regclass AND a.attname = 'created_at'",
-                         "'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at'"]) {
+                         "'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at'",
+                         "'public.ledger_postings'::regclass AND a.attname = 'created_xact_id'",
+                         "'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_xact_id'"]) {
       expect(prereq, kolom).toContain(kolom);
     }
     expect((prereq.match(/USING ERRCODE = '55000'/g) ?? []).length).toBe(8);
@@ -283,9 +290,17 @@ describe("rollback", () => {
     expect(guard).toContain("USING ERRCODE = '55000'");
     expect(guard).toContain("(SELECT p.proowner FROM pg_proc p WHERE p.oid = to_regprocedure('public.post_bank_transaction(uuid)'))");
     expect(topLevelStatements(rb).map((s) => s.split(/\s+/).slice(0, 2).join(" ").toUpperCase())).toEqual([
-      "DO …", "CREATE OR", "REVOKE ALL", "COMMENT ON", "DROP FUNCTION",
+      "DO …", "CREATE OR", "REVOKE ALL", "COMMENT ON", "DO …",
     ]);
-    expect(rb).toContain("DROP FUNCTION IF EXISTS public.bank_transaction_group_is_settled_history(uuid, uuid);");
+    // De hulpfunctie pas weg als de hold weer exact die van PR 1 is.
+    const drop = rb.slice(rb.indexOf("DO $rollback_hulp$"), rb.indexOf("$rollback_hulp$;"));
+    expect(drop).toContain(`IS DISTINCT FROM '${PR1_HOLD_MD5}' THEN`);
+    expect(drop.indexOf("RAISE EXCEPTION")).toBeLessThan(drop.indexOf("DROP FUNCTION IF EXISTS public.bank_transaction_group_is_settled_history(uuid, uuid);"));
+    // PR 2 terugdraaien weigert zolang deze fix er staat: de volgorde fix → PR 2 → PR 1 is afgedwongen.
+    const rb2 = read(`${PR2_ROLLOUT}/rollback.sql`);
+    const guard2 = rb2.slice(rb2.indexOf("DO $rollback$"), rb2.indexOf("$rollback$;"));
+    expect(guard2).toContain("IF to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NOT NULL THEN");
+    expect(guard2).toContain("Rollback geweigerd: 20261018180000 is nog toegepast");
     expect(raw).toContain(`-- rollback: voer ${ROLLOUT}/rollback.sql`);
   });
 });
@@ -294,45 +309,50 @@ describe("het uitvoerplan: één uitvoering", () => {
   const u = read(`${ROLLOUT}/uitvoering.sql`);
   const files = [PR1_FILE, PR2_FILE, FILE];
 
-  it("13. uitvoering.sql is exact: bewaking vooraf + de drie migraties letterlijk, in volgorde + bewaking achteraf", () => {
-    let at = 0;
-    for (const f of files) {
-      const begin = `-- ═══ BEGIN ${f} ═══\n`;
-      const end = `-- ═══ EINDE ${f} ═══\n`;
-      const b = u.indexOf(begin, at);
+  it("13. uitvoering.sql is exact: één DO-opdracht met de drie migraties letterlijk (EXECUTE), in volgorde, daarna één SELECT", () => {
+    const tags = ["pr1_20261018120000", "pr2_20261018150000", "fix_20261018180000"];
+    let at = u.indexOf("DO $uitrol_20261018180000$\n");
+    expect(at).toBeGreaterThan(0);
+    files.forEach((f, n) => {
+      const open = `  -- ═══ ${f} ═══\n  EXECUTE $${tags[n]}$\n`;
+      const close = `$${tags[n]}$;\n`;
+      const b = u.indexOf(open, at);
       expect(b, f).toBeGreaterThan(at);
-      const e = u.indexOf(end, b);
-      expect(u.slice(b + begin.length, e), f).toBe(read(`${MIGRATION_DIR}/${f}`));
-      expect(u.split(begin).length - 1, f).toBe(1);
+      const e = u.indexOf(close, b + open.length);
+      expect(u.slice(b + open.length, e), f).toBe(read(`${MIGRATION_DIR}/${f}`));
+      expect(u.split(`$${tags[n]}$`).length - 1, f).toBe(2);
+      expect(read(`${MIGRATION_DIR}/${f}`), f).not.toContain(`$${tags[n]}$`);
+      expect(read(`${MIGRATION_DIR}/${f}`), f).not.toContain("$uitrol_20261018180000$");
       at = e;
-    }
-    // De kop noemt de sha256 van elk bestand, en die klopt.
+    });
+    // Op het hoogste niveau precies twee opdrachten: de DO en de afsluitende SELECT.
+    const top = topLevelStatements(u.replace(/\$(pr1_20261018120000|pr2_20261018150000|fix_20261018180000)\$[\s\S]*?\$\1\$/g, "''"));
+    expect(top.map((t) => t.split(/\s+/)[0].toUpperCase())).toEqual(["DO", "SELECT"]);
     for (const f of files) expect(u).toContain(`--   ${f}  ${sha256(readFileSync(resolve(process.cwd(), MIGRATION_DIR, f)))}`);
   });
 
-  it("14. de bewaking: SET LOCAL eerst (anders weigert zij: geen ene transactie), niets van PR 1 aanwezig, en aan het eind exact de beoordeelde eindtoestand", () => {
-    const head = u.slice(0, u.indexOf(`-- ═══ BEGIN ${PR1_FILE} ═══`));
-    const tail = u.slice(u.indexOf(`-- ═══ EINDE ${FILE} ═══`));
-    const headStatements = topLevelStatements(head);
-    expect(headStatements.length).toBe(3);
-    expect(headStatements[0]).toBe("SET LOCAL lock_timeout = ''");
-    expect(headStatements[1]).toBe("DO …");
-    expect(headStatements[2]).toMatch(/^SELECT set_config\('', txid_current\(\)::text, true\)$/);
-    expect(head).toContain("SET LOCAL lock_timeout = '5s';");
-    expect(head).toContain("IF current_setting('lock_timeout') IS DISTINCT FROM '5s' THEN");
+  it("14. de bewaking zit IN de ene opdracht (grendel 5 s, niets aanwezig, exacte eindtoestand); de laatste rij zegt alleen 'voltooid' als die eindtoestand er staat", () => {
+    const doBlock = u.slice(u.indexOf("DO $uitrol_20261018180000$"), u.lastIndexOf("$uitrol_20261018180000$;"));
+    const head = doBlock.slice(0, doBlock.indexOf("EXECUTE $pr1_20261018120000$"));
+    const tail = doBlock.slice(doBlock.lastIndexOf("$fix_20261018180000$;"));
+    const select = u.slice(u.lastIndexOf("$uitrol_20261018180000$;"));
+    expect(head).toContain("PERFORM set_config('lock_timeout', '5s', true);");
     expect(head).toContain("to_regclass('public.bank_transaction_posting_events') IS NOT NULL");
-    expect(tail).toContain("IF current_setting('boekassist.uitrol_xid', true) IS DISTINCT FROM txid_current()::text THEN");
-    for (const h of [PR2_RECLASSIFY_MD5, FIX_HOLD_MD5, HELPER_MD5]) expect(tail).toContain(`IS DISTINCT FROM '${h}'`);
-    expect(tail).toContain("AND t.tgenabled = 'A'");
-    expect(tail).toContain("SELECT 'gecombineerde uitrol voltooid' AS uitkomst,");
-    // Geen eigen transactiebesturing: de editor voert de tekst als één transactie uit.
-    expect(topLevelStatements(u).filter((s) => /^(BEGIN|COMMIT|ROLLBACK|START|END|SAVEPOINT)\b/i.test(s))).toEqual([]);
+    expect(head).toContain("RAISE EXCEPTION 'Uitrol geweigerd: PR 1, PR 2 of 20261018180000 is al (deels) aanwezig");
+    for (const part of [tail, select]) {
+      for (const h of [PR2_RECLASSIFY_MD5, FIX_HOLD_MD5, HELPER_MD5]) expect(part).toContain(`IS NOT DISTINCT FROM '${h}'`);
+      expect(part).toContain("AND t.tgenabled = 'A'");
+    }
+    expect(tail).toContain("RAISE EXCEPTION 'Uitrol geweigerd: na de drie migraties is de eindtoestand niet de beoordeelde");
+    expect(select).toContain("THEN 'gecombineerde uitrol voltooid' ELSE 'NIET VOLTOOID — STOP' END AS uitkomst");
+    // Geen eigen transactiebesturing en geen SET buiten de DO.
+    expect(topLevelStatements(u).filter((t) => /^(BEGIN|COMMIT|ROLLBACK|START|END|SAVEPOINT|SET)\b/i.test(t))).toEqual([]);
     expect(u).toContain("alxlbdhpbwlehbdbfejw");
   });
 
   it("15. uitvoerplan.md beschrijft de ene uitvoering, de STOP-criteria, het onderhoudsprotocol en waarom los na elkaar STOP is", () => {
     const plan = read(`${ROLLOUT}/uitvoerplan.md`);
-    for (const s of ["alxlbdhpbwlehbdbfejw", "olumcwneiejjefhkzgmz", "ycuofllsdssoezwwpqmv", "uitvoering.sql", "PRE B9", "PRE B6",
+    for (const s of ["alxlbdhpbwlehbdbfejw", "olumcwneiejjefhkzgmz", "ycuofllsdssoezwwpqmv", "uitvoering.sql", "NIET VOLTOOID", "PRE B6",
                      "PRE 4", "POST 8", "IN ORDE", "TIJDELIJK", "STOP", "lock_timeout", "rollback.sql", "Onderhoudsprotocol"]) {
       expect(plan, s).toContain(s);
     }
@@ -343,15 +363,11 @@ describe("uitrolcontroles", () => {
   const pre = read(`${ROLLOUT}/preflight.sql`);
   const post = read(`${ROLLOUT}/postcheck.sql`);
 
-  it("16. PRE B en POST C zijn alleen-lezen (SELECT of WITH; alleen PRE B9 heeft een SET LOCAL) en noemen het juiste project", () => {
+  it("16. PRE B en POST C zijn alleen-lezen (elke opdracht is een SELECT of WITH) en noemen het juiste project", () => {
     for (const [f, text] of [["preflight.sql", pre], ["postcheck.sql", post]] as const) {
       expect(text, f).toContain("alxlbdhpbwlehbdbfejw");
-      for (const stmt of topLevelStatements(text)) {
-        if (f === "preflight.sql" && stmt === "SET LOCAL lock_timeout = ''") continue;
-        expect(stmt, f).toMatch(/^(SELECT|WITH)\b/i);
-      }
+      for (const stmt of topLevelStatements(text)) expect(stmt, f).toMatch(/^(SELECT|WITH)\b/i);
     }
-    expect(topLevelStatements(pre).filter((s) => /^SET\b/i.test(s))).toEqual(["SET LOCAL lock_timeout = ''"]);
   });
 
   it("17. PRE B6 en POST C4 kennen de beoordeelde historische storno; POST C pint de hulpfunctie, de hold en de trigger", () => {
@@ -367,12 +383,21 @@ describe("uitrolcontroles", () => {
   it("18. PRE 4 (PR 1) onderscheidt bewezen geschiedenis van onverklaard; POST 8 kent ook de gebeurtenissen en de hold-versie", () => {
     const p1pre = read(`${PR1_ROLLOUT}/preflight.sql`);
     const p1post = read(`${PR1_ROLLOUT}/postcheck.sql`);
-    for (const k of ["waarvan_historische_storno", "waarvan_onverklaard", "b1_zelfde_transactie", "b6_actuele_marker_daarna", "STOP — niet gestorneerd"]) {
+    for (const k of ["waarvan_historische_storno", "waarvan_onverklaard", "b1_zelfde_transactie", "b6_actuele_marker_daarna", "STOP — niet gestorneerd",
+                     "AS stop_losse_uitrol,", "PRE 4 `stop_losse_uitrol = true`", "STOP — de banktransactie bestaat niet meer"]) {
       expect(p1pre, k).toContain(k);
     }
     for (const k of ["waarvan_onverklaard", "hold_versie", `WHEN '${PR1_HOLD_MD5}' THEN 'PR 1'`, `WHEN '${FIX_HOLD_MD5}' THEN '20261018180000'`,
-                     "'IN ORDE'", "'TIJDELIJK", "e.replacement_posting_group_id = k.grp", "WHERE f.at IS NOT NULL AND y.created_at >= f.at"]) {
+                     "'IN ORDE'", "'TIJDELIJK", "e.replacement_posting_group_id = k.grp",
+                     "AND (y.created_at >= f.created_at OR y.created_xact_id >= f.created_xact_id)"]) {
       expect(p1post, k).toContain(k);
+    }
+    // Een groep van een verwijderde banktransactie valt niet weg: LEFT JOIN, en (1) eist dat zij bestaat.
+    const preB = read(`${ROLLOUT}/preflight.sql`);
+    for (const [naam, t, n] of [["PRE 4/4b", p1pre, 2], ["POST 8", p1post, 1], ["PRE B6", preB, 1]] as const) {
+      expect(t.split("LEFT JOIN public.bank_transactions bt ON bt.id = k.tx").length - 1, naam).toBe(n);
+      expect(t, naam).not.toContain("\n  JOIN public.bank_transactions bt ON bt.id = k.tx");
+      expect(t, naam).toContain("bt.id IS NOT NULL");
     }
     // PRE 7 en POST 7 sluiten dezelfde functies uit, inclusief de hulpfunctie.
     const list = (t: string, kop: string) => {
@@ -412,7 +437,8 @@ describe("het harnas", () => {
       at = next;
     }
     for (const f of ["helpers.sql", "history.sql", "pre.sql", "gap.sql", "snapshot.sql", "proof.sql", "corrections.sql", "concurrency.sql",
-                     "rollback-fix.sql", "window.sql", "reapply.sql", "final.sql", "prodlike.sql", "seq.sql", "atomic.sql", "visibility.sql"]) {
+                     "rollback-fix.sql", "window.sql", "reapply.sql", "final.sql", "prodlike.sql", "seq.sql", "atomic.sql", "visibility.sql",
+                     "prestart.sql", "xid-check.sql"]) {
       expect(existsSync(resolve(process.cwd(), HARNESS, f)), f).toBe(true);
     }
   });
@@ -424,7 +450,13 @@ describe("het harnas", () => {
     expect(run).toContain("SELECT :'u' \\gexec");
     expect(run).toContain("-c default_transaction_read_only=on");
     expect(run).toContain('U="$R3/uitvoering.sql"');
-    expect(run).toContain('psql -X -q -v ON_ERROR_STOP=1 -d "$DB3" -f "$U"'); // opdracht voor opdracht: moet weigeren
+    expect(run).toContain('PGOPTIONS="$PGOPTIONS -c lock_timeout=5s" psql -X -q -At -d "$DB3" -f "$TMP/sabotage.sql"'); // splitsend, doorgaand, vooraf 5s
+    expect(run).toContain('psql -X -q -At -d "$DBL" -f "$U"'); // opdracht voor opdracht: één DO-opdracht, dus toch atomair
+    expect(run).toContain('head -n "$CUT" "$U" > "$TMP/afgekapt.sql"');
+    expect(run).toContain('ZICHT_FILE="$TMP/zicht.sql"');
+    // Codex: transacties die vóór de eerste gebeurtenis begonnen — buiten HOLD_FIX_SKIP_PLAN, zodat mutanten er ook langs moeten.
+    expect(run).toContain('build "$DB5"');
+    expect(run.indexOf('build "$DB5"')).toBeGreaterThan(run.lastIndexOf("\nfi\n"));
     expect(run).toContain('run3 -f "$HERE/atomic.sql"');
     expect(run).toContain('-f "$HERE/visibility.sql"');
     expect(run).toMatch(/THROWAWAY DATABASES ONLY/);

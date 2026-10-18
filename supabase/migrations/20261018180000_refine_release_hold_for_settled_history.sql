@@ -26,8 +26,12 @@
 --        (5) de storno is niet zelf tegengeboekt;
 --        (6) de groep is niet de actieve marker en staat in geen gebeurtenis;
 --        (7) na de storno volgde een nieuwe directe boeking van de transactie;
---        (8) origineel, storno en claim zijn alle strikt ouder dan de eerste
---            correctiegebeurtenis van deze transactie.
+--        (8) origineel, storno en claim zijn alle strikt ouder dan elke
+--            correctiegebeurtenis van deze transactie — op tijd (created_at)
+--            én op transactievolgorde (created_xact_id). Alleen de tijd is niet
+--            genoeg: created_at is now(), de START van een transactie; een
+--            transactie die vóór een gebeurtenis begon en pas daarna schreef,
+--            krijgt een vroegere tijd maar een latere xid (Codex).
 --      Alleen een eerdere datum, of alleen het ontbreken van een marker, is
 --      dus nooit genoeg.
 --   2. enforce_bank_transaction_release_hold = het lichaam van PR 1 met één
@@ -84,8 +88,10 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
      OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'reversal_of_posting_id' AND NOT a.attisdropped)
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'created_xact_id' AND NOT a.attisdropped)
      OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_reversal_postings'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
-     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped) THEN
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_xact_id' AND NOT a.attisdropped) THEN
     RAISE EXCEPTION 'Voorwaarde: de kolommen waarop het bewijs van geschiedenis steunt ontbreken' USING ERRCODE = '55000';
   END IF;
 
@@ -128,7 +134,7 @@ BEGIN
   IF to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NOT NULL
      AND ((SELECT md5(p.prosrc) FROM pg_proc p
            WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
-          IS DISTINCT FROM 'c97cc25d4fb1849831528c6dc2d43501'
+          IS DISTINCT FROM '9e4593fcda07e2994459a7d3ac440ce6'
           OR (SELECT p.proowner FROM pg_proc p
               WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
           IS DISTINCT FROM
@@ -156,7 +162,7 @@ AS $$
     WHERE bt.id = _transaction_id
   ), orig AS (
     SELECT lp.id, lp.source_type, lp.source_id, lp.grootboekrekening_id, lp.posting_date,
-           lp.debit_amount, lp.credit_amount, lp.created_at
+           lp.debit_amount, lp.credit_amount, lp.created_at, lp.created_xact_id
     FROM public.ledger_postings lp
     WHERE lp.posting_group_id = _posting_group_id
   ), claim AS (
@@ -165,11 +171,11 @@ AS $$
     WHERE r.original_posting_group_id = _posting_group_id
   ), rev AS (
     SELECT lp.id, lp.source_type, lp.source_id, lp.reversal_of_posting_id, lp.grootboekrekening_id, lp.posting_date,
-           lp.debit_amount, lp.credit_amount, lp.created_at
+           lp.debit_amount, lp.credit_amount, lp.created_at, lp.created_xact_id
     FROM public.ledger_postings lp
     WHERE lp.posting_group_id = (SELECT c.reversal_posting_group_id FROM claim c)
-  ), first_event AS (
-    SELECT min(e.created_at) AS at
+  ), event AS (
+    SELECT e.created_at, e.created_xact_id
     FROM public.bank_transaction_posting_events e
     WHERE e.bank_transaction_id = _transaction_id
   )
@@ -219,13 +225,19 @@ AS $$
                   AND g.posting_group_id <> _posting_group_id
                   AND g.created_at >= (SELECT max(v.created_at) FROM rev v))
     -- (8) Geschiedenis van vóór de correctiegebeurtenissen van deze transactie:
-    --     origineel, storno en claim zijn alle strikt ouder dan haar eerste gebeurtenis.
+    --     origineel, storno en claim zijn alle strikt ouder dan elke gebeurtenis,
+    --     op tijd én op transactievolgorde. created_at is now(): de START van de
+    --     transactie; een transactie die vóór een gebeurtenis begon maar pas
+    --     daarna schreef, heeft dus een vroegere tijd. created_xact_id wordt
+    --     toegekend bij de eerste schrijfactie (ook een rijgrendel), zodat zo'n
+    --     transactie een latere xid heeft. De claim ontstaat in dezelfde
+    --     transactie als de stornoregels (reverse_posting_group).
     AND NOT EXISTS (SELECT 1
-                    FROM first_event f,
-                         (SELECT o.created_at FROM orig o
-                          UNION ALL SELECT v.created_at FROM rev v
-                          UNION ALL SELECT c.created_at FROM claim c) x
-                    WHERE f.at IS NOT NULL AND x.created_at >= f.at);
+                    FROM event f,
+                         (SELECT o.created_at, o.created_xact_id FROM orig o
+                          UNION ALL SELECT v.created_at, v.created_xact_id FROM rev v
+                          UNION ALL SELECT c.created_at, NULL::xid8 FROM claim c) x
+                    WHERE x.created_at >= f.created_at OR x.created_xact_id >= f.created_xact_id);
 $$;
 
 REVOKE ALL ON FUNCTION public.bank_transaction_group_is_settled_history(uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;

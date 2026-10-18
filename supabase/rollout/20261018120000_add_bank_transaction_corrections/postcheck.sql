@@ -235,7 +235,10 @@ SELECT
 -- Elke directe bankgroep moet de groep van haar marker zijn, als vervangen in
 -- een gebeurtenis staan, of een BEWEZEN historische storno zijn (dezelfde
 -- bewijsstukken als PRE 4b, plus: in geen gebeurtenis genoemd en strikt ouder
--- dan de eerste gebeurtenis van die transactie). Alles daarbuiten is STOP.
+-- dan elke gebeurtenis van die transactie, op tijd én op transactievolgorde
+-- (created_xact_id) — net als bank_transaction_group_is_settled_history). Een
+-- groep van een banktransactie die niet meer bestaat, is nooit bewezen.
+-- Alles daarbuiten is STOP.
 -- `hold_versie` zegt of 20261018180000 er al is; alleen dan dekt de
 -- vrijgave-hold een regel met een historische storno.
 -- Verwacht direct na de migratie: waarvan_onverklaard = 0, gebeurtenissen = 0,
@@ -252,7 +255,8 @@ WITH kandidaat AS (
   SELECT k.tx, k.grp,
     EXISTS (SELECT 1 FROM public.bank_transaction_posting_events e WHERE e.superseded_posting_group_id = k.grp) AS vervangen,
     coalesce(
-      NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
+      bt.id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
                   AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx))
       AND (SELECT count(*) FROM public.ledger_reversal_postings r1 WHERE r1.original_posting_group_id = k.grp) = 1
       AND r.original_source_type = 'bank_transaction'
@@ -278,14 +282,15 @@ WITH kandidaat AS (
                     AND g2.created_at >= (SELECT max(v.created_at) FROM public.ledger_postings v
                                           WHERE v.posting_group_id = r.reversal_posting_group_id))
       AND NOT EXISTS (SELECT 1
-                      FROM (SELECT min(e.created_at) AS at FROM public.bank_transaction_posting_events e
-                            WHERE e.bank_transaction_id = k.tx) f,
-                           (SELECT x.created_at FROM public.ledger_postings x WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id)
-                            UNION ALL SELECT r.created_at) y
-                      WHERE f.at IS NOT NULL AND y.created_at >= f.at),
+                      FROM public.bank_transaction_posting_events f,
+                           (SELECT x.created_at, x.created_xact_id FROM public.ledger_postings x
+                            WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id)
+                            UNION ALL SELECT r.created_at, NULL::xid8) y
+                      WHERE f.bank_transaction_id = k.tx
+                        AND (y.created_at >= f.created_at OR y.created_xact_id >= f.created_xact_id)),
       false) AS historisch
   FROM kandidaat k
-  JOIN public.bank_transactions bt ON bt.id = k.tx
+  LEFT JOIN public.bank_transactions bt ON bt.id = k.tx
   LEFT JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = k.grp
 ), telling AS (
   SELECT

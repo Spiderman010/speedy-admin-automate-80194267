@@ -177,11 +177,13 @@ run -v conn="$CONN" -f "$HERE/concurrency.sql"                                  
 
 # De rollback in de gedocumenteerde volgorde: de fix (TWEE keer), PR 2 (TWEE keer), PR 1 (TWEE keer).
 run -c "SELECT proof.put('digest_before_rollback', proof.digest()), proof.put('rest_before_rollback', proof.rest_digest());" > /dev/null
+# PR 2 terugdraaien terwijl de fix er nog is: moet weigeren (de volgorde is fix → PR 2 → PR 1).
+if PR2RB_ERR="$(run -f "$R2/rollback.sql" 2>&1 >/dev/null)"; then PR2RB_ERR="GEEN weigering"; fi
 run -f "$RB"                                                                       > /dev/null
 run -f "$RB"                                                                       > /dev/null
 RBGUARD="$(sed -n '/^DO \$rollback\$$/,/^\$rollback\$;$/p' "$RB")"
 [ -n "$RBGUARD" ] || { echo "rollbackbewaking niet gevonden" >&2; exit 1; }
-run -v rbguard="$RBGUARD" -f "$HERE/rollback-fix.sql"                              > /dev/null
+run -v rbguard="$RBGUARD" -v pr2rb_err="$PR2RB_ERR" -f "$HERE/rollback-fix.sql"   > /dev/null
 run -f "$R2/rollback.sql"                                                          > /dev/null
 run -f "$R2/rollback.sql"                                                          > /dev/null
 PR1_ROLLBACK="$(sed -n '/^-- ROLLBACK-BEGIN$/,/^-- ROLLBACK-END$/p' "$PR1" | grep -v '^-- ROLLBACK-' | sed 's/^-- \{0,1\}//')"
@@ -235,7 +237,7 @@ SQL
 run2 -f "$HERE/seq.sql"                                                            > /dev/null
 
 # ── database 3: het uitvoerplan (productiegelijk, met de productie-id's) ────
-DB3="${DB}_plan"; DB4="${DB}_zicht"; DBS="$DBS $DB3 $DB4"
+DB3="${DB}_plan"; DB4="${DB}_zicht"; DBL="${DB}_los"; DBS="$DBS $DB3 $DB4"
 run3() { psql -q -v ON_ERROR_STOP=1 -d "$DB3" "$@"; }
 U="$R3/uitvoering.sql"
 build "$DB3"
@@ -248,11 +250,7 @@ for f in "$R1/preflight.sql" "$R3/preflight.sql"; do
     RO="fout in $f: $OUT"
   fi
 done
-B9="$(awk 'index($0, "-- ── PRE B9.") == 1 { f = 1 } f && !/^--/ { print }' "$R3/preflight.sql")"
-[ "$(printf '%s\n' "$B9" | grep -c .)" = "2" ] || { echo "PRE B9 niet gevonden" >&2; exit 1; }
-B9_EEN="$(psql -X -At -d "$DB3" -c "$B9" 2>/dev/null | tail -1)"
-B9_LOS="$(printf '%s\n' "$B9" | psql -X -At -d "$DB3" 2>/dev/null | tail -1)"
-run3 -v ro="$RO" -v b9een="$B9_EEN" -v b9los="$B9_LOS" \
+run3 -v ro="$RO" \
      -v pre1="$(block "$R1/preflight.sql" '-- ── PRE 1.')" -v pre2="$(block "$R1/preflight.sql" '-- ── PRE 2.')" \
      -v pre4="$PRE4" -v pre4b="$PRE4B" -v pre6="$(block "$R1/preflight.sql" '-- ── PRE 6.')" \
      -v pre7="$(block "$R1/preflight.sql" '-- ── PRE 7.')" -v pre8="$(block "$R1/preflight.sql" '-- ── PRE 8.')" \
@@ -261,7 +259,7 @@ run3 -v ro="$RO" -v b9een="$B9_EEN" -v b9los="$B9_LOS" \
      -v b3="$(block "$R3/preflight.sql" '-- ── PRE B3.')" -v b4="$(block "$R3/preflight.sql" '-- ── PRE B4.')" \
      -v b5="$(block "$R3/preflight.sql" '-- ── PRE B5.')" -v b6="$PREB6" \
      -v b7="$(block "$R3/preflight.sql" '-- ── PRE B7.')" -v b8="$(block "$R3/preflight.sql" '-- ── PRE B8.')" > /dev/null <<'SQL'
-SELECT proof.put('a_pre_readonly', :'ro'), proof.put('a_b9_een', :'b9een'), proof.put('a_b9_los', :'b9los');
+SELECT proof.put('a_pre_readonly', :'ro');
 SELECT proof.capture('a_pre1', :'pre1'), proof.capture('a_pre2', :'pre2'), proof.capture('a_pre4', :'pre4'),
        proof.capture('a_pre4b', :'pre4b'), proof.capture('a_pre6', :'pre6'), proof.capture('a_pre7', :'pre7'),
        proof.capture('a_pre8', :'pre8'), proof.capture('a_pre11', :'pre11');
@@ -270,13 +268,23 @@ SELECT proof.capture('a_b1', :'b1'), proof.capture('a_b2', :'b2'), proof.capture
 SELECT proof.put('a_catalog_pre', proof.catalog_digest()), proof.put('a_digest_pre', proof.digest());
 SQL
 
-# Een kopie, vóór elke poging, voor het zichtbaarheidsbewijs.
+# Kopieën, vóór elke poging: voor het zichtbaarheidsbewijs en voor opdracht-voor-opdracht.
 psql -q -c "DROP DATABASE IF EXISTS $DB4;" -c "CREATE DATABASE $DB4 TEMPLATE $DB3;" postgres >/dev/null
+psql -q -c "DROP DATABASE IF EXISTS $DBL;" -c "CREATE DATABASE $DBL TEMPLATE $DB3;" postgres >/dev/null
 
-# 2. Opdracht voor opdracht (een editor die splitst): geweigerd.
-if ERR="$(psql -X -q -v ON_ERROR_STOP=1 -d "$DB3" -f "$U" 2>&1 >/dev/null)"; then ERR="GEEN weigering"; fi
-run3 -v err="$ERR" > /dev/null <<'SQL'
-SELECT proof.put('a_split', :'err'), proof.put('a_split_catalog', proof.catalog_digest());
+# De gesaboteerde kopie: alleen de eindcontrole IN de DO-opdracht (de eerste
+# vermelding van de md5 van de hulpfunctie) verwacht een andere waarde.
+HELPER_MD5="$(sed -n "s/.*md5(p.prosrc) = '\([0-9a-f]\{32\}\)', false).*/\1/p" "$R3/postcheck.sql" | head -1)"
+[ -n "$HELPER_MD5" ] || { echo "md5 van de hulpfunctie niet gevonden in POST C1" >&2; exit 1; }
+sed "0,/IS NOT DISTINCT FROM '$HELPER_MD5'/s//IS NOT DISTINCT FROM 'gesaboteerd'/" "$U" > "$TMP/sabotage.sql"
+cmp -s "$U" "$TMP/sabotage.sql" && { echo "sabotage niet aangebracht" >&2; exit 1; }
+[ "$(diff "$U" "$TMP/sabotage.sql" | grep -c '^[<>]')" = "2" ] || { echo "sabotage raakt meer dan één regel" >&2; exit 1; }
+
+# 2. Opdracht voor opdracht, doorgaan na een fout, lock_timeout al 5s op de sessie, gesaboteerd.
+SPLIT_OUT="$(PGOPTIONS="$PGOPTIONS -c lock_timeout=5s" psql -X -q -At -d "$DB3" -f "$TMP/sabotage.sql" 2>&1 || true)"
+SPLIT_LAST="$(printf '%s\n' "$SPLIT_OUT" | grep -v '^psql:' | tail -1)"
+run3 -v err="$SPLIT_OUT" -v last="$SPLIT_LAST" > /dev/null <<'SQL'
+SELECT proof.put('a_split', :'err'), proof.put('a_split_last', :'last'), proof.put('a_split_catalog', proof.catalog_digest());
 SQL
 
 # 3. Eén uitvoering terwijl een andere sessie een grendel op bank_transactions vasthoudt.
@@ -294,17 +302,25 @@ SELECT proof.put('a_lock', :'err'), proof.put('a_lock_catalog', proof.catalog_di
 SQL
 
 # 4. Een fout ná de drie migraties: de eindcontrole gesaboteerd (alleen hier).
-sed 's/IS DISTINCT FROM '"'"'c97cc25d4fb1849831528c6dc2d43501'"'"'$/IS DISTINCT FROM '"'"'gesaboteerd'"'"'/' "$U" > "$TMP/sabotage.sql"
-cmp -s "$U" "$TMP/sabotage.sql" && { echo "sabotage niet aangebracht" >&2; exit 1; }
 ERR="$(one_exec "$DB3" "$TMP/sabotage.sql")"
 run3 -v err="$ERR" > /dev/null <<'SQL'
-SELECT proof.put('a_sabotage', :'err'), proof.put('a_sabotage_catalog', proof.catalog_digest()), proof.put('a_digest_na_pogingen', proof.digest());
+SELECT proof.put('a_sabotage', :'err'), proof.put('a_sabotage_catalog', proof.catalog_digest());
+SQL
+
+# 4b. Een afgekapte plak: halverwege de tekst van PR 2.
+CUT=$(( $(grep -n '^  -- ═══ 20261018150000_keep_bank_description_on_correction.sql ═══$' "$U" | cut -d: -f1) + 200 ))
+head -n "$CUT" "$U" > "$TMP/afgekapt.sql"
+ERR="$(one_exec "$DB3" "$TMP/afgekapt.sql")"
+run3 -v err="$ERR" > /dev/null <<'SQL'
+SELECT proof.put('a_kort', :'err'), proof.put('a_kort_catalog', proof.catalog_digest()), proof.put('a_digest_na_pogingen', proof.digest());
 SQL
 
 # 5. Eén uitvoering, zoals de editor: één simple-query-bericht = één transactie.
 UITKOMST="$(one_exec "$DB3" "$U" | tail -1)"
-run3 -v u="$UITKOMST" > /dev/null <<'SQL'
-SELECT proof.put('a_uitkomst', :'u');
+# … en op een kopie opdracht voor opdracht (psql -f): ook één DO-opdracht.
+LOS="$(psql -X -q -At -d "$DBL" -f "$U" 2>/dev/null | tail -1)"
+run3 -v u="$UITKOMST" -v los="$LOS" > /dev/null <<'SQL'
+SELECT proof.put('a_uitkomst', :'u'), proof.put('a_los_uitkomst', :'los');
 SQL
 
 # 6. De POST's volledig, read-only, en elk blok vastgelegd.
@@ -336,18 +352,30 @@ SQL
 run3 -f "$HERE/atomic.sql"                                                         > /dev/null
 
 # ── database 4 (kopie van 3 vóór elke poging): niemand ziet de tussentoestand ──
-CHUNK1="$(awk '/^-- ═══ EINDE 20261018120000_add_bank_transaction_corrections.sql ═══$/ { print; exit } { print }' "$U")"
-CHUNK2="$(awk '/^-- ═══ BEGIN 20261018150000_keep_bank_description_on_correction.sql ═══$/ { f = 1 } f { print } /^-- ═══ EINDE 20261018150000_keep_bank_description_on_correction.sql ═══$/ { exit }' "$U")"
-CHUNK3="$(awk '/^-- ═══ BEGIN 20261018180000_refine_release_hold_for_settled_history.sql ═══$/ { f = 1 } f { print }' "$U")"
-[ "$CHUNK1
-
-$CHUNK2
-
-$CHUNK3" = "$(cat "$U")" ] || { echo "uitvoering.sql niet zonder rest in drie stukken te delen" >&2; exit 1; }
+FIXKOP='  -- ═══ 20261018180000_refine_release_hold_for_settled_history.sql ═══'
+[ "$(grep -cxF "$FIXKOP" "$U")" = "1" ] || { echo "kop van de fix in uitvoering.sql niet gevonden" >&2; exit 1; }
+awk -v kop="$FIXKOP" '$0 == kop { print "  PERFORM pg_sleep(3);" } { print }' "$U" > "$TMP/zicht.sql"
+[ "$(diff "$U" "$TMP/zicht.sql" | grep -c '^>')" = "1" ] && [ "$(diff "$U" "$TMP/zicht.sql" | grep -c '^<')" = "0" ] \
+  || { echo "de geïnstrumenteerde kopie wijkt meer af dan één regel" >&2; exit 1; }
 CONN4="host=${PGHOST} port=${PGPORT:-5432} dbname=$DB4 user=${PGUSER:-postgres}"
-psql -q -v ON_ERROR_STOP=1 -d "$DB4" -v conn="$CONN4" -v chunk1="$CHUNK1" -v chunk2="$CHUNK2" -v chunk3="$CHUNK3" \
-     -f "$HERE/visibility.sql"                                                     > /dev/null
+ZICHT_FILE="$TMP/zicht.sql" psql -q -v ON_ERROR_STOP=1 -d "$DB4" -v conn="$CONN4" -f "$HERE/visibility.sql" > /dev/null
 fi
+
+# ── database 5: transacties die vóór de eerste gebeurtenis begonnen (Codex) ──
+DB5="${DB}_xid"; DBS="$DBS $DB5"
+run5() { psql -q -v ON_ERROR_STOP=1 -d "$DB5" "$@"; }
+build "$DB5"
+run5 -v known=0 -f "$HERE/prodlike.sql"                                            > /dev/null
+run5 -f "$PR1"                                                                     > /dev/null
+run5 -f "$PR2"                                                                     > /dev/null
+run5 -f "$M"                                                                       > /dev/null
+CONN5="host=${PGHOST} port=${PGPORT:-5432} dbname=$DB5 user=${PGUSER:-postgres}"
+run5 -v conn="$CONN5" -v rbfix="$(cat "$RB")" -v rb2="$(cat "$R2/rollback.sql")" -v rb1="$PR1_ROLLBACK" \
+     -f "$HERE/prestart.sql"                                                       > /dev/null
+run5 -f "$PR1"                                                                     > /dev/null
+run5 -f "$PR2"                                                                     > /dev/null
+run5 -f "$M"                                                                       > /dev/null
+run5 -v post8="$POST8" -v pre4b="$PRE4B" -f "$HERE/xid-check.sql"                > /dev/null
 
 # ── uitslag over alle databases ─────────────────────────────────────────────
 TOTAL_FAILED=0

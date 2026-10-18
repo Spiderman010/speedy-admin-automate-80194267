@@ -1,49 +1,49 @@
 -- ═════════════════════════════════════════════════════════════════════════════
--- GECOMBINEERDE UITROL — PR 1 + PR 2 + 20261018180000 in ÉÉN uitvoering
+-- GECOMBINEERDE UITROL — PR 1 + PR 2 + 20261018180000 in ÉÉN opdracht
 --
 -- UITSLUITEND in de Lovable Cloud SQL editor van `alxlbdhpbwlehbdbfejw`
 -- (projectref visueel bevestigd; nooit het persoonlijke Supabase-dashboard,
 -- nooit olumcwneiejjefhkzgmz of ycuofllsdssoezwwpqmv), volgens uitvoerplan.md
--- in deze map: ná PRE (PR 1) en PRE B, en de proef op één transactie (stap 4).
+-- in deze map: ná PRE (PR 1) en PRE B.
 --
--- Plak dit HELE bestand, ongewijzigd, in één keer en voer het één keer uit.
--- Het draait als één transactie: lukt één opdracht niet (ook de lock_timeout
--- van 5 s), dan wordt NIETS toegepast. Niemand ziet ooit PR 1 zonder de fix.
+-- Plak dit HELE bestand, ongewijzigd, en voer het één keer uit. Het bestaat uit
+-- twee opdrachten:
+--   1. één DO-opdracht die de drie migraties letterlijk uitvoert (EXECUTE),
+--      met bewaking vooraf en achteraf. Eén opdracht is altijd één
+--      transactie, hoe de editor haar ook verstuurt: lukt één onderdeel niet
+--      (ook de lock_timeout van 5 s), dan wordt NIETS toegepast. Een afgekapte
+--      plak is een syntaxfout en doet ook niets. Niemand ziet ooit PR 1 zonder
+--      de fix.
+--   2. een SELECT die de eindtoestand leest: 'gecombineerde uitrol voltooid'
+--      alleen als alle drie er exact staan, anders 'NIET VOLTOOID — STOP'.
 --
 -- Inhoud, letterlijk en in deze volgorde (sha256 van de bestanden in
--- supabase/migrations/; de contracttest bewaakt dat dit bestand exact
--- bewaking + deze drie + bewaking is):
+-- supabase/migrations/; de contracttest bewaakt dat de tekst tussen elk paar
+-- dollar-aanhalingstekens byte-gelijk dat bestand is):
 --   20261018120000_add_bank_transaction_corrections.sql  6117f64382e7951af650f3a09d74c675e7ad1070b7e298ce46e9d5faa490f2fc
 --   20261018150000_keep_bank_description_on_correction.sql  1cc32885a3d095ec2fa0bb36e16d4337cb5fdf8f95f59440175ee9b6ff3fe54d
---   20261018180000_refine_release_hold_for_settled_history.sql  c12c3e6e18fdf2dcbdffcb521ae647674009477328502f4a8b8a8057656230b9
+--   20261018180000_refine_release_hold_for_settled_history.sql  a23977588d304ec4e5c92c805489405088a9a95324acc9b541ca164d93d94196
 --
 -- Verwacht als (laatste) uitkomst: één rij met `uitkomst` =
--- 'gecombineerde uitrol voltooid'. Elke foutmelding: STOP, niets herstellen,
--- uitkomst doorgeven (er is dan niets veranderd — controleer met PRE B1).
+-- 'gecombineerde uitrol voltooid'. Elke foutmelding, of 'NIET VOLTOOID — STOP':
+-- STOP, niets herstellen, uitkomst doorgeven.
 -- ═════════════════════════════════════════════════════════════════════════════
 
--- ── Bewaking vooraf: één transactie, en nog niets van PR 1 of de fix ────────
-SET LOCAL lock_timeout = '5s';
-
-DO $uitrol$
+DO $uitrol_20261018180000$
 BEGIN
-  -- SET LOCAL werkt alleen binnen een transactie: draait de editor de opdrachten
-  -- los van elkaar, dan staat lock_timeout hier niet op 5s en gebeurt er niets.
-  IF current_setting('lock_timeout') IS DISTINCT FROM '5s' THEN
-    RAISE EXCEPTION 'Uitrol geweigerd: deze uitvoering is niet één transactie (SET LOCAL had geen effect); er is niets veranderd' USING ERRCODE = '55000';
-  END IF;
+  -- Grendels hooguit 5 s, alleen binnen deze transactie.
+  PERFORM set_config('lock_timeout', '5s', true);
+
+  -- Vooraf: nog niets van PR 1, PR 2 of de fix.
   IF to_regclass('public.bank_transaction_posting_events') IS NOT NULL
      OR to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)') IS NOT NULL
      OR to_regprocedure('public.enforce_bank_transaction_release_hold()') IS NOT NULL
      OR to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NOT NULL THEN
     RAISE EXCEPTION 'Uitrol geweigerd: PR 1, PR 2 of 20261018180000 is al (deels) aanwezig; er is niets veranderd' USING ERRCODE = '55000';
   END IF;
-END
-$uitrol$;
 
-SELECT set_config('boekassist.uitrol_xid', txid_current()::text, true);
-
--- ═══ BEGIN 20261018120000_add_bank_transaction_corrections.sql ═══
+  -- ═══ 20261018120000_add_bank_transaction_corrections.sql ═══
+  EXECUTE $pr1_20261018120000$
 -- ═════════════════════════════════════════════════════════════════════════════
 -- BANKCORRECTIES v1.1 — PR 1: DE BACKENDFUNDERING
 --
@@ -1579,9 +1579,10 @@ GRANT EXECUTE ON FUNCTION public.return_bank_transaction_to_workflow(uuid, uuid,
 
 COMMENT ON FUNCTION public.return_bank_transaction_to_workflow(uuid, uuid, text) IS
 'D12-b: zet een vrijgegeven banktransactie (S3) expliciet terug naar de gewone werkstroom (accountant, toelichting verplicht, binnen een open boekingsperiode). Schrijft alleen gebeurtenis returned; daarna mogen matchen, sjablonen en de inhaalslag haar weer behandelen. Idempotent per (auth.uid(), _request_id).';
--- ═══ EINDE 20261018120000_add_bank_transaction_corrections.sql ═══
+$pr1_20261018120000$;
 
--- ═══ BEGIN 20261018150000_keep_bank_description_on_correction.sql ═══
+  -- ═══ 20261018150000_keep_bank_description_on_correction.sql ═══
+  EXECUTE $pr2_20261018150000$
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Bankcorrecties v1.1 — PR 2: de bankomschrijving blijft de geïmporteerde tekst
 -- ═════════════════════════════════════════════════════════════════════════════
@@ -2161,9 +2162,10 @@ GRANT EXECUTE ON FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, n
 
 COMMENT ON FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, numeric, uuid, text, text) IS
 'Boekt een directe banktransactie met de opgegeven grootboekrekening, BTW (0/9/21) en optioneel een boekingsomschrijving voor de grootboekregels; zonder blijft de bestaande boekingsomschrijving uit het grootboek staan (een nooit geboekte transactie: de bankomschrijving). bank_transactions.description blijft na elke correctie byte-gelijk. Niet geboekt (S0): eerste boeking (assistant). Geboekt (S1): storno + herboeking op de transactiedatum, of unchanged bij dezelfde codering (vastgelegd, zodat een herhaling exact dat antwoord geeft). Handmatig tegengeboekt (S2): herboeking zonder tweede storno. Vrijgegeven (S3): returned + herboeking. S2 en S3 alleen als de bestaande storno op de transactiedatum staat (anders 22023: memoriaal). S1–S3 vereisen accountant en een toelichting. _expected_posting_group_id = de actieve groep (NULL = niet geboekt), anders 55000. Idempotent per (auth.uid(), _request_id). Grootboekregels alleen via reverse_posting_group en post_bank_transaction.';
--- ═══ EINDE 20261018150000_keep_bank_description_on_correction.sql ═══
+$pr2_20261018150000$;
 
--- ═══ BEGIN 20261018180000_refine_release_hold_for_settled_history.sql ═══
+  -- ═══ 20261018180000_refine_release_hold_for_settled_history.sql ═══
+  EXECUTE $fix_20261018180000$
 -- ═════════════════════════════════════════════════════════════════════════════
 -- Bankcorrecties v1.1 — de vrijgave-hold (D12) en historische storno's van vóór PR 1
 -- ═════════════════════════════════════════════════════════════════════════════
@@ -2192,8 +2194,12 @@ COMMENT ON FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, numeric
 --        (5) de storno is niet zelf tegengeboekt;
 --        (6) de groep is niet de actieve marker en staat in geen gebeurtenis;
 --        (7) na de storno volgde een nieuwe directe boeking van de transactie;
---        (8) origineel, storno en claim zijn alle strikt ouder dan de eerste
---            correctiegebeurtenis van deze transactie.
+--        (8) origineel, storno en claim zijn alle strikt ouder dan elke
+--            correctiegebeurtenis van deze transactie — op tijd (created_at)
+--            én op transactievolgorde (created_xact_id). Alleen de tijd is niet
+--            genoeg: created_at is now(), de START van een transactie; een
+--            transactie die vóór een gebeurtenis begon en pas daarna schreef,
+--            krijgt een vroegere tijd maar een latere xid (Codex).
 --      Alleen een eerdere datum, of alleen het ontbreken van een marker, is
 --      dus nooit genoeg.
 --   2. enforce_bank_transaction_release_hold = het lichaam van PR 1 met één
@@ -2250,8 +2256,10 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
      OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'reversal_of_posting_id' AND NOT a.attisdropped)
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'created_xact_id' AND NOT a.attisdropped)
      OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_reversal_postings'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
-     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped) THEN
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_xact_id' AND NOT a.attisdropped) THEN
     RAISE EXCEPTION 'Voorwaarde: de kolommen waarop het bewijs van geschiedenis steunt ontbreken' USING ERRCODE = '55000';
   END IF;
 
@@ -2294,7 +2302,7 @@ BEGIN
   IF to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NOT NULL
      AND ((SELECT md5(p.prosrc) FROM pg_proc p
            WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
-          IS DISTINCT FROM 'c97cc25d4fb1849831528c6dc2d43501'
+          IS DISTINCT FROM '9e4593fcda07e2994459a7d3ac440ce6'
           OR (SELECT p.proowner FROM pg_proc p
               WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
           IS DISTINCT FROM
@@ -2322,7 +2330,7 @@ AS $$
     WHERE bt.id = _transaction_id
   ), orig AS (
     SELECT lp.id, lp.source_type, lp.source_id, lp.grootboekrekening_id, lp.posting_date,
-           lp.debit_amount, lp.credit_amount, lp.created_at
+           lp.debit_amount, lp.credit_amount, lp.created_at, lp.created_xact_id
     FROM public.ledger_postings lp
     WHERE lp.posting_group_id = _posting_group_id
   ), claim AS (
@@ -2331,11 +2339,11 @@ AS $$
     WHERE r.original_posting_group_id = _posting_group_id
   ), rev AS (
     SELECT lp.id, lp.source_type, lp.source_id, lp.reversal_of_posting_id, lp.grootboekrekening_id, lp.posting_date,
-           lp.debit_amount, lp.credit_amount, lp.created_at
+           lp.debit_amount, lp.credit_amount, lp.created_at, lp.created_xact_id
     FROM public.ledger_postings lp
     WHERE lp.posting_group_id = (SELECT c.reversal_posting_group_id FROM claim c)
-  ), first_event AS (
-    SELECT min(e.created_at) AS at
+  ), event AS (
+    SELECT e.created_at, e.created_xact_id
     FROM public.bank_transaction_posting_events e
     WHERE e.bank_transaction_id = _transaction_id
   )
@@ -2385,13 +2393,19 @@ AS $$
                   AND g.posting_group_id <> _posting_group_id
                   AND g.created_at >= (SELECT max(v.created_at) FROM rev v))
     -- (8) Geschiedenis van vóór de correctiegebeurtenissen van deze transactie:
-    --     origineel, storno en claim zijn alle strikt ouder dan haar eerste gebeurtenis.
+    --     origineel, storno en claim zijn alle strikt ouder dan elke gebeurtenis,
+    --     op tijd én op transactievolgorde. created_at is now(): de START van de
+    --     transactie; een transactie die vóór een gebeurtenis begon maar pas
+    --     daarna schreef, heeft dus een vroegere tijd. created_xact_id wordt
+    --     toegekend bij de eerste schrijfactie (ook een rijgrendel), zodat zo'n
+    --     transactie een latere xid heeft. De claim ontstaat in dezelfde
+    --     transactie als de stornoregels (reverse_posting_group).
     AND NOT EXISTS (SELECT 1
-                    FROM first_event f,
-                         (SELECT o.created_at FROM orig o
-                          UNION ALL SELECT v.created_at FROM rev v
-                          UNION ALL SELECT c.created_at FROM claim c) x
-                    WHERE f.at IS NOT NULL AND x.created_at >= f.at);
+                    FROM event f,
+                         (SELECT o.created_at, o.created_xact_id FROM orig o
+                          UNION ALL SELECT v.created_at, v.created_xact_id FROM rev v
+                          UNION ALL SELECT c.created_at, NULL::xid8 FROM claim c) x
+                    WHERE x.created_at >= f.created_at OR x.created_xact_id >= f.created_xact_id);
 $$;
 
 REVOKE ALL ON FUNCTION public.bank_transaction_group_is_settled_history(uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
@@ -2497,31 +2511,39 @@ REVOKE ALL ON FUNCTION public.enforce_bank_transaction_release_hold() FROM PUBLI
 
 COMMENT ON FUNCTION public.enforce_bank_transaction_release_hold() IS
 'D12 — BEFORE UPDATE OR DELETE op bank_transactions (ENABLE ALWAYS). Zonder marker en met boekingsgeschiedenis: verwijderen en identiteitswijzigingen geweigerd; na een vrijgave (laatste gebeurtenis released) ook status, rekening, BTW en factuurmatch, voor elke rol en elk pad. Een bewezen historische storno van vóór de correctiegebeurtenissen (bank_transaction_group_is_settled_history) schakelt die hold niet uit. Kijkt niet naar rollen.';
--- ═══ EINDE 20261018180000_refine_release_hold_for_settled_history.sql ═══
+$fix_20261018180000$;
 
--- ── Bewaking achteraf: alles in deze ene transactie, exact de beoordeelde versies ──
-DO $uitrol$
-BEGIN
-  IF current_setting('boekassist.uitrol_xid', true) IS DISTINCT FROM txid_current()::text THEN
-    RAISE EXCEPTION 'Uitrol geweigerd: de drie migraties liepen niet in één transactie' USING ERRCODE = '55000';
-  END IF;
-  IF (SELECT md5(p.prosrc) FROM pg_proc p
-      WHERE p.oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'))
-     IS DISTINCT FROM '067939e0c44a672c26ec8883717ef6d2'
-     OR (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
-        IS DISTINCT FROM '43347fb9f48ed4c161e291fa769577c2'
-     OR (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
-        IS DISTINCT FROM 'c97cc25d4fb1849831528c6dc2d43501'
-     OR NOT EXISTS (SELECT 1 FROM pg_trigger t
-                    WHERE t.tgrelid = 'public.bank_transactions'::regclass
-                      AND t.tgname = 'enforce_bank_transaction_release_hold_trigger'
-                      AND t.tgfoid = to_regprocedure('public.enforce_bank_transaction_release_hold()')
-                      AND t.tgenabled = 'A') THEN
+  -- Achteraf: exact de beoordeelde eindtoestand, anders draait alles terug.
+  IF NOT ((SELECT md5(p.prosrc) FROM pg_proc p
+       WHERE p.oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'))
+      IS NOT DISTINCT FROM '067939e0c44a672c26ec8883717ef6d2'
+  AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
+      IS NOT DISTINCT FROM '43347fb9f48ed4c161e291fa769577c2'
+  AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
+      IS NOT DISTINCT FROM '9e4593fcda07e2994459a7d3ac440ce6'
+  AND EXISTS (SELECT 1 FROM pg_trigger t
+              WHERE t.tgrelid = 'public.bank_transactions'::regclass
+                AND t.tgname = 'enforce_bank_transaction_release_hold_trigger'
+                AND t.tgfoid = to_regprocedure('public.enforce_bank_transaction_release_hold()')
+                AND t.tgenabled = 'A')) THEN
     RAISE EXCEPTION 'Uitrol geweigerd: na de drie migraties is de eindtoestand niet de beoordeelde; er is niets veranderd' USING ERRCODE = '55000';
   END IF;
 END
-$uitrol$;
+$uitrol_20261018180000$;
 
-SELECT 'gecombineerde uitrol voltooid' AS uitkomst,
-       current_setting('boekassist.uitrol_xid') AS transactie,
-       (SELECT count(*) FROM public.bank_transaction_posting_events) AS gebeurtenissen;
+SELECT CASE WHEN (SELECT md5(p.prosrc) FROM pg_proc p
+       WHERE p.oid = to_regprocedure('public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text)'))
+      IS NOT DISTINCT FROM '067939e0c44a672c26ec8883717ef6d2'
+  AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
+      IS NOT DISTINCT FROM '43347fb9f48ed4c161e291fa769577c2'
+  AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
+      IS NOT DISTINCT FROM '9e4593fcda07e2994459a7d3ac440ce6'
+  AND EXISTS (SELECT 1 FROM pg_trigger t
+              WHERE t.tgrelid = 'public.bank_transactions'::regclass
+                AND t.tgname = 'enforce_bank_transaction_release_hold_trigger'
+                AND t.tgfoid = to_regprocedure('public.enforce_bank_transaction_release_hold()')
+                AND t.tgenabled = 'A')
+            THEN 'gecombineerde uitrol voltooid' ELSE 'NIET VOLTOOID — STOP' END AS uitkomst,
+       (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace
+          AND proname = 'bank_transaction_group_is_settled_history') AS hulpfunctie,
+       (SELECT count(*) FROM pg_class WHERE oid = to_regclass('public.bank_transaction_posting_events')) AS gebeurtenistabel;
