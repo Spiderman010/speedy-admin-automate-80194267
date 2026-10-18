@@ -358,9 +358,11 @@ describe("wat de migratie niet doet", () => {
       expect(stmt.replace(/\s+/g, " ")).toMatch(/^ALTER TABLE public\.\w+ ENABLE (ALWAYS TRIGGER \w+|ROW LEVEL SECURITY)$/);
     }
     expect(code).not.toMatch(/\bADD COLUMN\b|\bDROP COLUMN\b|\bRENAME\b|\bALTER COLUMN\b|ALTER FUNCTION|DROP TABLE|CASCADE/i);
-    // Geen enkele bestaande functie opnieuw gedefinieerd.
+    // Geen enkele bestaande functie opnieuw gedefinieerd: "bestaand" = uit een
+    // migratie vóór deze. Een latere migratie mag een functie van PR 1 vervangen
+    // (PR 2, 20261018150000, vervangt reclassify_bank_transaction en toetst dat zelf).
     const bestaand = new Set<string>();
-    for (const f of readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((x) => x.endsWith(".sql") && x !== FILE)) {
+    for (const f of readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((x) => x.endsWith(".sql") && x < FILE)) {
       const text = readFileSync(resolve(process.cwd(), MIGRATION_DIR, f), "utf8");
       for (const m of text.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?(\w+)\s*\(/gi)) bestaand.add(m[1].toLowerCase());
     }
