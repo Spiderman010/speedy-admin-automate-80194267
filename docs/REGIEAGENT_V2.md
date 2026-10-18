@@ -17,7 +17,7 @@ Na de merge moet de nieuwe workflow eerst op de standaardbranch aanwezig zijn vo
 - Haalt voor iedere getoonde PR de GitHub check-runs en commit-status op, matcht de kwaliteitscheck op de **exacte PR-head-SHA** en toont die 40-cijferige SHA in het rapport om verouderde snapshots herkenbaar te maken.
 - Geeft `STOP` bij rode CI of een verkeerde basisbranch; `WAIT_CI` bij ontbrekende/lopende CI; `DRAFT` bij een concept-PR; anders **`REVIEW_REQUIRED`**, nooit automatisch `GO`.
 - Markeert Vercel-commitstatus `failure` **én** `error` als **afwijking** die alleen de eigenaar per PR kan accepteren.
-- Vraagt maximaal 100 commitstatussen op en vergelijkt GitHubs `total_count` met het aantal ontvangen statussen. Bij een ontbrekend telveld of een onvolledige pagina volgt expliciet **`STOP / ONVOLLEDIG`**; een niet-gevonden Vercel-status wordt dan nooit als gezond verklaard. Geen automatische goedkeuring bij paginering. Een eerder geaccepteerde uitzondering wordt niet hergebruikt.
+- Vraagt maximaal 100 commitstatussen op en vergelijkt GitHubs `total_count` met het aantal ontvangen statussen. Bij een ongeldig `statuses`-veld of een ontbrekende/niet exact overeenkomende `total_count` volgt expliciet **`STOP / ONVOLLEDIG`**; een niet-gevonden Vercel-status wordt dan nooit als gezond verklaard. Geen automatische goedkeuring bij paginering. Een eerder geaccepteerde uitzondering wordt niet hergebruikt.
 - Controleert **niet**: reviewthreads, afzonderlijke Codex-bevindingen, mergeability, CI-skips, financiële invarianten, eigenaars-GO of productiestatus. Die controles blijven verplicht vóór een merge.
 - Weigert bij API- of authenticatiefouten een stilzwijgend groen resultaat. Rapportages tonen beknopte status en geen GitHub-token.
 
