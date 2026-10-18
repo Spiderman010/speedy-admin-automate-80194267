@@ -42,13 +42,16 @@ jobs:
       - name: Unit and contract tests (offline, no production credentials)
         env:
           VITE_SUPABASE_URL: http://127.0.0.1:54321
-          VITE_SUPABASE_PUBLISHABLE_KEY: ""
-          VITE_SUPABASE_ANON_KEY: ""
+          VITE_SUPABASE_PUBLISHABLE_KEY: ci-inert-not-a-real-supabase-key
+          VITE_SUPABASE_ANON_KEY: ci-inert-not-a-real-supabase-key
         run: |
-          # Repository .env would otherwise enable live integration tests against production.
-          # This only changes the ephemeral CI checkout; never delete .env from the repo.
+          # Remove committed environment files only from the ephemeral runner checkout.
+          # The dummy URL and key allow mocked modules to initialize without production access.
           rm -f .env .env.local .env.test .env.test.local
-          npm run test
+          npm run test -- --exclude src/test/security-backup-and-storage-access.test.ts
+          # This file contains optional LIVE HTTP tests; keep its valuable static assertions,
+          # but prevent the live suite from enabling by emptying the key for this invocation.
+          VITE_SUPABASE_PUBLISHABLE_KEY= VITE_SUPABASE_ANON_KEY= npx vitest run src/test/security-backup-and-storage-access.test.ts
 
       - name: Production build
         run: npm run build
