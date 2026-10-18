@@ -21,14 +21,21 @@ export function classifyPr(pr, checks, combinedStatus) {
   const check = matching[0];
   const ci = !check ? "MISSING" : check.status !== "completed"
     ? "PENDING" : check.conclusion === "success" ? "GREEN" : "RED";
-  const hasVercelFailure = (combinedStatus.statuses ?? [])
+  // GitHub combined-status responses are paginated (30 statuses by default).
+  // Treat incomplete or malformed coverage as STOP; never infer a clean Vercel status.
+  const statuses = Array.isArray(combinedStatus?.statuses) ? combinedStatus.statuses : [];
+  const statusesComplete = Number.isSafeInteger(combinedStatus?.total_count)
+    && combinedStatus.total_count >= 0
+    && combinedStatus.total_count <= statuses.length;
+  const hasVercelFailure = statuses
     .some((s) => s.context === "Vercel" && ["failure", "error"].includes(s.state));
   const base = pr.base?.ref === "main";
-  const state = !base || ci === "RED" ? "STOP"
+  const state = !statusesComplete || !base || ci === "RED" ? "STOP"
     : pr.draft ? "DRAFT"
       : ci !== "GREEN" ? "WAIT_CI"
         : "REVIEW_REQUIRED";
-  const next = !base ? "Controleer PR-basisbranch"
+  const next = !statusesComplete ? "Controleer alle GitHub commitstatussen (gepagineerd)"
+    : !base ? "Controleer PR-basisbranch"
     : ci === "RED" ? "Onderzoek mislukte CI"
       : pr.draft ? "Concept afronden"
         : ci !== "GREEN" ? "Wacht op CI op exacte head"
@@ -39,7 +46,8 @@ export function classifyPr(pr, checks, combinedStatus) {
     url: pr.html_url,
     head: pr.head.sha,
     state, ci, next,
-    vercel: hasVercelFailure ? "Afwijking: apart GO nodig" : "Geen bekende Vercel-fout",
+    vercel: !statusesComplete ? "ONVOLLEDIG: commitstatussen (STOP)"
+      : hasVercelFailure ? "Afwijking: apart GO nodig" : "Geen bekende Vercel-fout",
   };
 }
 
@@ -110,7 +118,7 @@ export async function collectSnapshot(token) {
     if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Unexpected PR SHA");
     const [checks, statuses] = await Promise.all([
       githubGet(root + "/commits/" + sha + "/check-runs?per_page=100", token),
-      githubGet(root + "/commits/" + sha + "/status", token),
+      githubGet(root + "/commits/" + sha + "/status?per_page=100", token),
     ]);
     prs.push(classifyPr(pr, checks, statuses));
   }
