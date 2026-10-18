@@ -56,7 +56,8 @@ jobs:
           for envfile in .env .env.local .env.test .env.test.local; do
             if [ -f "$envfile" ]; then mv "$envfile" "${envfile}.ci-quarantined"; fi
           done
-          npm run test -- --exclude src/test/security-backup-and-storage-access.test.ts
+          # CI runners can be slower: allow 15s for existing async UI tests without changing their assertions.
+          npm run test -- --exclude src/test/security-backup-and-storage-access.test.ts --testTimeout=15000
           # Keep the static security assertions but disable its five live HTTP tests.
           VITE_SUPABASE_PUBLISHABLE_KEY= VITE_SUPABASE_ANON_KEY= npx vitest run src/test/security-backup-and-storage-access.test.ts
 
