@@ -140,3 +140,14 @@ Paste the output (or a summary) of:
 - `npm run test`
 
 All three must be green before the task is considered complete.
+
+---
+
+## Optional Regieagent v1
+
+For tasks coordinated through the BoekAssist Regieagent, use
+[`docs/REGIEAGENT_V1.md`](docs/REGIEAGENT_V1.md) and the GitHub Issue template
+`BoekAssist — regietaak`. This is a coordination protocol, not an autonomous
+agent. All rules above remain mandatory. In particular, neither an Issue nor
+green CI authorizes a merge, deployment, or production SQL without a separate
+explicit owner GO.
