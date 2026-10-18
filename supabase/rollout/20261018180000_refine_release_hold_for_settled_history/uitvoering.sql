@@ -22,7 +22,7 @@
 -- dollar-aanhalingstekens byte-gelijk dat bestand is):
 --   20261018120000_add_bank_transaction_corrections.sql  6117f64382e7951af650f3a09d74c675e7ad1070b7e298ce46e9d5faa490f2fc
 --   20261018150000_keep_bank_description_on_correction.sql  1cc32885a3d095ec2fa0bb36e16d4337cb5fdf8f95f59440175ee9b6ff3fe54d
---   20261018180000_refine_release_hold_for_settled_history.sql  a23977588d304ec4e5c92c805489405088a9a95324acc9b541ca164d93d94196
+--   20261018180000_refine_release_hold_for_settled_history.sql  4f61a9cf675db61f03c806258870f90bd74938cdc42831c60d3025af243d147d
 --
 -- Verwacht als (laatste) uitkomst: één rij met `uitkomst` =
 -- 'gecombineerde uitrol voltooid'. Elke foutmelding, of 'NIET VOLTOOID — STOP':
@@ -2195,11 +2195,7 @@ $pr2_20261018150000$;
 --        (6) de groep is niet de actieve marker en staat in geen gebeurtenis;
 --        (7) na de storno volgde een nieuwe directe boeking van de transactie;
 --        (8) origineel, storno en claim zijn alle strikt ouder dan elke
---            correctiegebeurtenis van deze transactie — op tijd (created_at)
---            én op transactievolgorde (created_xact_id). Alleen de tijd is niet
---            genoeg: created_at is now(), de START van een transactie; een
---            transactie die vóór een gebeurtenis begon en pas daarna schreef,
---            krijgt een vroegere tijd maar een latere xid (Codex).
+--            correctiegebeurtenis van deze transactie (created_at).
 --      Alleen een eerdere datum, of alleen het ontbreken van een marker, is
 --      dus nooit genoeg.
 --   2. enforce_bank_transaction_release_hold = het lichaam van PR 1 met één
@@ -2219,6 +2215,16 @@ $pr2_20261018150000$;
 --     correctie begon pas nadat de vrijgave was gecommit.
 --   • Een groep die niet aan alles voldoet, gedraagt zich als onder PR 1; de
 --     uitrolcontroles geven daarop STOP (PRE 4, POST 8).
+--   • Omgekeerd kan een ten onrechte "historisch" oordeel de hold alleen
+--     strenger maken. Daarom steunt (8) bewust op de tijd: die blijft kloppen
+--     na een logische restore (een xid-volgorde niet — dan zou de hold de regel
+--     stil loslaten). created_at is wel now(), de START van een transactie: een
+--     groep die in een functionele rollback-tussentijd wordt geboekt door een
+--     transactie die al vóór een gebeurtenis begon, kan hier als historisch
+--     gelden. Gevolg: de hold geldt vaker, nooit minder vaak. POST 8 toetst
+--     strenger — ook op transactievolgorde (created_xact_id) — en geeft op zo'n
+--     groep STOP, behalve als die transactie ook haar xid al vóór de gebeurtenis
+--     had (gedocumenteerd restgeval; alleen in een rollback-tussentijd).
 --
 -- NIET
 --   Geen schrijver, geen grootboekregel, marker, gebeurtenis, trigger(definitie),
@@ -2256,10 +2262,8 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
      OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'reversal_of_posting_id' AND NOT a.attisdropped)
-     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_postings'::regclass AND a.attname = 'created_xact_id' AND NOT a.attisdropped)
      OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.ledger_reversal_postings'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
-     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped)
-     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_xact_id' AND NOT a.attisdropped) THEN
+     OR NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = 'public.bank_transaction_posting_events'::regclass AND a.attname = 'created_at' AND NOT a.attisdropped) THEN
     RAISE EXCEPTION 'Voorwaarde: de kolommen waarop het bewijs van geschiedenis steunt ontbreken' USING ERRCODE = '55000';
   END IF;
 
@@ -2302,7 +2306,7 @@ BEGIN
   IF to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)') IS NOT NULL
      AND ((SELECT md5(p.prosrc) FROM pg_proc p
            WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
-          IS DISTINCT FROM '9e4593fcda07e2994459a7d3ac440ce6'
+          IS DISTINCT FROM '697f9413067e9c5b73323b792c51cda9'
           OR (SELECT p.proowner FROM pg_proc p
               WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
           IS DISTINCT FROM
@@ -2330,7 +2334,7 @@ AS $$
     WHERE bt.id = _transaction_id
   ), orig AS (
     SELECT lp.id, lp.source_type, lp.source_id, lp.grootboekrekening_id, lp.posting_date,
-           lp.debit_amount, lp.credit_amount, lp.created_at, lp.created_xact_id
+           lp.debit_amount, lp.credit_amount, lp.created_at
     FROM public.ledger_postings lp
     WHERE lp.posting_group_id = _posting_group_id
   ), claim AS (
@@ -2339,11 +2343,11 @@ AS $$
     WHERE r.original_posting_group_id = _posting_group_id
   ), rev AS (
     SELECT lp.id, lp.source_type, lp.source_id, lp.reversal_of_posting_id, lp.grootboekrekening_id, lp.posting_date,
-           lp.debit_amount, lp.credit_amount, lp.created_at, lp.created_xact_id
+           lp.debit_amount, lp.credit_amount, lp.created_at
     FROM public.ledger_postings lp
     WHERE lp.posting_group_id = (SELECT c.reversal_posting_group_id FROM claim c)
   ), event AS (
-    SELECT e.created_at, e.created_xact_id
+    SELECT e.created_at
     FROM public.bank_transaction_posting_events e
     WHERE e.bank_transaction_id = _transaction_id
   )
@@ -2393,19 +2397,19 @@ AS $$
                   AND g.posting_group_id <> _posting_group_id
                   AND g.created_at >= (SELECT max(v.created_at) FROM rev v))
     -- (8) Geschiedenis van vóór de correctiegebeurtenissen van deze transactie:
-    --     origineel, storno en claim zijn alle strikt ouder dan elke gebeurtenis,
-    --     op tijd én op transactievolgorde. created_at is now(): de START van de
-    --     transactie; een transactie die vóór een gebeurtenis begon maar pas
-    --     daarna schreef, heeft dus een vroegere tijd. created_xact_id wordt
-    --     toegekend bij de eerste schrijfactie (ook een rijgrendel), zodat zo'n
-    --     transactie een latere xid heeft. De claim ontstaat in dezelfde
-    --     transactie als de stornoregels (reverse_posting_group).
+    --     origineel, storno en claim zijn alle strikt ouder dan elke gebeurtenis.
+    --     Bewust op tijd (created_at): een vergissing hier kan de hold alleen
+    --     strenger maken — deze functie staat binnen de NOT EXISTS die haar
+    --     uitschakelt — en de tijd blijft kloppen na een logische restore, een
+    --     xid-volgorde niet. De strengere diagnose, ook op transactievolgorde,
+    --     zit in de uitrolcontrole (POST 8): wat niet in beide volgordes ouder
+    --     is, geeft daar STOP.
     AND NOT EXISTS (SELECT 1
                     FROM event f,
-                         (SELECT o.created_at, o.created_xact_id FROM orig o
-                          UNION ALL SELECT v.created_at, v.created_xact_id FROM rev v
-                          UNION ALL SELECT c.created_at, NULL::xid8 FROM claim c) x
-                    WHERE x.created_at >= f.created_at OR x.created_xact_id >= f.created_xact_id);
+                         (SELECT o.created_at FROM orig o
+                          UNION ALL SELECT v.created_at FROM rev v
+                          UNION ALL SELECT c.created_at FROM claim c) x
+                    WHERE x.created_at >= f.created_at);
 $$;
 
 REVOKE ALL ON FUNCTION public.bank_transaction_group_is_settled_history(uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
@@ -2520,7 +2524,7 @@ $fix_20261018180000$;
   AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
       IS NOT DISTINCT FROM '43347fb9f48ed4c161e291fa769577c2'
   AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
-      IS NOT DISTINCT FROM '9e4593fcda07e2994459a7d3ac440ce6'
+      IS NOT DISTINCT FROM '697f9413067e9c5b73323b792c51cda9'
   AND EXISTS (SELECT 1 FROM pg_trigger t
               WHERE t.tgrelid = 'public.bank_transactions'::regclass
                 AND t.tgname = 'enforce_bank_transaction_release_hold_trigger'
@@ -2537,7 +2541,7 @@ SELECT CASE WHEN (SELECT md5(p.prosrc) FROM pg_proc p
   AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
       IS NOT DISTINCT FROM '43347fb9f48ed4c161e291fa769577c2'
   AND (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.bank_transaction_group_is_settled_history(uuid,uuid)'))
-      IS NOT DISTINCT FROM '9e4593fcda07e2994459a7d3ac440ce6'
+      IS NOT DISTINCT FROM '697f9413067e9c5b73323b792c51cda9'
   AND EXISTS (SELECT 1 FROM pg_trigger t
               WHERE t.tgrelid = 'public.bank_transactions'::regclass
                 AND t.tgname = 'enforce_bank_transaction_release_hold_trigger'

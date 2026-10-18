@@ -18,7 +18,7 @@
 -- ── POST C1. De hulpfunctie: exact, alleen lezen, alleen voor de eigenaar ───
 -- Verwacht: één rij, elke kolom `true`.
 SELECT
-  coalesce(md5(p.prosrc) = '9e4593fcda07e2994459a7d3ac440ce6', false)                    AS lichaam_exact,
+  coalesce(md5(p.prosrc) = '697f9413067e9c5b73323b792c51cda9', false)                    AS lichaam_exact,
   coalesce(p.provolatile = 's', false)                                                    AS stable,
   coalesce(NOT p.prosecdef, false)                                                        AS geen_security_definer,
   coalesce(p.proconfig = ARRAY['search_path=public'], false)                              AS search_path_vast,

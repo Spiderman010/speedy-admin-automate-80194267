@@ -11,8 +11,10 @@
 -- Verwacht na afloop: md5(prosrc) van enforce_bank_transaction_release_hold =
 -- 812d151a7041cdd48b7a784cd193a159, en geen bank_transaction_group_is_settled_history.
 
--- Alleen vanuit de beoordeelde toestand: de hold is die van deze migratie (of al
--- die van PR 1, bij een tweede uitvoering), met de eigenaar van de schrijver.
+-- Eén opdracht, dus één transactie — hoe de editor haar ook verstuurt: weigert
+-- de bewaking, dan verandert er niets. Alleen vanuit de beoordeelde toestand: de
+-- hold is die van deze migratie (of al die van PR 1, bij een tweede uitvoering),
+-- met de eigenaar van de schrijver.
 DO $rollback$
 DECLARE v_md5 text;
 BEGIN
@@ -26,9 +28,9 @@ BEGIN
      (SELECT p.proowner FROM pg_proc p WHERE p.oid = to_regprocedure('public.post_bank_transaction(uuid)')) THEN
     RAISE EXCEPTION 'Rollback geweigerd: enforce_bank_transaction_release_hold heeft een andere eigenaar dan de schrijver post_bank_transaction' USING ERRCODE = '55000';
   END IF;
-END
-$rollback$;
 
+  -- De hold van PR 1, letterlijk, met haar rechten en commentaar.
+  EXECUTE $hold_pr1$
 CREATE OR REPLACE FUNCTION public.enforce_bank_transaction_release_hold()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -121,15 +123,14 @@ REVOKE ALL ON FUNCTION public.enforce_bank_transaction_release_hold() FROM PUBLI
 
 COMMENT ON FUNCTION public.enforce_bank_transaction_release_hold() IS
 'D12 — BEFORE UPDATE OR DELETE op bank_transactions (ENABLE ALWAYS). Zonder marker en met boekingsgeschiedenis: verwijderen en identiteitswijzigingen geweigerd; na een vrijgave (laatste gebeurtenis released) ook status, rekening, BTW en factuurmatch, voor elke rol en elk pad. Kijkt niet naar rollen.';
+$hold_pr1$;
 
--- De hulpfunctie pas weg als de hold weer exact die van PR 1 is (die haar niet
--- aanroept); anders zou een hold die haar wél aanroept achterblijven.
-DO $rollback_hulp$
-BEGIN
+  -- De hulpfunctie pas weg als de hold weer exact die van PR 1 is (die haar niet
+  -- aanroept); anders zou een hold die haar wél aanroept achterblijven.
   IF (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = to_regprocedure('public.enforce_bank_transaction_release_hold()'))
      IS DISTINCT FROM '812d151a7041cdd48b7a784cd193a159' THEN
-    RAISE EXCEPTION 'Rollback onvolledig: enforce_bank_transaction_release_hold is niet die van PR 1; de hulpfunctie blijft staan' USING ERRCODE = '55000';
+    RAISE EXCEPTION 'Rollback onvolledig: enforce_bank_transaction_release_hold is niet die van PR 1; er is niets veranderd' USING ERRCODE = '55000';
   END IF;
   DROP FUNCTION IF EXISTS public.bank_transaction_group_is_settled_history(uuid, uuid);
 END
-$rollback_hulp$;
+$rollback$;

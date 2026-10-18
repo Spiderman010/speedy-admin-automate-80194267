@@ -70,7 +70,9 @@ SELECT proof.record('A11', 'PRE B6: precies de bekende historische storno, niets
   NOT stop AND bewezen = 1 AND onverklaard = 0 AND bekende_storno_bewezen AND andere_bewezen = 0,
   format('%s/%s/%s/%s/%s', bewezen, onverklaard, bekende_storno_bewezen, andere_bewezen, stop))
 FROM proof.a_b6;
-SELECT proof.record('A12', 'PRE B7: geen lopende applicatieverzoeken', (SELECT count(*) FROM proof.a_b7) = 0);
+SELECT proof.record('A12', 'PRE B7: geen lopende applicatieverzoeken; PRE B9: geneste dollar-aanhalingstekens komen heel aan (één bericht en psql -f: één rij, heel)',
+  (SELECT count(*) FROM proof.a_b7) = 0 AND proof.get('a_b9_een') = 't' AND proof.get('a_b9_f') = 't',
+  concat_ws(' / ', proof.get('a_b9_een'), proof.get('a_b9_f')));
 
 -- ── geweigerde of mislukte uitvoeringen: niets toegepast ───────────────────
 SELECT proof.record('A20', 'opdracht voor opdracht, doorgaan na een fout, lock_timeout al 5s op de sessie, eindcontrole gesaboteerd: niets toegepast en de laatste rij zegt NIET VOLTOOID',

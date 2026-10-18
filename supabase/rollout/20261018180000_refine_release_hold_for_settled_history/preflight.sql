@@ -14,6 +14,7 @@
 --   • PRE B1, B2 of B5 ergens `false` geeft;
 --   • PRE B3, B4 of B6 `stop = true` geeft;
 --   • PRE B7 actieve applicatiesessies toont (wacht, en voer B7 opnieuw uit);
+--   • PRE B9 iets anders geeft dan één rij met `heel` = true;
 --   • een query een foutmelding geeft.
 -- ═════════════════════════════════════════════════════════════════════════════
 
@@ -163,3 +164,11 @@ SELECT
    FROM public.ledger_postings)                                                           AS grootboektekst_md5,
   (SELECT count(*) FROM pg_proc WHERE pronamespace = 'public'::regnamespace)              AS functies_public,
   (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal)                                AS triggers;
+
+
+-- ── PRE B9. Proef: verstuurt de editor geneste dollar-aanhalingstekens heel? ──
+-- uitvoering.sql is één DO-opdracht met daarin de drie migraties tussen eigen
+-- dollar-aanhalingstekens. Deze ene SELECT bevat dezelfde vorm (een ; binnen
+-- geneste aanhalingstekens). Alleen lezen. Verwacht: één rij, `heel` = true.
+-- Een foutmelding of een rij 'GESPLITST — STOP': de editor knipt de tekst; STOP.
+SELECT $buiten$ $binnen$; SELECT 'GESPLITST — STOP' AS proef; $binnen$ $buiten$ IS NOT NULL AS heel;

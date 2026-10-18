@@ -18,7 +18,7 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY[
   'C1','C2','C3','C4','C5','C6','C7','C8',
-  'V0','V1','V2','V2b','V2c','V2d','V2e','V2f','V3','V4','V5','V6','V7','V8','V9','V10','V11',
+  'V0','V1','V2','V2b','V2c','V2d','V3','V4','V5','V6','V7','V8','V9','V10','V11',
   'H1','H2a','H2b','H2c','H2d','H2e','H2f','H2g','H2h','H2i','H2j','H2k','H2l','H2m','H2n','H2o','H3','H4','H5','H6','H7',
   'Q1','Q2','Q3','Q4',
   'D1','D2a','D2b','D2c','D2d','D2e','D3a','D3b','D3c','D3d','D3e','D4a','D4b','D4c','D5','D6','D7','D8',
@@ -93,10 +93,6 @@ SELECT proof.prereq_refuses('V2c', 'weigert zonder reversal_of_posting_id op het
   'ALTER TABLE public.ledger_postings RENAME COLUMN reversal_of_posting_id TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
 SELECT proof.prereq_refuses('V2d', 'weigert zonder created_at op de storno''s',
   'ALTER TABLE public.ledger_reversal_postings RENAME COLUMN created_at TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
-SELECT proof.prereq_refuses('V2e', 'weigert zonder created_xact_id op het grootboek (de transactievolgorde van (8))',
-  'ALTER TABLE public.ledger_postings RENAME COLUMN created_xact_id TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
-SELECT proof.prereq_refuses('V2f', 'weigert zonder created_xact_id op de gebeurtenissen',
-  'ALTER TABLE public.bank_transaction_posting_events RENAME COLUMN created_xact_id TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
 SELECT proof.prereq_refuses('V3', 'weigert zonder PR 2 (geen correctie-RPC)',
   'ALTER FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, numeric, uuid, text, text) RENAME TO proof_weg', :'prereq', 'PR 2 (20261018150000) is niet toegepast');
 SELECT proof.prereq_refuses('V4', 'weigert als de correctie-RPC niet die van PR 2 is (ander lichaam)',

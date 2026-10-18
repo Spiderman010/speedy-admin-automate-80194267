@@ -268,6 +268,15 @@ SELECT proof.capture('a_b1', :'b1'), proof.capture('a_b2', :'b2'), proof.capture
 SELECT proof.put('a_catalog_pre', proof.catalog_digest()), proof.put('a_digest_pre', proof.digest());
 SQL
 
+# PRE B9: de proef op geneste dollar-aanhalingstekens, als één bericht (zoals de editor) en via psql -f.
+awk 'index($0, "-- ── PRE B9.") == 1 { f = 1 } f && !/^--/ { print }' "$R3/preflight.sql" > "$TMP/b9.sql"
+[ "$(grep -c . "$TMP/b9.sql")" = "1" ] || { echo "PRE B9 niet gevonden" >&2; exit 1; }
+B9_EEN="$(one_exec "$DB3" "$TMP/b9.sql" | tail -1)"
+B9_F="$(psql -X -q -At -d "$DB3" -f "$TMP/b9.sql" 2>&1 | tail -1)"
+run3 -v een="$B9_EEN" -v f="$B9_F" > /dev/null <<'SQL'
+SELECT proof.put('a_b9_een', :'een'), proof.put('a_b9_f', :'f');
+SQL
+
 # Kopieën, vóór elke poging: voor het zichtbaarheidsbewijs en voor opdracht-voor-opdracht.
 psql -q -c "DROP DATABASE IF EXISTS $DB4;" -c "CREATE DATABASE $DB4 TEMPLATE $DB3;" postgres >/dev/null
 psql -q -c "DROP DATABASE IF EXISTS $DBL;" -c "CREATE DATABASE $DBL TEMPLATE $DB3;" postgres >/dev/null

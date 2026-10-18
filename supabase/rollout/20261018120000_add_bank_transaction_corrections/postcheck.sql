@@ -236,9 +236,13 @@ SELECT
 -- een gebeurtenis staan, of een BEWEZEN historische storno zijn (dezelfde
 -- bewijsstukken als PRE 4b, plus: in geen gebeurtenis genoemd en strikt ouder
 -- dan elke gebeurtenis van die transactie, op tijd én op transactievolgorde
--- (created_xact_id) — net als bank_transaction_group_is_settled_history). Een
--- groep van een banktransactie die niet meer bestaat, is nooit bewezen.
--- Alles daarbuiten is STOP.
+-- (created_xact_id). Dat is strenger dan de hold zelf
+-- (bank_transaction_group_is_settled_history toetst alleen de tijd, zodat een
+-- vergissing de hold alleen strenger maakt): wat niet in beide volgordes
+-- ouder is, is hier onverklaard. Na een logische restore (nieuwe xid-reeks)
+-- kan POST 8 daardoor STOP geven op een bewezen groep terwijl de hold haar
+-- blijft dekken — melden, niet negeren. Een groep van een banktransactie die
+-- niet meer bestaat, is nooit bewezen. Alles daarbuiten is STOP.
 -- `hold_versie` zegt of 20261018180000 er al is; alleen dan dekt de
 -- vrijgave-hold een regel met een historische storno.
 -- Verwacht direct na de migratie: waarvan_onverklaard = 0, gebeurtenissen = 0,

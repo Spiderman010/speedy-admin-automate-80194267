@@ -71,10 +71,25 @@ genoeg: een groep is pas bewezen historisch als alle bewijsstukken waar zijn
 die elke regel omkeert, origineel, storno en claim op de transactiedatum, per
 grootboekrekening neutraal, de storno niet zelf tegengeboekt, geen marker en in
 geen gebeurtenis genoemd, daarna een nieuwe boeking, en alles strikt ouder dan
-elke gebeurtenis — op tijd én op transactievolgorde). Elke andere groep is
-STOP. Bij de uitrol zelf zijn er nog geen gebeurtenissen (PRE B1: de tabel
-bestaat niet), dus elke bestaande groep is per definitie van vóór de
-correctiegebeurtenissen.
+elke gebeurtenis). Elke andere groep is STOP. Bij de uitrol zelf zijn er nog
+geen gebeurtenissen (PRE B1: de tabel bestaat niet), dus elke bestaande groep
+is per definitie van vóór de correctiegebeurtenissen.
+
+**Twee niveaus, bewust.** De hold zelf (de hulpfunctie) toetst "ouder dan elke
+gebeurtenis" op de tijd (`created_at`). Een vergissing daar kan de hold alleen
+strenger maken — nooit zwakker — en de tijd blijft kloppen na een logische
+restore. POST 8 toetst strenger: ook op de volgorde van de transacties
+(`created_xact_id`). Wat daar niet in beide volgordes ouder is, geeft STOP.
+Gevolgen:
+
+- Na een logische restore (een nieuwe xid-reeks) kan POST 8 STOP geven op de
+  bekende groep, terwijl de hold de regel blijft dekken (harnas X8–X10). Dat
+  is geen reden om iets te herstellen: melden.
+- Gedocumenteerd restgeval: een groep die alleen in een functionele
+  rollback-tussentijd kan ontstaan, door transacties die hun xid al vóór een
+  gebeurtenis hadden en tijdens de rollback open bleven. Zo'n groep geldt ook
+  in POST 8 als geschiedenis. Gevolg: de hold geldt vaker, nooit minder vaak
+  (harnas X2, X6, X7). De rollback houdt BoekAssist dicht (§8).
 
 ## 3. Onderhoudsprotocol
 
@@ -138,6 +153,7 @@ voer daarom elk blok apart uit en noteer de uitkomst.
 | PRE B6 | `bewezen` = 1, `onverklaard` = 0, `bekende_storno_bewezen` = true, `andere_bewezen` = 0, `stop` = false | STOP |
 | PRE B7 | 0 rijen | wachten, opnieuw; blijft het: STOP |
 | PRE B8 | **bewaren** (POST 4 van PR 2 en POST C6 vergelijken ermee) | — |
+| PRE B9 | één rij, `heel` = true (de editor knipt geneste dollar-aanhalingstekens niet, zoals in `uitvoering.sql`) | STOP |
 
 De PRE van PR 2 (`20261018150000_…/preflight.sql`) wordt **niet** uitgevoerd:
 die verwacht PR 1 al in productie. Haar voorwaarden zijn gedekt door PRE B2–B5
@@ -208,11 +224,15 @@ Altijd in deze volgorde, elk als eigen uitvoering, met BoekAssist dicht van de
 eerste tot en met de laatste stap:
 
 1. `supabase/rollout/20261018180000_refine_release_hold_for_settled_history/rollback.sql`
-   — de hold terug naar PR 1, en daarna pas de hulpfunctie weg (dat laatste
-   weigert als de hold niet exact die van PR 1 is). **Gevolg:** de historische
-   regel valt na een vrijgave weer buiten de hold — de tussentoestand (c).
+   — één opdracht: bewaking, de hold terug naar PR 1, en daarna pas de
+   hulpfunctie weg; weigert één onderdeel, dan verandert er niets.
+   **Gevolg:** de historische regel valt na een vrijgave weer buiten de hold —
+   de tussentoestand (c).
 2. `supabase/rollout/20261018150000_keep_bank_description_on_correction/rollback.sql`
    — de correctie-RPC terug naar PR 1. Weigert zolang stap 1 niet gedaan is.
+   Dit bestand is een bewaking gevolgd door losse opdrachten: plak het in zijn
+   geheel in één uitvoering (dan draait een weigering alles terug, zie PRE B9)
+   en STOP bij elke foutmelding.
 3. Het ROLLBACK-blok uit de kop van `20261018120000_add_bank_transaction_corrections.sql`.
 
 Gebeurtenissen en grootboekregels blijven bij elke rollback staan. Na een
@@ -227,6 +247,7 @@ toepassen terwijl de fix er staat, weigert ook — bewezen in het harnas.)
 - PRE 1, 2, 8 (PR 1) of PRE B1, B2, B5 ergens `false`.
 - PRE 4, PRE 11, PRE B3, PRE B4 of PRE B6 `stop = true`; PRE 4 anders dan precies één bewezen historische storno met `stop_losse_uitrol = true`; PRE 4b anders dan precies de bekende groep met alle bewijsstukken `true`.
 - PRE B7 blijft rijen tonen.
+- PRE B9 geeft iets anders dan één rij met `heel` = true.
 - Elke foutmelding bij een PRE- of POST-blok.
 - `uitvoering.sql` geeft iets anders dan `gecombineerde uitrol voltooid` (behalve `lock timeout`: dan is er niets veranderd, opnieuw vanaf §3 stap 2), of de laatste regel van §4 staat niet in de editor.
 - Elke POST-afwijking uit §7, in het bijzonder POST 8 'TIJDELIJK …' of 'STOP'.
