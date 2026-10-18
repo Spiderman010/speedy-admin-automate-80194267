@@ -22,7 +22,7 @@ export function classifyPr(pr, checks, combinedStatus) {
   const ci = !check ? "MISSING" : check.status !== "completed"
     ? "PENDING" : check.conclusion === "success" ? "GREEN" : "RED";
   const hasVercelFailure = (combinedStatus.statuses ?? [])
-    .some((s) => s.context === "Vercel" && s.state === "failure");
+    .some((s) => s.context === "Vercel" && ["failure", "error"].includes(s.state));
   const base = pr.base?.ref === "main";
   const state = !base || ci === "RED" ? "STOP"
     : pr.draft ? "DRAFT"
@@ -54,13 +54,13 @@ export function renderReport({ generatedAt, prs, issues, prTotal, issueTotal, in
     "",
     "## Open PR's (maximaal 20, laatst bijgewerkt eerst)",
     "",
-    "| PR | Status | CI exacte head | Afwijking | Volgende stap |",
-    "| --- | --- | --- | --- | --- |",
+    "| PR | Gecontroleerde head-SHA | Status | CI exacte head | Afwijking | Volgende stap |",
+    "| --- | --- | --- | --- | --- | --- |",
   ];
-  if (!prs.length) lines.push("| — | Geen open PR's | — | — | — |");
+  if (!prs.length) lines.push("| — | — | Geen open PR's | — | — | — |");
   for (const pr of prs) {
     lines.push("| [#" + pr.number + "](" + pr.url + ") " + pr.title +
-      " | " + pr.state + " | " + pr.ci + " | " + pr.vercel +
+      " | `" + pr.head + "` | " + pr.state + " | " + pr.ci + " | " + pr.vercel +
       " | " + safeText(pr.next) + " |");
   }
   lines.push("", "## Open Issues (maximaal 20, laatst bijgewerkt eerst)", "");
