@@ -94,12 +94,18 @@ ORDER BY h.naam;
 
 
 -- ── PRE 3. Omvang (informatief) ─────────────────────────────────────────────
+-- `direct_geboekt_met_oude_factuurmatch`: direct geboekte regels die nog een
+-- matched_invoice_id dragen; de correctie-RPC's weigeren die (22023), want zij
+-- herrekenen geen facturen.
 SELECT
   (SELECT count(*) FROM public.bank_transactions)            AS banktransacties,
   (SELECT count(*) FROM public.bank_transaction_postings)    AS directe_boekingen,
   (SELECT count(*) FROM public.bank_transaction_postings m
    WHERE EXISTS (SELECT 1 FROM public.ledger_reversal_postings r WHERE r.original_posting_group_id = m.posting_group_id))
                                                              AS handmatig_tegengeboekt_s2,
+  (SELECT count(*) FROM public.bank_transaction_postings m
+   JOIN public.bank_transactions bt ON bt.id = m.bank_transaction_id
+   WHERE bt.matched_invoice_id IS NOT NULL)                AS direct_geboekt_met_oude_factuurmatch,
   (SELECT count(*) FROM public.bank_transaction_allocations) AS koppelingen,
   (SELECT count(*) FROM public.bank_allocation_postings)     AS geboekte_afletteringen,
   (SELECT count(*) FROM public.ledger_postings)              AS grootboekregels,

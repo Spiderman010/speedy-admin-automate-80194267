@@ -34,7 +34,7 @@ SELECT proof.plan(ARRAY[
   'K7a','K7b','K7c','K7d','K7e','K7f','K7g',
   'K8a','K8b','K8c','K8d','K8e','K8f','K8g','K8h',
   'K9a','K9b','K9c','K9d','K9e','K9f','K9g',
-  'K10a','K10b','K10c','K10d',
+  'K10a','K10b','K10c','K10d','K10e','K10f','K10g',
   'K11a','K11b','K11c','K11d','K11e','K11f','K11g','K11h','K11i','K11j','K11k','K11l','K11m','K11n','K11o','K11p','K11q',
   'K12a','K12b','K12c',
   'R1','R2','R3',
@@ -910,6 +910,38 @@ FROM proof.call(proof.u(1), format($q$INSERT INTO public.bank_transaction_alloca
 
 SELECT proof.expect_true('K10d', 'geen enkele banktransactie heeft zowel een directe als een afletteringsmarker', $$
   NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings d JOIN public.bank_allocation_postings a ON a.bank_transaction_id = d.bank_transaction_id) $$);
+
+-- Een oudere koppeling via de match: matched_invoice_id zonder koppelingsrij.
+SELECT proof.tx(102, -25.00), proof.purchase(102, 25.00), proof.tx(103, -25.00), proof.purchase(103, 25.00), proof.tx(104, -25.00);
+UPDATE public.bank_transactions SET match_status = 'gematcht', matched_invoice_id = proof.uid(2000, 102), match_confidence = 100
+WHERE id = proof.uid(1000, 102);
+-- Gematcht, daarna "handmatig boeken" (die de match laat staan) en direct geboekt:
+UPDATE public.bank_transactions SET match_status = 'handmatig_geboekt', matched_invoice_id = proof.uid(2000, 103),
+  grootboekrekening_id = proof.acct(7) WHERE id = proof.uid(1000, 103);
+SELECT proof.put('k10_g103', public.post_bank_transaction(proof.uid(1000, 103))::text);
+UPDATE public.bank_transactions SET match_status = 'suggestie', matched_invoice_id = proof.uid(2000, 102), match_confidence = 60
+WHERE id = proof.uid(1000, 104);
+SELECT proof.put('k10_digest2', proof.digest());
+
+SELECT proof.record('K10e', 'een oudere match zonder koppelingsrij (gematcht): eerste boeking via de RPC geweigerd (22023), niets veranderd',
+  o LIKE 'fout [22023] Deze banktransactie is via de match aan een factuur gekoppeld%' AND proof.digest() = proof.get('k10_digest2'), o)
+FROM proof.rc(proof.u(2), proof.uid(1000, 102), NULL, proof.acct(7), 0, proof.req(1020)) o;
+
+SELECT proof.record('K10f', 'direct geboekt mét een achtergebleven factuurmatch: herclassificeren en vrijgeven weigeren (22023) — de factuur wordt niet stil losgemaakt',
+  a LIKE 'fout [22023] Deze banktransactie is via de match aan een factuur gekoppeld%'
+  AND b LIKE 'fout [22023] Deze banktransactie is via de match aan een factuur gekoppeld%'
+  AND proof.digest() = proof.get('k10_digest2')
+  AND (SELECT matched_invoice_id FROM public.bank_transactions WHERE id = proof.uid(1000, 103)) = proof.uid(2000, 103),
+  a || ' || ' || b)
+FROM proof.rc(proof.u(1), proof.uid(1000, 103), proof.get('k10_g103')::uuid, proof.acct(6), 0, proof.req(1030), 'Correctie') a,
+     proof.rel(proof.u(1), proof.uid(1000, 103), proof.get('k10_g103')::uuid, proof.req(1031), 'Vrijgeven') b;
+
+SELECT proof.put('k10_sugg', proof.rc(proof.u(2), proof.uid(1000, 104), NULL, proof.acct(7), 0, proof.req(1040)));
+SELECT proof.record('K10g', 'een onbevestigde suggestie mag worden overschreven: geboekt, suggestie gewist',
+  proof.get('k10_sugg') LIKE 'ok: posted|f|%'
+  AND (SELECT matched_invoice_id IS NULL AND match_confidence IS NULL AND match_status = 'handmatig_geboekt'
+       FROM public.bank_transactions WHERE id = proof.uid(1000, 104)),
+  proof.get('k10_sugg'));
 
 -- ═══ K11. D12 — ELK SCHRIJFPAD TEGEN EEN VRIJGEGEVEN TRANSACTIE ══════════════
 

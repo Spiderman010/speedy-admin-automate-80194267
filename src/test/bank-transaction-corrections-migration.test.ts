@@ -24,7 +24,7 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261018120000_add_bank_transaction_corrections.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 /** SHA-256 van de migratie zoals beoordeeld. */
-const REVIEWED_SHA256 = "ced5d808c7115bcf9f08fd0bcea8004bb2fff50f7e867399b81f58cd3668faf4";
+const REVIEWED_SHA256 = "4d297951c1da5a5c3147c42d24d869d488f73aae264cd9b8c0e8507803c92bf2";
 const HARNESS = "supabase/tests/bank-transaction-corrections";
 const ROLLOUT = "supabase/rollout/20261018120000_add_bank_transaction_corrections";
 
@@ -274,6 +274,10 @@ describe("de RPC's — volgorde van controles en mutaties", () => {
     expect(rc).toContain("IF v_line_acct IS DISTINCT FROM v_vat_acct THEN");
     for (const name of RPCS) {
       expect(body(name), name).toMatch(/FROM public\.bank_transaction_allocations a WHERE a\.bank_transaction_id = v_tx\.id\) THEN\s+RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie'/);
+    }
+    // Ook een oudere koppeling via de match (geen koppelingsrij): de RPC herrekent geen facturen.
+    for (const name of ["reclassify_bank_transaction", "release_bank_transaction_posting"]) {
+      expect(body(name), name).toMatch(/IF v_tx\.matched_invoice_id IS NOT NULL AND v_tx\.match_status IS DISTINCT FROM 'suggestie' THEN\s+RAISE EXCEPTION 'Deze banktransactie is via de match aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';/);
     }
   });
 

@@ -74,7 +74,9 @@
 --     de dan geldende configuratie.
 --   • De boekingsblokkade geldt voor elke handeling (assert_posting_allowed op
 --     de transactiedatum); een afgesloten jaar zonder blokkade mag (D8, PR H).
---   • Factuurkoppelingen vallen buiten v1: elke koppeling → 22023.
+--   • Factuurkoppelingen vallen buiten v1: elke koppeling → 22023, ook een
+--     oudere koppeling via de match (matched_invoice_id zonder koppelingsrij,
+--     behalve een onbevestigde suggestie): de RPC herrekent geen facturen.
 --   • Een bestaande storno (handmatig via het grootboek) op een LATERE datum dan
 --     de transactie: opnieuw boeken op de transactiedatum zou bank, kosten en
 --     BTW in de periode daartussen dubbel boeken (de totalen kloppen, de
@@ -959,6 +961,14 @@ BEGIN
     RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
   END IF;
 
+  -- (7b') Ook een oudere koppeling via de match — matched_invoice_id zonder
+  --       koppelingsrij — is een factuurkoppeling: het restbedrag van die factuur
+  --       is erop afgestemd, en de RPC zou de koppeling wissen zonder de factuur
+  --       te herrekenen. Alleen een onbevestigde suggestie mag worden overschreven.
+  IF v_tx.matched_invoice_id IS NOT NULL AND v_tx.match_status IS DISTINCT FROM 'suggestie' THEN
+    RAISE EXCEPTION 'Deze banktransactie is via de match aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
+  END IF;
+
   -- (7c) Een geboekte of vrijgegeven transactie: accountant en een toelichting.
   IF v_state <> 'S0' THEN
     IF NOT public.has_min_role(v_uid, v_tx.organization_id, 'accountant') THEN
@@ -1288,6 +1298,14 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = v_tx.id) THEN
     RAISE EXCEPTION 'Deze banktransactie is aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
+  END IF;
+
+  -- (7b') Ook een oudere koppeling via de match — matched_invoice_id zonder
+  --       koppelingsrij — is een factuurkoppeling: het restbedrag van die factuur
+  --       is erop afgestemd, en de RPC zou de koppeling wissen zonder de factuur
+  --       te herrekenen. Alleen een onbevestigde suggestie mag worden overschreven.
+  IF v_tx.matched_invoice_id IS NOT NULL AND v_tx.match_status IS DISTINCT FROM 'suggestie' THEN
+    RAISE EXCEPTION 'Deze banktransactie is via de match aan een factuur gekoppeld; een correctie van een factuurkoppeling valt buiten deze functie' USING ERRCODE = '22023';
   END IF;
 
   -- Een bestaande storno op een latere datum: na vrijgeven zou opnieuw boeken
