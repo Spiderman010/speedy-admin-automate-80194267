@@ -35,4 +35,15 @@ export default tseslint.config(
       "no-useless-escape": "off",
     },
   },
+  {
+    // Lovable-managed file ("automatically generated. Do not edit it directly"; rewritten
+    // by gpt-engineer-app[bot] in dd4a3a1), so a hand edit would be overwritten. Its
+    // `let timer` is read in the `finish` closure before `timer = setTimeout(...)`,
+    // which is exactly what prefer-const's ignoreReadBeforeAssign allows. One file,
+    // one rule option; prefer-const stays an error for everything else in it.
+    files: ["src/integrations/supabase/previewAuthStorage.ts"],
+    rules: {
+      "prefer-const": ["error", { ignoreReadBeforeAssign: true }],
+    },
+  },
 );
