@@ -17,7 +17,7 @@
 SET client_min_messages = warning;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
-SELECT proof.plan(ARRAY['W3a','W3b','W3c','W3d','W3e','W3f','W3g']);
+SELECT proof.plan(ARRAY['W3a','W3b','W3c','W3d','W3e','W3f','W3g','W3h']);
 
 SELECT proof.record('W3a', 'opnieuw toegepast: de catalogus is exact die na de eerste toepassing van de fix',
   proof.catalog_digest() = proof.get('catalog_after_first_fix'));
@@ -73,9 +73,20 @@ SELECT proof.record('W3d', 'de groep uit de tussentijd (12) voldoet aan (1)–(7
 FROM proof.pre4b_now b
 WHERE b.groep = proof.get('w_g12a')::uuid;
 
+SELECT proof.record('W3h', 'de groep van 19: origineel ouder dan de eerste gebeurtenis, maar storno en claim niet — (1)–(7) waar, toch geen historische storno',
+  b.bewezen
+  AND (SELECT max(o.created_at) FROM public.ledger_postings o WHERE o.posting_group_id = proof.get('w_g19')::uuid)
+      < (SELECT min(e.created_at) FROM public.bank_transaction_posting_events e WHERE e.bank_transaction_id = proof.uid(1000, 19))
+  AND (SELECT min(v.created_at) FROM public.ledger_postings v WHERE v.posting_group_id = proof.storno_of(proof.get('w_g19')::uuid))
+      >= (SELECT min(e.created_at) FROM public.bank_transaction_posting_events e WHERE e.bank_transaction_id = proof.uid(1000, 19))
+  AND NOT proof.settled(19, proof.get('w_g19')::uuid),
+  format('%s/%s', b.bewezen, proof.settled(19, proof.get('w_g19')::uuid)))
+FROM proof.pre4b_now b
+WHERE b.groep = proof.get('w_g19')::uuid;
+
 SELECT proof.capture('post8_reapply', :'post8');
-SELECT proof.record('W3e', 'POST 8 noemt haar onverklaard: 12 onverklaard (11 corrupt + deze) — STOP',
-  waarvan_onverklaard = 12 AND toestand = 'STOP' AND hold_versie = '20261018180000',
+SELECT proof.record('W3e', 'POST 8 noemt beide groepen uit de tussentijd onverklaard: 16 onverklaard (14 corrupt + 12 + 19) — STOP',
+  waarvan_onverklaard = 16 AND toestand = 'STOP' AND hold_versie = '20261018180000',
   format('%s/%s/%s/%s/%s', groepen_zonder_marker, waarvan_vervangen, waarvan_historische_storno, waarvan_onverklaard, toestand))
 FROM proof.post8_reapply;
 

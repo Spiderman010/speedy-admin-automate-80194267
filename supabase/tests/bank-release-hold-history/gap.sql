@@ -48,11 +48,11 @@ FROM proof.app_code(41) o;
 
 -- Direct na PR 1 vastgelegd (run-proof.sh), letterlijk uit de rolloutbestanden.
 SELECT proof.record('N6', 'de oorspronkelijke POST 8 van PR 1 (main 3669a94) verwacht 0 en 0 en gaf hier dus STOP — zonder onderscheid',
-  groepen_zonder_marker = 21 AND gebeurtenissen = 0, format('%s/%s', groepen_zonder_marker, gebeurtenissen))
+  groepen_zonder_marker = 25 AND gebeurtenissen = 0, format('%s/%s', groepen_zonder_marker, gebeurtenissen))
 FROM proof.post8_oud_m1;
 
-SELECT proof.record('N7', 'de nieuwe POST 8 direct na PR 1: 10 bewezen historisch, 11 onverklaard, hold van PR 1 — STOP (de onverklaarde gaan voor)',
-  groepen_zonder_marker = 21 AND waarvan_vervangen = 0 AND waarvan_historische_storno = 10 AND waarvan_onverklaard = 11
+SELECT proof.record('N7', 'de nieuwe POST 8 direct na PR 1: 11 bewezen historisch, 14 onverklaard, hold van PR 1 — STOP (de onverklaarde gaan voor)',
+  groepen_zonder_marker = 25 AND waarvan_vervangen = 0 AND waarvan_historische_storno = 11 AND waarvan_onverklaard = 14
   AND gebeurtenissen = 0 AND hold_versie = 'PR 1' AND toestand = 'STOP',
   format('%s/%s/%s/%s/%s/%s/%s', groepen_zonder_marker, waarvan_vervangen, waarvan_historische_storno, waarvan_onverklaard, gebeurtenissen, hold_versie, toestand))
 FROM proof.post8_m1;

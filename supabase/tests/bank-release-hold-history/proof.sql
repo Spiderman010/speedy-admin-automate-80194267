@@ -18,8 +18,8 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY[
   'C1','C2','C3','C4','C5','C6','C7','C8',
-  'V0','V1','V2','V3','V4','V5','V6','V7','V8','V9','V10','V11',
-  'H1','H2a','H2b','H2c','H2d','H2e','H2f','H2g','H2h','H2i','H2j','H2k','H3','H4','H5','H6','H7',
+  'V0','V1','V2','V2b','V2c','V2d','V3','V4','V5','V6','V7','V8','V9','V10','V11',
+  'H1','H2a','H2b','H2c','H2d','H2e','H2f','H2g','H2h','H2i','H2j','H2k','H2l','H2m','H2n','H3','H4','H5','H6','H7',
   'Q1','Q2','Q3','Q4',
   'D1','D2a','D2b','D2c','D2d','D2e','D3a','D3b','D3c','D3d','D3e','D4a','D4b','D4c','D5','D6','D7','D8',
   'D9a','D9b','D10a','D10b','D10c','D10d','D11']);
@@ -87,6 +87,12 @@ SELECT proof.prereq_refuses('V1', 'weigert zonder de gebeurtenistabel van PR 1',
   'ALTER TABLE public.bank_transaction_posting_events RENAME TO proof_weg', :'prereq', 'de tabellen van het grootboek en van PR 1 ontbreken');
 SELECT proof.prereq_refuses('V2', 'weigert zonder created_at op de gebeurtenissen (het bewijs van "vóór de gebeurtenissen")',
   'ALTER TABLE public.bank_transaction_posting_events RENAME COLUMN created_at TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
+SELECT proof.prereq_refuses('V2b', 'weigert zonder created_at op het grootboek',
+  'ALTER TABLE public.ledger_postings RENAME COLUMN created_at TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
+SELECT proof.prereq_refuses('V2c', 'weigert zonder reversal_of_posting_id op het grootboek',
+  'ALTER TABLE public.ledger_postings RENAME COLUMN reversal_of_posting_id TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
+SELECT proof.prereq_refuses('V2d', 'weigert zonder created_at op de storno''s',
+  'ALTER TABLE public.ledger_reversal_postings RENAME COLUMN created_at TO proof_weg', :'prereq', 'de kolommen waarop het bewijs');
 SELECT proof.prereq_refuses('V3', 'weigert zonder PR 2 (geen correctie-RPC)',
   'ALTER FUNCTION public.reclassify_bank_transaction(uuid, uuid, uuid, numeric, uuid, text, text) RENAME TO proof_weg', :'prereq', 'PR 2 (20261018150000) is niet toegepast');
 SELECT proof.prereq_refuses('V4', 'weigert als de correctie-RPC niet die van PR 2 is (ander lichaam)',
@@ -112,8 +118,8 @@ SELECT proof.prereq_refuses('V11', 'weigert als de hulpfunctie een andere eigena
 
 -- ═══ H. HET OORDEEL VAN DE HULPFUNCTIE ═══════════════════════════════════════
 
-SELECT proof.expect_true('H1', 'waar voor elke bewezen historische groep (10–18; bij 15 beide) — ook 13, waar na de vrijgave al gebeurtenissen zijn', $$
-  (SELECT bool_and(proof.settled(n, proof.h_orig(n))) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n)
+SELECT proof.expect_true('H1', 'waar voor elke bewezen historische groep (10–19; bij 15 beide; 19 met storno en herboeking in één transactie) — ook 13, waar na de vrijgave al gebeurtenissen zijn', $$
+  (SELECT bool_and(proof.settled(n, proof.h_orig(n))) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) n)
   AND proof.settled(15, proof.h_orig(15, 2)) $$);
 
 CREATE TABLE proof.h2 (id text, n integer, grp_of integer, what text);
@@ -128,7 +134,10 @@ INSERT INTO proof.h2 VALUES
   ('H2h', 27, 27, 'het origineel op een andere datum (3)'),
   ('H2i', 28, 28, 'de claim op een andere datum (3)'),
   ('H2j', 29, 29, 'de storno mist een regel (2)'),
-  ('H2k', 30, 30, 'een stornoregel zonder verwijzing (2); 31: claim van een andere bronsoort (2)');
+  ('H2k', 30, 30, 'een stornoregel zonder verwijzing (2); 31: claim van een andere bronsoort (2)'),
+  ('H2l', 32, 32, 'een stornoregel keert een regel van een andere groep om (2)'),
+  ('H2m', 33, 33, 'een stornoregel noemt een andere bron (2)'),
+  ('H2n', 34, 34, 'de stornoregels op een andere datum dan de transactie (3)');
 SELECT proof.record(id, format('onwaar: %s', what),
   NOT proof.settled(n, proof.h_orig(grp_of)) AND (id <> 'H2k' OR NOT proof.settled(31, proof.h_orig(31))),
   proof.settled(n, proof.h_orig(grp_of))::text)
@@ -163,8 +172,8 @@ SELECT proof.capture('post8_fix', :'post8');
 SELECT proof.capture('postc4_fix', :'postc4');
 SELECT proof.capture('postc5_fix', :'postc5');
 
-SELECT proof.record('Q1', 'POST 8 na de fix: 2 vervangen, 10 bewezen historisch, 11 onverklaard, hold van de fix — STOP (de corrupte geschiedenis blijft STOP)',
-  groepen_zonder_marker = 23 AND waarvan_vervangen = 2 AND waarvan_historische_storno = 10 AND waarvan_onverklaard = 11
+SELECT proof.record('Q1', 'POST 8 na de fix: 2 vervangen, 11 bewezen historisch, 14 onverklaard, hold van de fix — STOP (de corrupte geschiedenis blijft STOP)',
+  groepen_zonder_marker = 27 AND waarvan_vervangen = 2 AND waarvan_historische_storno = 11 AND waarvan_onverklaard = 14
   AND hold_versie = '20261018180000' AND toestand = 'STOP',
   format('%s/%s/%s/%s/%s/%s/%s', groepen_zonder_marker, waarvan_vervangen, waarvan_historische_storno, waarvan_onverklaard, gebeurtenissen, hold_versie, toestand))
 FROM proof.post8_fix;
@@ -179,18 +188,18 @@ SELECT proof.record('Q2', 'POST 8 en de hold oordelen gelijk: het aantal groepen
   p.waarvan_historische_storno::text)
 FROM proof.post8_fix p;
 
-SELECT proof.expect_true('Q3', 'POST C4: precies de 10 bewezen groepen waar, elke corrupte en vervangen groep onwaar; geen bekende productiegroep', $$
-  (SELECT count(*) FROM proof.postc4_fix WHERE bewezen_historisch) = 10
+SELECT proof.expect_true('Q3', 'POST C4: precies de 11 bewezen groepen waar, elke corrupte en vervangen groep onwaar; geen bekende productiegroep', $$
+  (SELECT count(*) FROM proof.postc4_fix WHERE bewezen_historisch) = 11
   AND NOT EXISTS (SELECT 1 FROM proof.postc4_fix c WHERE c.bewezen_historisch
-                  AND (c.banktransactie, c.groep) NOT IN (SELECT proof.uid(1000, n), proof.h_orig(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n
+                  AND (c.banktransactie, c.groep) NOT IN (SELECT proof.uid(1000, n), proof.h_orig(n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) n
                                                          UNION SELECT proof.uid(1000, 15), proof.h_orig(15, 2)))
   AND NOT EXISTS (SELECT 1 FROM proof.postc4_fix WHERE vervangen AND bewezen_historisch)
   AND NOT EXISTS (SELECT 1 FROM proof.postc4_fix WHERE bekend) $$);
 
-SELECT proof.expect_true('Q4', 'POST C5: voor elke regel met bewezen geschiedenis dekt de hold na een vrijgave (9 regels, overal waar)', $$
-  (SELECT count(*) FROM proof.postc5_fix) = 9 AND (SELECT bool_and(hold_dekt_na_vrijgave) FROM proof.postc5_fix)
+SELECT proof.expect_true('Q4', 'POST C5: voor elke regel met bewezen geschiedenis dekt de hold na een vrijgave (10 regels, overal waar)', $$
+  (SELECT count(*) FROM proof.postc5_fix) = 10 AND (SELECT bool_and(hold_dekt_na_vrijgave) FROM proof.postc5_fix)
   AND (SELECT array_agg(banktransactie ORDER BY banktransactie) FROM proof.postc5_fix)
-      = (SELECT array_agg(proof.uid(1000, n) ORDER BY proof.uid(1000, n)) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n) $$);
+      = (SELECT array_agg(proof.uid(1000, n) ORDER BY proof.uid(1000, n)) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) n) $$);
 
 -- ═══ D. D12 — DE VRIJGEGEVEN HISTORISCHE REGEL ═══════════════════════════════
 -- Regel 10 is zoals de regel in productie: € 3.993, geboekt op 25-11-2025,

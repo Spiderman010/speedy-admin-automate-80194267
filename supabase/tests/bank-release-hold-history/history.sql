@@ -12,6 +12,7 @@
 --   16  voor het terugzetten naar de werkstroom
 --   17  voor de bekende-storno-controle (PRE B6) in een schone database
 --   18  daarna ook de nieuwe boeking handmatig gestorneerd, marker behouden (S2)
+--   19  storneren, marker weg en opnieuw boeken in ÉÉN transactie (gelijke created_at)
 -- Corrupt (precies één bewijsstuk onwaar):
 --   20  niet gestorneerd              21  storno op een latere datum
 --   22  geen nieuwe boeking/marker    23  storno zelf tegengeboekt (nagebootst)
@@ -21,6 +22,9 @@
 --   29  storno mist een regel (nagebootst)
 --   30  stornoregel zonder verwijzing (nagebootst)
 --   31  claim van een andere bronsoort (nagebootst)
+--   32  een stornoregel keert een regel van een andere groep om (nagebootst)
+--   33  een stornoregel noemt een andere bron dan het origineel (nagebootst)
+--   34  de stornoregels op een andere datum dan de claim (nagebootst)
 -- Gewoon (geen geschiedenis): 40 en 41.
 
 \set ON_ERROR_STOP on
@@ -41,6 +45,9 @@ SELECT proof.h_unmark(15);
 SELECT proof.h_repost(15);
 -- 18: ook de nieuwe boeking handmatig gestorneerd, de marker blijft (S2 in PR 1)
 SELECT proof.h_reverse(18);
+-- 19: storno, marker weg en herboeking in één opdracht, dus één transactie
+SELECT proof.h_post(19, -19.00);
+SELECT proof.h_reverse(19), proof.h_unmark(19), proof.h_repost(19);
 
 -- ── corrupt, met de schrijvers ──────────────────────────────────────────────
 SELECT proof.h_post(20, -20.00), proof.h_post(21, -21.00), proof.h_post(22, -22.00);
@@ -49,11 +56,11 @@ SELECT proof.h_unmark(20), proof.h_unmark(21), proof.h_unmark(22);
 SELECT proof.h_repost(20), proof.h_repost(21);
 
 -- ── corrupt, nagebootst vanuit een geldige geschiedenis ─────────────────────
-SELECT proof.h_post(n, -(n::numeric)) FROM generate_series(23, 31) n;
+SELECT proof.h_post(n, -(n::numeric)) FROM generate_series(23, 34) n;
 SELECT proof.btx(41, -41.00, 'Gewone regel 41'), proof.btx(40, -40.00, 'Gewone regel 40');
-SELECT proof.h_reverse(n) FROM generate_series(23, 31) n WHERE n <> 26;
-SELECT proof.h_unmark(n) FROM generate_series(23, 31) n WHERE n <> 26;
-SELECT proof.h_repost(n) FROM generate_series(23, 31) n WHERE n <> 26;
+SELECT proof.h_reverse(n) FROM generate_series(23, 34) n WHERE n <> 26;
+SELECT proof.h_unmark(n) FROM generate_series(23, 34) n WHERE n <> 26;
+SELECT proof.h_repost(n) FROM generate_series(23, 34) n WHERE n <> 26;
 
 -- 23: de storno is zelf tegengeboekt (een claim die de storno als origineel noemt).
 SELECT proof.forge(format($f$
@@ -89,6 +96,18 @@ SELECT proof.forge(format($f$
   proof.storno_of(proof.h_orig(30))));
 -- 31: de claim noemt een andere bronsoort.
 SELECT proof.forge(format($f$ UPDATE public.ledger_reversal_postings SET original_source_type = 'manual_journal' WHERE original_posting_group_id = %L $f$, proof.h_orig(31)));
+-- 32: een stornoregel keert een regel van een andere groep om (de actieve groep van 26, die nooit wordt gestorneerd).
+SELECT proof.forge(format($f$
+  UPDATE public.ledger_postings SET reversal_of_posting_id = (SELECT o.id FROM public.ledger_postings o WHERE o.posting_group_id = %L ORDER BY o.line_no LIMIT 1)
+  WHERE id = (SELECT v.id FROM public.ledger_postings v WHERE v.posting_group_id = %L ORDER BY v.line_no LIMIT 1) $f$,
+  proof.m(26), proof.storno_of(proof.h_orig(32))));
+-- 33: een stornoregel noemt een andere bron dan het origineel.
+SELECT proof.forge(format($f$
+  UPDATE public.ledger_postings SET source_id = gen_random_uuid()
+  WHERE id = (SELECT v.id FROM public.ledger_postings v WHERE v.posting_group_id = %L ORDER BY v.line_no LIMIT 1) $f$,
+  proof.storno_of(proof.h_orig(33))));
+-- 34: de stornoregels staan op een andere datum dan de transactie (de claim niet).
+SELECT proof.forge(format($f$ UPDATE public.ledger_postings SET posting_date = DATE '2025-11-26' WHERE posting_group_id = %L $f$, proof.storno_of(proof.h_orig(34))));
 
 -- ── gewoon (geen geschiedenis) ──────────────────────────────────────────────
 UPDATE public.bank_transactions SET match_status = 'handmatig_geboekt', grootboekrekening_id = proof.acct(7), btw_percentage = 0

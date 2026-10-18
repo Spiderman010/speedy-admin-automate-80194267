@@ -9,7 +9,7 @@
 \set QUIET on
 SET client_min_messages = warning;
 
-SELECT proof.plan(ARRAY['P0', 'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P3d', 'P3e', 'P3f', 'P3g', 'P3h', 'P3i', 'P3j', 'P3k', 'P3l', 'P4']);
+SELECT proof.plan(ARRAY['P0', 'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P3d', 'P3e', 'P3f', 'P3g', 'P3h', 'P3i', 'P3j', 'P3k', 'P3l', 'P3m', 'P3n', 'P3o', 'P4']);
 
 -- De grootboekhistorie van vóór PR 1, voor de append-only-toets aan het eind (I4).
 CREATE TABLE proof.ledger_before_pr1 AS SELECT * FROM public.ledger_postings;
@@ -18,25 +18,25 @@ GRANT SELECT ON proof.ledger_before_pr1, proof.reversals_before_pr1 TO public;
 
 SELECT proof.capture('pre4_oud', :'pre4_oud');
 SELECT proof.record('P0', 'de oorspronkelijke PRE 4 (main 3669a94) geeft voor deze geschiedenis STOP, zonder onderscheid — zoals in productie',
-  stop AND afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 21, format('%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, stop))
+  stop AND afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 25, format('%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, stop))
 FROM proof.pre4_oud;
 
 SELECT proof.capture('pre4', :'pre4');
 SELECT proof.capture('pre4b', :'pre4b');
 
-SELECT proof.record('P1', 'PRE 4: vorm in orde, 21 groepen zonder marker — 10 bewezen historische storno''s en 11 onverklaard — dus STOP',
-  afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 21 AND waarvan_historische_storno = 10 AND waarvan_onverklaard = 11 AND stop,
+SELECT proof.record('P1', 'PRE 4: vorm in orde, 25 groepen zonder marker — 11 bewezen historische storno''s en 14 onverklaard — dus STOP',
+  afwijkende_vorm = 0 AND bankgroepen_zonder_marker = 25 AND waarvan_historische_storno = 11 AND waarvan_onverklaard = 14 AND stop,
   format('%s/%s/%s/%s/%s', afwijkende_vorm, bankgroepen_zonder_marker, waarvan_historische_storno, waarvan_onverklaard, stop))
 FROM proof.pre4;
 
-SELECT proof.record('P2', 'PRE 4b: elke geldige historische groep (10–18, bij 15 twee) is bewezen, met elk bewijsstuk waar',
+SELECT proof.record('P2', 'PRE 4b: elke geldige historische groep (10–19, bij 15 twee) is bewezen, met elk bewijsstuk waar',
   (SELECT count(*) FROM proof.pre4b b
-   WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n)
+   WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) n)
      AND b.bewezen AND b.b1_zelfde_transactie AND b.b2_reversalketen AND b.b3_transactiedatum AND b.b4_neutraal
      AND b.b5_storno_geldig AND b.b6_actuele_marker_daarna
-     AND b.toestand LIKE 'bewezen historische storno%') = 10
+     AND b.toestand LIKE 'bewezen historische storno%') = 11
   AND (SELECT count(*) FROM proof.pre4b b
-       WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18]) n)) = 10);
+       WHERE b.banktransactie IN (SELECT proof.uid(1000, n) FROM unnest(ARRAY[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) n)) = 11);
 
 /** Rij van PRE 4b voor testregel _n, als "b1b2b3b4b5b6/bewezen". */
 CREATE FUNCTION proof.p4b(_n integer) RETURNS text LANGUAGE sql STABLE AS $$
@@ -60,10 +60,13 @@ SELECT proof.record('P3h', '28 claim op een andere datum: alleen de datum onwaar
 SELECT proof.record('P3i', '29 storno mist een regel: reversalketen (en daardoor neutraliteit) onwaar', proof.p4b(29) = '101011/0', proof.p4b(29));
 SELECT proof.record('P3j', '30 stornoregel zonder verwijzing: alleen de reversalketen onwaar',  proof.p4b(30) = '101111/0', proof.p4b(30));
 SELECT proof.record('P3k', '31 claim van een andere bronsoort: alleen de reversalketen onwaar', proof.p4b(31) = '101111/0', proof.p4b(31));
+SELECT proof.record('P3m', '32 stornoregel keert een regel van een andere groep om: alleen de reversalketen onwaar', proof.p4b(32) = '101111/0', proof.p4b(32));
+SELECT proof.record('P3n', '33 stornoregel met een andere bron: alleen de reversalketen onwaar', proof.p4b(33) = '101111/0', proof.p4b(33));
+SELECT proof.record('P3o', '34 stornoregels op een andere datum: alleen de datum onwaar', proof.p4b(34) = '110111/0', proof.p4b(34));
 SELECT proof.record('P3l', 'de gewone regels 40 en 41 staan niet in PRE 4b',
   NOT EXISTS (SELECT 1 FROM proof.pre4b WHERE banktransactie IN (proof.uid(1000, 40), proof.uid(1000, 41))));
 
 SELECT proof.capture('preb6', :'preb6');
 SELECT proof.record('P4', 'PRE B6 (de bekende productiestorno) geeft hier STOP: de bekende groepen ontbreken en er is onverklaarde geschiedenis',
-  stop AND NOT bekende_storno_bewezen AND onverklaard = 11, format('%s/%s/%s/%s', bewezen, onverklaard, bekende_storno_bewezen, stop))
+  stop AND NOT bekende_storno_bewezen AND onverklaard = 14, format('%s/%s/%s/%s', bewezen, onverklaard, bekende_storno_bewezen, stop))
 FROM proof.preb6;

@@ -12,7 +12,7 @@
 SET client_min_messages = warning;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
-SELECT proof.plan(ARRAY['S1a','S1b','S1c','S2','S3','S4','S5','S6','S7','S8']);
+SELECT proof.plan(ARRAY['S1a','S1b','S1c','S2','S3','S4','S5','S6','S7','S8','S9']);
 
 -- S1: een historische regel corrigeren (S1: actieve groep, andere rekening).
 SELECT proof.record('S1a', 'historisch (12), S1 door een assistent: geweigerd (accountant vereist) — zoals onder PR 1',
@@ -62,6 +62,11 @@ SELECT proof.record('S6', 'gewoon (40), eerste boeking via de RPC (S0) door een 
 SELECT proof.put('s_s3', proof.rc(proof.u(1), proof.uid(1000, 41), NULL, proof.acct(7), 0, proof.req(41002), 'Opnieuw boeken'));
 SELECT proof.record('S7', 'gewoon (41, vrijgegeven in N5), "Opnieuw boeken" (S3): herboekt',
   proof.get('s_s3') LIKE 'ok: reposted_after_release|f|%' AND proof.net(proof.uid(1000, 41), proof.acct(1)) = -41.00, proof.get('s_s3'));
+
+-- S9: een eerste gebeurtenis zonder vervanging (unchanged) op 19: de actieve groep blijft, maar is nu ouder dan een gebeurtenis (zie W3h).
+SELECT proof.put('s_un19', proof.rc(proof.u(1), proof.uid(1000, 19), proof.m(19), proof.acct(7), 0, proof.req(19001), 'Controle'));
+SELECT proof.record('S9', 'historisch (19), dezelfde codering: unchanged; de historische groep blijft bewezen',
+  proof.get('s_un19') LIKE 'ok: unchanged|f|%' AND proof.settled(19, proof.h_orig(19)), proof.get('s_un19'));
 
 SELECT proof.expect_true('S8', 'elke directe bankgroep van deze regels is actief, precies één keer vervangen of bewezen geschiedenis', $$
   proof.hist_lineage_violations(ARRAY[10, 11, 12, 13, 16, 18, 40, 41]) = 0 $$);

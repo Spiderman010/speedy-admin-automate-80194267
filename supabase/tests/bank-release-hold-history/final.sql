@@ -14,7 +14,7 @@ SELECT proof.record('I1', 'elke boekingsgroep is in evenwicht — op de ene nage
        WHERE x.posting_group_id = proof.storno_of(proof.h_orig(29))) = 1,
   proof.unbalanced()::text);
 
-SELECT proof.expect_true('I2', 'lineage met geschiedenis: elke directe bankgroep van elke geldige testregel is actief, precies één keer vervangen of bewezen geschiedenis', $$
+SELECT proof.expect_true('I2', 'lineage met geschiedenis: elke directe bankgroep van elke geldige testregel is actief, precies één keer vervangen of bewezen geschiedenis (12 en 19: de tussentijd, zie W3)', $$
   proof.hist_lineage_violations(ARRAY[10, 11, 13, 14, 15, 16, 17, 18, 40, 41]) = 0 $$);
 
 SELECT proof.expect_true('I3', 'per banktransactie staat het bankbedrag hoogstens één keer netto in het grootboek — behalve 20 (niet gestorneerd, opnieuw geboekt: dubbel), precies waarop PRE 4 STOP geeft', $$
