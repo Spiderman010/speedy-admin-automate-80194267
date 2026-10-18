@@ -45,12 +45,19 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ci-inert-not-a-real-supabase-key
           VITE_SUPABASE_ANON_KEY: ci-inert-not-a-real-supabase-key
         run: |
-          # Remove committed environment files only from the ephemeral runner checkout.
-          # The dummy URL and key allow mocked modules to initialize without production access.
-          rm -f .env .env.local .env.test .env.test.local
+          # Quarantine .env files only inside this ephemeral checkout during tests.
+          # Restore them on all exits so the subsequent Vite build gets its normal config.
+          restore_dotenv() {
+            for envfile in .env .env.local .env.test .env.test.local; do
+              if [ -f "${envfile}.ci-quarantined" ]; then mv "${envfile}.ci-quarantined" "$envfile"; fi
+            done
+          }
+          trap restore_dotenv EXIT
+          for envfile in .env .env.local .env.test .env.test.local; do
+            if [ -f "$envfile" ]; then mv "$envfile" "${envfile}.ci-quarantined"; fi
+          done
           npm run test -- --exclude src/test/security-backup-and-storage-access.test.ts
-          # This file contains optional LIVE HTTP tests; keep its valuable static assertions,
-          # but prevent the live suite from enabling by emptying the key for this invocation.
+          # Keep the static security assertions but disable its five live HTTP tests.
           VITE_SUPABASE_PUBLISHABLE_KEY= VITE_SUPABASE_ANON_KEY= npx vitest run src/test/security-backup-and-storage-access.test.ts
 
       - name: Production build
