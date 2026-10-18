@@ -30,8 +30,16 @@ body:
     id: scope
     attributes:
       label: Scope en grenzen
-      description: "Bestanden, modules, uitsluitingen; vermeld of een migratie of PR afhankelijkheid speelt"
-      placeholder: "Alleen ...; niet wijzigen: ...; afhankelijkheid: ..."
+      description: "Bestanden, modules en expliciete uitsluitingen"
+      placeholder: "Alleen ...; niet wijzigen: ..."
+    validations:
+      required: true
+  - type: textarea
+    id: afhankelijkheden
+    attributes:
+      label: Afhankelijkheden en exclusief file-eigenaarschap
+      description: "Vermeld open PR's, migraties, vereiste reviews en andere agents die dezelfde bestanden bezitten; vul expliciet 'geen' in als er niets speelt"
+      placeholder: "PR's: geen; migraties: geen; review: geen; exclusieve bestanden/eigenaar: geen"
     validations:
       required: true
   - type: textarea
@@ -46,6 +54,6 @@ body:
     id: context
     attributes:
       label: Context / links (optioneel)
-      description: "Bestaande PR's, bekende risico's, documentatie en eventuele exclusieve file-eigenaar"
+      description: "Extra links, bekende risico's en relevante documentatie"
     validations:
       required: false
