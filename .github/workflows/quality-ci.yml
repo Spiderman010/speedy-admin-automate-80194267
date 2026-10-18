@@ -39,8 +39,10 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Unit and contract tests
-        run: npm run test
+      - name: Safety stop — production-connected tests not yet isolated
+        run: |
+          echo '::error::STOP: no Vitest run until verified isolation from production Supabase.'
+          exit 1
 
       - name: Production build
         run: npm run build
