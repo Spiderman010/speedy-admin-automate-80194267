@@ -17,13 +17,20 @@
 -- EERSTE REGEL in DEZELFDE uitvoering als het ongewijzigde migratiebestand;
 -- een losse uitvoering gebruikt niet gegarandeerd dezelfde verbinding.
 --
+-- LET OP — gecombineerde uitrol: bevat PRE 4 een bewezen historische storno
+-- (`waarvan_historische_storno` > 0), dan mag deze migratie NIET alleen worden
+-- uitgevoerd. Volg dan supabase/rollout/20261018180000_refine_release_hold_for_settled_history/
+-- uitvoerplan.md: PR 1, PR 2 en 20261018180000 in één uitvoering — anders
+-- beschermt de vrijgave-hold die regel na een vrijgave niet.
+--
 -- STOP (niet migreren, niets herstellen, uitkomst doorgeven) als:
 --   • PRE 1, PRE 2 of PRE 8 ergens `false` geeft;
 --   • PRE 4 `stop = true` geeft (een bankboeking die niet de vorm van de
---     schrijver heeft, of een directe bankgroep zonder marker);
+--     schrijver heeft, of een directe bankgroep zonder marker die geen bewezen
+--     historische storno is — PRE 4b noemt welke en waarom);
 --   • PRE 11 `stop = true` geeft (een onbekende trigger op bank_transactions);
 --   • een query een foutmelding geeft.
--- PRE 3, PRE 5, PRE 9 en PRE 10 zijn informatief.
+-- PRE 3, PRE 4b, PRE 5, PRE 9 en PRE 10 zijn informatief (PRE 4b licht PRE 4 toe).
 -- ═════════════════════════════════════════════════════════════════════════════
 
 
@@ -140,8 +147,17 @@ SELECT
 -- aan de bankzijde (het bruto), aan de tegenzijde netto (+ BTW), alle regels
 -- van deze transactie, op de markerdatum, en die markerdatum is de
 -- transactiedatum (de RPC stort op de transactiedatum). Een afwijkende groep kan de RPC
--- niet veilig corrigeren; een directe bankgroep zonder marker breekt de
--- lineage-aanname. Verwacht: beide 0, stop = false.
+-- niet veilig corrigeren.
+-- Een directe bankgroep zónder marker breekt de lineage-aanname — behalve een
+-- BEWEZEN historische storno (zie PRE 4b voor elk bewijsstuk): dezelfde
+-- transactie, precies één storno via de reversalketen die elke regel omkeert,
+-- origineel en storno op de transactiedatum, per grootboekrekening neutraal,
+-- de storno niet zelf tegengeboekt, en daarna een nieuwe boeking die nu de
+-- actieve marker draagt. Alleen een eerdere datum of het ontbreken van een
+-- marker is nooit genoeg.
+-- Verwacht: afwijkende_vorm = 0 en waarvan_onverklaard = 0, stop = false.
+-- waarvan_historische_storno > 0 is geen STOP, maar dan alleen de gecombineerde
+-- uitrol (zie de kop).
 WITH g AS (
   SELECT m.bank_transaction_id AS tx, m.posting_group_id AS grp, m.gross_amount, m.net_amount, m.btw_amount,
          m.posting_date, bt.amount, bt.transaction_date
@@ -160,24 +176,123 @@ WITH g AS (
          max(g.btw_amount) AS btw
   FROM g LEFT JOIN public.ledger_postings lp ON lp.posting_group_id = g.grp
   GROUP BY g.grp
+), kandidaat AS (
+  SELECT DISTINCT lp.source_id AS tx, lp.posting_group_id AS grp
+  FROM public.ledger_postings lp
+  WHERE lp.source_type = 'bank_transaction'
+    AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m
+                    WHERE m.bank_transaction_id = lp.source_id AND m.posting_group_id = lp.posting_group_id)
+), bewijs AS (
+  SELECT k.tx, k.grp,
+    coalesce(
+      -- (1) dezelfde banktransactie
+      NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
+                  AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx))
+      -- (2) de reversalketen
+      AND (SELECT count(*) FROM public.ledger_reversal_postings r1 WHERE r1.original_posting_group_id = k.grp) = 1
+      AND r.original_source_type = 'bank_transaction'
+      AND (SELECT count(*) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id)
+          = (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id
+                      AND (v.source_type <> 'reversal' OR v.source_id IS DISTINCT FROM k.grp OR v.reversal_of_posting_id IS NULL
+                           OR NOT EXISTS (SELECT 1 FROM public.ledger_postings o
+                                          WHERE o.posting_group_id = k.grp AND o.id = v.reversal_of_posting_id)))
+      AND (SELECT count(DISTINCT v.reversal_of_posting_id) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id)
+          = (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)
+      -- (3) de juiste datum
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings x
+                      WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id) AND x.posting_date <> bt.transaction_date)
+      AND r.posting_date = bt.transaction_date AND r.original_posting_date = bt.transaction_date
+      -- (4) neutraal per grootboekrekening
+      AND NOT EXISTS (SELECT x.grootboekrekening_id FROM public.ledger_postings x
+                      WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id)
+                      GROUP BY x.grootboekrekening_id HAVING sum(x.debit_amount - x.credit_amount) <> 0)
+      -- (5) de storno is niet zelf tegengeboekt
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_reversal_postings r2 WHERE r2.original_posting_group_id = r.reversal_posting_group_id)
+      -- (7) gevolgd door een nieuwe boeking, die (9) de actieve marker draagt
+      AND m.posting_group_id IS NOT NULL AND m.posting_group_id <> k.grp
+      AND (SELECT min(a.created_at) FROM public.ledger_postings a WHERE a.posting_group_id = m.posting_group_id)
+          >= (SELECT max(v.created_at) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id),
+      false) AS bewezen
+  FROM kandidaat k
+  JOIN public.bank_transactions bt ON bt.id = k.tx
+  LEFT JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = k.grp
+  LEFT JOIN public.bank_transaction_postings m ON m.bank_transaction_id = k.tx
 )
 SELECT
   (SELECT count(*) FROM shape
    WHERE regels NOT BETWEEN 2 AND 3 OR vreemd > 0 OR bankzijde <> 1 OR bankzijde_bruto <> 1
       OR tegenzijde <> CASE WHEN btw > 0 THEN 2 ELSE 1 END)                AS afwijkende_vorm,
-  (SELECT count(DISTINCT lp.posting_group_id) FROM public.ledger_postings lp
-   WHERE lp.source_type = 'bank_transaction'
-     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m
-                     WHERE m.bank_transaction_id = lp.source_id AND m.posting_group_id = lp.posting_group_id))
-                                                                           AS bankgroepen_zonder_marker,
+  (SELECT count(DISTINCT grp) FROM kandidaat)                              AS bankgroepen_zonder_marker,
+  (SELECT count(DISTINCT grp) FROM bewijs b
+   WHERE b.bewezen AND NOT EXISTS (SELECT 1 FROM bewijs b2 WHERE b2.grp = b.grp AND NOT b2.bewezen))
+                                                                           AS waarvan_historische_storno,
+  (SELECT count(DISTINCT grp) FROM bewijs b WHERE NOT b.bewezen)           AS waarvan_onverklaard,
   EXISTS (SELECT 1 FROM shape
           WHERE regels NOT BETWEEN 2 AND 3 OR vreemd > 0 OR bankzijde <> 1 OR bankzijde_bruto <> 1
              OR tegenzijde <> CASE WHEN btw > 0 THEN 2 ELSE 1 END)
-  OR EXISTS (SELECT 1 FROM public.ledger_postings lp
-             WHERE lp.source_type = 'bank_transaction'
-               AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m
-                               WHERE m.bank_transaction_id = lp.source_id AND m.posting_group_id = lp.posting_group_id))
-                                                                           AS stop;
+  OR EXISTS (SELECT 1 FROM bewijs b WHERE NOT b.bewezen)                   AS stop;
+
+
+-- ── PRE 4b. Elke directe bankgroep zonder marker, met elk bewijsstuk ─────────
+-- Eén rij per groep (per transactie). `bewezen` = alle bewijsstukken waar.
+-- `toestand` zegt wat ermee moet. Geen rijen is ook goed.
+WITH kandidaat AS (
+  SELECT DISTINCT lp.source_id AS tx, lp.posting_group_id AS grp
+  FROM public.ledger_postings lp
+  WHERE lp.source_type = 'bank_transaction'
+    AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m
+                    WHERE m.bank_transaction_id = lp.source_id AND m.posting_group_id = lp.posting_group_id)
+), feiten AS (
+  SELECT k.tx, k.grp, bt.transaction_date, r.reversal_posting_group_id AS storno, m.posting_group_id AS actuele_groep,
+    (SELECT min(o.posting_date) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)                 AS groepsdatum,
+    (SELECT min(v.posting_date) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id) AS stornodatum,
+    (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)                           AS regels,
+    (SELECT sum(o.debit_amount) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)                AS debet,
+    coalesce(NOT EXISTS (SELECT 1 FROM public.ledger_postings o WHERE o.posting_group_id = k.grp
+                         AND (o.source_type <> 'bank_transaction' OR o.source_id IS DISTINCT FROM k.tx)), false) AS b1_zelfde_transactie,
+    coalesce((SELECT count(*) FROM public.ledger_reversal_postings r1 WHERE r1.original_posting_group_id = k.grp) = 1
+      AND r.original_source_type = 'bank_transaction'
+      AND (SELECT count(*) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id)
+          = (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp)
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id
+                      AND (v.source_type <> 'reversal' OR v.source_id IS DISTINCT FROM k.grp OR v.reversal_of_posting_id IS NULL
+                           OR NOT EXISTS (SELECT 1 FROM public.ledger_postings o
+                                          WHERE o.posting_group_id = k.grp AND o.id = v.reversal_of_posting_id)))
+      AND (SELECT count(DISTINCT v.reversal_of_posting_id) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id)
+          = (SELECT count(*) FROM public.ledger_postings o WHERE o.posting_group_id = k.grp), false) AS b2_reversalketen,
+    coalesce(NOT EXISTS (SELECT 1 FROM public.ledger_postings x
+                         WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id) AND x.posting_date <> bt.transaction_date)
+      AND r.posting_date = bt.transaction_date AND r.original_posting_date = bt.transaction_date, false)         AS b3_transactiedatum,
+    coalesce(r.reversal_posting_group_id IS NOT NULL
+      AND NOT EXISTS (SELECT x.grootboekrekening_id FROM public.ledger_postings x
+                      WHERE x.posting_group_id IN (k.grp, r.reversal_posting_group_id)
+                      GROUP BY x.grootboekrekening_id HAVING sum(x.debit_amount - x.credit_amount) <> 0), false) AS b4_neutraal,
+    coalesce(r.reversal_posting_group_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM public.ledger_reversal_postings r2 WHERE r2.original_posting_group_id = r.reversal_posting_group_id), false)
+                                                                                                                AS b5_storno_geldig,
+    coalesce(m.posting_group_id IS NOT NULL AND m.posting_group_id <> k.grp
+      AND (SELECT min(a.created_at) FROM public.ledger_postings a WHERE a.posting_group_id = m.posting_group_id)
+          >= (SELECT max(v.created_at) FROM public.ledger_postings v WHERE v.posting_group_id = r.reversal_posting_group_id), false)
+                                                                                                                AS b6_actuele_marker_daarna
+  FROM kandidaat k
+  JOIN public.bank_transactions bt ON bt.id = k.tx
+  LEFT JOIN public.ledger_reversal_postings r ON r.original_posting_group_id = k.grp
+  LEFT JOIN public.bank_transaction_postings m ON m.bank_transaction_id = k.tx
+)
+SELECT f.tx AS banktransactie, f.grp AS groep, f.storno, f.actuele_groep,
+       f.transaction_date, f.groepsdatum, f.stornodatum, f.regels, f.debet,
+       f.b1_zelfde_transactie, f.b2_reversalketen, f.b3_transactiedatum, f.b4_neutraal, f.b5_storno_geldig, f.b6_actuele_marker_daarna,
+       (f.b1_zelfde_transactie AND f.b2_reversalketen AND f.b3_transactiedatum AND f.b4_neutraal
+        AND f.b5_storno_geldig AND f.b6_actuele_marker_daarna)                                                 AS bewezen,
+       CASE WHEN f.b1_zelfde_transactie AND f.b2_reversalketen AND f.b3_transactiedatum AND f.b4_neutraal
+                 AND f.b5_storno_geldig AND f.b6_actuele_marker_daarna
+            THEN 'bewezen historische storno — alleen via de gecombineerde uitrol (PR 1 + PR 2 + 20261018180000)'
+            WHEN f.storno IS NULL THEN 'STOP — niet gestorneerd'
+            WHEN f.actuele_groep IS NULL THEN 'STOP — geen actuele marker'
+            ELSE 'STOP — onverklaard (zie de onware bewijsstukken)' END                                          AS toestand
+FROM feiten f
+ORDER BY f.transaction_date, f.tx, f.groepsdatum;
 
 
 -- ── PRE 5. Handmatig tegengeboekte directe boekingen (S2, informatief) ──────
@@ -244,7 +359,7 @@ SELECT
      'enforce_bank_transaction_posting_event', 'prevent_bank_transaction_posting_event_mutation',
      'prevent_bank_transaction_posting_marker_mutation', 'enforce_bank_transaction_posting_marker_delete',
      'enforce_bank_transaction_posting_marker_lineage', 'enforce_bank_transaction_release_hold',
-     'enforce_bank_allocation_not_released'))                                                          AS bestaande_functies_digest,
+     'enforce_bank_allocation_not_released', 'bank_transaction_group_is_settled_history'))            AS bestaande_functies_digest,
   (SELECT md5(coalesce(string_agg(format('%s|%s|%s', t.tgrelid::regclass, t.tgname, t.tgenabled),
                                   ',' ORDER BY t.tgrelid::regclass::text, t.tgname), ''))
    FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
