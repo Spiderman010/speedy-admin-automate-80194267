@@ -1,0 +1,51 @@
+name: "BoekAssist — regietaak"
+description: "Compacte intake voor ontwikkeling onder Regieagent v1 (geen automatische merge of productieacties)"
+title: "[Regie] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Deze intake volgt `docs/REGIEAGENT_V1.md`. Vermeld geen geheimen of persoonsgegevens.
+        Begin altijd met `AGENTS.md` en `PROJECT_MAP.md`; een Issue verleent geen merge- of productie-GO.
+  - type: textarea
+    id: doel
+    attributes:
+      label: Doel
+      description: "Wat moet er aantoonbaar beter zijn?"
+      placeholder: "Huidig probleem en gewenst resultaat in 1-2 zinnen"
+    validations:
+      required: true
+  - type: dropdown
+    id: risico
+    attributes:
+      label: Risicoklasse
+      description: "Bij twijfel H kiezen; regie verifieert de inschatting"
+      options:
+        - "L — documentatie, kleine UI of mechanische cleanup"
+        - "M — applicatiegedrag, integraties of tests"
+        - "H — geldboekingen, RLS/auth, schema, data of productie"
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope en grenzen
+      description: "Bestanden, modules, uitsluitingen; vermeld of een migratie of PR afhankelijkheid speelt"
+      placeholder: "Alleen ...; niet wijzigen: ...; afhankelijkheid: ..."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptatie
+    attributes:
+      label: Acceptatiecriteria
+      description: "Concreet toetsbare uitkomsten en regressiecontroles"
+      placeholder: "Gedrag X werkt; bestaande Y blijft werken; typecheck, lint, tests, build"
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / links (optioneel)
+      description: "Bestaande PR's, bekende risico's, documentatie en eventuele exclusieve file-eigenaar"
+    validations:
+      required: false
