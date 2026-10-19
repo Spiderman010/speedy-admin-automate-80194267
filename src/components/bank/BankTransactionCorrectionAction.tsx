@@ -16,7 +16,7 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
   transaction: Tables<"bank_transactions">;
   allocationCount: number;
 }) {
-  const { data: posting, isPending: loading, isError } = useBankTransactionPosting(transaction.id);
+  const { data: posting, isPending: loading, isError, refetch: refetchPosting } = useBankTransactionPosting(transaction.id);
   const correction = useReclassifyBankTransaction();
   const { user } = useAuth();
   const { data: canCorrect } = useQuery({
@@ -39,19 +39,20 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
   const [vat, setVat] = useState(String(transaction.btw_percentage ?? 0));
   const [reason, setReason] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
+  const [openedPostingGroupId, setOpenedPostingGroupId] = useState<string | null>(null);
 
   // Until the marker is known, fail closed. Invoice-linked transactions are excluded in v1.1.
   if (loading || isError || allocationCount > 0) return null;
   if (!posting || transaction.match_status !== "handmatig_geboekt" || canCorrect !== true) return null;
 
   const submit = async () => {
-    if (!accountId || !reason.trim() || reason.trim().length > 500 || correction.isPending) return;
+    if (!accountId || !reason.trim() || reason.trim().length > 500 || correction.isPending || !openedPostingGroupId) return;
     const id = requestId ?? crypto.randomUUID();
     if (!requestId) setRequestId(id); // Retain idempotency key on retry.
     try {
       await correction.mutateAsync({
         transactionId: transaction.id,
-        expectedPostingGroupId: posting.posting_group_id,
+        expectedPostingGroupId: openedPostingGroupId,
         accountId, vat: Number(vat), reason: reason.trim(), requestId: id,
       });
       toast({ title: "Bankrekeningcorrectie verwerkt" });
@@ -67,8 +68,36 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
     }
   };
 
+  if (open && posting?.posting_group_id !== openedPostingGroupId) {
+    // Fail closed if another user changed the posting marker during editing.
+    return <p role="alert">Deze bankboeking is gewijzigd. Sluit en open de details opnieuw.</p>;
+  }
+
   return <>
-    <Button size="sm" variant="outline" className="w-full" onClick={async () => { const { data, error } = await supabase.from("bank_transactions").select("btw_percentage").eq("id", transaction.id).eq("organization_id", transaction.organization_id!).single(); if (error || !data) { toast({ title: "Actuele BTW niet beschikbaar", description: "Laad de banktransactie opnieuw voordat je corrigeert.", variant: "destructive" }); return; } setAccountId(""); setAccountLabel(""); setVat(String(data.btw_percentage ?? 0)); setReason(""); setRequestId(null); setOpen(true); }}>Rekening wijzigen</Button>
+    <Button size="sm" variant="outline" className="w-full" onClick={async () => {
+      // Snapshot the concurrency token before loading VAT. The RPC must never use a newer marker with an older form.
+      const currentMarker = await refetchPosting();
+      const groupId = currentMarker.data?.posting_group_id;
+      if (currentMarker.isError || !groupId || !transaction.organization_id) {
+        toast({ title: "Boeking niet actueel", description: "Laad de banktransactie opnieuw.", variant: "destructive" });
+        return;
+      }
+      const { data, error } = await supabase.from("bank_transactions")
+        .select("btw_percentage").eq("id", transaction.id).eq("organization_id", transaction.organization_id).single();
+      if (error || !data) {
+        toast({ title: "Actuele BTW niet beschikbaar", description: "Laad de banktransactie opnieuw voordat je corrigeert.", variant: "destructive" });
+        return;
+      }
+      // Detect a concurrent correction during VAT load, rather than combining incompatible snapshots.
+      const confirmed = await refetchPosting();
+      if (confirmed.isError || confirmed.data?.posting_group_id !== groupId) {
+        toast({ title: "Boeking is ondertussen gewijzigd", description: "Open de correctie opnieuw.", variant: "destructive" });
+        return;
+      }
+      setOpenedPostingGroupId(groupId);
+      setAccountId(""); setAccountLabel(""); setVat(String(data.btw_percentage ?? 0));
+      setReason(""); setRequestId(null); setOpen(true);
+    }}>Rekening wijzigen</Button>
     <Dialog open={open} onOpenChange={v => { if (!correction.isPending) setOpen(v); }}>
       <DialogContent>
         <DialogHeader>
@@ -87,7 +116,7 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={correction.isPending}>Annuleren</Button>
-          <Button onClick={submit} disabled={correction.isPending || !accountId || !reason.trim() || reason.trim().length > 500}>{correction.isPending ? "Verwerken…" : "Correctie bevestigen"}</Button>
+          <Button onClick={submit} disabled={correction.isPending || !openedPostingGroupId || !accountId || !reason.trim() || reason.trim().length > 500}>{correction.isPending ? "Verwerken…" : "Correctie bevestigen"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
