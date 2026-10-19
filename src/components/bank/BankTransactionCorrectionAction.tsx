@@ -58,8 +58,12 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
       setOpen(false);
       setRequestId(null);
       window.dispatchEvent(new CustomEvent("bookassist:bank-correction-success", { detail: { transactionId: transaction.id } }));
-    } catch {
-      toast({ title: "Correctie niet uitgevoerd", description: "Controleer de actuele boekingsstatus en probeer pas daarna opnieuw.", variant: "destructive" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      const safeMessage = message.length > 0 && message.length <= 500 && !/https?:\/\/|stack|postgres|supabase|schema|function|relation|permission denied/i.test(message)
+        ? message
+        : "Controleer de actuele boekingsstatus en probeer pas daarna opnieuw.";
+      toast({ title: "Correctie niet uitgevoerd", description: safeMessage, variant: "destructive" });
     }
   };
 
