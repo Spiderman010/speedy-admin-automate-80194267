@@ -12,7 +12,8 @@ describe("bank-match rejection hook security contract", () => {
   });
 
   it("reads all pages and propagates failures instead of treating them as empty feedback", () => {
-    expect(source).toContain(".range(offset, offset + PAGE_SIZE - 1)");
+    expect(source).toContain('if (lastId) query = query.gt("id", lastId)');
+    expect(source).toContain(".limit(PAGE_SIZE)");
     expect(source).toContain("if (error) throw error");
     expect(source).toContain("if ((data?.length ?? 0) < PAGE_SIZE) return result");
   });
@@ -84,5 +85,19 @@ describe("Codex P2: matched invoice type is resolved, not inferred from sign", (
     expect(bankPage).toContain('if (matched && !matchedPurchase && !matchedSales) throw new Error');
     expect(bankPage).toContain('if (matched && matchedPurchase && matchedSales) throw new Error');
     expect(bankPage).toContain('type: matchedPurchase ? "inkoop" as const : "verkoop" as const');
+  });
+});
+
+describe("Codex P1/P2: fresh recheck and keyset pagination", () => {
+  it("queries each financial candidate against current database state", () => {
+    expect(source).toContain("export async function assertBankMatchNotRejected(");
+    expect(source).toContain('.eq("bank_transaction_id", bankTransactionId)');
+    expect(source).toContain('.eq("invoice_type", invoiceType)');
+    expect(source).toContain('.eq("invoice_id", invoiceId)');
+    expect(bankPage).toContain("await assertBankMatchNotRejected(");
+  });
+  it("uses keyset pagination instead of mutable offsets", () => {
+    expect(source).toContain('query.gt("id", lastId)');
+    expect(source).not.toContain(".range(offset,");
   });
 });
