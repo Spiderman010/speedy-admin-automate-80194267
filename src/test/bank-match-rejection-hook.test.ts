@@ -76,3 +76,13 @@ describe("Codex P1: processing screen rejection guard", () => {
     expect(beforeWrite).toContain("if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, id, { id: invoiceId, type: invoiceType }))");
   });
 });
+
+describe("Codex P2: matched invoice type is resolved, not inferred from sign", () => {
+  it("uses the scoped purchase or sales collections and fails on missing or ambiguous IDs", () => {
+    expect(bankPage).toContain("invoices?.some(i => i.id === matched && i.client_id === tx.client_id)");
+    expect(bankPage).toContain("salesInvs?.some(i => i.id === matched && i.client_id === tx.client_id)");
+    expect(bankPage).toContain('if (matched && !matchedPurchase && !matchedSales) throw new Error');
+    expect(bankPage).toContain('if (matched && matchedPurchase && matchedSales) throw new Error');
+    expect(bankPage).toContain('type: matchedPurchase ? "inkoop" as const : "verkoop" as const');
+  });
+});
