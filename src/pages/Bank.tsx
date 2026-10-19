@@ -59,8 +59,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
 import { BankMatchDialog, rankCandidates, type InvoiceCandidate } from "@/components/BankMatchDialog";
-import { buildRejectionIndex, withoutRejectedCandidates } from "@/lib/bank-match-rejections";
-import { useBankMatchRejections } from "@/hooks/useBankMatchRejections";
+import { buildRejectionIndex, isRejectedCandidate, withoutRejectedCandidates } from "@/lib/bank-match-rejections";
+import { useBankMatchRejections, useRecordBankMatchRejection } from "@/hooks/useBankMatchRejections";
 import { BankAfletteringDrawer } from "@/components/BankAfletteringDrawer";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
@@ -301,6 +301,7 @@ export default function Bank() {
     () => rejectionsLoaded && rejectionRows ? buildRejectionIndex(rejectionRows) : undefined,
     [rejectionsLoaded, rejectionRows],
   );
+  const recordRejection = useRecordBankMatchRejection();
   const rankAllowedCandidates = useCallback((
     tx: Tables<"bank_transactions">,
     purchase: Tables<"purchase_invoices">[],
@@ -958,12 +959,16 @@ export default function Bank() {
 
   const handleConfirm = useCallback(async (id: string) => {
     try {
+      if (!rejectionIndex) throw new Error("Bankmatch-afwijzingen zijn nog niet beschikbaar");
       const tx = transactions?.find(t => t.id === id);
       if (!tx) return;
 
       // If the transaction already carries a matched_invoice_id (set during import),
       // simply promote the status — do not lose the existing link.
       if (tx.matched_invoice_id) {
+        if (isRejectedCandidate(rejectionIndex, tx.id, { id: tx.matched_invoice_id, type: expectedInvoiceTypeForTx(tx) })) {
+          throw new Error("Deze factuurkoppeling is eerder afgewezen");
+        }
         await updateTx.mutateAsync({ id, match_status: "gematcht" });
         await upsertSingleAllocationForMatch(tx, tx.matched_invoice_id);
         toast({ title: "Transactie bevestigd" });
@@ -1026,7 +1031,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [transactions, invoices, salesInvs, rankAllowedCandidates, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+  }, [transactions, invoices, salesInvs, rejectionIndex, rankAllowedCandidates, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const closeMatchDialog = useCallback(() => {
     setMatchTx(null);
@@ -1046,6 +1051,9 @@ export default function Bank() {
   ) => {
     try {
       const tx = transactions?.find(t => t.id === transactionId);
+      if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, tx.id, { id: invoiceId, type: invoiceType })) {
+        throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
+      }
 
       // Additional mode: only write the new allocation row and update the invoice's remaining_amount.
       // Do NOT overwrite the tx record (matched_invoice_id is already set for the primary invoice).
@@ -1145,7 +1153,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout bij koppelen", description: e.message, variant: "destructive" });
     }
-  }, [matchDialogMode, allAllocations, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
+  }, [matchDialogMode, allAllocations, transactions, invoices, salesInvs, rejectionIndex, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
 
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
@@ -1491,6 +1499,25 @@ export default function Bank() {
     }
   }, [selectedIds, transactions, invoices, salesInvs, rejectionIndex, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
 
+  // Identify the actual invoice being rejected before clearing the suggestion.
+  // Never invent an invoice identity when no candidate is available.
+  const recordSuggestionRejection = useCallback(async (tx: Tables<"bank_transactions">) => {
+    if (!activeOrganizationId || !rejectionIndex) throw new Error("Afwijzingen nog niet beschikbaar");
+    const suggested = matchDetailMap.get(tx.id)?.best;
+    const matched = tx.matched_invoice_id;
+    const candidate = matched
+      ? { id: matched, type: suggested?.id === matched ? suggested.type : expectedInvoiceTypeForTx(tx) }
+      : suggested;
+    if (!candidate) throw new Error("Geen concrete factuursuggestie om af te wijzen");
+    await recordRejection.mutateAsync({
+      organizationId: activeOrganizationId,
+      clientId: tx.client_id,
+      bankTransactionId: tx.id,
+      invoiceType: candidate.type,
+      invoiceId: candidate.id,
+    });
+  }, [activeOrganizationId, rejectionIndex, matchDetailMap, recordRejection]);
+
   const handleBulkRejectSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
     let processed = 0;
@@ -1501,6 +1528,7 @@ export default function Bank() {
       const tx = transactions.find(t => t.id === id);
       if (!tx || tx.match_status !== "suggestie") { skipped++; continue; }
       try {
+        await recordSuggestionRejection(tx);
         await updateTx.mutateAsync({
           id: tx.id,
           match_status: "niet_gematcht",
@@ -1524,7 +1552,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij afwijzen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, updateTx, toast, refetch]);
+  }, [selectedIds, transactions, recordSuggestionRejection, updateTx, toast, refetch]);
 
   const handleBulkVraagpost = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
@@ -1811,6 +1839,7 @@ export default function Bank() {
 
   const handleRejectSuggestion = useCallback(async (t: Tables<"bank_transactions">) => {
     try {
+      await recordSuggestionRejection(t);
       await updateTx.mutateAsync({
         id: t.id,
         match_status: "niet_gematcht",
@@ -1821,7 +1850,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [updateTx, toast]);
+  }, [recordSuggestionRejection, updateTx, toast]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
