@@ -60,7 +60,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
 import { BankMatchDialog, rankCandidates, type InvoiceCandidate } from "@/components/BankMatchDialog";
 import { buildRejectionIndex, isRejectedCandidate, withoutRejectedCandidates } from "@/lib/bank-match-rejections";
-import { useBankMatchRejections, useRecordBankMatchRejection } from "@/hooks/useBankMatchRejections";
+import { assertBankMatchNotRejected, useBankMatchRejections, useRecordBankMatchRejection } from "@/hooks/useBankMatchRejections";
 import { BankAfletteringDrawer } from "@/components/BankAfletteringDrawer";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
@@ -969,6 +969,7 @@ export default function Bank() {
         if (isRejectedCandidate(rejectionIndex, tx.id, { id: tx.matched_invoice_id, type: expectedInvoiceTypeForTx(tx) })) {
           throw new Error("Deze factuurkoppeling is eerder afgewezen");
         }
+        await assertBankMatchNotRejected(tx.id, expectedInvoiceTypeForTx(tx), tx.matched_invoice_id, tx.client_id, activeOrganizationId!);
         await updateTx.mutateAsync({ id, match_status: "gematcht" });
         await upsertSingleAllocationForMatch(tx, tx.matched_invoice_id);
         toast({ title: "Transactie bevestigd" });
@@ -988,6 +989,7 @@ export default function Bank() {
       const best = candidates.find(c => c.score > 0 && c.type === expectedType);
 
       if (best) {
+        await assertBankMatchNotRejected(tx.id, best.type, best.id, tx.client_id, activeOrganizationId!);
         const exactMatch =
           best.reasons.includes("Exact bedrag") ||
           best.reasons.includes("Bedrag ≈ gelijk (≤€0,50)");
@@ -1054,6 +1056,8 @@ export default function Bank() {
       if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, tx.id, { id: invoiceId, type: invoiceType })) {
         throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
       }
+
+      await assertBankMatchNotRejected(tx.id, invoiceType, invoiceId, tx.client_id, activeOrganizationId!);
 
       // Additional mode: only write the new allocation row and update the invoice's remaining_amount.
       // Do NOT overwrite the tx record (matched_invoice_id is already set for the primary invoice).
@@ -1461,6 +1465,7 @@ export default function Bank() {
       if (!best) { skipped++; continue; }
 
       try {
+        await assertBankMatchNotRejected(tx.id, best.type, best.id, tx.client_id, activeOrganizationId!);
         await updateTx.mutateAsync({
           id: tx.id,
           match_status: "gematcht",
@@ -1666,6 +1671,7 @@ export default function Bank() {
 
         if (safeCandidate) {
           const best = safeCandidate;
+          await assertBankMatchNotRejected(t.id, best.type, best.id, t.client_id, activeOrganizationId!);
           // Veilig: direct bevestigen + factuur op betaald + allocatie schrijven.
 
           // Snapshot vóór mutaties voor undo.
@@ -1823,6 +1829,7 @@ export default function Bank() {
       return;
     }
     try {
+      await assertBankMatchNotRejected(t.id, best.type, best.id, t.client_id, activeOrganizationId!);
       await updateTx.mutateAsync({
         id: t.id,
         match_status: "gematcht",
@@ -3003,6 +3010,7 @@ export default function Bank() {
           if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, id, { id: invoiceId, type: invoiceType })) {
             throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
           }
+          await assertBankMatchNotRejected(id, invoiceType, invoiceId, tx.client_id, activeOrganizationId!);
           await updateTx.mutateAsync({ id, match_status: "gematcht", matched_invoice_id: invoiceId, match_confidence: 100 });
           if (invoiceType === "inkoop") {
             await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
