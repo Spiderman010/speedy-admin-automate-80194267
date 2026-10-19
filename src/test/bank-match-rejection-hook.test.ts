@@ -24,3 +24,16 @@ describe("bank-match rejection hook security contract", () => {
     expect(source).not.toMatch(/\.from\("(?:ledger_postings|bank_transactions|bank_transaction_allocations)"\)/);
   });
 });
+
+const dialog = readFileSync(resolve(process.cwd(), "src/components/BankMatchDialog.tsx"), "utf8");
+
+describe("bank match dialog rejection enforcement", () => {
+  it("does not offer matches until rejection feedback is available", () => {
+    expect(dialog).toContain("if (!rejectionIndex) return []");
+  });
+
+  it("filters rejected candidates before rendering and selection", () => {
+    expect(dialog).toContain("withoutRejectedCandidates(rejectionIndex, transaction.id,");
+    expect(dialog).toContain("rankCandidates(transaction, purchaseInvoices, salesInvoices)");
+  });
+});
