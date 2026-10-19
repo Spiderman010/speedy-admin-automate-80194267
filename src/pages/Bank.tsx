@@ -301,6 +301,13 @@ export default function Bank() {
     () => rejectionsLoaded && rejectionRows ? buildRejectionIndex(rejectionRows) : undefined,
     [rejectionsLoaded, rejectionRows],
   );
+  const rejectionCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of rejectionRows ?? []) {
+      counts.set(row.bank_transaction_id, (counts.get(row.bank_transaction_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [rejectionRows]);
   const recordRejection = useRecordBankMatchRejection();
   const rankAllowedCandidates = useCallback((
     tx: Tables<"bank_transactions">,
@@ -1858,7 +1865,7 @@ export default function Bank() {
         matched_invoice_id: null,
         match_confidence: null,
       });
-      toast({ title: "Suggestie afgewezen" });
+      toast({ title: "Afwijzing opgeslagen", description: "Deze factuur wordt niet opnieuw voorgesteld. Een andere factuur kan nog wel als suggestie verschijnen." });
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
@@ -2723,6 +2730,11 @@ export default function Bank() {
                                       <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
                                         <AlertTriangle className="h-3 w-3" /> Controle nodig
                                       </span>
+                                    )}
+                                    {(rejectionCounts.get(t.id) ?? 0) > 0 && (
+                                      <div className="text-xs text-muted-foreground">
+                                        {rejectionCounts.get(t.id)} eerdere factuurafwijzing(en) opgeslagen{best && !bestIsWrongDirection ? "; de huidige kandidaat is een andere factuur." : "; er is momenteel geen geschikte andere factuurkandidaat."}
+                                      </div>
                                     )}
                                     {best && !bestIsWrongDirection && (
                                       <div className="text-xs space-y-0.5">
