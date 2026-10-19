@@ -39,6 +39,6 @@ export default tseslint.config(
     // Lovable genereert deze preview-authbron: wijzig haar niet om een lintregel te voldoen.
     // De timeout-handle wordt bewust na het klaarzetten van de callback toegewezen.
     files: ["src/integrations/supabase/previewAuthStorage.ts"],
-    rules: { "prefer-const": "off" },
+    rules: { "prefer-const": ["error", { ignoreReadBeforeAssign: true }] },
   },
 );
