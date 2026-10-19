@@ -46,7 +46,7 @@ export function BankTransactionPostingAction({
   );
 
   if (posting) {
-    return <div className="space-y-2"><p className="text-xs text-muted-foreground" data-testid="bank-transaction-posting-done">Geboekt in het grootboek.</p><BankTransactionCorrectionAction transaction={transaction} allocationCount={allocationCount} /></div>;
+    return <div className="space-y-2"><p className="text-xs text-muted-foreground" data-testid="bank-transaction-posting-done">Geboekt in het grootboek.</p><BankTransactionCorrectionAction key={transaction.id} transaction={transaction} allocationCount={allocationCount} /></div>;
   }
 
   if (markerPending || markerError) {
