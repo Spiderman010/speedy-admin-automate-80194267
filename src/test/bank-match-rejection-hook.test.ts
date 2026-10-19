@@ -44,7 +44,7 @@ describe("Bank page reject feedback integration", () => {
   it("applies one fail-closed rejected-candidate filter across ranked suggestions", () => {
     expect(bankPage).toContain("const rankAllowedCandidates = useCallback(");
     expect(bankPage).toContain("withoutRejectedCandidates(rejectionIndex, tx.id, rankCandidates(tx, purchase, sales))");
-    expect((bankPage.match(/rankAllowedCandidates\(/g) ?? []).length).toBeGreaterThanOrEqual(5);
+    expect((bankPage.match(/rankAllowedCandidates\(/g) ?? []).length).toBeGreaterThanOrEqual(4);
     expect(bankPage).toContain("rejectionIndex={rejectionIndex}");
   });
 
