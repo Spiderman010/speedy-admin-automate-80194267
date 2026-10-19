@@ -82,6 +82,16 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
         toast({ title: "Boeking niet actueel", description: "Laad de banktransactie opnieuw.", variant: "destructive" });
         return;
       }
+      // The parent allocation cache may still be loading; verify independently before exposing the correction.
+      const { data: linkedAllocations, error: allocationsError } = await supabase
+        .from("bank_transaction_allocations")
+        .select("id")
+        .eq("bank_transaction_id", transaction.id)
+        .limit(1);
+      if (allocationsError || !linkedAllocations || linkedAllocations.length > 0) {
+        toast({ title: "Factuurkoppelingen niet gecontroleerd", description: "Controleer de afletteringen voordat je deze boeking corrigeert.", variant: "destructive" });
+        return;
+      }
       const { data, error } = await supabase.from("bank_transactions")
         .select("btw_percentage").eq("id", transaction.id).eq("organization_id", transaction.organization_id).single();
       if (error || !data) {
