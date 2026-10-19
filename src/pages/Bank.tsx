@@ -436,7 +436,7 @@ export default function Bank() {
       }
     }
     return ids;
-  }, [transactions, invoices, salesInvs]);
+  }, [transactions, invoices, salesInvs, rankAllowedCandidates]);
 
   const suggested = suggestionIds.size;
   const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0)
@@ -703,7 +703,7 @@ export default function Bank() {
       });
     }
     return map;
-  }, [transactions, invoices, salesInvs]);
+  }, [transactions, invoices, salesInvs, rankAllowedCandidates]);
 
   // Derived from matchDetailMap — no extra rankCandidates calls needed.
   const safeMatchIds = useMemo(() => {
@@ -1026,7 +1026,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+  }, [transactions, invoices, salesInvs, rankAllowedCandidates, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const closeMatchDialog = useCallback(() => {
     setMatchTx(null);
@@ -1489,7 +1489,7 @@ export default function Bank() {
     if (errors.length > 0) {
       toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, invoices, salesInvs, rejectionIndex, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleBulkRejectSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
@@ -1711,7 +1711,7 @@ export default function Bank() {
       title: "Automatisch voorstellen klaar",
       description: parts.join(" · ") + (errors.length ? ` · ${errors.length} fout(en)` : ""),
     });
-  }, [transactions, invoices, salesInvs, autoScanRunning, allocationsByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
+  }, [transactions, invoices, salesInvs, rankAllowedCandidates, autoScanRunning, allocationsByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
 
   const handleUndoLastBatch = useCallback(async () => {
     if (!lastBatch || lastBatch.length === 0 || undoingBatch) return;
@@ -1807,7 +1807,7 @@ export default function Bank() {
     } catch (e: any) {
       toast({ title: "Fout", description: e.message, variant: "destructive" });
     }
-  }, [invoices, salesInvs, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+  }, [invoices, salesInvs, rejectionIndex, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const handleRejectSuggestion = useCallback(async (t: Tables<"bank_transactions">) => {
     try {
