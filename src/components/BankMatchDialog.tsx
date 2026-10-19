@@ -13,6 +13,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { getInvoiceRemainingAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
+import { withoutRejectedCandidates } from "@/lib/bank-match-rejections";
 
 type BankTransaction = Tables<"bank_transactions">;
 type PurchaseInvoice = Tables<"purchase_invoices">;
@@ -46,6 +47,8 @@ interface BankMatchDialogProps {
   alreadyAllocatedAmount?: number;
   /** Invoice IDs to exclude from the candidate list (already allocated to this tx in additional mode). */
   excludedInvoiceIds?: string[];
+  /** Undefined means rejection data has not been verified: never show suggestions. */
+  rejectionIndex?: ReadonlySet<string>;
 }
 
 const formatCurrency = (amount: number) =>
@@ -187,7 +190,7 @@ type CandidateFilter = "auto" | "verkoop" | "inkoop" | "alle";
 
 export function BankMatchDialog({
   open, onOpenChange, transaction, purchaseInvoices, salesInvoices, onConfirm, onManualBook, onRefresh,
-  maxAllocationAmount, alreadyAllocatedAmount, excludedInvoiceIds,
+  maxAllocationAmount, alreadyAllocatedAmount, excludedInvoiceIds, rejectionIndex,
 }: BankMatchDialogProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<string>("factuur");
@@ -200,12 +203,14 @@ export function BankMatchDialog({
 
   const candidates = useMemo(() => {
     if (!transaction) return [];
-    const all = rankCandidates(transaction, purchaseInvoices, salesInvoices);
+    if (!rejectionIndex) return []; // fail closed while feedback is loading or unavailable
+    const all = withoutRejectedCandidates(rejectionIndex, transaction.id,
+      rankCandidates(transaction, purchaseInvoices, salesInvoices));
     if (!excludedInvoiceIds?.length) return all;
     const excluded = new Set(excludedInvoiceIds);
     return all.filter(c => !excluded.has(c.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transaction, purchaseInvoices, salesInvoices, refreshKey, excludedInvoiceIds]);
+  }, [transaction, purchaseInvoices, salesInvoices, refreshKey, excludedInvoiceIds, rejectionIndex]);
 
   const preferredType: "inkoop" | "verkoop" = transaction?.amount != null
     ? (transaction.amount >= 0 ? "verkoop" : "inkoop")

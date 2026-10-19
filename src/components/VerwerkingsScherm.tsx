@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +8,7 @@ import { X, ChevronRight, ChevronLeft, Home, Briefcase, FileText, SkipForward, C
 import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
+import { isRejectedCandidate } from "@/lib/bank-match-rejections";
 
 type BankTransaction = Tables<"bank_transactions">;
 type PurchaseInvoice = Tables<"purchase_invoices">;
@@ -21,6 +23,8 @@ interface Props {
   transactions: BankTransaction[];
   purchaseInvoices: PurchaseInvoice[];
   salesInvoices: SalesInvoice[];
+  /** Undefined while rejection data is unavailable: invoice matches fail closed. */
+  rejectionIndex?: ReadonlySet<string>;
   onBookPrivate: (transactionId: string) => Promise<void>;
   onBookLedger: (transactionId: string, ledgerText: string, ledgerId: string) => Promise<void>;
   onMatchInvoice: (transactionId: string, invoiceId: string, invoiceType: "inkoop" | "verkoop") => Promise<void>;
@@ -39,6 +43,7 @@ export function VerwerkingsScherm({
   transactions,
   purchaseInvoices,
   salesInvoices,
+  rejectionIndex,
   onBookPrivate,
   onBookLedger,
   onMatchInvoice,
@@ -101,21 +106,21 @@ export function VerwerkingsScherm({
   };
 
   const candidateInvoices = useMemo(() => {
-    if (!current) return [];
+    if (!current || !rejectionIndex) return [];
     const txAmount = Math.abs(current.amount);
     const allInvoices = [
       ...purchaseInvoices.filter(i => i.client_id === current.client_id).map(i => ({ ...i, type: "inkoop" as const })),
       ...salesInvoices.filter(i => i.client_id === current.client_id).map(i => ({ ...i, type: "verkoop" as const })),
     ];
     return allInvoices
-      .filter(i => !isClosedInvoiceStatus(i.status))
+      .filter(i => !isClosedInvoiceStatus(i.status) && !isRejectedCandidate(rejectionIndex, current.id, { id: i.id, type: i.type }))
       .sort((a, b) => {
         const diffA = Math.abs(Math.abs(getInvoiceRemainingAmount(a) ?? 0) - txAmount);
         const diffB = Math.abs(Math.abs(getInvoiceRemainingAmount(b) ?? 0) - txAmount);
         return diffA - diffB;
       })
       .slice(0, 8);
-  }, [current, purchaseInvoices, salesInvoices]);
+  }, [current, purchaseInvoices, salesInvoices, rejectionIndex]);
 
   if (total === 0) {
     return (
@@ -248,9 +253,14 @@ export function VerwerkingsScherm({
                         className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
                         onClick={async () => {
                           setLoading(true);
-                          await onMatchInvoice(current.id, inv.id, inv.type);
-                          setLoading(false);
-                          goNext();
+                          try {
+                            await onMatchInvoice(current.id, inv.id, inv.type);
+                            goNext();
+                          } catch (error) {
+                            toast({ title: "Factuurkoppeling mislukt", description: error instanceof Error ? error.message : "Probeer opnieuw", variant: "destructive" });
+                          } finally {
+                            setLoading(false);
+                          }
                         }}
                         disabled={loading}
                       >
