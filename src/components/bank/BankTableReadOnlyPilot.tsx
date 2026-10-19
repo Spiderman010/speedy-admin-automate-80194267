@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 type BankRow = Tables<"bank_transactions">;
-type SortKey = "date" | "description" | "amount" | "match_status";
+type SortKey = "transaction_date" | "description" | "amount" | "match_status";
 const currency = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" });
 const statusText: Record<string, string> = { handmatig_geboekt: "Handmatig geboekt", gematcht: "Gematcht", suggestie: "Suggestie", niet_gematcht: "Open" };
 
@@ -18,7 +18,7 @@ export function BankTableReadOnlyPilot({ rows }: { rows: BankRow[] }) {
   const [ascending, setAscending] = useState(false);
   const visible = useMemo(() => {
     const query = term.trim().toLocaleLowerCase("nl-NL");
-    return rows.filter(row => !query || [row.description, row.date, row.match_status, row.amount].some(v => String(v ?? "").toLocaleLowerCase("nl-NL").includes(query)))
+    return rows.filter(row => !query || [row.description, row.transaction_date, row.match_status, row.amount].some(v => String(v ?? "").toLocaleLowerCase("nl-NL").includes(query)))
       .slice().sort((a, b) => {
         const av = a[sort] ?? "", bv = b[sort] ?? "";
         const cmp = sort === "amount" ? Number(av) - Number(bv) : String(av).localeCompare(String(bv), "nl-NL");
@@ -38,7 +38,7 @@ export function BankTableReadOnlyPilot({ rows }: { rows: BankRow[] }) {
       <div className="overflow-auto">
         <Table>
           <TableHeader><TableRow>
-            {([["date", "Datum"], ["description", "Omschrijving"], ["amount", "Bedrag"], ["match_status", "Status"]] as const).map(([key, label]) => (
+            {([["transaction_date", "Datum"], ["description", "Omschrijving"], ["amount", "Bedrag"], ["match_status", "Status"]] as const).map(([key, label]) => (
               <TableHead key={key} aria-sort={sort === key ? ascending ? "ascending" : "descending" : "none"}>
                 <Button size="sm" variant="ghost" onClick={() => changeSort(key)} className="h-8 px-1">{label}{sort === key ? ascending ? " ↑" : " ↓" : ""}</Button>
               </TableHead>
@@ -46,7 +46,7 @@ export function BankTableReadOnlyPilot({ rows }: { rows: BankRow[] }) {
           </TableRow></TableHeader>
           <TableBody>
             {visible.map(row => <TableRow key={row.id}>
-              <TableCell className="whitespace-nowrap">{row.date ? new Date(row.date + "T12:00:00").toLocaleDateString("nl-NL") : "—"}</TableCell>
+              <TableCell className="whitespace-nowrap">{row.transaction_date ? new Date(row.transaction_date + "T12:00:00").toLocaleDateString("nl-NL") : "—"}</TableCell>
               <TableCell className="min-w-60 max-w-lg break-words">{row.description || "—"}</TableCell>
               <TableCell className="whitespace-nowrap tabular-nums">{currency.format(row.amount)}</TableCell>
               <TableCell>{statusText[row.match_status ?? ""] ?? row.match_status ?? "—"}</TableCell>
