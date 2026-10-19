@@ -1514,9 +1514,9 @@ export default function Bank() {
     const matchedSales = matched && salesInvs?.some(i => i.id === matched && i.client_id === tx.client_id);
     if (matched && !matchedPurchase && !matchedSales) throw new Error("Gekoppelde factuur niet gevonden");
     if (matched && matchedPurchase && matchedSales) throw new Error("Factuurtype is niet eenduidig");
-    const candidate = matched
+    const candidate = suggested ?? (matched
       ? { id: matched, type: matchedPurchase ? "inkoop" as const : "verkoop" as const }
-      : suggested;
+      : null);
     if (!candidate) throw new Error("Geen concrete factuursuggestie om af te wijzen");
     await recordRejection.mutateAsync({
       organizationId: activeOrganizationId,
@@ -1722,6 +1722,7 @@ export default function Bank() {
               match_confidence: t.match_confidence,
             },
           };
+          await assertBankMatchNotRejected(t.id, best.type, best.id, t.client_id, activeOrganizationId!);
           await updateTx.mutateAsync({
             id: t.id,
             match_status: "suggestie",
