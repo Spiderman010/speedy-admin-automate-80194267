@@ -19,16 +19,16 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [accountLabel, setAccountLabel] = useState("");
-  const [vat, setVat] = useState("0");
+  const [vat, setVat] = useState(String(transaction.btw_percentage ?? 0));
   const [reason, setReason] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
 
   // Until the marker is known, fail closed. Invoice-linked transactions are excluded in v1.1.
-  if (loading || isError || allocationCount > 0 || !!transaction.matched_invoice_id) return null;
+  if (loading || isError || allocationCount > 0) return null;
   if (!posting || transaction.match_status !== "handmatig_geboekt") return null;
 
   const submit = async () => {
-    if (!accountId || !reason.trim() || correction.isPending) return;
+    if (!accountId || !reason.trim() || reason.trim().length > 500 || correction.isPending) return;
     const id = requestId ?? crypto.randomUUID();
     if (!requestId) setRequestId(id); // Retain idempotency key on retry.
     try {
@@ -40,13 +40,14 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
       toast({ title: "Bankrekeningcorrectie verwerkt" });
       setOpen(false);
       setRequestId(null);
+      window.dispatchEvent(new CustomEvent("bookassist:bank-correction-success", { detail: { transactionId: transaction.id } }));
     } catch {
       toast({ title: "Correctie niet uitgevoerd", description: "Controleer de actuele boekingsstatus en probeer pas daarna opnieuw.", variant: "destructive" });
     }
   };
 
   return <>
-    <Button size="sm" variant="outline" className="w-full" onClick={() => setOpen(true)}>Rekening wijzigen</Button>
+    <Button size="sm" variant="outline" className="w-full" onClick={() => { setAccountId(""); setAccountLabel(""); setVat(String(transaction.btw_percentage ?? 0)); setReason(""); setRequestId(null); setOpen(true); }}>Rekening wijzigen</Button>
     <Dialog open={open} onOpenChange={v => { if (!correction.isPending) setOpen(v); }}>
       <DialogContent>
         <DialogHeader>
@@ -61,11 +62,11 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
             <option value="0">0%</option><option value="9">9%</option><option value="21">21%</option>
           </select>
           <Label htmlFor="correction-reason">Reden (verplicht)</Label>
-          <Input id="correction-reason" value={reason} onChange={e => setReason(e.target.value)} />
+          <Input id="correction-reason" maxLength={500} value={reason} onChange={e => setReason(e.target.value)} />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={correction.isPending}>Annuleren</Button>
-          <Button onClick={submit} disabled={correction.isPending || !accountId || !reason.trim()}>{correction.isPending ? "Verwerken…" : "Correctie bevestigen"}</Button>
+          <Button onClick={submit} disabled={correction.isPending || !accountId || !reason.trim() || reason.trim().length > 500}>{correction.isPending ? "Verwerken…" : "Correctie bevestigen"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
