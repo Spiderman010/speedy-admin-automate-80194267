@@ -101,3 +101,21 @@ describe("Codex P1/P2: fresh recheck and keyset pagination", () => {
     expect(source).not.toContain(".range(offset,");
   });
 });
+
+describe("PR #256: rejection history and replacement message contract", () => {
+  it("counts rejection feedback by bank transaction, not across administrations", () => {
+    expect(bankPage).toContain("const rejectionCounts = useMemo(() => {");
+    expect(bankPage).toContain("counts.set(row.bank_transaction_id, (counts.get(row.bank_transaction_id) ?? 0) + 1)");
+    expect(bankPage).toContain("}, [rejectionRows]);");
+  });
+
+  it("only calls an eligible, same-direction candidate a replacement", () => {
+    expect(bankPage).toContain('best && !bestIsWrongDirection ? "; de huidige kandidaat is een andere factuur."');
+    expect(bankPage).toContain('"; er is momenteel geen geschikte andere factuurkandidaat."');
+  });
+
+  it("explains the scope of a successful rejection without claiming all suggestions disappear", () => {
+    expect(bankPage).toContain('title: "Afwijzing opgeslagen"');
+    expect(bankPage).toContain("Een andere factuur kan nog wel als suggestie verschijnen.");
+  });
+});
