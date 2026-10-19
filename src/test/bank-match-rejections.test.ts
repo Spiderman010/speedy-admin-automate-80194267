@@ -169,7 +169,7 @@ describe("branch-grenzen", () => {
     assertBranchTouchesNoExistingWriter(changed);
   });
 
-  it("12. geen UI-schrijfpad zonder gegenereerde types: niemand praat al met de tabel", () => {
+  it("12. uitsluitend de beoordeelde bankmatch-hook mag naar de afwijzingstabel schrijven", () => {
     const src = execFileSync("git", ["grep", "-l", "bank_match_rejections", "--", "src"], { encoding: "utf8" })
       .split("\n")
       .filter(Boolean)
@@ -177,7 +177,7 @@ describe("branch-grenzen", () => {
     // Gegenereerde Supabase-types beschrijven alleen het schema, geen UI-schrijfpad.
     // Houd de bewaking strak voor alle overige bronbestanden.
     expect(src.filter((file) => file !== "src/integrations/supabase/types.ts"))
-      .toEqual(["src/lib/bank-match-rejections.ts", "src/test/bank-match-rejections.test.ts"]);
+      .toEqual(["src/hooks/useBankMatchRejections.ts", "src/lib/bank-match-rejections.ts", "src/test/bank-match-rejections.test.ts"]);
     const lib = readFileSync(resolve(process.cwd(), "src/lib/bank-match-rejections.ts"), "utf8");
     expect(lib).not.toMatch(/integrations\/supabase|\.from\(|\.rpc\(|as any|: any\b/);
   });
