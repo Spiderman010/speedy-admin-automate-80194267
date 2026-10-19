@@ -252,9 +252,15 @@ export function VerwerkingsScherm({
                         className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
                         onClick={async () => {
                           setLoading(true);
-                          await onMatchInvoice(current.id, inv.id, inv.type);
-                          setLoading(false);
-                          goNext();
+                          try {
+                            await onMatchInvoice(current.id, inv.id, inv.type);
+                            goNext();
+                          } catch {
+                            // A concurrent rejection can invalidate this candidate.
+                            // Keep the user on the current transaction for a retry.
+                          } finally {
+                            setLoading(false);
+                          }
                         }}
                         disabled={loading}
                       >
