@@ -2733,7 +2733,7 @@ export default function Bank() {
                                     )}
                                     {(rejectionCounts.get(t.id) ?? 0) > 0 && (
                                       <div className="text-xs text-muted-foreground">
-                                        {rejectionCounts.get(t.id)} eerdere factuurafwijzing(en) opgeslagen{best ? "; de huidige kandidaat is een andere factuur." : "; er is momenteel geen andere factuurkandidaat."}
+                                        {rejectionCounts.get(t.id)} eerdere factuurafwijzing(en) opgeslagen{best && !bestIsWrongDirection ? "; de huidige kandidaat is een andere factuur." : "; er is momenteel geen geschikte andere factuurkandidaat."}
                                       </div>
                                     )}
                                     {best && !bestIsWrongDirection && (
