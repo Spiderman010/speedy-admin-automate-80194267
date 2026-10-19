@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 
+type BankCorrectionRpc = (name: "reclassify_bank_transaction", args: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
+
 type CorrectionInput = {
   transactionId: string;
   expectedPostingGroupId: string | null;
@@ -15,7 +17,8 @@ export function useReclassifyBankTransaction() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (v: CorrectionInput) => {
-      const { data, error } = await supabase.rpc("reclassify_bank_transaction", {
+      const callCorrection = supabase.rpc.bind(supabase) as unknown as BankCorrectionRpc;
+      const { data, error } = await callCorrection("reclassify_bank_transaction", {
         _transaction_id: v.transactionId,
         _expected_posting_group_id: v.expectedPostingGroupId,
         _grootboekrekening_id: v.accountId,
