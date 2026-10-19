@@ -59,3 +59,20 @@ describe("Bank page reject feedback integration", () => {
     expect(bankPage).toContain("isRejectedCandidate(rejectionIndex, tx.id, { id: invoiceId, type: invoiceType })");
   });
 });
+
+const processingScreen = readFileSync(resolve(process.cwd(), "src/components/VerwerkingsScherm.tsx"), "utf8");
+
+describe("Codex P1: processing screen rejection guard", () => {
+  it("hides rejected invoices and fails closed while feedback is unavailable", () => {
+    expect(processingScreen).toContain("if (!current || !rejectionIndex) return []");
+    expect(processingScreen).toContain("!isRejectedCandidate(rejectionIndex, current.id, { id: i.id, type: i.type })");
+    expect(bankPage).toContain("rejectionIndex={rejectionIndex}");
+  });
+
+  it("blocks processing screen financial writes before any mutation", () => {
+    const handler = bankPage.split("onMatchInvoice={async (id, invoiceId, invoiceType) => {")[1];
+    expect(handler).toBeDefined();
+    const beforeWrite = handler.split("await updateTx.mutateAsync")[0];
+    expect(beforeWrite).toContain("if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, id, { id: invoiceId, type: invoiceType }))");
+  });
+});
