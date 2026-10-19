@@ -177,7 +177,7 @@ describe("branch-grenzen", () => {
     // Gegenereerde Supabase-types beschrijven alleen het schema, geen UI-schrijfpad.
     // Houd de bewaking strak voor alle overige bronbestanden.
     expect(src.filter((file) => file !== "src/integrations/supabase/types.ts"))
-      .toEqual(["src/hooks/useBankMatchRejections.ts", "src/lib/bank-match-rejections.ts", "src/test/bank-match-rejections.test.ts"]);
+      .toEqual(["src/hooks/useBankMatchRejections.ts", "src/lib/bank-match-rejections.ts", "src/test/bank-match-rejection-hook.test.ts", "src/test/bank-match-rejections.test.ts"]);
     const lib = readFileSync(resolve(process.cwd(), "src/lib/bank-match-rejections.ts"), "utf8");
     expect(lib).not.toMatch(/integrations\/supabase|\.from\(|\.rpc\(|as any|: any\b/);
   });
