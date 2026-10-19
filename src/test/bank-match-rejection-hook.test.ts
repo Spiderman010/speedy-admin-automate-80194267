@@ -44,14 +44,14 @@ describe("Bank page reject feedback integration", () => {
   it("applies one fail-closed rejected-candidate filter across ranked suggestions", () => {
     expect(bankPage).toContain("const rankAllowedCandidates = useCallback(");
     expect(bankPage).toContain("withoutRejectedCandidates(rejectionIndex, tx.id, rankCandidates(tx, purchase, sales))");
-    expect((bankPage.match(/rankAllowedCandidates\\(/g) ?? []).length).toBeGreaterThanOrEqual(5);
+    expect((bankPage.match(/rankAllowedCandidates\(/g) ?? []).length).toBeGreaterThanOrEqual(5);
     expect(bankPage).toContain("rejectionIndex={rejectionIndex}");
   });
 
   it("records a concrete rejected invoice before resetting the bank transaction", () => {
     expect(bankPage).toContain("const recordSuggestionRejection = useCallback(");
-    expect(bankPage).toMatch(/await recordSuggestionRejection\\(tx\\);[\\s\\S]*?await updateTx\\.mutateAsync\\(\\{/);
-    expect(bankPage).toMatch(/await recordSuggestionRejection\\(t\\);[\\s\\S]*?await updateTx\\.mutateAsync\\(\\{/);
+    expect(bankPage).toMatch(/await recordSuggestionRejection\(tx\);[\s\S]*?await updateTx\.mutateAsync\(\{/);
+    expect(bankPage).toMatch(/await recordSuggestionRejection\(t\);[\s\S]*?await updateTx\.mutateAsync\(\{/);
   });
 
   it("blocks direct invoice confirmation when rejection feedback is unavailable", () => {
