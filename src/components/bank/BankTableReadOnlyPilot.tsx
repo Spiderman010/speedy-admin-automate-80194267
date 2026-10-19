@@ -14,7 +14,7 @@ const statusText: Record<string, string> = { handmatig_geboekt: "Handmatig geboe
  */
 export function BankTableReadOnlyPilot({ rows }: { rows: BankRow[] }) {
   const [term, setTerm] = useState("");
-  const [sort, setSort] = useState<SortKey>("date");
+  const [sort, setSort] = useState<SortKey>("transaction_date");
   const [ascending, setAscending] = useState(false);
   const visible = useMemo(() => {
     const query = term.trim().toLocaleLowerCase("nl-NL");
