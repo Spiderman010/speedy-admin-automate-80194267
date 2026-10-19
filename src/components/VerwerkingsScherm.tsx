@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -255,9 +256,8 @@ export function VerwerkingsScherm({
                           try {
                             await onMatchInvoice(current.id, inv.id, inv.type);
                             goNext();
-                          } catch {
-                            // A concurrent rejection can invalidate this candidate.
-                            // Keep the user on the current transaction for a retry.
+                          } catch (error) {
+                            toast({ title: "Factuurkoppeling mislukt", description: error instanceof Error ? error.message : "Probeer opnieuw", variant: "destructive" });
                           } finally {
                             setLoading(false);
                           }
