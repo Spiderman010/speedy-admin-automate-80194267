@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,6 +18,20 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
 }) {
   const { data: posting, isPending: loading, isError } = useBankTransactionPosting(transaction.id);
   const correction = useReclassifyBankTransaction();
+  const { user } = useAuth();
+  const { data: canCorrect } = useQuery({
+    queryKey: ["bank-correction-accountant", transaction.organization_id, user?.id],
+    enabled: !!user?.id && !!transaction.organization_id,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("has_min_role", {
+        _min: "accountant",
+        _organization_id: transaction.organization_id,
+        _user_id: user!.id,
+      });
+      if (error) throw error;
+      return data === true;
+    },
+  });
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
@@ -25,7 +42,7 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
 
   // Until the marker is known, fail closed. Invoice-linked transactions are excluded in v1.1.
   if (loading || isError || allocationCount > 0) return null;
-  if (!posting || transaction.match_status !== "handmatig_geboekt") return null;
+  if (!posting || transaction.match_status !== "handmatig_geboekt" || canCorrect !== true) return null;
 
   const submit = async () => {
     if (!accountId || !reason.trim() || reason.trim().length > 500 || correction.isPending) return;
