@@ -68,7 +68,7 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
   };
 
   return <>
-    <Button size="sm" variant="outline" className="w-full" onClick={() => { setAccountId(""); setAccountLabel(""); setVat(String(transaction.btw_percentage ?? 0)); setReason(""); setRequestId(null); setOpen(true); }}>Rekening wijzigen</Button>
+    <Button size="sm" variant="outline" className="w-full" onClick={async () => { const { data, error } = await supabase.from("bank_transactions").select("btw_percentage").eq("id", transaction.id).eq("organization_id", transaction.organization_id!).single(); if (error || !data) { toast({ title: "Actuele BTW niet beschikbaar", description: "Laad de banktransactie opnieuw voordat je corrigeert.", variant: "destructive" }); return; } setAccountId(""); setAccountLabel(""); setVat(String(data.btw_percentage ?? 0)); setReason(""); setRequestId(null); setOpen(true); }}>Rekening wijzigen</Button>
     <Dialog open={open} onOpenChange={v => { if (!correction.isPending) setOpen(v); }}>
       <DialogContent>
         <DialogHeader>
