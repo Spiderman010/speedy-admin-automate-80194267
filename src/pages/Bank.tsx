@@ -2983,6 +2983,7 @@ export default function Bank() {
         transactions={transactions ?? []}
         purchaseInvoices={invoices ?? []}
         salesInvoices={salesInvs ?? []}
+        rejectionIndex={rejectionIndex}
         onBookPrivate={async (id) => {
           await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: undefined });
           toast({ title: "Privé geboekt" });
@@ -2994,6 +2995,10 @@ export default function Bank() {
           refetch();
         }}
         onMatchInvoice={async (id, invoiceId, invoiceType) => {
+          const tx = transactions?.find(t => t.id === id);
+          if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, id, { id: invoiceId, type: invoiceType })) {
+            throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
+          }
           await updateTx.mutateAsync({ id, match_status: "gematcht", matched_invoice_id: invoiceId, match_confidence: 100 });
           if (invoiceType === "inkoop") {
             await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
