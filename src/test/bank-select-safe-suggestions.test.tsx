@@ -38,6 +38,12 @@ const makeTx = (over: Partial<any> = {}) => ({
 });
 
 // ── Module mocks ────────────────────────────────────────────────────────────
+// Bank-matching tests isolate rejection feedback from network and React Query.
+vi.mock("@/hooks/useBankMatchRejections", () => ({
+  useBankMatchRejections: () => ({ data: [], isSuccess: true, isError: false }),
+  useRecordBankMatchRejection: () => ({ mutateAsync: vi.fn(async () => undefined) }),
+}));
+
 vi.mock("@/hooks/useClientContext", () => ({
   useClientContext: () => ({ selectedClientId: "c1", setSelectedClientId: vi.fn() }),
 }));
