@@ -1,0 +1,78 @@
+name: BoekAssist PR readiness notifier
+
+on:
+  workflow_run:
+    workflows: ["Typecheck, tests & build"]
+    types: [completed]
+  issue_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: boekassist-pr-readiness
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    if: >-
+      github.event_name == 'workflow_run' ||
+      github.event_name == 'pull_request_review' ||
+      (github.event_name == 'issue_comment' && (github.event.issue.number == 260 || github.event.issue.number == 261)) ||
+      (github.event_name == 'pull_request' && (github.event.pull_request.number == 260 || github.event.pull_request.number == 261))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check both PRs and notify only when ready
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = [260, 261];
+            const repo = context.repo;
+            const statuses = [];
+            for (const number of prs) {
+              const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
+              if (pr.state !== 'open' || pr.draft || pr.base.ref !== 'main') return core.info('PR ' + number + ' not eligible');
+              const sha = pr.head.sha;
+              const { data: runs } = await github.rest.actions.listWorkflowRunsForRepo({ ...repo, head_sha: sha, per_page: 100 });
+              const requiredRuns = runs.workflow_runs.filter(run => run.name === 'Typecheck, tests & build');
+              if (!requiredRuns.some(run => run.head_sha === sha && run.status === 'completed' && run.conclusion === 'success')) {
+                return core.info('CI not green on exact SHA for PR ' + number);
+              }
+              const allComments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
+              const states = allComments.flatMap(c => [...(c.body || '').matchAll(/<!-- codex-review-state:v1 (\{[^\n]*\}) -->/g)].map(m => {
+                try { return JSON.parse(m[1]).code_review; } catch { return null; }
+              })).filter(Boolean);
+              if (!states.some(s => s.commit_sha === sha && s.status === 'completed' && s.has_unresolved_findings === false && s.has_any_findings === false)) {
+                return core.info('Codex not clean on exact SHA for PR ' + number);
+              }
+              const result = await github.graphql(`query($owner:String!, $name:String!, $number:Int!) {
+                repository(owner:$owner,name:$name) { pullRequest(number:$number) {
+                  reviewThreads(first:100) { pageInfo { hasNextPage } nodes { isResolved } }
+                } }
+              }`, { owner: repo.owner, name: repo.repo, number });
+              const threads = result.repository.pullRequest.reviewThreads;
+              if (threads.pageInfo.hasNextPage || threads.nodes.some(t => !t.isResolved)) {
+                return core.info('Review threads unresolved or unverified for PR ' + number);
+              }
+              if (pr.mergeable !== true || pr.mergeable_state !== 'clean') {
+                return core.info('Mergeability not confirmed for PR ' + number);
+              }
+              statuses.push({ number, sha, url: pr.html_url });
+            }
+            const marker = '<!-- boekassist-pr260-261-ready:' + statuses.map(s => s.sha).join(':') + ' -->';
+            const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: 261, per_page: 100 });
+            if (comments.some(c => (c.body || '').includes(marker))) return core.info('Readiness already reported');
+            const body = marker + '\n@Spiderman010 Beide BoekAssist-PR\'s zijn klaar voor jouw afzonderlijke, expliciete merge-GO (geen automatische merge):\n' +
+              statuses.map(s => '- PR #' + s.number + ': ' + s.url + ' — head `' + s.sha + '`').join('\n') +
+              '\nCI en Codex gecontroleerd op de vermelde SHA\'s; alle reviewthreads gesloten. Controleer voorwaarden opnieuw vlak vóór de merge.';
+            await github.rest.issues.createComment({ ...repo, issue_number: 261, body });
+            core.notice('Both PRs ready; GitHub notification published');
