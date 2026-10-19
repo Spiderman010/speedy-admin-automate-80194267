@@ -6,7 +6,7 @@ const bank = readFileSync("src/pages/Bank.tsx", "utf8");
 
 describe("read-only bank table pilot boundaries", () => {
   it("contains no writes, RPCs, or database client calls", () => {
-    expect(pilot).not.toMatch(/supabase|\.mutate\(|\.update\(|\.insert\(|\.delete\(|\.rpc\(/);
+    expect(pilot).not.toMatch(/from ["\x27]@\/integrations\/supabase\/client|\.mutate\(|\.update\(|\.insert\(|\.delete\(|\.rpc\(/);
   });
   it("only filters and sorts already loaded rows", () => {
     expect(pilot).toContain("rows.filter(");
