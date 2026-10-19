@@ -32,14 +32,17 @@ export function useBankMatchRejections({
     queryFn: async (): Promise<BankMatchRejectionLike[]> => {
       if (!organizationId || sortedClientIds.length === 0) return [];
       const result: BankMatchRejectionLike[] = [];
-      for (let offset = 0; ; offset += PAGE_SIZE) {
-        const { data, error } = await supabase
+      let lastId: string | null = null;
+      for (;;) {
+        let query = supabase
           .from("bank_match_rejections")
-          .select("bank_transaction_id,invoice_type,invoice_id")
+          .select("id,bank_transaction_id,invoice_type,invoice_id")
           .eq("organization_id", organizationId)
           .in("client_id", sortedClientIds)
           .order("id", { ascending: true })
-          .range(offset, offset + PAGE_SIZE - 1);
+          .limit(PAGE_SIZE);
+        if (lastId) query = query.gt("id", lastId);
+        const { data, error } = await query;
         if (error) throw error;
         for (const row of data ?? []) {
           if (row.invoice_type !== "inkoop" && row.invoice_type !== "verkoop") {
@@ -52,6 +55,7 @@ export function useBankMatchRejections({
           });
         }
         if ((data?.length ?? 0) < PAGE_SIZE) return result;
+        lastId = data![data!.length - 1].id;
       }
     },
   });
@@ -90,4 +94,28 @@ export function useRecordBankMatchRejection() {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
+}
+
+/**
+ * Fresh DB verification immediately before a user-initiated financial match.
+ * No cache is trusted: another browser may have rejected the pair since render.
+ * This does not replace atomic database enforcement against concurrent writes.
+ */
+export async function assertBankMatchNotRejected(
+  bankTransactionId: string,
+  invoiceType: "inkoop" | "verkoop",
+  invoiceId: string,
+  clientId: string,
+  organizationId: string,
+): Promise<void> {
+  const { data, error } = await supabase.from("bank_match_rejections")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .eq("client_id", clientId)
+    .eq("bank_transaction_id", bankTransactionId)
+    .eq("invoice_type", invoiceType)
+    .eq("invoice_id", invoiceId)
+    .limit(1);
+  if (error) throw new Error("Afwijzingscontrole niet beschikbaar: koppeling geblokkeerd");
+  if (data?.length) throw new Error("Deze factuurkoppeling is eerder afgewezen");
 }
