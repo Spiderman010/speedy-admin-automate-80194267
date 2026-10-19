@@ -67,6 +67,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
 import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
 import { BankTransactionDetailDock, BankTransactionDetailSheet } from "@/components/bank/BankTransactionDetailSheet";
+import { BankTableReadOnlyPilot } from "@/components/bank/BankTableReadOnlyPilot";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
@@ -227,6 +228,7 @@ export default function Bank() {
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
   const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
   const [detailTx, setDetailTx] = useState<Tables<"bank_transactions"> | null>(null);
+  const [showReadonlyTablePilot, setShowReadonlyTablePilot] = useState(false);
   const [showExportBlockers, setShowExportBlockers] = useState(true);
 
   type ExportPreflightData = {
@@ -2494,6 +2496,7 @@ export default function Bank() {
                 </div>
               );
             })()}
+            <div className="mb-2 space-y-2 px-3"><Button size="sm" variant="outline" aria-pressed={showReadonlyTablePilot} onClick={() => setShowReadonlyTablePilot(v => !v)}>{showReadonlyTablePilot ? "Sluit tabelproef" : "Bekijk read-only tabelproef"}</Button>{showReadonlyTablePilot && <BankTableReadOnlyPilot rows={tableRows} />}</div>
             <Table className="text-[13px] [&_th]:h-8 [&_td]:py-0.5 [&_thead_tr]:bg-muted/40">
               <TableHeader>
                 <TableRow>
