@@ -1505,8 +1505,12 @@ export default function Bank() {
     if (!activeOrganizationId || !rejectionIndex) throw new Error("Afwijzingen nog niet beschikbaar");
     const suggested = matchDetailMap.get(tx.id)?.best;
     const matched = tx.matched_invoice_id;
+    const matchedPurchase = matched && invoices?.some(i => i.id === matched && i.client_id === tx.client_id);
+    const matchedSales = matched && salesInvs?.some(i => i.id === matched && i.client_id === tx.client_id);
+    if (matched && !matchedPurchase && !matchedSales) throw new Error("Gekoppelde factuur niet gevonden");
+    if (matched && matchedPurchase && matchedSales) throw new Error("Factuurtype is niet eenduidig");
     const candidate = matched
-      ? { id: matched, type: suggested?.id === matched ? suggested.type : expectedInvoiceTypeForTx(tx) }
+      ? { id: matched, type: matchedPurchase ? "inkoop" as const : "verkoop" as const }
       : suggested;
     if (!candidate) throw new Error("Geen concrete factuursuggestie om af te wijzen");
     await recordRejection.mutateAsync({
@@ -1516,7 +1520,7 @@ export default function Bank() {
       invoiceType: candidate.type,
       invoiceId: candidate.id,
     });
-  }, [activeOrganizationId, rejectionIndex, matchDetailMap, recordRejection]);
+  }, [activeOrganizationId, rejectionIndex, matchDetailMap, invoices, salesInvs, recordRejection]);
 
   const handleBulkRejectSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
