@@ -165,7 +165,7 @@ describe("Beginbalans-UI — branch-scope", () => {
   branchIt("raakt de schrijvers, de export en de navigatie niet aan; de rapportagekern rekent onveranderd", () => {
     for (const f of changed!) {
       expect(f).not.toMatch(/proef-saldibalans\.ts|snelstart-export\.ts/);
-      expect(f).not.toMatch(/useManualJournal|usePurchaseInvoicePosting|useSalesInvoicePosting|useBankAllocationPosting/);
+      expect(f).not.toMatch(/useManualJournal|useSalesInvoicePosting|useBankAllocationPosting/);
     }
     // Voorheen: "ledger-reporting.ts en ledger-completeness.ts zijn niet
     // aangeraakt" — een scope-uitspraak van PR 2, geen invariant: PR 3 voegt

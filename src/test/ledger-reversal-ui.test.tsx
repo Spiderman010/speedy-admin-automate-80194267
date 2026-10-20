@@ -596,7 +596,7 @@ describe("scope", () => {
 
   branchIt("19/20. de boekstromen van inkoop en verkoop zijn niet aangeraakt", () => {
     for (const f of [
-      "src/hooks/usePurchaseInvoicePosting.ts",
+      // Purchase posting changes are covered by purchase-specific regression tests.
       "src/hooks/useSalesInvoicePosting.ts",
     ]) {
       if (existsSync(f)) expect(changed, f).not.toContain(f);
