@@ -1029,8 +1029,14 @@ export default function Bank() {
       const tx = transactions?.find(t => t.id === id);
       if (!tx) return;
 
-      // If the transaction already carries a matched_invoice_id (set during import),
-      // simply promote the status — do not lose the existing link.
+      // Re-evaluate safety at confirmation time, including persisted import links.
+      // A stale or unsafe link must be reviewed manually, never promoted blindly.
+      const safeCandidate = getSafeMatchCandidate(tx, invoices ?? [], salesInvs ?? [], rejectionIndex);
+      if (tx.matched_invoice_id && (!safeCandidate || safeCandidate.id !== tx.matched_invoice_id)) {
+        setMatchTx(tx);
+        toast({ title: "Handmatige controle vereist", description: "De opgeslagen factuurkoppeling voldoet niet aan de veilige matchcriteria.", variant: "destructive" });
+        return;
+      }
       if (tx.matched_invoice_id) {
         if (isRejectedCandidate(rejectionIndex, tx.id, { id: tx.matched_invoice_id, type: expectedInvoiceTypeForTx(tx) })) {
           throw new Error("Deze factuurkoppeling is eerder afgewezen");
@@ -1052,7 +1058,7 @@ export default function Bank() {
             )
           : [];
       const expectedType = expectedInvoiceTypeForTx(tx);
-      const best = candidates.find(c => c.score > 0 && c.type === expectedType);
+      const best = pickSafeMatchCandidate(tx, candidates);
 
       if (best) {
         await assertBankMatchNotRejected(tx.id, best.type, best.id, tx.client_id, activeOrganizationId!);
