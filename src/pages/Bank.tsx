@@ -62,6 +62,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
 import { hasBankDescription } from "@/lib/bank-statement-parser";
+import { importFingerprintSupported, isImportFingerprintConflict, withImportFingerprint } from "@/hooks/bankImportFingerprint";
 import { BankMatchDialog, rankCandidates, type InvoiceCandidate } from "@/components/BankMatchDialog";
 import { buildRejectionIndex, isRejectedCandidate, withoutRejectedCandidates } from "@/lib/bank-match-rejections";
 import { assertBankMatchNotRejected, useBankMatchRejections, useRecordBankMatchRejection } from "@/hooks/useBankMatchRejections";
@@ -1904,7 +1905,22 @@ export default function Bank() {
   }, [recordSuggestionRejection, updateTx, toast]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
+    // Database idempotency (20261020120000) only once the column exists; before
+    // the migration the import works exactly as it did. An unknown answer stops
+    // the import, like a failed duplicate check.
+    let sendFingerprint = false;
+    try {
+      sendFingerprint = await importFingerprintSupported();
+    } catch (e: any) {
+      toast({
+        title: "Importeren is niet gestart",
+        description: `${e?.message || "Onbekende fout"} Probeer het opnieuw.`,
+        variant: "destructive",
+      });
+      return;
+    }
     let success = 0;
+    let alreadyImported = 0;
     let failed = 0;
     let firstImportError = "";
     let allocationErrors = 0;
@@ -1915,7 +1931,7 @@ export default function Bank() {
       // again" (the retry would then skip it as a duplicate).
       let newTx: Awaited<ReturnType<typeof addTx.mutateAsync>> | undefined;
       try {
-        newTx = await addTx.mutateAsync({
+        newTx = await addTx.mutateAsync(withImportFingerprint({
           client_id: importClientId,
           transaction_date: tx.date,
           amount: tx.amount,
@@ -1932,8 +1948,14 @@ export default function Bank() {
           // A recognition rule may carry its VAT; without one the row stays
           // "controle nodig" in the Inhaalslag instead of posting at 0%.
           ...(tx.btwPercentage != null ? { btw_percentage: tx.btwPercentage } : {}),
-        });
+        }, sendFingerprint ? tx.importFingerprint : null));
       } catch (e: any) {
+        if (isImportFingerprintConflict(e)) {
+          // The database refused a second copy of this exact statement line
+          // (for example a colleague importing the same file at the same time).
+          alreadyImported++;
+          continue;
+        }
         failed++;
         if (!firstImportError) firstImportError = e?.message || "Onbekende fout";
         console.error("Import error:", e);
@@ -1967,23 +1989,29 @@ export default function Bank() {
       }
     }
     await refetchPurchase();
+    const alreadyImportedNote = alreadyImported > 0
+      ? ` ${alreadyImported} ${alreadyImported === 1 ? "regel stond" : "regels stonden"} er intussen al (bijvoorbeeld door een gelijktijdige import) en ${alreadyImported === 1 ? "is" : "zijn"} niet nog eens opgeslagen.`
+      : "";
     const allocationWarning = allocationErrors > 0
       ? `${allocationErrors} ${allocationErrors === 1 ? "regel is" : "regels zijn"} wel opgeslagen, maar de koppeling met de factuur is niet afgerond (${firstAllocationError}). Controleer de afletterdetails en openstaande bedragen; niet opnieuw importeren.`
       : "";
     if (failed > 0) {
       toast({
         title: `${success} van ${txs.length} transacties geïmporteerd`,
-        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.${allocationWarning ? ` ${allocationWarning}` : ""}`,
+        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.${allocationWarning ? ` ${allocationWarning}` : ""}${alreadyImportedNote}`,
         variant: "destructive",
       });
     } else if (allocationErrors > 0) {
       toast({
         title: "Bankafschrift geïmporteerd met waarschuwing",
-        description: `${success} transacties geïmporteerd. ${allocationWarning}`,
+        description: `${success} transacties geïmporteerd. ${allocationWarning}${alreadyImportedNote}`,
         variant: "destructive",
       });
     } else {
-      toast({ title: `${success} van ${txs.length} transacties geïmporteerd` });
+      toast({
+        title: `${success} van ${txs.length} transacties geïmporteerd`,
+        ...(alreadyImportedNote ? { description: alreadyImportedNote.trim() } : {}),
+      });
     }
   }, [addTx, invoices, salesInvs, updatePurchase, upsertSingleAllocationForMatch, refetchPurchase, toast]);
 

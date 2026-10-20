@@ -16,6 +16,7 @@ import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, AlertTriangle,
 import {
   parseBankStatementFull,
   detectDuplicates,
+  importFingerprints,
   type ParsedTransaction,
   type DuplicateInfo,
   type ExistingBankTransactionForDuplicates,
@@ -49,6 +50,8 @@ export interface MatchedTransaction extends ParsedTransaction {
   matchedInvoiceLabel: string | null;
   grootboekrekeningId?: string | null;
   btwPercentage?: number | null;
+  /** Database idempotency key (20261020120000), computed over the whole statement. */
+  importFingerprint?: string | null;
   grootboekText?: string | null;
   templateName?: string | null;
 }
@@ -172,6 +175,16 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
       return;
     }
     if (token !== checkToken.current) return;
+
+    // Over the whole statement, before any selection, so a line's position —
+    // and with it its fingerprint — never depends on what the user ticks.
+    let fingerprints: (string | null)[] = statement.transactions.map(() => null);
+    try {
+      fingerprints = await importFingerprints(statement);
+    } catch {
+      // No Web Crypto: import as before; the duplicate check below still runs.
+    }
+    if (token !== checkToken.current) return;
     setCheckingDuplicates(false);
     setPreviewClientId(forClientId);
 
@@ -181,7 +194,8 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     // Only match against invoices for the selected client
     const clientInvoices = invoices.filter(i => i.client_id === forClientId);
     const matched = autoMatch(statement.transactions, clientInvoices);
-    const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, forClientId);
+    const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, forClientId)
+      .map((t, i) => ({ ...t, importFingerprint: fingerprints[i] ?? null }));
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(statement.transactions, existing);

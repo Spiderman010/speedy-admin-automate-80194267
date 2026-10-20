@@ -99,6 +99,8 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
     const [clientId, rows] = onImport.mock.calls[0];
     expect(clientId).toBe("client-a");
     expect(rows.map((r: { description: string }) => r.description)).toEqual(["Bol.com bestelling 1234"]);
+    // Elke regel draagt de vingerafdruk die over het hele afschrift is berekend.
+    expect(rows[0].importFingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(load).toHaveBeenCalledTimes(2);
   });
 

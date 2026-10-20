@@ -2,12 +2,22 @@
  * Client-side parser for MT940 (SWIFT) and CAMT.053 (XML) bank statements.
  */
 
+export type BankStatementSource = "mt940" | "camt053";
+
 export interface ParsedTransaction {
   date: string; // YYYY-MM-DD
   amount: number;
   description: string;
   counterAccount: string | null;
   reference: string | null;
+  /** Which parser produced this line; reference semantics differ per format. */
+  source?: BankStatementSource;
+  /**
+   * The bank's own reference for this transaction, when the statement carries
+   * one: MT940 the part after "//" in :61:, CAMT.053 <AcctSvcrRef>. Unique per
+   * transaction at the bank and stable across re-exports.
+   */
+  bankReference?: string | null;
   /** CAMT.053 Ustrd (unstructured remittance info) — only set for CAMT.053 sources. */
   ustrd?: string | null;
   /** CAMT.053 AddtlNtryInf (additional entry information) — only set for CAMT.053 sources. */
@@ -155,7 +165,18 @@ function parseMT940Transaction(
   const cntpMatch = description.match(/\/CNTP\/([^/]+)/);
   if (cntpMatch) counterAccount = cntpMatch[1];
 
-  return { date, amount, description: description.trim() || "Geen omschrijving", counterAccount, reference };
+  const tail = reference?.indexOf("//") ?? -1;
+  const bankReference = reference && tail >= 0 ? reference.slice(tail + 2).trim() || null : null;
+
+  return {
+    date,
+    amount,
+    description: description.trim() || "Geen omschrijving",
+    counterAccount,
+    reference,
+    source: "mt940",
+    bankReference,
+  };
 }
 
 // ─── CAMT.053 Parser ────────────────────────────────────────────────
@@ -269,6 +290,7 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
   if (refEl.length && refEl[0].textContent !== "NOTPROVIDED") {
     reference = refEl[0].textContent;
   }
+  const bankReference = getTextNS(entry, ns, "AcctSvcrRef").trim() || null;
 
   return {
     date: dateStr,
@@ -276,6 +298,8 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
     description,
     counterAccount,
     reference,
+    source: "camt053",
+    bankReference,
     ustrd,
     addtlNtryInf,
     counterpartyName,
@@ -316,11 +340,12 @@ export function parseBankStatementFull(content: string): ParsedStatement {
 
 // ─── Duplicate detection ────────────────────────────────────────────
 //
-// There is no database uniqueness on bank_transactions, so this check is the
-// only thing standing between a re-imported statement and a second copy of
-// every transaction (each of which could then be posted again). It must
-// therefore be neither too loose (missing a duplicate) nor too strict
-// (silently deselecting a genuine new transaction).
+// bank_transactions only carries a database guarantee for rows imported with
+// an import fingerprint (20261020120000); this check is what stands between a
+// re-imported statement and a second copy of every older transaction (each of
+// which could then be posted again). It must therefore be neither too loose
+// (missing a duplicate) nor too strict (silently deselecting a genuine new
+// transaction).
 
 /**
  * Bank placeholders that mean "no reference". MT940 uses NONREF in :61: when
@@ -328,33 +353,110 @@ export function parseBankStatementFull(content: string): ParsedStatement {
  * CAMT.053 uses NOTPROVIDED for a missing EndToEndId. They are shared by many
  * unrelated transactions, so they can never identify one.
  */
-const PLACEHOLDER_REFERENCES = new Set(["NONREF", "NOTPROVIDED", "NOT PROVIDED"]);
+const PLACEHOLDER_REFERENCES = new Set(["NONREF", "NOTPROVIDED", "NOT PROVIDED", "NOTPROVIDED."]);
 
 /**
  * The MT940 parser only strips type codes shaped like N544; ING-style codes
- * (NTRF, NDDT, NMSC, …) stay glued to the reference, as in "NTRFNONREF" or
- * "NTRFABC123". The same payment arrives from CAMT.053 as plain "ABC123".
+ * (NTRF, NDDT, NMSC, …) stay glued to the account owner's reference, as in
+ * "NTRFNONREF" or "NTRFABC123". In MT940 that position is the type code by
+ * definition, so it is removed there — and only there. A CAMT.053 EndToEndId
+ * is the payer's own text and is never shortened.
  */
 const SWIFT_TYPE_CODES =
   "BNK|BOE|BRF|CHG|CHK|CLR|CMI|CMN|CMP|CMS|CMT|CMZ|COL|COM|CPN|DCR|DDT|DIV|EQA|EXT|FEX|INT|LBX|LDP|MAR|MAT|MGT|MSC|NWI|ODC|OPT|PCH|POP|PRN|REC|RED|RIG|RTI|SAL|SEC|SLE|STO|STP|SUB|SWP|TAX|TCK|TCM|TRA|TRF|TRN|UWC|VDA|WAR";
-/** Only the official SWIFT transaction type codes, so "NOTA2026-01" stays intact. */
 const MT940_LETTER_TYPE_CODE = new RegExp(`^N(?:${SWIFT_TYPE_CODES})(?=.)`);
 
+/** Where a reference came from. "unknown": a stored row with no format marker. */
+export type ReferenceSource = BankStatementSource | "unknown";
+
 /**
- * The account owner's reference in a comparable form, or null when there is
- * none or only a placeholder. Normalised so MT940 and CAMT.053 agree: the
- * MT940 type code and the "//bank reference" tail are dropped (the bank's own
- * reference is not what CAMT carries as EndToEndId), case and spaces ignored.
+ * Everything that can identify one transaction by reference.
+ *   bank:   the bank's own reference (MT940 "//" tail, CAMT <AcctSvcrRef>).
+ *           Unique per transaction; two different ones prove two transactions.
+ *   owners: the account owner's / payer's reference in comparable form. Two
+ *           candidates only for an "unknown" stored row (as written, and with
+ *           an MT940 type code removed), so historical rows still match.
  */
+export interface ReferenceIds {
+  bank: string | null;
+  owners: string[];
+}
+
+function core(value: string | null | undefined): string {
+  return (value ?? "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function ownerCandidate(value: string): string | null {
+  return value && !PLACEHOLDER_REFERENCES.has(value) ? value : null;
+}
+
+function stripMt940TypeCode(value: string): string {
+  return MT940_LETTER_TYPE_CODE.test(value) ? value.slice(4) : value;
+}
+
+export function referenceIdsFor(input: {
+  reference: string | null | undefined;
+  source?: ReferenceSource;
+  bankReference?: string | null;
+}): ReferenceIds {
+  const source = input.source ?? "unknown";
+  const raw = core(input.reference);
+  const tail = raw.indexOf("//");
+  const ownerPart = tail >= 0 ? raw.slice(0, tail) : raw;
+  const tailRef = tail >= 0 ? raw.slice(tail + 2) : "";
+  const bankCandidate = core(input.bankReference) || (source !== "camt053" ? tailRef : "");
+  const bank = bankCandidate && !PLACEHOLDER_REFERENCES.has(bankCandidate) ? bankCandidate : null;
+
+  const owners = new Set<string>();
+  const add = (v: string | null) => {
+    if (v) owners.add(v);
+  };
+  if (source === "camt053") {
+    add(ownerCandidate(ownerPart));
+  } else if (source === "mt940") {
+    const owner = ownerCandidate(ownerPart);
+    if (owner) add(ownerCandidate(stripMt940TypeCode(owner)));
+  } else {
+    // A stored row without "//" and without CAMT fields: its format is not
+    // recorded. Accept both readings, so a statement imported before this
+    // change is still recognised on re-import.
+    const owner = ownerCandidate(ownerPart);
+    if (owner) {
+      add(owner);
+      add(ownerCandidate(stripMt940TypeCode(owner)));
+    }
+  }
+  return { bank, owners: [...owners] };
+}
+
+/** The MT940 account-owner reference in comparable form (null for none/placeholder). */
 export function identifyingBankReference(reference: string | null | undefined): string | null {
-  let core = (reference ?? "").trim().toUpperCase();
-  const tail = core.indexOf("//");
-  if (tail >= 0) core = core.slice(0, tail);
-  core = core.replace(/\s+/g, "");
-  if (!core || PLACEHOLDER_REFERENCES.has(core)) return null;
-  if (MT940_LETTER_TYPE_CODE.test(core)) core = core.slice(4);
-  if (!core || PLACEHOLDER_REFERENCES.has(core)) return null;
-  return core;
+  return referenceIdsFor({ reference, source: "mt940" }).owners[0] ?? null;
+}
+
+/**
+ * Safety net: a bank reference only identifies a transaction if it is unique.
+ * Should one appear more than once within the same list (a bank that writes a
+ * constant after "//", or historical double imports), it is not used as a key
+ * for those rows — they fall back to the weaker evidence instead of making
+ * different transactions equal.
+ */
+function withoutRepeatedBankReferences(list: ReferenceIds[]): ReferenceIds[] {
+  const counts = new Map<string, number>();
+  for (const ids of list) if (ids.bank) counts.set(ids.bank, (counts.get(ids.bank) ?? 0) + 1);
+  return list.map((ids) => (ids.bank && (counts.get(ids.bank) ?? 0) > 1 ? { ...ids, bank: null } : ids));
+}
+
+function sameReference(a: ReferenceIds, b: ReferenceIds): "bank" | "owner" | null {
+  if (a.bank && b.bank) return a.bank === b.bank ? "bank" : null;
+  return a.owners.some((o) => b.owners.includes(o)) ? "owner" : null;
+}
+
+/** Two different real references prove two different transactions. */
+function differentReferences(a: ReferenceIds, b: ReferenceIds): boolean {
+  if (a.bank && b.bank) return a.bank !== b.bank;
+  if (a.owners.length > 0 && b.owners.length > 0) return !a.owners.some((o) => b.owners.includes(o));
+  return false;
 }
 
 function compositeKey(
@@ -369,16 +471,11 @@ function compositeKey(
 }
 
 /**
- * A reference only proves a duplicate together with the same amount and a
- * date close by. Not the exact date: value date and booking date can differ
- * by a few days. Not any date either: a direct debit can carry the same
- * reference (a policy or contract number) every month.
+ * An account owner's reference only proves a duplicate together with the same
+ * amount and a date close by: value date and booking date can differ by a
+ * weekend, and a direct debit can carry the same contract number every week.
+ * The bank's own reference needs no window: it is unique per transaction.
  */
-function referenceKey(reference: string, amount: number): string {
-  return `${reference}|${amount.toFixed(2)}`;
-}
-
-/** Value date vs booking date: a weekend at most. Below 7, so a weekly debit with a fixed reference is never a duplicate. */
 const REFERENCE_DATE_WINDOW_DAYS = 4;
 
 function daysApart(a: string, b: string): number {
@@ -402,6 +499,17 @@ export interface ExistingBankTransactionForDuplicates {
   description: string | null;
   counter_account: string | null;
   reference: string | null;
+  /** Present on rows imported from CAMT.053; used to read the reference right. */
+  camt_ustrd?: string | null;
+  camt_addtl_ntry_inf?: string | null;
+  camt_counterparty_name?: string | null;
+}
+
+/** A stored row does not record its format; "//" means MT940, CAMT fields mean CAMT.053. */
+export function storedReferenceSource(row: ExistingBankTransactionForDuplicates): ReferenceSource {
+  if ((row.reference ?? "").includes("//")) return "mt940";
+  if (row.camt_ustrd || row.camt_addtl_ntry_inf || row.camt_counterparty_name) return "camt053";
+  return "unknown";
 }
 
 /**
@@ -426,21 +534,20 @@ export function detectDuplicates(
     else map.set(key, [index]);
   };
 
-  const existingRefs = existing.map((ex) => identifyingBankReference(ex.reference));
+  const existingRefs = withoutRepeatedBankReferences(
+    existing.map((ex) => referenceIdsFor({ reference: ex.reference, source: storedReferenceSource(ex) })),
+  );
   existing.forEach((ex, index) => {
-    const ref = existingRefs[index];
-    if (ref) push(byReference, referenceKey(ref, ex.amount), index);
+    const ids = existingRefs[index];
+    if (ids.bank) push(byReference, `B:${ids.bank}`, index);
+    for (const o of ids.owners) push(byReference, `O:${o}`, index);
     push(byComposite, compositeKey(ex.transaction_date, ex.amount, ex.description, ex.counter_account), index);
     const possible = possibleKey(ex.transaction_date, ex.amount, ex.counter_account);
     if (possible) push(byPossible, possible, index);
   });
 
-  const claim = (
-    map: Map<string, number[]>,
-    key: string,
-    allowed: (index: number) => boolean = () => true,
-  ): boolean => {
-    const index = map.get(key)?.find((i) => !consumed[i] && allowed(i));
+  const claimFirst = (candidates: number[], allowed: (index: number) => boolean): boolean => {
+    const index = candidates.find((i) => !consumed[i] && allowed(i));
     if (index === undefined) return false;
     consumed[index] = true;
     return true;
@@ -449,31 +556,84 @@ export function detectDuplicates(
   // Strongest evidence first, across the whole file: a weak match of an
   // earlier row may never take the stored row that a later row matches exactly.
   const result: DuplicateInfo[] = incoming.map(() => ({ isDuplicate: false, reason: null }));
-  const refs = incoming.map((tx) => identifyingBankReference(tx.reference));
-  const compatible = (ref: string | null) => (index: number) =>
-    // Two different real references prove two different transactions,
-    // however alike the rest looks.
-    !ref || !existingRefs[index] || existingRefs[index] === ref;
+  const refs = withoutRepeatedBankReferences(
+    incoming.map((tx) =>
+      referenceIdsFor({ reference: tx.reference, source: tx.source ?? "unknown", bankReference: tx.bankReference }),
+    ),
+  );
+  const compatible = (ids: ReferenceIds) => (index: number) => !differentReferences(ids, existingRefs[index]);
 
   incoming.forEach((tx, i) => {
-    const ref = refs[i];
-    const nearby = (index: number) => daysApart(existing[index].transaction_date, tx.date) <= REFERENCE_DATE_WINDOW_DAYS;
-    if (ref && claim(byReference, referenceKey(ref, tx.amount), nearby)) {
-      result[i] = { isDuplicate: true, reason: "reference" };
-    }
+    const ids = refs[i];
+    const keys = [...(ids.bank ? [`B:${ids.bank}`] : []), ...ids.owners.map((o) => `O:${o}`)];
+    const candidates = [...new Set(keys.flatMap((k) => byReference.get(k) ?? []))].sort((a, b) => a - b);
+    const matched = claimFirst(candidates, (index) => {
+      if (existing[index].amount.toFixed(2) !== tx.amount.toFixed(2)) return false;
+      const how = sameReference(ids, existingRefs[index]);
+      if (how === "bank") return true;
+      return how === "owner" && daysApart(existing[index].transaction_date, tx.date) <= REFERENCE_DATE_WINDOW_DAYS;
+    });
+    if (matched) result[i] = { isDuplicate: true, reason: "reference" };
   });
   incoming.forEach((tx, i) => {
     if (result[i].isDuplicate) return;
-    if (claim(byComposite, compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount), compatible(refs[i]))) {
-      result[i] = { isDuplicate: true, reason: "composite" };
-    }
+    const candidates = byComposite.get(compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount)) ?? [];
+    if (claimFirst(candidates, compatible(refs[i]))) result[i] = { isDuplicate: true, reason: "composite" };
   });
   incoming.forEach((tx, i) => {
     if (result[i].isDuplicate) return;
     const possible = possibleKey(tx.date, tx.amount, tx.counterAccount);
-    if (possible && claim(byPossible, possible, compatible(refs[i]))) {
+    if (possible && claimFirst(byPossible.get(possible) ?? [], compatible(refs[i]))) {
       result[i] = { isDuplicate: true, reason: "possible" };
     }
   });
   return result;
+}
+
+// ─── Import fingerprints (database idempotency, 20261020120000) ─────
+
+async function sha256Hex(text: string): Promise<string> {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * One fingerprint per statement line, aligned with `statement.transactions`.
+ * The database refuses a second row with the same fingerprint for the same
+ * administratie (unique index), also when two people import at the same time.
+ *
+ *   - With the bank's own reference: account + bank reference + date + amount.
+ *     That identifies the bank transaction itself, so the same line in another
+ *     or overlapping statement of the same account is recognised too. The
+ *     date is in it so that a bank writing a constant instead of a unique
+ *     reference can never make next month's payment equal to this one.
+ *   - Without one: a key of the whole statement (account, balances and every
+ *     line) + the line's position. That only recognises the same statement
+ *     again, but can never make two different lines equal — two genuine,
+ *     identical payments always get different fingerprints.
+ */
+export async function importFingerprints(statement: ParsedStatement): Promise<string[]> {
+  const account = core(statement.accountIban);
+  const statementKey = await sha256Hex(
+    JSON.stringify([
+      "v1",
+      account,
+      statement.openingBalance,
+      statement.closingBalance,
+      statement.transactions.map((t) => [t.date, t.amount.toFixed(2), t.description, t.counterAccount, t.reference]),
+    ]),
+  );
+  const ids = withoutRepeatedBankReferences(
+    statement.transactions.map((t) =>
+      referenceIdsFor({ reference: t.reference, source: t.source ?? "unknown", bankReference: t.bankReference }),
+    ),
+  );
+  return Promise.all(
+    statement.transactions.map((t, index) => {
+      return ids[index].bank
+        ? sha256Hex(`v1|bank|${account}|${ids[index].bank}|${t.date}|${t.amount.toFixed(2)}`)
+        : sha256Hex(`v1|stmt|${statementKey}|${index}`);
+    }),
+  );
 }
