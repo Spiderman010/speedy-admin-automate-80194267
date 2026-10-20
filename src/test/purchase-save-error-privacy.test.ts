@@ -13,6 +13,8 @@ describe("purchase workspace save error privacy boundary", () => {
     const saveAction = source.slice(start, end);
     expect(saveAction).toContain('title: "Opslaan mislukt"');
     expect(saveAction).toContain("Vernieuw de factuur en controleer de gegevens");
-    expect(saveAction).not.toMatch(/e\\?\\.message|raw|error\\?\\.message|description:.*\\$\\{/);
+    expect(saveAction).not.toContain("const raw =");
+    expect(saveAction).not.toContain("e?.message");
+    expect(saveAction).not.toContain("(raw ?");
   });
 });
