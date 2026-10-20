@@ -32,7 +32,8 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   clients: { id: string; name: string; ibans?: string[] | null }[];
   invoices: PurchaseInvoice[];
-  onImport: (clientId: string, transactions: MatchedTransaction[]) => Promise<void>;
+  /** Resolves `false` when the import did not start at all: the preview then stays open. */
+  onImport: (clientId: string, transactions: MatchedTransaction[]) => Promise<void | false>;
   /**
    * Loads every stored bank transaction of exactly this client, fresh from the
    * server. Duplicates are checked against this — never against whatever the
@@ -306,7 +307,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
       }
 
       const toImport = parsed.filter((_, i) => selected[i]);
-      await onImport(importClientId, toImport);
+      // Nothing was attempted (e.g. the pre-import check failed): keep the
+      // reviewed preview, so the user can simply try again.
+      if ((await onImport(importClientId, toImport)) === false) return;
       setParsed(null);
       setPreviewClientId(null);
       setDuplicateInfos([]);

@@ -269,8 +269,14 @@ describe("Bank — import met importvingerafdruk", () => {
     importState.supported = vi.fn(async () => {
       throw new Error("JWT expired");
     });
-    await runImport([line(1)]);
+    renderBank();
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await importState.dialogProps.onImport("c1", [line(1)]);
+    });
     expect(importState.addTx).not.toHaveBeenCalled();
     expect(importState.toast.mock.calls.at(-1)[0]).toMatchObject({ title: "Importeren is niet gestart", variant: "destructive" });
+    // Het dialoog hoort dat er niets is geprobeerd, en houdt de preview open.
+    expect(outcome).toBe(false);
   });
 });

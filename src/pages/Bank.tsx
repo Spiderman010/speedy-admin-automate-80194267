@@ -1909,7 +1909,7 @@ export default function Bank() {
     }
   }, [recordSuggestionRejection, updateTx, toast]);
 
-  const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
+  const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]): Promise<void | false> => {
     // Database idempotency (20261020120000) only once the column exists; before
     // the migration the import works exactly as it did. An unknown answer stops
     // the import, like a failed duplicate check.
@@ -1922,7 +1922,7 @@ export default function Bank() {
         description: `${e?.message || "Onbekende fout"} Probeer het opnieuw.`,
         variant: "destructive",
       });
-      return;
+      return false;
     }
     let success = 0;
     let alreadyImported = 0;

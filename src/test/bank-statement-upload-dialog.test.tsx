@@ -104,6 +104,27 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("import niet gestart (onImport geeft false): de preview blijft open en het dialoog sluit niet", async () => {
+    const onOpenChange = vi.fn();
+    const onImport = vi.fn().mockResolvedValue(false);
+    render(
+      <BankStatementUploadDialog
+        open
+        onOpenChange={onOpenChange}
+        clients={[CLIENT]}
+        invoices={[]}
+        onImport={onImport}
+        loadExistingTransactions={vi.fn().mockResolvedValue([])}
+        defaultClientId={CLIENT.id}
+      />,
+    );
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file(STATEMENT)] } });
+    fireEvent.click(await screen.findByRole("button", { name: /2 transacties importeren/ }));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole("button", { name: /2 transacties importeren/ })).toBeEnabled();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
   it("tijdens de controle kan de klant niet worden gewisseld (de preview hoort bij één klant)", async () => {
     let resolve!: (rows: ExistingBankTransactionForDuplicates[]) => void;
     renderDialog(() => new Promise((r) => { resolve = r; }));
