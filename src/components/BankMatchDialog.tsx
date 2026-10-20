@@ -107,9 +107,8 @@ export function rankCandidates(
 
     // Invoice number in description/reference
     if (identity.number) {
-        score += 50;
-        reasons.push("Factuurnr gevonden");
-      }
+      score += 50;
+      reasons.push("Factuurnr gevonden");
     }
 
     // Name in description
