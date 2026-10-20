@@ -185,11 +185,11 @@ type SuggestionDetail = {
 };
 
 /**
- * Alleen lay-out: vanaf 1360px staan de transactiedetails in een vast dok naast
+ * Alleen lay-out: vanaf 1800px staan de transactiedetails in een vast dok naast
  * de banklijst, daaronder in de bestaande Sheet. Beide tonen dezelfde
  * `detailTx` met dezelfde handlers; dit kiest alleen de container.
  */
-const DETAIL_DOCK_QUERY = "(min-width: 1360px)";
+const DETAIL_DOCK_QUERY = "(min-width: 1800px)";
 function useDetailDockLayout(): boolean {
   return useSyncExternalStore(
     (onChange) => {
@@ -2110,8 +2110,8 @@ export default function Bank() {
   return (
     <>
       <h1 className="sr-only">Bankafschriften</h1>
-      {/* Werkruimte: banklijst links, vanaf 1360px het vaste detaildok rechts. */}
-      <div className="min-[1360px]:grid min-[1360px]:grid-cols-[minmax(0,1fr)_380px] min-[1360px]:items-start min-[1360px]:gap-3">
+      {/* Werkruimte: banklijst links, vanaf 1800px het vaste detaildok rechts. */}
+      <div className="min-[1800px]:grid min-[1800px]:grid-cols-[minmax(0,1fr)_380px] min-[1800px]:items-start min-[1800px]:gap-3">
       <div className="min-w-0">
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-card px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         <ClientMultiSelect
@@ -3194,7 +3194,7 @@ export default function Bank() {
         }
       />
 
-      {/* Eén detailinhoud, twee containers: Sheet onder 1360px, dok erboven. */}
+      {/* Eén detailinhoud, twee containers: Sheet onder 1800px, dok erboven. */}
       <BankTransactionDetailSheet open={!!detailTx && !showDetailDock} {...detailProps} />
 
       <BankMatchDialog

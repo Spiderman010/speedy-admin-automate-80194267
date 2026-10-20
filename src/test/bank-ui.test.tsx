@@ -373,13 +373,13 @@ describe("Bank pagina UI", () => {
   });
 });
 
-describe("Bank pagina UI — desktop detaildok (>= 1360px)", () => {
+describe("Bank pagina UI — desktop detaildok (>= 1800px)", () => {
   const originalMatchMedia = window.matchMedia;
 
   beforeEach(() => {
     // Alleen de dok-breakpoint matcht; alle andere media queries blijven false.
     window.matchMedia = ((query: string) => ({
-      matches: query === "(min-width: 1360px)",
+      matches: query === "(min-width: 1800px)",
       media: query,
       onchange: null,
       addListener: () => {},
