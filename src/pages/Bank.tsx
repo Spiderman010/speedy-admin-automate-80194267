@@ -467,36 +467,6 @@ export default function Bank() {
     });
   }, [transactions, invoices, salesInvs, wholeSetReady, rankAllowedCandidates]);
 
-  const [repairingSuggestionId, setRepairingSuggestionId] = useState<string | null>(null);
-  const handleRepairLegacySuggestion = useCallback(async (id: string) => {
-    const entry = legacySuggestionReview.find(row => row.id === id && row.reason === "Geen betrouwbare identiteitsmatch");
-    const tx = transactions?.find(row => row.id === id);
-    if (!entry || !tx?.matched_invoice_id || tx.match_status !== "suggestie" || !activeOrganizationId) return;
-    if ((allocationsByTxId.get(id) ?? []).length > 0) {
-      toast({ title: "Herstel geblokkeerd", description: "Er bestaan afletteringen; controleer deze transactie handmatig.", variant: "destructive" });
-      return;
-    }
-    if (!window.confirm(`Suggestie van ${tx.description || "banktransactie"} verwijderen? De transactie wordt niet gematcht; bestaande boekingen blijven staan.`)) return;
-    setRepairingSuggestionId(id);
-    try {
-      // Atomic compare-and-set avoids overwriting a recently confirmed or changed match.
-      const { data, error } = await supabase.from("bank_transactions")
-        .update({ match_status: "niet_gematcht", matched_invoice_id: null, match_confidence: null })
-        .eq("id", id).eq("organization_id", activeOrganizationId)
-        .eq("client_id", tx.client_id).eq("match_status", "suggestie")
-        .eq("matched_invoice_id", tx.matched_invoice_id)
-        .select("id");
-      if (error) throw error;
-      if (!data?.length) throw new Error("Suggestie inmiddels gewijzigd; ververs de pagina.");
-      await refetch();
-      toast({ title: "Oude suggestie verwijderd", description: "De banktransactie is weer niet gematcht." });
-    } catch (error: any) {
-      toast({ title: "Herstel mislukt", description: error.message, variant: "destructive" });
-    } finally {
-      setRepairingSuggestionId(null);
-    }
-  }, [legacySuggestionReview, transactions, activeOrganizationId, allocationsByTxId, toast, refetch]);
-
   const suggested = suggestionIds.size;
   const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0)
     - (transactions?.filter((t) => t.match_status === "niet_gematcht" && suggestionIds.has(t.id)).length ?? 0);
@@ -531,6 +501,38 @@ export default function Bank() {
     }
     return m;
   }, [allAllocations]);
+
+  const [repairingSuggestionId, setRepairingSuggestionId] = useState<string | null>(null);
+  const handleRepairLegacySuggestion = useCallback(async (id: string) => {
+    const entry = legacySuggestionReview.find(row => row.id === id && row.reason === "Geen betrouwbare identiteitsmatch");
+    const tx = transactions?.find(row => row.id === id);
+    if (!entry || !tx?.matched_invoice_id || tx.match_status !== "suggestie" || !activeOrganizationId) return;
+    if ((allocationsByTxId.get(id) ?? []).length > 0) {
+      toast({ title: "Herstel geblokkeerd", description: "Er bestaan afletteringen; controleer deze transactie handmatig.", variant: "destructive" });
+      return;
+    }
+    if (!window.confirm(`Suggestie van ${tx.description || "banktransactie"} verwijderen? De transactie wordt niet gematcht; bestaande boekingen blijven staan.`)) return;
+    setRepairingSuggestionId(id);
+    try {
+      // Atomic compare-and-set avoids overwriting a recently confirmed or changed match.
+      const { data, error } = await supabase.from("bank_transactions")
+        .update({ match_status: "niet_gematcht", matched_invoice_id: null, match_confidence: null })
+        .eq("id", id).eq("organization_id", activeOrganizationId)
+        .eq("client_id", tx.client_id).eq("match_status", "suggestie")
+        .eq("matched_invoice_id", tx.matched_invoice_id)
+        .select("id");
+      if (error) throw error;
+      if (!data?.length) throw new Error("Suggestie inmiddels gewijzigd; ververs de pagina.");
+      await refetch();
+      toast({ title: "Oude suggestie verwijderd", description: "De banktransactie is weer niet gematcht." });
+    } catch (error: any) {
+      toast({ title: "Herstel mislukt", description: error.message, variant: "destructive" });
+    } finally {
+      setRepairingSuggestionId(null);
+    }
+  }, [legacySuggestionReview, transactions, activeOrganizationId, allocationsByTxId, toast, refetch]);
+
+
 
   const vraagpostByBankTransactionId = useMemo(() => {
     const m = new Map<string, NonNullable<typeof vraagposten>[number]>();
