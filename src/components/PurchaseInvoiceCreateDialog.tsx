@@ -248,7 +248,7 @@ export function PurchaseInvoiceCreateDialog({
                 className="w-1/2"
                 placeholder="of typ leveranciernaam *"
                 value={form.supplier}
-                onChange={(e) => update({ supplier: e.target.value })}
+                onChange={(e) => update({ supplier: e.target.value, leverancier_id: "" })}
               />
             </div>
           </div>
