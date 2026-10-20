@@ -599,7 +599,7 @@ export default function Facturen() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,.jpg,.jpeg,.png,.webp"
+                  accept=".pdf,.jpg,.jpeg,.png,.webp,.xml,.ubl"
                   multiple
                   className="hidden"
                   onChange={handleFileSelect}
