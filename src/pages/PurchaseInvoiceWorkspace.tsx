@@ -38,6 +38,7 @@ import { aggregateInvoiceLines, evaluatePurchaseInvoice } from "@/lib/ledger-cat
 import { getUblWorkspaceLines } from "@/lib/ubl-workspace-prefill";
 import { suggestLedgerAccountFromLegacyText } from "@/lib/legacy-ledger-suggestion";
 import { suggestExistingSupplier } from "@/lib/purchase-supplier-suggestion";
+import { suggestSupplierLedger } from "@/lib/supplier-ledger-suggestion";
 import { deriveHeaderFromLines } from "@/lib/purchase-header-derivation";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import { round2 } from "@/lib/btw-calc";
@@ -181,6 +182,16 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
   const [header, setHeader] = useState<HeaderForm>(() => emptyHeader(invoice ?? null));
   const [lines, setLines] = useState<LineRow[]>([]);
+  const supplierLedgerSuggestion = useMemo(() =>
+    suggestSupplierLedger(
+      header.leverancier_id, invoice?.client_id ?? "", leveranciers ?? [], ledgers ?? [],
+    ),
+    [header.leverancier_id, invoice?.client_id, leveranciers, ledgers],
+  );
+  const linesWithSuggestions = useMemo(() => lines.map((line) => {
+    if (line.grootboekrekening_id || line.suggestedAccount || !supplierLedgerSuggestion) return line;
+    return { ...line, suggestedAccount: supplierLedgerSuggestion };
+  }), [lines, supplierLedgerSuggestion]);
   const supplierSuggestion = useMemo(() => {
     if (!invoice || !leveranciers || header.leverancier_id) return null;
     const ocr = invoice.ocr_data && typeof invoice.ocr_data === "object" &&
@@ -944,7 +955,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
               )}
 
               <PurchaseInvoiceLinesTable
-                lines={lines}
+                lines={linesWithSuggestions}
                 isBtwVrijgesteld={isBtwVrijgesteld}
                 onPatchLine={patchLine}
                 onRemoveLine={removeLine}
