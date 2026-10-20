@@ -11,6 +11,6 @@ describe("purchase invoice batch intake", () => {
     expect(progress).toBeGreaterThan(filter);
     expect(processing).toBeGreaterThan(progress);
     expect(source.slice(progress, processing)).toContain("bestandstype niet ondersteund");
-    expect(source).toContain("PDF, JPG, PNG of WebP");
+    expect(source).toContain("PDF, JPG, PNG, WebP of UBL/XML");
   });
 });
