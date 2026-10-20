@@ -394,7 +394,10 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
 
   // De database boekt alleen een gecontroleerde factuur; de knop volgt die regel
   // zodat een nog te controleren factuur geen onvermijdelijke foutmelding geeft.
-  const isPostableStatus = ["gecontroleerd", "betaald", "geexporteerd"].includes(header.status);
+  // Posting reads the persisted invoice, never an unsaved or stale form status.
+  // The save RPC invalidates purchase_invoice, so approval unlocks posting
+  // after the confirmed server result without requiring a page reload.
+  const isPostableStatus = ["gecontroleerd", "betaald", "geexporteerd"].includes(invoice?.status ?? "");
 
   /**
    * Boekbaarheid, met exact dezelfde beoordeling als de historische
