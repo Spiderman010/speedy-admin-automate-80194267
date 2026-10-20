@@ -37,6 +37,7 @@ import {
 import { aggregateInvoiceLines, evaluatePurchaseInvoice } from "@/lib/ledger-catchup";
 import { getUblWorkspaceLines } from "@/lib/ubl-workspace-prefill";
 import { suggestLedgerAccountFromLegacyText } from "@/lib/legacy-ledger-suggestion";
+import { suggestExistingSupplier } from "@/lib/purchase-supplier-suggestion";
 import { deriveHeaderFromLines } from "@/lib/purchase-header-derivation";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
 import { round2 } from "@/lib/btw-calc";
@@ -176,8 +177,21 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   );
   const isBtwVrijgesteld = !!client?.btw_vrijgesteld;
 
+
+
   const [header, setHeader] = useState<HeaderForm>(() => emptyHeader(invoice ?? null));
   const [lines, setLines] = useState<LineRow[]>([]);
+  const supplierSuggestion = useMemo(() => {
+    if (!invoice || !leveranciers || header.leverancier_id) return null;
+    const ocr = invoice.ocr_data && typeof invoice.ocr_data === "object" &&
+      !Array.isArray(invoice.ocr_data)
+      ? invoice.ocr_data as Record<string, unknown> : {};
+    return suggestExistingSupplier({
+      supplier: header.supplier,
+      supplier_btw_number: invoice.supplier_btw_number,
+      supplier_iban: typeof ocr.supplier_iban === "string" ? ocr.supplier_iban : null,
+    }, leveranciers, invoice.client_id);
+  }, [invoice, leveranciers, header.supplier, header.leverancier_id]);
   /**
    * VOOR WELKE factuur de kop en regels hieronder zijn ingevuld — geen kale
    * boolean. Een boolean kan alleen zeggen "er is ooit geïnitialiseerd" en
@@ -744,6 +758,21 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                         aria-label="Leveranciersnaam"
                       />
                     </div>
+                    {supplierSuggestion && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-1 h-7 text-xs"
+                        onClick={() => patchHeader({
+                          leverancier_id: supplierSuggestion.id,
+                          supplier: supplierSuggestion.naam,
+                        })}
+                      >
+                        <Link2 className="mr-1 h-3 w-3" />
+                        Leverancier voorstellen: {supplierSuggestion.naam} — koppelen
+                      </Button>
+                    )}
                     <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
                       {header.leverancier_id ? (
                         <>
