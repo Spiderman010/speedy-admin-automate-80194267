@@ -50,7 +50,7 @@ type DetailContentProps = Omit<Props, "open" | "transaction"> & {
 
 function StatusBadge({ status }: { status: string }) {
   if (status === "gematcht") return <Badge>Gematcht</Badge>;
-  if (status === "handmatig_geboekt") return <Badge variant="secondary">Handmatig geboekt</Badge>;
+  if (status === "handmatig_geboekt") return <Badge variant="secondary">Handmatig gecodeerd</Badge>;
   if (status === "suggestie") return <Badge variant="secondary">Suggestie</Badge>;
   return <Badge variant="destructive">Open</Badge>;
 }

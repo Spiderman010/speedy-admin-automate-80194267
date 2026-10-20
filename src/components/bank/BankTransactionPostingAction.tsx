@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
+import { BtwKeuzeSelect } from "@/components/bank/BtwKeuzeSelect";
+import { btwKeuzeFromPercentage } from "@/lib/btw-keuze";
 import { useToast } from "@/hooks/use-toast";
 import {
   useBankTransactionPosting,
@@ -25,12 +24,6 @@ export interface BankTransactionPostingActionProps {
   allocationCount: number;
 }
 
-const BTW_OPTIES = [
-  { value: "0", label: "Geen BTW" },
-  { value: "9", label: "9%" },
-  { value: "21", label: "21%" },
-];
-
 export function BankTransactionPostingAction({
   transaction,
   allocationCount,
@@ -40,9 +33,9 @@ export function BankTransactionPostingAction({
     useBankTransactionPosting(transaction.id);
   const postTransaction = usePostBankTransaction();
 
-  const [btw, setBtw] = useState<string>(
-    transaction.btw_percentage != null ? String(transaction.btw_percentage) : "0",
-  );
+  // No silent VAT: without a stored percentage the user must choose one. A
+  // default of "Geen BTW" would post a 21% expense gross, unnoticed.
+  const [btw, setBtw] = useState<string>(() => btwKeuzeFromPercentage(transaction.btw_percentage));
 
   if (posting) {
     return (
@@ -78,8 +71,10 @@ export function BankTransactionPostingAction({
   }
 
   const handlePost = () => {
+    if (btw === "") return;
     postTransaction.mutate(
-      { transactionId: transaction.id, btwPercentage: Number(btw) || null },
+      // "Geen BTW" is stored as an explicit 0, not as an unknown (null).
+      { transactionId: transaction.id, btwPercentage: Number(btw) },
       {
         onSuccess: () => toast({ title: "Geboekt in het grootboek" }),
         onError: (e) =>
@@ -96,22 +91,18 @@ export function BankTransactionPostingAction({
     <div className="space-y-2" data-testid="bank-transaction-posting-action">
       <div className="grid gap-1">
         <Label htmlFor="bank-posting-btw" className="text-xs">BTW op deze regel</Label>
-        <Select value={btw} onValueChange={setBtw}>
-          <SelectTrigger id="bank-posting-btw" className="h-8">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {BTW_OPTIES.map((o) => (
-              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <BtwKeuzeSelect id="bank-posting-btw" className="h-8" value={btw} onValueChange={setBtw} />
       </div>
+      {btw === "" && (
+        <p className="text-xs text-muted-foreground" data-testid="bank-transaction-posting-choose-vat">
+          Kies eerst het BTW-percentage van deze regel.
+        </p>
+      )}
       <Button
         size="sm"
         className="w-full"
         onClick={handlePost}
-        disabled={postTransaction.isPending}
+        disabled={postTransaction.isPending || btw === ""}
       >
         {postTransaction.isPending ? "Bezig met boeken…" : "Boeken in grootboek"}
       </Button>

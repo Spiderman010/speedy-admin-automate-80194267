@@ -31,6 +31,7 @@ import {
   rejectedResults,
   resultsFromError,
   selectableCandidates,
+  applyVatChoiceGate,
   selectionBreakdown,
   submittableIds,
   summariseBulkResults,
@@ -120,7 +121,11 @@ export default function BankInhaalslag() {
   const years = recentYears();
 
   /** `null` = "kon het niet weten" (deploy-venster), nooit "er is niets". */
-  const rows: BankBulkCandidate[] | null = candidates.data ?? null;
+  // Regels zonder gekozen BTW worden niet als "klaar" aangeboden (geen stille 0%).
+  const rows: BankBulkCandidate[] | null = useMemo(
+    () => (candidates.data ? applyVatChoiceGate(candidates.data) : null),
+    [candidates.data],
+  );
   const zichtbaar = useMemo(
     () =>
       filterCandidates(rows ?? [], {

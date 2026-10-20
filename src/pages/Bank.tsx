@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo, useEffect, useRef, useSyncExternalStore, type ComponentProps } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
+import { BtwKeuzeSelect } from "@/components/bank/BtwKeuzeSelect";
+import { btwKeuzeToPercentage } from "@/lib/btw-keuze";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,6 +43,7 @@ import {
   usePaginatedBankTransactions,
   useAddBankTransaction,
   useUpdateBankTransaction,
+  fetchAllBankTransactions,
   isServerFilterableBankStatus,
   BANK_TRANSACTIONS_PAGE_SIZE,
   BANK_STATUS_MATCH_VALUES,
@@ -58,6 +61,7 @@ import { useVraagposten } from "@/hooks/useVraagposten";
 import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BankStatementUploadDialog, type MatchedTransaction } from "@/components/BankStatementUploadDialog";
+import { hasBankDescription } from "@/lib/bank-statement-parser";
 import { BankMatchDialog, rankCandidates, type InvoiceCandidate } from "@/components/BankMatchDialog";
 import { buildRejectionIndex, isRejectedCandidate, withoutRejectedCandidates } from "@/lib/bank-match-rejections";
 import { assertBankMatchNotRejected, useBankMatchRejections, useRecordBankMatchRejection } from "@/hooks/useBankMatchRejections";
@@ -90,7 +94,7 @@ const MATCH_STATUS_NL: Record<string, string> = {
   suggestie: "Suggestie",
   niet_gematcht: "Open",
   gematcht: "Gematcht",
-  handmatig_geboekt: "Handmatig geboekt",
+  handmatig_geboekt: "Handmatig gecodeerd",
 };
 
 type SortField = "date" | "amount" | "description" | "status";
@@ -105,6 +109,13 @@ type BankColDef = {
 
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
+import { useBankLedgerStatus } from "@/hooks/useBankLedgerStatus";
+import {
+  BANK_LEDGER_STATE_LABEL,
+  codedNotPostedMessage,
+  expectsLedgerPosting,
+  resolveBankLedgerState,
+} from "@/lib/bank-ledger-status";
 
 const isOpenTransactionStatus = (matchStatus: string) =>
   matchStatus === "niet_gematcht" || matchStatus === "suggestie";
@@ -224,6 +235,8 @@ export default function Bank() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkLedger, setBulkLedger] = useState("");
   const [bulkLedgerId, setBulkLedgerId] = useState("");
+  // Bulk coding: VAT is a required, explicit choice ("" = not chosen).
+  const [bulkBtw, setBulkBtw] = useState("");
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
   const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
   const [detailTx, setDetailTx] = useState<Tables<"bank_transactions"> | null>(null);
@@ -867,6 +880,9 @@ export default function Bank() {
     ? filteredSorted.slice((page - 1) * BANK_TRANSACTIONS_PAGE_SIZE, page * BANK_TRANSACTIONS_PAGE_SIZE)
     : (pagedData?.transactions ?? []);
   const tableTotal = computedFilterActive ? filteredSorted.length : (pagedData?.total ?? 0);
+  // Whether each visible row is actually in the ledger. match_status alone
+  // cannot say: coding a row on an account does not post it.
+  const { data: ledgerFacts } = useBankLedgerStatus(tableRows.map((t) => t.id), orgEnabled && hasSelection);
   const totalPages = Math.max(1, Math.ceil(tableTotal / BANK_TRANSACTIONS_PAGE_SIZE));
 
   // Page-data readiness is independent of whole-dataset matching readiness:
@@ -1192,20 +1208,29 @@ export default function Bank() {
     }
   }, [recalculateRemainingAfterDeletions, deleteAllocationsForTx, updateTx, refetchPurchase, refetchSales, toast]);
 
-  const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => {
+  const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId: string | undefined, btwPercentage: number) => {
     try {
+      // The imported bank description is the audit source and is never
+      // overwritten; a typed text is only used when the bank gave none.
+      const current = matchTx?.id === transactionId ? matchTx : transactions?.find((t) => t.id === transactionId);
+      const bankHasDescription = !!current && hasBankDescription(current.description);
       await updateTx.mutateAsync({
         id: transactionId,
         match_status: "handmatig_geboekt",
-        description: description || undefined,
+        ...(!bankHasDescription && current && description.trim() ? { description: description.trim() } : {}),
         grootboekrekening_id: grootboekrekeningId || undefined,
+        // Explicit VAT choice; the server treats NULL as 0% so it must never stay unset.
+        btw_percentage: btwPercentage,
+        // A manual coding replaces any open invoice suggestion.
+        matched_invoice_id: null,
+        match_confidence: null,
       });
-      toast({ title: "Transactie geboekt", description: `Grootboek: ${ledgerAccount}` });
+      toast(codedNotPostedMessage(ledgerAccount));
       closeMatchDialog();
     } catch (e: any) {
       toast({ title: "Fout bij boeken", description: e.message, variant: "destructive" });
     }
-  }, [updateTx, closeMatchDialog, toast]);
+  }, [updateTx, closeMatchDialog, toast, transactions, matchTx]);
 
   const handleMaakVraagpost = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
@@ -1250,7 +1275,8 @@ export default function Bank() {
   }, [createVraagpost, updateTx, grootboekrekeningen, toast]);
 
   const handleBulkBook = useCallback(async () => {
-    if (selectedIds.size === 0 || !bulkLedger) return;
+    const btwPercentage = btwKeuzeToPercentage(bulkBtw);
+    if (selectedIds.size === 0 || !bulkLedger || btwPercentage == null) return;
 
     const ids = Array.from(selectedIds);
     let success = 0;
@@ -1274,6 +1300,7 @@ export default function Bank() {
           id,
           match_status: "handmatig_geboekt",
           grootboekrekening_id: bulkLedgerId || undefined,
+          btw_percentage: btwPercentage,
           matched_invoice_id: null,
           match_confidence: null,
         });
@@ -1294,17 +1321,22 @@ export default function Bank() {
     setSelectedIds(new Set());
     setBulkLedger("");
     setBulkLedgerId("");
+    setBulkBtw("");
     await refetch();
     await refetchPurchase();
     await refetchSales();
 
     if (success > 0) {
-      toast({ title: `${success} transactie(s) geboekt naar ${bulkLedger}` });
+      // Coding only records the account; the rows are not in the ledger yet.
+      toast({
+        title: `${success} transactie(s) gecodeerd op ${bulkLedger}`,
+        description: codedNotPostedMessage(bulkLedger).description,
+      });
     }
     if (errors.length > 0) {
-      toast({ title: "Fout bij boeken", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
+      toast({ title: "Fout bij coderen", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
     }
-  }, [selectedIds, bulkLedger, bulkLedgerId, transactions, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, bulkBtw, transactions, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
 
   const handleBulkUnlink = useCallback(async () => {
     if (selectedIds.size === 0) return;
@@ -1873,6 +1905,8 @@ export default function Bank() {
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]) => {
     let success = 0;
+    let failed = 0;
+    let firstImportError = "";
     let allocationErrors = 0;
     let firstAllocationError = "";
     for (const tx of txs) {
@@ -1922,11 +1956,19 @@ export default function Bank() {
 
         success++;
       } catch (e: any) {
+        failed++;
+        if (!firstImportError) firstImportError = e?.message || "Onbekende fout";
         console.error("Import error:", e);
       }
     }
     await refetchPurchase();
-    if (allocationErrors > 0) {
+    if (failed > 0) {
+      toast({
+        title: `${success} van ${txs.length} transacties geïmporteerd`,
+        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.`,
+        variant: "destructive",
+      });
+    } else if (allocationErrors > 0) {
       toast({
         title: "Bankafschrift geïmporteerd met waarschuwing",
         description: `${success} transacties geïmporteerd. ${allocationErrors} afletteringen konden niet worden bijgewerkt. Controleer openstaande bedragen.`,
@@ -2162,7 +2204,7 @@ export default function Bank() {
         </CardContent></Card>
         <Card className="rounded-none border-0 shadow-none"><CardContent className="flex items-center gap-3 px-3 py-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted"><Download className="h-4 w-4 text-muted-foreground" /></span>
-          <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? (transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0) : "–"}</p><p className="text-xs text-muted-foreground">Handmatig geboekt</p></div>
+          <div><p className="font-display text-lg font-bold leading-tight tabular-nums">{wholeSetReady ? (transactions?.filter(t => t.match_status === "handmatig_geboekt").length ?? 0) : "–"}</p><p className="text-xs text-muted-foreground">Handmatig gecodeerd</p></div>
         </CardContent></Card>
         <Card className="rounded-none border-0 shadow-none"><CardContent className="flex items-center gap-3 px-3 py-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-destructive/10"><HelpCircle className="h-4 w-4 text-destructive" /></span>
@@ -2634,10 +2676,24 @@ export default function Bank() {
                             : "destructive"
                           }>
                             {t.match_status === "gematcht" ? "Gematcht"
-                             : t.match_status === "handmatig_geboekt" ? "Handmatig geboekt"
+                             : t.match_status === "handmatig_geboekt" ? "Handmatig gecodeerd"
                              : isSuggestion ? "Suggestie"
                              : "Open"}
                           </Badge>
+                          {expectsLedgerPosting(t.match_status) && (() => {
+                            const ledgerState = resolveBankLedgerState(t.id, ledgerFacts ?? null);
+                            const tone =
+                              ledgerState === "geboekt"
+                                ? "border-emerald-500/60 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"
+                                : ledgerState === "onbekend"
+                                  ? "text-muted-foreground"
+                                  : "border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200";
+                            return (
+                              <Badge variant="outline" className={`text-xs w-fit ${tone}`} data-testid="bank-ledger-state" data-ledger-state={ledgerState}>
+                                {BANK_LEDGER_STATE_LABEL[ledgerState]}
+                              </Badge>
+                            );
+                          })()}
                           {t.match_status === "handmatig_geboekt" && !t.grootboekrekening_id && (
                             <Badge variant="outline" className="text-xs w-fit border-amber-500/60 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
                               Blokkeert export
@@ -2944,6 +3000,9 @@ export default function Bank() {
           <div className="w-64">
             <GrootboekCombobox value={bulkLedger} onValueChange={setBulkLedger} onIdChange={setBulkLedgerId} />
           </div>
+          <div className="w-36">
+            <BtwKeuzeSelect id="bulk-book-btw" value={bulkBtw} onValueChange={setBulkBtw} />
+          </div>
           {(() => {
             const repairCount = Array.from(selectedIds).filter(id => {
               const tx = transactions?.find(t => t.id === id);
@@ -2956,8 +3015,8 @@ export default function Bank() {
               </Button>
             ) : null;
           })()}
-          <Button size="sm" onClick={handleBulkBook} disabled={!bulkLedger}>
-            Boek geselecteerde transacties
+          <Button size="sm" onClick={handleBulkBook} disabled={!bulkLedger || bulkBtw === ""} data-testid="bulk-book-button">
+            Codeer geselecteerde transacties
           </Button>
           <Button
             size="sm"
@@ -2973,7 +3032,7 @@ export default function Bank() {
             <Unlink className="mr-1 h-4 w-4" />
             Ontkoppel geselecteerde
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => { setSelectedIds(new Set()); setBulkLedger(""); setBulkLedgerId(""); }}>
+          <Button size="sm" variant="ghost" onClick={() => { setSelectedIds(new Set()); setBulkLedger(""); setBulkLedgerId(""); setBulkBtw(""); }}>
             Annuleren
           </Button>
         </div>
@@ -3009,13 +3068,27 @@ export default function Bank() {
         salesInvoices={salesInvs ?? []}
         rejectionIndex={rejectionIndex}
         onBookPrivate={async (id) => {
-          await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: undefined });
-          toast({ title: "Privé geboekt" });
+          try {
+            // A private withdrawal carries no deductible VAT: explicit 0, never NULL.
+            await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: undefined, btw_percentage: 0, matched_invoice_id: null, match_confidence: null });
+          } catch (e: any) {
+            toast({ title: "Markeren als privé is niet gelukt", description: e?.message, variant: "destructive" });
+            throw e;
+          }
+          toast({
+            title: "Gemarkeerd als privé",
+            description: "Nog niet in het grootboek: kies eerst een grootboekrekening en boek de regel daarna.",
+          });
           refetch();
         }}
-        onBookLedger={async (id, ledgerText, ledgerId) => {
-          await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: ledgerId || undefined });
-          toast({ title: `Geboekt: ${ledgerText}` });
+        onBookLedger={async (id, ledgerText, ledgerId, btwPercentage) => {
+          try {
+            await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: ledgerId || undefined, btw_percentage: btwPercentage, matched_invoice_id: null, match_confidence: null });
+          } catch (e: any) {
+            toast({ title: "Coderen is niet gelukt", description: e?.message, variant: "destructive" });
+            throw e;
+          }
+          toast(codedNotPostedMessage(ledgerText));
           refetch();
         }}
         onMatchInvoice={async (id, invoiceId, invoiceType) => {
@@ -3054,7 +3127,9 @@ export default function Bank() {
         clients={clients ?? []}
         invoices={invoices ?? []}
         onImport={handleImport}
-        existingTransactions={transactions ?? []}
+        loadExistingTransactions={(importClientId) =>
+          fetchAllBankTransactions({ organizationId: activeOrganizationId ?? undefined, clientId: importClientId })
+        }
         bookingTemplates={bookingTemplates ?? []}
         defaultClientId={singleClientId}
       />

@@ -13,13 +13,18 @@ import {
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, AlertTriangle, Copy } from "lucide-react";
-import { parseBankStatementFull, detectDuplicates, type ParsedTransaction, type DuplicateInfo } from "@/lib/bank-statement-parser";
+import {
+  parseBankStatementFull,
+  detectDuplicates,
+  type ParsedTransaction,
+  type DuplicateInfo,
+  type ExistingBankTransactionForDuplicates,
+} from "@/lib/bank-statement-parser";
 import { applyBookingTemplatesToTransactions } from "@/lib/booking-template-utils";
 import type { Tables } from "@/integrations/supabase/types";
 import type { BookingTemplate } from "@/hooks/useBookingTemplates";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
-type BankTransaction = Tables<"bank_transactions">;
 
 interface Props {
   open: boolean;
@@ -27,7 +32,12 @@ interface Props {
   clients: { id: string; name: string; ibans?: string[] | null }[];
   invoices: PurchaseInvoice[];
   onImport: (clientId: string, transactions: MatchedTransaction[]) => Promise<void>;
-  existingTransactions?: BankTransaction[];
+  /**
+   * Loads every stored bank transaction of exactly this client, fresh from the
+   * server. Duplicates are checked against this — never against whatever the
+   * bank page happens to have loaded for its own client filter.
+   */
+  loadExistingTransactions: (clientId: string) => Promise<ExistingBankTransactionForDuplicates[]>;
   bookingTemplates?: BookingTemplate[];
   defaultClientId?: string;
 }
@@ -101,7 +111,10 @@ function invoiceLabel(inv: PurchaseInvoice) {
   return `${inv.supplier} - ${inv.invoice_number || "?"}${amt}`;
 }
 
-export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, onImport, existingTransactions, bookingTemplates = [], defaultClientId }: Props) {
+export const DUPLICATE_CHECK_FAILED_MESSAGE =
+  "De bestaande banktransacties van deze klant konden niet worden geladen. Importeren is geblokkeerd, zodat er geen dubbele transacties ontstaan. Probeer het opnieuw.";
+
+export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, onImport, loadExistingTransactions, bookingTemplates = [], defaultClientId }: Props) {
   const [clientId, setClientId] = useState(defaultClientId ?? "");
 
   // Sync clientId whenever the dialog (re-)opens with a preselected client
@@ -114,42 +127,54 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   const [openingBalance, setOpeningBalance] = useState<number | null>(null);
   const [closingBalance, setClosingBalance] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Ignores a duplicate check that finishes after the user started over.
+  const checkToken = useRef(0);
 
   // IBAN mismatch warning state
   const [ibanWarning, setIbanWarning] = useState<{ fileIban: string; clientName: string } | null>(null);
   const [pendingFileText, setPendingFileText] = useState<string | null>(null);
 
-  const processFile = useCallback((text: string) => {
+  const processFile = useCallback(async (text: string) => {
     const statement = parseBankStatementFull(text);
     if (!statement.transactions.length) {
       setError("Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
       return;
     }
+    if (!clientId) return;
+
+    // Fail closed: without the client's stored transactions there is no
+    // duplicate check, so nothing may be offered for import.
+    const token = ++checkToken.current;
+    setCheckingDuplicates(true);
+    let existing: ExistingBankTransactionForDuplicates[];
+    try {
+      existing = await loadExistingTransactions(clientId);
+    } catch {
+      if (token === checkToken.current) {
+        setCheckingDuplicates(false);
+        setError(DUPLICATE_CHECK_FAILED_MESSAGE);
+      }
+      return;
+    }
+    if (token !== checkToken.current) return;
+    setCheckingDuplicates(false);
 
     setOpeningBalance(statement.openingBalance);
     setClosingBalance(statement.closingBalance);
 
     // Only match against invoices for the selected client
-    const clientInvoices = clientId ? invoices.filter(i => i.client_id === clientId) : invoices;
+    const clientInvoices = invoices.filter(i => i.client_id === clientId);
     const matched = autoMatch(statement.transactions, clientInvoices);
     const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, clientId);
     setParsed(withTemplates);
 
-    const dupInfos = detectDuplicates(
-      statement.transactions,
-      (existingTransactions ?? []).map(t => ({
-        transaction_date: t.transaction_date,
-        amount: t.amount,
-        description: t.description,
-        counter_account: t.counter_account,
-        reference: t.reference,
-      }))
-    );
+    const dupInfos = detectDuplicates(statement.transactions, existing);
     setDuplicateInfos(dupInfos);
     setSelected(dupInfos.map(d => !d.isDuplicate));
-  }, [invoices, existingTransactions, clientId, bookingTemplates]);
+  }, [invoices, loadExistingTransactions, clientId, bookingTemplates]);
 
   const handleFile = useCallback(async (file: File) => {
     setError(null);
@@ -170,11 +195,11 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         }
       }
 
-      processFile(text);
+      await processFile(text);
     } catch (e: any) {
       setError(`Fout bij verwerken: ${e.message}`);
     }
-  }, [invoices, existingTransactions, clientId, clients, processFile]);
+  }, [clientId, clients, processFile]);
 
   const updateMatch = (index: number, invoiceId: string | null) => {
     if (!parsed) return;
@@ -210,17 +235,45 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
 
   const handleImport = async () => {
     if (!clientId || !parsed) return;
-    const toImport = parsed.filter((_, i) => selected[i]);
-    if (!toImport.length) return;
+    if (!parsed.some((_, i) => selected[i])) return;
     setImporting(true);
-    await onImport(clientId, toImport);
-    setImporting(false);
-    setParsed(null);
-    setDuplicateInfos([]);
-    setSelected([]);
-    setOpeningBalance(null);
-    setClosingBalance(null);
-    onOpenChange(false);
+    setError(null);
+    try {
+      // Check again right before writing: a colleague may have imported the
+      // same statement since the preview. Rows the user deliberately selected
+      // despite a duplicate warning stay their choice; rows that only became
+      // duplicates now are never written unseen.
+      let fresh: ExistingBankTransactionForDuplicates[];
+      try {
+        fresh = await loadExistingTransactions(clientId);
+      } catch {
+        setError(DUPLICATE_CHECK_FAILED_MESSAGE);
+        return;
+      }
+      const recheck = detectDuplicates(parsed, fresh);
+      const newlyDuplicate = recheck
+        .map((d, i) => (selected[i] && d.isDuplicate && !duplicateInfos[i]?.isDuplicate ? i : -1))
+        .filter((i) => i >= 0);
+      if (newlyDuplicate.length > 0) {
+        setDuplicateInfos(recheck);
+        setSelected((prev) => prev.map((s, i) => (newlyDuplicate.includes(i) ? false : s)));
+        setError(
+          `${newlyDuplicate.length} ${newlyDuplicate.length === 1 ? "transactie is" : "transacties zijn"} intussen al geïmporteerd en niet meer geselecteerd. Controleer de selectie en importeer opnieuw.`,
+        );
+        return;
+      }
+
+      const toImport = parsed.filter((_, i) => selected[i]);
+      await onImport(clientId, toImport);
+      setParsed(null);
+      setDuplicateInfos([]);
+      setSelected([]);
+      setOpeningBalance(null);
+      setClosingBalance(null);
+      onOpenChange(false);
+    } finally {
+      setImporting(false);
+    }
   };
 
   const selectedCount = selected.filter(Boolean).length;
@@ -241,6 +294,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     <>
     <Dialog open={open} onOpenChange={(o) => {
       if (!o) {
+        checkToken.current++;
+        setCheckingDuplicates(false);
+        setError(null);
         setParsed(null);
         setDuplicateInfos([]);
         setSelected([]);
@@ -268,7 +324,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
 
             <div
               className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 transition-colors border-border"
-              style={{ opacity: clientId ? 1 : 0.5, pointerEvents: clientId ? "auto" : "none" }}
+              style={{ opacity: clientId && !checkingDuplicates ? 1 : 0.5, pointerEvents: clientId && !checkingDuplicates ? "auto" : "none" }}
               onDragOver={e => e.preventDefault()}
               onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) handleFile(file); }}
             >
@@ -277,19 +333,30 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
               <p className="mt-1 text-sm text-muted-foreground">Of klik om een bestand te selecteren</p>
               <input ref={fileRef} type="file" accept=".sta,.mt940,.940,.txt,.xml,.csv" className="hidden"
                 onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ""; }} />
-              <Button className="mt-4" onClick={() => fileRef.current?.click()} disabled={!clientId}>
+              <Button className="mt-4" onClick={() => fileRef.current?.click()} disabled={!clientId || checkingDuplicates}>
                 <FileText className="mr-2 h-4 w-4" />Bestand selecteren
               </Button>
             </div>
 
+            {checkingDuplicates && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+                <Loader2 className="h-4 w-4 animate-spin" />Bestaande transacties van deze klant controleren op duplicaten…
+              </div>
+            )}
+
             {error && (
-              <div className="flex items-center gap-2 text-destructive text-sm">
+              <div className="flex items-center gap-2 text-destructive text-sm" role="alert">
                 <AlertCircle className="h-4 w-4" />{error}
               </div>
             )}
           </div>
         ) : (
           <div className="space-y-4">
+            {error && (
+              <div className="flex items-center gap-2 text-destructive text-sm" role="alert">
+                <AlertCircle className="h-4 w-4" />{error}
+              </div>
+            )}
             {/* Balance display */}
             {(openingBalance !== null || closingBalance !== null) && (
               <div className="flex flex-wrap items-center gap-4 rounded-lg border p-3 bg-muted/30">
@@ -415,7 +482,8 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
 
         {parsed && (
           <DialogFooter>
-            <Button variant="outline" onClick={() => {
+            <Button variant="outline" disabled={importing} onClick={() => {
+              setError(null);
               setParsed(null);
               setDuplicateInfos([]);
               setSelected([]);
@@ -450,7 +518,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
             Annuleren
           </Button>
           <Button onClick={() => {
-            if (pendingFileText) processFile(pendingFileText);
+            if (pendingFileText) void processFile(pendingFileText);
             setIbanWarning(null);
             setPendingFileText(null);
           }}>

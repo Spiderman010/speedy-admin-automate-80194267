@@ -153,6 +153,7 @@ vi.mock("@/components/BankMatchDialog", () => ({
   rankCandidates: (tx: any) => (tx.__candidate === null ? [] : []),
 }));
 
+vi.mock("@/hooks/useBankLedgerStatus", () => ({ useBankLedgerStatus: () => ({ data: undefined }) }));
 vi.mock("@/components/BankStatementUploadDialog", () => ({
   BankStatementUploadDialog: () => null,
 }));

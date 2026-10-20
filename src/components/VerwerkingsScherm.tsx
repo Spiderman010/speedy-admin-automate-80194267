@@ -9,6 +9,8 @@ import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
 import { isRejectedCandidate } from "@/lib/bank-match-rejections";
+import { BtwKeuzeSelect } from "@/components/bank/BtwKeuzeSelect";
+import { btwKeuzeFromPercentage, btwKeuzeToPercentage } from "@/lib/btw-keuze";
 
 type BankTransaction = Tables<"bank_transactions">;
 type PurchaseInvoice = Tables<"purchase_invoices">;
@@ -26,7 +28,7 @@ interface Props {
   /** Undefined while rejection data is unavailable: invoice matches fail closed. */
   rejectionIndex?: ReadonlySet<string>;
   onBookPrivate: (transactionId: string) => Promise<void>;
-  onBookLedger: (transactionId: string, ledgerText: string, ledgerId: string) => Promise<void>;
+  onBookLedger: (transactionId: string, ledgerText: string, ledgerId: string, btwPercentage: number) => Promise<void>;
   onMatchInvoice: (transactionId: string, invoiceId: string, invoiceType: "inkoop" | "verkoop") => Promise<void>;
   onSkip: (transactionId: string) => void;
 }
@@ -53,6 +55,9 @@ export function VerwerkingsScherm({
   const [mode, setMode] = useState<"main" | "grootboek" | "factuur">("main");
   const [ledgerText, setLedgerText] = useState("");
   const [ledgerId, setLedgerId] = useState("");
+  // "" = not chosen yet; prefilled from the current transaction when entering
+  // ledger mode and reset whenever we move to another transaction.
+  const [ledgerBtw, setLedgerBtw] = useState("");
   const [loading, setLoading] = useState(false);
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
 
@@ -72,6 +77,7 @@ export function VerwerkingsScherm({
     setMode("main");
     setLedgerText("");
     setLedgerId("");
+    setLedgerBtw("");
     if (currentIndex < total - 1) {
       setCurrentIndex(i => i + 1);
     }
@@ -79,23 +85,42 @@ export function VerwerkingsScherm({
 
   const goPrev = () => {
     setMode("main");
+    setLedgerBtw("");
     if (currentIndex > 0) setCurrentIndex(i => i - 1);
   };
 
+  const openLedgerMode = () => {
+    setLedgerBtw(btwKeuzeFromPercentage(current?.btw_percentage));
+    setMode("grootboek");
+  };
+
+  // Only move on when the coding was saved; on a refusal the parent shows the
+  // reason and the user stays on this transaction.
   const handlePrivate = async () => {
     if (!current) return;
     setLoading(true);
-    await onBookPrivate(current.id);
-    setLoading(false);
-    goNext();
+    try {
+      await onBookPrivate(current.id);
+      goNext();
+    } catch {
+      /* reported by the parent */
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLedger = async () => {
-    if (!current || !ledgerText) return;
+    const btwPercentage = btwKeuzeToPercentage(ledgerBtw);
+    if (!current || !ledgerText || btwPercentage == null) return;
     setLoading(true);
-    await onBookLedger(current.id, ledgerText, ledgerId);
-    setLoading(false);
-    goNext();
+    try {
+      await onBookLedger(current.id, ledgerText, ledgerId, btwPercentage);
+      goNext();
+    } catch {
+      /* reported by the parent */
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSkip = () => {
@@ -193,7 +218,7 @@ export function VerwerkingsScherm({
               <Button
                 variant="outline"
                 className="h-14 flex-col gap-1 border-blue-200 hover:bg-blue-50 hover:border-blue-400"
-                onClick={() => setMode("grootboek")}
+                onClick={openLedgerMode}
               >
                 <Briefcase className="h-5 w-5 text-blue-500" />
                 <span className="text-xs">Grootboek</span>
@@ -225,12 +250,21 @@ export function VerwerkingsScherm({
                 onValueChange={setLedgerText}
                 onIdChange={setLedgerId}
               />
+              <div className="space-y-1">
+                <label htmlFor="verwerking-ledger-btw" className="text-sm font-medium">BTW *</label>
+                <BtwKeuzeSelect id="verwerking-ledger-btw" value={ledgerBtw} onValueChange={setLedgerBtw} />
+              </div>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setMode("main")} className="flex-1">
                   Terug
                 </Button>
-                <Button onClick={handleLedger} disabled={!ledgerText || loading} className="flex-1">
-                  Boeken
+                <Button
+                  onClick={handleLedger}
+                  disabled={!ledgerText || ledgerBtw === "" || loading}
+                  className="flex-1"
+                  data-testid="verwerking-ledger-submit"
+                >
+                  Coderen
                 </Button>
               </div>
             </div>

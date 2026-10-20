@@ -1420,6 +1420,24 @@ src/test/bank-release-hold-history-migration.test.ts      contract: hold = PR 1 
 - **Rollback:** fix → PR 2 → PR 1, elk afzonderlijk, met BoekAssist dicht. Die van de fix is één opdracht (bewaking, de hold van PR 1, en pas daarna de hulpfunctie weg); die van PR 2 weigert zolang de fix er staat (plak haar in zijn geheel in één uitvoering); na elke stap een alleen-lezen controle (uitvoerplan §8). Na een volledige rollback is opnieuw toepassen een eigen plan (`uitvoering.sql` weigert dan).
 - **Buiten deze PR:** geen app, geen productie-SQL; de migratiebestanden van PR 1 en PR 2 zijn onveranderd. `types.ts` wordt na de uitrol (PR 3) opnieuw gegenereerd; de hulpfunctie kan daarin verschijnen, maar is voor niemand uitvoerbaar.
 
+### Dagelijkse bankverwerking — eerlijk en veilig (alleen app, geen migratie)
+
+```
+src/lib/bank-statement-parser.ts             duplicaatcontrole: placeholders, referentie+bedrag, één-op-één
+src/components/BankStatementUploadDialog.tsx controle tegen exact de importklant, fail-closed, hercontrole vóór schrijven
+src/lib/bank-ledger-status.ts                pure grootboekstatus per bankregel
+src/hooks/useBankLedgerStatus.ts             markers voor de zichtbare regels (bank_transaction_postings, bank_allocation_postings)
+src/lib/bank-bulk-posting.ts                 applyVatChoiceGate: geen stille 0% BTW in de inhaalslag
+```
+
+**Status: werkt na merge** — gebruikt uitsluitend tabellen en RPC's die al in productie (en in `types.ts`) staan. Geen productie-SQL, geen typesynchronisatie.
+
+- **Import:** `bank_transactions` heeft geen database-uniciteit; de duplicaatcontrole is de enige rem op een tweede kopie (en tweede boeking). Zij keek naar de klanten van het paginafilter in plaats van de importklant (en naar een lege lijst tijdens laden/fout), telde `NONREF`/`NOTPROVIDED` als referentie (elke volgende NONREF-regel werd als duplicaat uitgevinkt) en liet één opgeslagen regel meerdere gelijke nieuwe regels "verklaren". Nu: verse, server-side lijst van exact de importklant, fail-closed; referentie telt alleen samen met het bedrag; één-op-één; twee verschillende échte referenties zijn nooit duplicaat; vlak vóór het wegschrijven opnieuw gecontroleerd. Mislukte regels worden gemeld in plaats van alleen gelogd. Gelijktijdige imports blijven theoretisch mogelijk zolang er geen database-uniciteit is (vervolg: eigen migratie, apart GO).
+- **Gecodeerd ≠ geboekt:** handmatig coderen (matchdialoog, snelverwerking, bulkbalk) zet alleen rekening en status; de journaalpost volgt via "Boeken in grootboek" of de inhaalslag. Meldingen zeiden "geboekt"; nu "Gecodeerd … nog niet in het grootboek", label "Handmatig gecodeerd", en elke verwerkte regel in de lijst toont "In grootboek / Deels / Nog niet / onbekend" uit de boekingsmarkers (onbekend bij laden of fout, nooit "geboekt").
+- **Bankomschrijving blijft:** handmatig coderen overschreef `description` met de toelichting; nu alleen nog wanneer de bank geen omschrijving gaf. Open factuursuggesties worden bij handmatig coderen opgeruimd.
+- **Geen stille BTW:** de server boekt een ontbrekend percentage als 0%. Coderen vraagt nu expliciet BTW (privé = 0), "Boeken in grootboek" vereist een keuze, en de inhaalslag biedt een regel zonder keuze niet aan ("controle nodig"; ook "Geen BTW" is een keuze). Dit raakt alleen regels die vóór deze wijziging zijn gecodeerd. Vervolg: dezelfde regel server-side in `bank_bulk_posting_candidates` (migratie, apart GO).
+- **Niet in deze PR:** Bankcorrecties v1.1 (#260 e.v.) — de correctie-RPC staat niet in productie.
+
 ---
 
 ## Emergency rule

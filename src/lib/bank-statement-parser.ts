@@ -275,6 +275,19 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
   };
 }
 
+// ─── Bank description ───────────────────────────────────────────────
+/** What the parsers store when a statement line carries no text at all. */
+export const NO_BANK_DESCRIPTION = "Geen omschrijving";
+
+/**
+ * Whether the imported bank text says anything. Only then is it the audit
+ * source that must never be overwritten by a typed note.
+ */
+export function hasBankDescription(description: string | null | undefined): boolean {
+  const trimmed = (description ?? "").trim();
+  return trimmed.length > 0 && trimmed !== NO_BANK_DESCRIPTION;
+}
+
 // ─── Auto-detect format ─────────────────────────────────────────────
 // Backward-compatible: returns ParsedTransaction[] only
 export function parseBankStatement(content: string): ParsedTransaction[] {
@@ -295,6 +308,29 @@ export function parseBankStatementFull(content: string): ParsedStatement {
 }
 
 // ─── Duplicate detection ────────────────────────────────────────────
+//
+// There is no database uniqueness on bank_transactions, so this check is the
+// only thing standing between a re-imported statement and a second copy of
+// every transaction (each of which could then be posted again). It must
+// therefore be neither too loose (missing a duplicate) nor too strict
+// (silently deselecting a genuine new transaction).
+
+/**
+ * Bank placeholders that mean "no reference". MT940 uses NONREF in :61: when
+ * the account owner gave no reference (standard at Rabobank, ING, ABN AMRO);
+ * CAMT.053 uses NOTPROVIDED for a missing EndToEndId. They are shared by many
+ * unrelated transactions, so they can never identify one.
+ */
+const PLACEHOLDER_REFERENCES = new Set(["NONREF", "NOTPROVIDED", "NOT PROVIDED"]);
+
+/** A trimmed reference that can identify a transaction, or null for none/placeholder. */
+export function identifyingBankReference(reference: string | null | undefined): string | null {
+  const trimmed = (reference ?? "").trim();
+  if (!trimmed) return null;
+  if (PLACEHOLDER_REFERENCES.has(trimmed.toUpperCase())) return null;
+  return trimmed;
+}
+
 function compositeKey(
   date: string,
   amount: number,
@@ -306,37 +342,71 @@ function compositeKey(
   return `${date}|${amount.toFixed(2)}|${normDesc}|${normAcct}`;
 }
 
+/**
+ * A reference only proves a duplicate together with the same amount. The date
+ * is deliberately not part of it: the same transaction can carry its value
+ * date in MT940 and its booking date in CAMT.053.
+ */
+function referenceKey(reference: string, amount: number): string {
+  return `${reference}|${amount.toFixed(2)}`;
+}
+
+export interface ExistingBankTransactionForDuplicates {
+  transaction_date: string;
+  amount: number;
+  description: string | null;
+  counter_account: string | null;
+  reference: string | null;
+}
+
+/**
+ * Marks each incoming transaction that is already stored.
+ *
+ * Matching is one-to-one: every stored transaction can explain at most one
+ * incoming transaction. Two identical payments on the same day (two parking
+ * tickets) are both genuine; when only one of them was imported before, the
+ * second one stays selected instead of being dropped as a "duplicate".
+ */
 export function detectDuplicates(
   incoming: ParsedTransaction[],
-  existing: {
-    transaction_date: string;
-    amount: number;
-    description: string | null;
-    counter_account: string | null;
-    reference: string | null;
-  }[]
+  existing: ExistingBankTransactionForDuplicates[]
 ): DuplicateInfo[] {
-  // Build sets from existing transactions
-  const existingRefs = new Set<string>();
-  const existingComposites = new Set<string>();
+  const consumed = new Array<boolean>(existing.length).fill(false);
+  const byReference = new Map<string, number[]>();
+  const byComposite = new Map<string, number[]>();
+  const push = (map: Map<string, number[]>, key: string, index: number) => {
+    const list = map.get(key);
+    if (list) list.push(index);
+    else map.set(key, [index]);
+  };
 
-  for (const ex of existing) {
-    if (ex.reference && ex.reference.trim()) {
-      existingRefs.add(ex.reference.trim());
-    }
-    existingComposites.add(
-      compositeKey(ex.transaction_date, ex.amount, ex.description, ex.counter_account)
-    );
-  }
+  const existingRefs = existing.map((ex) => identifyingBankReference(ex.reference));
+  existing.forEach((ex, index) => {
+    const ref = existingRefs[index];
+    if (ref) push(byReference, referenceKey(ref, ex.amount), index);
+    push(byComposite, compositeKey(ex.transaction_date, ex.amount, ex.description, ex.counter_account), index);
+  });
+
+  const claim = (
+    map: Map<string, number[]>,
+    key: string,
+    allowed: (index: number) => boolean = () => true,
+  ): boolean => {
+    const index = map.get(key)?.find((i) => !consumed[i] && allowed(i));
+    if (index === undefined) return false;
+    consumed[index] = true;
+    return true;
+  };
 
   return incoming.map((tx) => {
-    // Check reference first
-    if (tx.reference && tx.reference.trim() && existingRefs.has(tx.reference.trim())) {
+    const ref = identifyingBankReference(tx.reference);
+    if (ref && claim(byReference, referenceKey(ref, tx.amount))) {
       return { isDuplicate: true, reason: "reference" as const };
     }
-    // Fallback: composite key
-    const key = compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount);
-    if (existingComposites.has(key)) {
+    // Two different real references prove two different transactions, however
+    // alike the rest looks; only fall back to the composite key otherwise.
+    const compatible = (index: number) => !ref || !existingRefs[index] || existingRefs[index] === ref;
+    if (claim(byComposite, compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount), compatible)) {
       return { isDuplicate: true, reason: "composite" as const };
     }
     return { isDuplicate: false, reason: null };
