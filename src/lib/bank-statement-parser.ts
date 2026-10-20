@@ -628,23 +628,52 @@ export function detectDuplicates(
   const refs = incomingReferenceIds(incoming, existing, storedReferenceIds(existing));
   const compatible = (ids: ReferenceIds) => (index: number) => !differentReferences(ids, existingRefs[index]);
 
+  // 1. The bank's own reference: unique per transaction, so no date window.
   incoming.forEach((tx, i) => {
     const ids = refs[i];
-    const keys = [...(ids.bank ? [`B:${ids.bank}`] : []), ...ids.owners.map((o) => `O:${o}`)];
-    const candidates = [...new Set(keys.flatMap((k) => byReference.get(k) ?? []))].sort((a, b) => a - b);
-    const matched = claimFirst(candidates, (index) => {
-      if (existing[index].amount.toFixed(2) !== tx.amount.toFixed(2)) return false;
-      const how = sameReference(ids, existingRefs[index]);
-      if (how === "bank") return true;
-      return how === "owner" && daysApart(existing[index].transaction_date, tx.date) <= REFERENCE_DATE_WINDOW_DAYS;
-    });
+    if (!ids.bank) return;
+    const matched = claimFirst(byReference.get(`B:${ids.bank}`) ?? [], (index) =>
+      existing[index].amount.toFixed(2) === tx.amount.toFixed(2) && sameReference(ids, existingRefs[index]) === "bank",
+    );
     if (matched) result[i] = { isDuplicate: true, reason: "reference" };
+  });
+  // 2. Exact copies (date, amount, description, counter account) before the
+  //    approximate owner-reference match: otherwise a newer, genuine row with
+  //    the same owner reference could take the stored row that a later exact
+  //    copy in the same file belongs to.
+  //    Within those, a copy that also carries the same owner reference first.
+  incoming.forEach((tx, i) => {
+    if (result[i].isDuplicate) return;
+    const candidates = byComposite.get(compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount)) ?? [];
+    if (claimFirst(candidates, (index) => sameReference(refs[i], existingRefs[index]) === "owner")) {
+      result[i] = { isDuplicate: true, reason: "reference" };
+    }
   });
   incoming.forEach((tx, i) => {
     if (result[i].isDuplicate) return;
     const candidates = byComposite.get(compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount)) ?? [];
     if (claimFirst(candidates, compatible(refs[i]))) result[i] = { isDuplicate: true, reason: "composite" };
   });
+  // 3. The account owner's reference: same amount, within the date window.
+  //    Closest dates first across the whole file, so the nearest pair wins.
+  const ownerPairs: { i: number; index: number; days: number }[] = [];
+  incoming.forEach((tx, i) => {
+    if (result[i].isDuplicate) return;
+    const ids = refs[i];
+    const candidates = new Set(ids.owners.flatMap((o) => byReference.get(`O:${o}`) ?? []));
+    for (const index of candidates) {
+      if (consumed[index] || existing[index].amount.toFixed(2) !== tx.amount.toFixed(2)) continue;
+      if (sameReference(ids, existingRefs[index]) !== "owner") continue;
+      const days = daysApart(existing[index].transaction_date, tx.date);
+      if (days <= REFERENCE_DATE_WINDOW_DAYS) ownerPairs.push({ i, index, days });
+    }
+  });
+  ownerPairs.sort((a, b) => a.days - b.days || a.i - b.i || a.index - b.index);
+  for (const { i, index } of ownerPairs) {
+    if (result[i].isDuplicate || consumed[index]) continue;
+    consumed[index] = true;
+    result[i] = { isDuplicate: true, reason: "reference" };
+  }
   incoming.forEach((tx, i) => {
     if (result[i].isDuplicate) return;
     const possible = possibleKey(tx.date, tx.amount, tx.counterAccount);

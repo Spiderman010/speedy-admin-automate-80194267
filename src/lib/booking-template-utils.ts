@@ -155,3 +155,22 @@ export function applyBookingTemplatesToTransactions<T extends BookingTemplateTra
     return tx;
   });
 }
+
+/**
+ * What "Regels toepassen" writes to an existing bank row. The VAT always comes
+ * from the rule: without one it is written as null, so a percentage left from
+ * an earlier coding can never make the row "ready" for posting — the row stays
+ * "controle nodig" in the Inhaalslag instead.
+ */
+export function bookingTemplateLedgerUpdate(
+  template: Pick<BookingTemplate, "btw_percentage">,
+  ledgerId: string,
+) {
+  return {
+    match_status: "handmatig_geboekt" as const,
+    grootboekrekening_id: ledgerId,
+    btw_percentage: template.btw_percentage ?? null,
+    matched_invoice_id: null,
+    match_confidence: null,
+  };
+}

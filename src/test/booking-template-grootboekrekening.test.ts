@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyBookingTemplatesToTransactions,
+  bookingTemplateLedgerUpdate,
   getBookingTemplateLedgerLabel,
   resolveBookingTemplateLedger,
   toBookingTemplateFormState,
@@ -93,6 +94,19 @@ describe("booking template grootboekrekening flow", () => {
     expect(met21.btwPercentage).toBe(21);
     const [zonder] = applyBookingTemplatesToTransactions([tx], [{ ...bookingTemplate, btw_percentage: null }], "client-1");
     expect(zonder.btwPercentage).toBeNull();
+  });
+
+  it("'Regels toepassen' op een bestaande regel: BTW komt altijd uit de regel, zonder BTW expliciet null (geen oud percentage)", () => {
+    expect(bookingTemplateLedgerUpdate({ btw_percentage: 9 }, "gb-1")).toEqual({
+      match_status: "handmatig_geboekt",
+      grootboekrekening_id: "gb-1",
+      btw_percentage: 9,
+      matched_invoice_id: null,
+      match_confidence: null,
+    });
+    const zonder = bookingTemplateLedgerUpdate({ btw_percentage: null }, "gb-1");
+    expect(zonder).toHaveProperty("btw_percentage", null);
+    expect(bookingTemplateLedgerUpdate({ btw_percentage: 0 }, "gb-1").btw_percentage).toBe(0);
   });
 
   it("applies booking templates to bank import using grootboekrekening_id", () => {

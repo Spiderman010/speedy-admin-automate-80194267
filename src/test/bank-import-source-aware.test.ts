@@ -295,3 +295,34 @@ describe("Codex-ronde op 427204f: de CAMT-bankreferentie wordt bewaard", () => {
     expect(referenceIdsFor({ reference: stored.reference, source: "camt053", bankReference: stored.bank_reference }).bank).toBeNull();
   });
 });
+
+describe("Codex-ronde op 3ba4389: exacte kopie gaat vóór een benaderde referentiematch", () => {
+  const opgeslagen: ExistingBankTransactionForDuplicates = {
+    transaction_date: "2026-10-02", amount: -45, description: "Incasso polis oktober", counter_account: null, reference: "POLIS-77",
+    import_source: "camt053",
+  };
+  const nieuw: ParsedTransaction = { date: "2026-10-04", amount: -45, description: "Incasso polis nabetaling", counterAccount: null, reference: "POLIS-77", source: "camt053" };
+  const kopie: ParsedTransaction = { date: "2026-10-02", amount: -45, description: "Incasso polis oktober", counterAccount: null, reference: "POLIS-77", source: "camt053" };
+
+  it("de nieuwe regel staat eerder in het bestand: alleen de exacte kopie is duplicaat", () => {
+    expect(detectDuplicates([nieuw, kopie], [opgeslagen])).toEqual([
+      { isDuplicate: false, reason: null },
+      { isDuplicate: true, reason: "reference" },
+    ]);
+  });
+
+  it("twee exacte kopieën, één met en één zonder de referentie: die mét de referentie is het duplicaat, ongeacht de volgorde", () => {
+    const zonderRef: ParsedTransaction = { ...kopie, reference: null };
+    expect(detectDuplicates([zonderRef, kopie], [opgeslagen]).map((d) => d.isDuplicate)).toEqual([false, true]);
+  });
+
+  it("zonder exacte kopie: de referentie binnen het venster herkent hem nog steeds", () => {
+    expect(detectDuplicates([nieuw], [opgeslagen])[0]).toEqual({ isDuplicate: true, reason: "reference" });
+  });
+
+  it("twee kandidaten via dezelfde referentie: de dichtstbijzijnde datum wint, ongeacht de volgorde in het bestand", () => {
+    const later: ParsedTransaction = { ...nieuw, date: "2026-10-05", description: "a" };
+    const dichtbij: ParsedTransaction = { ...nieuw, date: "2026-10-03", description: "b" };
+    expect(detectDuplicates([later, dichtbij], [opgeslagen]).map((d) => d.isDuplicate)).toEqual([false, true]);
+  });
+});
