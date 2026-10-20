@@ -493,14 +493,14 @@ describe("PurchaseInvoiceWorkspace — save/approve flows", () => {
     expect(navigateSpy).not.toHaveBeenCalled();
   });
 
-  it("30. save error toont de bestaande rollback-veilige foutmelding", async () => {
+  it("30. save error toont een veilige foutmelding zonder SQL-details", async () => {
     atomicMutateAsync.mockRejectedValue(new Error("constraint failure"));
     await renderReady();
     fireEvent.click(saveBtn());
     await waitFor(() => {
       expect(toastSpy).toHaveBeenCalledWith({
         title: "Opslaan mislukt",
-        description: "Opslaan mislukt. De bestaande factuur en boekingsregels zijn niet gewijzigd. (constraint failure)",
+        description: "De factuur kon niet worden opgeslagen. Vernieuw de factuur en controleer de gegevens voordat je opnieuw probeert.",
         variant: "destructive",
       });
     });
