@@ -231,6 +231,12 @@ describe("Bank overview source guarantees", () => {
     expect(source).toMatch(/\) : tableError \? \(/);
   });
 
+  it("hercontroleert bestaande koppelingen voordat bevestigen een bankmatch finaliseert", () => {
+    expect(source).toContain("const safeCandidate = getSafeMatchCandidate(tx, invoices ?? [], salesInvs ?? [], rejectionIndex)");
+    expect(source).toContain("tx.matched_invoice_id && (!safeCandidate || safeCandidate.id !== tx.matched_invoice_id)");
+    expect(source).toContain("const best = pickSafeMatchCandidate(tx, candidates)");
+  });
+
   it("gates stats, auto-matching, processing and exports on whole-dataset readiness", () => {
     expect(source).toContain(
       "const wholeSetReady = hasSelection && !wholeSetLoading && !wholeSetError && !!rawTransactions;",
