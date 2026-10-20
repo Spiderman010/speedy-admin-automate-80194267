@@ -176,6 +176,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
     [clients, invoice?.client_id],
   );
   const isBtwVrijgesteld = !!client?.btw_vrijgesteld;
+
+
+
+  const [header, setHeader] = useState<HeaderForm>(() => emptyHeader(invoice ?? null));
+  const [lines, setLines] = useState<LineRow[]>([]);
   const supplierSuggestion = useMemo(() => {
     if (!invoice || !leveranciers || header.leverancier_id) return null;
     const ocr = invoice.ocr_data && typeof invoice.ocr_data === "object" &&
@@ -187,10 +192,6 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
       supplier_iban: typeof ocr.supplier_iban === "string" ? ocr.supplier_iban : null,
     }, leveranciers, invoice.client_id);
   }, [invoice, leveranciers, header.supplier, header.leverancier_id]);
-
-
-  const [header, setHeader] = useState<HeaderForm>(() => emptyHeader(invoice ?? null));
-  const [lines, setLines] = useState<LineRow[]>([]);
   /**
    * VOOR WELKE factuur de kop en regels hieronder zijn ingevuld — geen kale
    * boolean. Een boolean kan alleen zeggen "er is ooit geïnitialiseerd" en
