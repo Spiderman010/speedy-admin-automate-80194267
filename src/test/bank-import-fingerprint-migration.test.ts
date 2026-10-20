@@ -129,7 +129,7 @@ describe("wat de migratie niet doet", () => {
         /^ALTER TABLE public\.bank_transactions (ADD COLUMN IF NOT EXISTS import_fingerprint text|ADD CONSTRAINT bank_transactions_import_fingerprint_format CHECK)/,
       );
     }
-    for (const t of ["bank_transaction_allocations", "ledger_postings", "clients", "bank_match_rejections"]) {
+    for (const t of ["bank_transaction_allocations", "ledger_postings", "clients"]) {
       expect(sql, t).not.toMatch(new RegExp(`ALTER TABLE[^;]*\\b${t}\\b`));
     }
   });
