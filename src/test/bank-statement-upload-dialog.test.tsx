@@ -134,6 +134,49 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
     expect(load).toHaveBeenCalledWith("client-a");
   });
 
+  it("een bestand zonder transacties toont de fout en laat klantkeuze en bestandskeuze weer open", async () => {
+    const empty = file(":20:LEEG\n:25:NL91RABO0123456789\n:62F:C0,00\n");
+    render(
+      <BankStatementUploadDialog
+        open
+        onOpenChange={() => {}}
+        clients={[CLIENT]}
+        invoices={[]}
+        onImport={vi.fn()}
+        loadExistingTransactions={vi.fn().mockResolvedValue([])}
+        defaultClientId={CLIENT.id}
+      />,
+    );
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [empty] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Geen transacties gevonden/);
+    expect(screen.getByRole("combobox")).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Bestand selecteren/ })).toBeEnabled();
+  });
+
+  it("sluiten terwijl het bestand nog wordt gelezen: het oude bestand verschijnt daarna niet alsnog", async () => {
+    let release!: (text: string) => void;
+    const slow = new File([STATEMENT], "afschrift.sta", { type: "text/plain" });
+    Object.defineProperty(slow, "text", { value: () => new Promise<string>((r) => { release = r; }) });
+    const load = vi.fn().mockResolvedValue([]);
+    render(
+      <BankStatementUploadDialog
+        open
+        onOpenChange={() => {}}
+        clients={[CLIENT]}
+        invoices={[]}
+        onImport={vi.fn()}
+        loadExistingTransactions={load}
+        defaultClientId={CLIENT.id}
+      />,
+    );
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [slow] } });
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    release(STATEMENT);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(load).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /transacties importeren/ })).toBeNull();
+  });
+
   it("een bewust aangevinkte duplicaat blijft de keuze van de gebruiker", async () => {
     const load = vi.fn().mockResolvedValue([PARKEREN]);
     const { onImport } = renderDialog(load);

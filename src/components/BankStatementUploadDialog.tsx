@@ -142,17 +142,24 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   const [pendingFileText, setPendingFileText] = useState<string | null>(null);
   const [pendingClientId, setPendingClientId] = useState<string | null>(null);
 
-  const processFile = useCallback(async (text: string, forClientId: string) => {
+  const processFile = useCallback(async (text: string, forClientId: string, startedToken?: number) => {
+    // One token per user action, taken before anything is awaited; closing the
+    // dialog or choosing another file invalidates it.
+    const token = startedToken ?? ++checkToken.current;
+    if (token !== checkToken.current) return;
     const statement = parseBankStatementFull(text);
     if (!statement.transactions.length) {
+      setCheckingDuplicates(false);
       setError("Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
       return;
     }
-    if (!forClientId) return;
+    if (!forClientId) {
+      setCheckingDuplicates(false);
+      return;
+    }
 
     // Fail closed: without the client's stored transactions there is no
     // duplicate check, so nothing may be offered for import.
-    const token = ++checkToken.current;
     setCheckingDuplicates(true);
     let existing: ExistingBankTransactionForDuplicates[];
     try {
@@ -188,9 +195,11 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     // before the file is even read, and everything below uses this value.
     const forClientId = clientId;
     if (!forClientId) return;
+    const token = ++checkToken.current;
     setCheckingDuplicates(true);
     try {
       const text = await file.text();
+      if (token !== checkToken.current) return; // dialog closed or another file chosen
       const statement = parseBankStatementFull(text);
 
       // Check IBAN match
@@ -208,8 +217,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         }
       }
 
-      await processFile(text, forClientId);
+      await processFile(text, forClientId, token);
     } catch (e: any) {
+      if (token !== checkToken.current) return;
       setCheckingDuplicates(false);
       setError(`Fout bij verwerken: ${e.message}`);
     }

@@ -26,7 +26,7 @@ export interface ParsedStatement {
 export interface DuplicateInfo {
   isDuplicate: boolean;
   /**
-   * reference: same real reference, same amount, within a few days.
+   * reference: same real reference, same amount, at most 4 days apart.
    * composite: same date, amount, description and counter account.
    * possible:  same date, amount and counter account, but a different text —
    *            typically an older row whose description was overwritten by a
@@ -378,7 +378,8 @@ function referenceKey(reference: string, amount: number): string {
   return `${reference}|${amount.toFixed(2)}`;
 }
 
-const REFERENCE_DATE_WINDOW_DAYS = 7;
+/** Value date vs booking date: a weekend at most. Below 7, so a weekly debit with a fixed reference is never a duplicate. */
+const REFERENCE_DATE_WINDOW_DAYS = 4;
 
 function daysApart(a: string, b: string): number {
   const ms = Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`));

@@ -161,6 +161,8 @@ describe("detectDuplicates — reviewbevindingen", () => {
     const existing = [stored({ reference: "POLIS123", amount: -12.5, transaction_date: "2026-01-02", description: "Verzekering jan" })];
     const volgendeMaand = [tx({ reference: "POLIS123", amount: -12.5, date: "2026-02-02", description: "Verzekering feb" })];
     expect(detectDuplicates(volgendeMaand, existing)[0].isDuplicate).toBe(false);
+    const volgendeWeek = [tx({ reference: "POLIS123", amount: -12.5, date: "2026-01-09", description: "Verzekering jan" })];
+    expect(detectDuplicates(volgendeWeek, existing)[0].isDuplicate).toBe(false);
     const paarDagenLater = [tx({ reference: "POLIS123", amount: -12.5, date: "2026-01-05", description: "Verzekering jan" })];
     expect(detectDuplicates(paarDagenLater, existing)).toEqual([{ isDuplicate: true, reason: "reference" }]);
   });
