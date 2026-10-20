@@ -45,6 +45,8 @@ vi.mock("@/hooks/useAuth", () => ({
 
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
   useAddPurchaseInvoice: () => ({ mutateAsync, isPending: false }),
+  fetchPurchaseInvoiceDuplicateCandidates: vi.fn(async () => []),
+  computeDuplicateIds: vi.fn(() => new Set<string>()),
 }));
 
 vi.mock("@/hooks/useLeveranciers", () => ({
