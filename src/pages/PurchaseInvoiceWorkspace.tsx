@@ -444,8 +444,10 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   }, [invoice, client, storedLines, posting, lockedThrough]);
 
   // Geblokkeerd én onbekend houden de knop uit: onbekend is geen "klaar".
+  // Without a loaded readiness assessment, posting must remain blocked.
+  // A missing client/config is not evidence that the invoice is bookable.
   const readinessBlocked =
-    !!postingReadiness && (postingReadiness.state === "geblokkeerd" || postingReadiness.state === "onbekend");
+    !postingReadiness || postingReadiness.state === "geblokkeerd" || postingReadiness.state === "onbekend";
 
   // Totals color state
   const totalsState: "green" | "amber" | "red" =
