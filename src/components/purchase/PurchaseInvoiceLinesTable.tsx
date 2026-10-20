@@ -132,6 +132,24 @@ export function PurchaseInvoiceLinesTable({
                       geen rekening. Ze staat hier als verwijzing, en alleen bij
                       precies één ondubbelzinnige treffer is er iets te
                       bevestigen — met één klik, door de gebruiker. */}
+                  {!line.grootboekrekening_id && !line.legacyLabel && line.suggestedAccount && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-1 min-h-9 px-2 text-[11px]"
+                      data-testid="supplier-ledger-confirm"
+                      onClick={() => {
+                        if (!line.suggestedAccount) return;
+                        onPatchLine(idx, {
+                          grootboekrekening_id: line.suggestedAccount.id,
+                          grootboek_label: line.suggestedAccount.label,
+                        });
+                      }}
+                    >
+                      Bevestig leveranciersrekening: {line.suggestedAccount.label}
+                    </Button>
+                  )}
                   {!line.grootboekrekening_id && line.legacyLabel && (
                     <div className="mt-1 space-y-1" data-testid="legacy-account-hint">
                       <p className="text-[11px] text-muted-foreground">
