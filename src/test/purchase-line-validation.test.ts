@@ -89,6 +89,17 @@ describe("purchase line validation", () => {
     )).toMatch(/geldig bedrag/);
   });
 
+  it("rejects missing amounts and invalid VAT without silently treating them as zero", () => {
+    const header = { amount_excl: 0, btw_amount: 0, amount_incl: 0 };
+    const row = { omschrijving: "Consultancy", amount_excl: 0, btw_percentage: 0 };
+    expect(validatePurchaseLines([{ ...row, amount_excl: null as unknown as number }], header)).toMatch(/geldig bedrag/);
+    expect(validatePurchaseLines([{ ...row, amount_excl: undefined as unknown as number }], header)).toMatch(/geldig bedrag/);
+    expect(validatePurchaseLines([{ ...row, btw_percentage: Number.NaN }], header)).toMatch(/BTW-percentage/);
+    expect(validatePurchaseLines([{ ...row, btw_percentage: -1 }], header)).toMatch(/BTW-percentage/);
+    expect(validatePurchaseLines([{ ...row, btw_percentage: 101 }], header)).toMatch(/BTW-percentage/);
+    expect(validatePurchaseLines([row], header)).toBeNull();
+  });
+
   it("scales tolerance with line count", () => {
     expect(lineTolerance(1)).toBe(0.02);
     expect(lineTolerance(5)).toBe(0.05);

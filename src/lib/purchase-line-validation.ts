@@ -88,7 +88,8 @@ export function validatePurchaseLines(
   if (lines.length === 0) return null;
   for (const l of lines) {
     if (!l.omschrijving.trim()) return "Elke regel moet een omschrijving hebben";
-    if (!Number.isFinite(Number(l.amount_excl))) return "Elke regel moet een geldig bedrag excl. hebben";
+    if (l.amount_excl == null || !Number.isFinite(l.amount_excl)) return "Elke regel moet een geldig bedrag excl. hebben";
+    if (l.btw_percentage != null && (!Number.isFinite(l.btw_percentage) || l.btw_percentage < 0 || l.btw_percentage > 100)) return "Elke regel moet een geldig BTW-percentage hebben";
   }
   const totals = computeLineTotals(lines);
   const diffs = computeLineDiffs(lines, header);
