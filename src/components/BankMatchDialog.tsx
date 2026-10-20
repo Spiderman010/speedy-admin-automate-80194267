@@ -14,6 +14,9 @@ import { parseMT940Description } from "@/lib/mt940-description-parser";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { getInvoiceRemainingAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
 import { withoutRejectedCandidates } from "@/lib/bank-match-rejections";
+import { hasBankDescription } from "@/lib/bank-statement-parser";
+import { BtwKeuzeSelect } from "@/components/bank/BtwKeuzeSelect";
+import { btwKeuzeFromPercentage, btwKeuzeToPercentage } from "@/lib/btw-keuze";
 
 type BankTransaction = Tables<"bank_transactions">;
 type PurchaseInvoice = Tables<"purchase_invoices">;
@@ -39,7 +42,7 @@ interface BankMatchDialogProps {
   purchaseInvoices: PurchaseInvoice[];
   salesInvoices: SalesInvoice[];
   onConfirm: (transactionId: string, invoiceId: string, invoiceType: "inkoop" | "verkoop", exactMatch: boolean, isPartialPayment: boolean, remainingAmount: number | null, allocationAmount: number) => void;
-  onManualBook?: (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId?: string) => void;
+  onManualBook?: (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId: string | undefined, btwPercentage: number) => void;
   onRefresh?: () => void;
   /** When set, caps the allocation amount to this value (unallocated remainder on an already-matched tx). */
   maxAllocationAmount?: number;
@@ -197,6 +200,8 @@ export function BankMatchDialog({
   const [ledgerAccount, setLedgerAccount] = useState("");
   const [ledgerAccountId, setLedgerAccountId] = useState("");
   const [manualDesc, setManualDesc] = useState("");
+  // No silent VAT: prefilled from the row, otherwise an explicit choice is required.
+  const [manualBtw, setManualBtw] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [allocationAmountStr, setAllocationAmountStr] = useState("");
   const [candidateFilter, setCandidateFilter] = useState<CandidateFilter>("auto");
@@ -229,6 +234,11 @@ export function BankMatchDialog({
   useEffect(() => {
     setCandidateFilter("auto");
   }, [transaction?.id]);
+  // Prefill the VAT choice from the row each time the dialog opens (the close
+  // reset would otherwise hide a stored percentage on a re-open of the same tx).
+  useEffect(() => {
+    if (open) setManualBtw(btwKeuzeFromPercentage(transaction?.btw_percentage));
+  }, [open, transaction?.id, transaction?.btw_percentage]);
 useEffect(() => {
   if (selectedId && !displayedCandidates.some(c => c.id === selectedId)) {
     setSelectedId("");
@@ -279,8 +289,15 @@ useEffect(() => {
   };
 
   const handleManualBook = () => {
-    if (!transaction || !ledgerAccount || !onManualBook) return;
-    onManualBook(transaction.id, ledgerAccount, manualDesc, ledgerAccountId || undefined);
+    const btwPercentage = btwKeuzeToPercentage(manualBtw);
+    if (!transaction || !ledgerAccount || btwPercentage == null || !onManualBook) return;
+    onManualBook(
+      transaction.id,
+      ledgerAccount,
+      hasBankDescription(transaction.description) ? "" : manualDesc,
+      ledgerAccountId || undefined,
+      btwPercentage,
+    );
     resetAndClose();
   };
 
@@ -295,6 +312,7 @@ useEffect(() => {
     setLedgerAccount("");
     setLedgerAccountId("");
     setManualDesc("");
+    setManualBtw("");
     setAllocationAmountStr("");
     onOpenChange(false);
   };
@@ -365,7 +383,7 @@ useEffect(() => {
           <TabsList className="w-full">
             <TabsTrigger value="factuur" className="flex-1">Koppel aan factuur</TabsTrigger>
             {maxAllocationAmount == null && (
-              <TabsTrigger value="handmatig" className="flex-1">Handmatig boeken</TabsTrigger>
+              <TabsTrigger value="handmatig" className="flex-1">Handmatig coderen</TabsTrigger>
             )}
           </TabsList>
 
@@ -525,9 +543,27 @@ useEffect(() => {
               <p className="text-xs text-muted-foreground mt-1">Bijv. privé, bankkosten, of niet-factuurgerelateerde betaling</p>
             </div>
             <div>
-              <Label>Omschrijving (optioneel)</Label>
-              <Input value={manualDesc} onChange={(e) => setManualDesc(e.target.value)} placeholder="Toelichting..." />
+              <Label htmlFor="manual-book-btw">BTW *</Label>
+              <BtwKeuzeSelect id="manual-book-btw" value={manualBtw} onValueChange={setManualBtw} />
+              <p className="text-xs text-muted-foreground mt-1">Kies bewust “Geen BTW” als er geen BTW op deze regel zit.</p>
             </div>
+            {transaction && hasBankDescription(transaction.description) ? (
+              <div>
+                <Label>Bankomschrijving</Label>
+                <p className="text-sm text-muted-foreground break-words" data-testid="manual-book-bank-description">
+                  {transaction.description}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">De omschrijving van de bank blijft ongewijzigd bewaard.</p>
+              </div>
+            ) : (
+              <div>
+                <Label>Omschrijving (optioneel)</Label>
+                <Input value={manualDesc} onChange={(e) => setManualDesc(e.target.value)} placeholder="De bank gaf geen omschrijving mee…" />
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground" data-testid="manual-book-not-posted-hint">
+              Coderen legt de rekening vast. De regel staat pas in het grootboek na “Boeken in grootboek” in de details of via de inhaalslag.
+            </p>
           </TabsContent>
         </Tabs>
         </div>
@@ -547,8 +583,8 @@ useEffect(() => {
                   }`}
             </Button>
           ) : (
-            <Button disabled={!ledgerAccount} onClick={handleManualBook}>
-              Boeken
+            <Button disabled={!ledgerAccount || manualBtw === ""} onClick={handleManualBook} data-testid="manual-book-submit">
+              Coderen
             </Button>
           )}
         </DialogFooter>

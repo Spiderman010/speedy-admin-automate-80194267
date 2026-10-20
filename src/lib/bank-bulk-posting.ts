@@ -189,6 +189,28 @@ export const WORKFLOW_BADGE_VARIANT: Record<
  * de server juist zegt dat er nog iets aan moet gebeuren — en de weigering zou
  * dan pas ná de bulkactie zichtbaar worden. `blocked` en `posted` evenmin.
  */
+export const VAT_NOT_CHOSEN_REASON =
+  "Het BTW-percentage is nog niet gekozen. Kies het bij het coderen of in de details van de bankregel op de bankpagina.";
+
+/**
+ * Geen stille BTW. De server boekt een ontbrekend BTW-percentage als 0%; een
+ * gecodeerde kostenpost van 21% zou dan zonder BTW-terugvordering in het
+ * grootboek belanden, zonder dat iemand het ziet. Zo'n regel wordt daarom
+ * niet in bulk aangeboden totdat het percentage expliciet is gekozen — ook
+ * "Geen BTW" (0) is een keuze, en elke codeerroute vraagt er nu om.
+ *
+ * Dit is een werkstroomrem, geen boekhoudkundig oordeel: er wordt niets
+ * berekend en niets over de administratie aangenomen, alleen minder
+ * aangeboden. De server blijft de autoriteit over wat wél geboekt mag worden.
+ */
+export function applyVatChoiceGate(rows: readonly BankBulkCandidate[]): BankBulkCandidate[] {
+  return rows.map((row) =>
+    row.workflow_state === "ready" && (row.btw_percentage === null || row.btw_percentage === undefined)
+      ? { ...row, workflow_state: "review_needed" as const, reason: VAT_NOT_CHOSEN_REASON }
+      : row,
+  );
+}
+
 export function isSelectable(row: BankBulkCandidate): boolean {
   return row.workflow_state === "ready";
 }

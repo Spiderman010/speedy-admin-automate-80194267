@@ -71,6 +71,7 @@ import {
   partialErrorForChunk,
   reconcileSelection,
   submittableIds,
+  applyVatChoiceGate,
   type BankBulkCandidate,
   type BankBulkResult,
 } from "@/lib/bank-bulk-posting";
@@ -95,7 +96,7 @@ const rij = (over: Partial<BankBulkCandidate>): BankBulkCandidate => ({
 
 const REGELS: BankBulkCandidate[] = [
   rij({ transaction_id: "tx-ready-1", description: "Kantoorartikelen" }),
-  rij({ transaction_id: "tx-ready-2", amount: -55, btw_percentage: null }),
+  rij({ transaction_id: "tx-ready-2", amount: -55, btw_percentage: 0 }),
   rij({
     transaction_id: "tx-review",
     workflow_state: "review_needed",
@@ -211,6 +212,19 @@ describe("de servertoestand is leidend", () => {
     renderPagina();
     expect(rowOf("tx-blocked")).toHaveAttribute("data-state-label", "blocked");
     expect(within(rowOf("tx-blocked")).getByTestId("inhaalslag-state").textContent?.trim()).not.toBe("");
+  });
+});
+
+describe("geen stille BTW", () => {
+  it("4b. een 'gereed'-regel zonder BTW-keuze wordt 'controle nodig' met reden, is niet selecteerbaar en gaat niet mee", () => {
+    state.data = [...REGELS, rij({ transaction_id: "tx-geen-btw-keuze", amount: -242, btw_percentage: null })];
+    renderPagina();
+    const rij0 = rowOf("tx-geen-btw-keuze");
+    expect(within(rij0).getByTestId("inhaalslag-state")).toHaveTextContent("Controle nodig");
+    expect(within(rij0).getByTestId("inhaalslag-checkbox")).toBeDisabled();
+    expect(submittableIds(applyVatChoiceGate(state.data as BankBulkCandidate[]), ["tx-geen-btw-keuze", "tx-ready-1"])).toEqual(["tx-ready-1"]);
+    fireEvent.click(screen.getByTestId("inhaalslag-selecteer-zichtbaar"));
+    expect(screen.getByTestId("bulkbalk-gereed")).toHaveTextContent("2");
   });
 });
 

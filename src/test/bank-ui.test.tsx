@@ -8,6 +8,7 @@ const state = {
   transactions: [] as any[],
   wholeSetLoading: false,
   wholeSetError: false,
+  ledgerFacts: undefined as any,
 };
 
 const makeRow = (id: string, over: Partial<any> = {}) => ({
@@ -123,6 +124,7 @@ vi.mock("@/components/BankMatchDialog", () => ({
   rankCandidates: () => [],
 }));
 
+vi.mock("@/hooks/useBankLedgerStatus", () => ({ useBankLedgerStatus: () => ({ data: state.ledgerFacts }) }));
 vi.mock("@/components/BankStatementUploadDialog", () => ({
   BankStatementUploadDialog: () => null,
 }));
@@ -253,6 +255,34 @@ describe("Bank pagina UI", () => {
     // Use getAllByText in case descriptions appear in blocker area too
     expect(screen.getAllByText("Huur kantoor uniek beschrijving A").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Simyo factuur uniek beschrijving B").length).toBeGreaterThan(0);
+  });
+
+  it("toont per verwerkte regel of hij werkelijk in het grootboek staat (gecodeerd is niet geboekt)", () => {
+    state.transactions = [
+      makeRow("coded", { description: "Gecodeerd niet geboekt", match_status: "handmatig_geboekt", grootboekrekening_id: "gb-1" }),
+      makeRow("posted", { description: "Gecodeerd en geboekt", match_status: "handmatig_geboekt", grootboekrekening_id: "gb-1" }),
+      makeRow("open", { description: "Nog open", match_status: "niet_gematcht" }),
+    ];
+    state.ledgerFacts = {
+      directPostingGroup: new Map([["posted", "group-1"]]),
+      allocationPostings: new Map(),
+      reversedGroups: new Set(),
+    };
+    renderBank();
+    const rowOf = (text: string) => screen.getAllByText(text).map((el) => el.closest("tr")).find(Boolean) as HTMLElement;
+    expect(within(rowOf("Gecodeerd niet geboekt")).getByTestId("bank-ledger-state")).toHaveTextContent("Nog niet in grootboek");
+    expect(within(rowOf("Gecodeerd en geboekt")).getByTestId("bank-ledger-state")).toHaveTextContent("In grootboek");
+    expect(within(rowOf("Nog open")).queryByTestId("bank-ledger-state")).toBeNull();
+    expect(screen.queryAllByText("Handmatig geboekt")).toHaveLength(0);
+    state.ledgerFacts = undefined;
+  });
+
+  it("zonder boekingsmarkers (laden/fout) is de grootboekstatus onbekend, nooit 'In grootboek'", () => {
+    state.transactions = [makeRow("coded", { description: "Status onbekend", match_status: "handmatig_geboekt", grootboekrekening_id: "gb-1" })];
+    state.ledgerFacts = undefined;
+    renderBank();
+    const row = screen.getAllByText("Status onbekend").map((el) => el.closest("tr")).find(Boolean) as HTMLElement;
+    expect(within(row).getByTestId("bank-ledger-state")).toHaveTextContent("Grootboekstatus onbekend");
   });
 
   it("toont de lege toestand als er geen transacties zijn maar wel een klant", () => {

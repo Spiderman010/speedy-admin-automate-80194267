@@ -23,6 +23,7 @@ import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 import {
+  bookingTemplateLedgerUpdate,
   buildBookingTemplateMutationPayload,
   createEmptyBookingTemplateFormState,
   getBookingTemplateLedgerLabel,
@@ -536,12 +537,7 @@ function HerkenningsregelsTab() {
           // actually updated (returns empty when the row no longer qualifies).
           const { data: updated } = await supabase
             .from("bank_transactions")
-            .update({
-              match_status: "handmatig_geboekt",
-              grootboekrekening_id: ledger.id,
-              matched_invoice_id: null,
-              match_confidence: null,
-            })
+            .update(bookingTemplateLedgerUpdate(rule, ledger.id))
             .eq("id", tx.id)
             .eq("match_status", "niet_gematcht")
             .eq("organization_id", activeOrganizationId)

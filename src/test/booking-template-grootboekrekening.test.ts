@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyBookingTemplatesToTransactions,
+  bookingTemplateLedgerUpdate,
   getBookingTemplateLedgerLabel,
   resolveBookingTemplateLedger,
   toBookingTemplateFormState,
@@ -79,6 +80,33 @@ describe("booking template grootboekrekening flow", () => {
     expect(form.ledger_account_text).toBe("4400 - Kantoorkosten");
     expect(getBookingTemplateLedgerLabel(bookingTemplate, accounts)).toBe("4400 - Kantoorkosten");
     expect(resolveBookingTemplateLedger(bookingTemplate, accounts)?.id).toBe("gb-4400");
+  });
+
+  it("geeft het BTW-percentage van de herkenningsregel mee aan de import (geen stille 0%)", () => {
+    const tx = {
+      description: "Kantoor huur juli",
+      reference: "",
+      counterAccount: "Verhuurder BV",
+      matchConfidence: null,
+      matchStatus: "niet_gematcht" as const,
+    };
+    const [met21] = applyBookingTemplatesToTransactions([tx], [{ ...bookingTemplate, btw_percentage: 21 }], "client-1");
+    expect(met21.btwPercentage).toBe(21);
+    const [zonder] = applyBookingTemplatesToTransactions([tx], [{ ...bookingTemplate, btw_percentage: null }], "client-1");
+    expect(zonder.btwPercentage).toBeNull();
+  });
+
+  it("'Regels toepassen' op een bestaande regel: BTW komt altijd uit de regel, zonder BTW expliciet null (geen oud percentage)", () => {
+    expect(bookingTemplateLedgerUpdate({ btw_percentage: 9 }, "gb-1")).toEqual({
+      match_status: "handmatig_geboekt",
+      grootboekrekening_id: "gb-1",
+      btw_percentage: 9,
+      matched_invoice_id: null,
+      match_confidence: null,
+    });
+    const zonder = bookingTemplateLedgerUpdate({ btw_percentage: null }, "gb-1");
+    expect(zonder).toHaveProperty("btw_percentage", null);
+    expect(bookingTemplateLedgerUpdate({ btw_percentage: 0 }, "gb-1").btw_percentage).toBe(0);
   });
 
   it("applies booking templates to bank import using grootboekrekening_id", () => {

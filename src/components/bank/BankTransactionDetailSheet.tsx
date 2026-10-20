@@ -50,7 +50,7 @@ type DetailContentProps = Omit<Props, "open" | "transaction"> & {
 
 function StatusBadge({ status }: { status: string }) {
   if (status === "gematcht") return <Badge>Gematcht</Badge>;
-  if (status === "handmatig_geboekt") return <Badge variant="secondary">Handmatig geboekt</Badge>;
+  if (status === "handmatig_geboekt") return <Badge variant="secondary">Handmatig gecodeerd</Badge>;
   if (status === "suggestie") return <Badge variant="secondary">Suggestie</Badge>;
   return <Badge variant="destructive">Open</Badge>;
 }
@@ -215,6 +215,9 @@ export function BankTransactionDetailContent({
           {isHandmatig && (
             <div className="pb-2">
               <BankTransactionPostingAction
+                // Fresh form per bank line: the desktop dock stays mounted when
+                // another row is clicked, and a VAT choice must never carry over.
+                key={tx.id}
                 transaction={tx}
                 allocationCount={allocations.length}
               />
