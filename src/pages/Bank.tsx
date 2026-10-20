@@ -448,6 +448,25 @@ export default function Bank() {
     return ids;
   }, [transactions, invoices, salesInvs, rankAllowedCandidates]);
 
+  // Read-only inventory of legacy persisted suggestions. Never clear or alter
+  // existing links from an audit result: an invoice may have changed since then.
+  const legacySuggestionReview = useMemo(() => {
+    if (!transactions || !invoices || !salesInvs || !wholeSetReady) return [];
+    return transactions.flatMap((tx) => {
+      if (tx.match_status !== "suggestie" || !tx.matched_invoice_id) return [];
+      const candidates = rankAllowedCandidates(
+        tx,
+        invoices.filter(i => i.client_id === tx.client_id),
+        salesInvs.filter(i => i.client_id === tx.client_id),
+      );
+      const linked = candidates.find(c => c.id === tx.matched_invoice_id
+        && c.type === expectedInvoiceTypeForTx(tx));
+      if (linked && linked.score > 0) return [];
+      return [{ id: tx.id, description: tx.description || tx.reference || "Banktransactie",
+        reason: linked ? "Geen betrouwbare identiteitsmatch" : "Gekoppelde factuur niet als open kandidaat beschikbaar" }];
+    });
+  }, [transactions, invoices, salesInvs, wholeSetReady, rankAllowedCandidates]);
+
   const suggested = suggestionIds.size;
   const unmatched = (transactions?.filter((t) => t.match_status === "niet_gematcht").length ?? 0)
     - (transactions?.filter((t) => t.match_status === "niet_gematcht" && suggestionIds.has(t.id)).length ?? 0);
@@ -2311,6 +2330,18 @@ export default function Bank() {
 
 
 
+      {legacySuggestionReview.length > 0 && (
+        <div className="mb-3 rounded-md border border-amber-400/60 bg-amber-50/60 p-3 text-sm text-amber-950 dark:bg-amber-950/20 dark:text-amber-100" role="alert" data-testid="bank-legacy-suggestion-audit">
+          <p className="font-medium">{legacySuggestionReview.length} opgeslagen banksuggestie(s) vereisen herbeoordeling</p>
+          <p className="mt-1 text-xs">Read-only controle: geen koppelingen of boekingen gewijzigd. Een ontbrekende factuur kan ook al afgesloten zijn.</p>
+          <ul className="mt-2 list-disc pl-5 text-xs">
+            {legacySuggestionReview.slice(0, 10).map((row) => (
+              <li key={row.id}>{row.description} — {row.reason}</li>
+            ))}
+          </ul>
+          {legacySuggestionReview.length > 10 && <p className="mt-1 text-xs">En {legacySuggestionReview.length - 10} andere transacties.</p>}
+        </div>
+      )}
       {/* Werkoppervlak: tabs, zoeken, filters, exportblokkades en banktabel in één kader. */}
       <div className="overflow-hidden rounded-md border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
       <div className="space-y-2 border-b px-3 py-2">
