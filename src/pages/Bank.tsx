@@ -523,14 +523,14 @@ export default function Bank() {
         .select("id");
       if (error) throw error;
       if (!data?.length) throw new Error("Suggestie inmiddels gewijzigd; ververs de pagina.");
-      await Promise.resolve();
+      await refetchWholeSet();
       toast({ title: "Oude suggestie verwijderd", description: "De banktransactie is weer niet gematcht." });
     } catch (error: any) {
       toast({ title: "Herstel mislukt", description: error.message, variant: "destructive" });
     } finally {
       setRepairingSuggestionId(null);
     }
-  }, [legacySuggestionReview, transactions, activeOrganizationId, allocationsByTxId, toast]);
+  }, [legacySuggestionReview, transactions, activeOrganizationId, allocationsByTxId, toast, refetchWholeSet]);
 
 
 
