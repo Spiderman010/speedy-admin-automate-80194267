@@ -54,6 +54,11 @@ export function usePostPurchaseInvoice() {
     },
     onSuccess: (_postingGroupId, invoiceId) => {
       queryClient.invalidateQueries({ queryKey: ["purchase-invoice-posting", invoiceId] });
+      // All invoice views share the same persisted posting state; refresh them
+      // after the server confirms the immutable ledger write. Never optimistically
+      // mark an invoice as posted before the RPC succeeds.
+      queryClient.invalidateQueries({ queryKey: ["purchase_invoice", invoiceId] });
+      queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
       queryClient.invalidateQueries({ queryKey: ["ledger-postings"] });
     },
   });
