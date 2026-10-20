@@ -35,6 +35,7 @@ import {
   isPartiallyFilledLine,
 } from "@/lib/purchase-line-validation";
 import { aggregateInvoiceLines, evaluatePurchaseInvoice } from "@/lib/ledger-catchup";
+import { getUblWorkspaceLines } from "@/lib/ubl-workspace-prefill";
 import { suggestLedgerAccountFromLegacyText } from "@/lib/legacy-ledger-suggestion";
 import { deriveHeaderFromLines } from "@/lib/purchase-header-derivation";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
@@ -228,6 +229,22 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         };
       });
     } else {
+      // Prefill UBL lines only when their totals reconcile to the invoice.
+      // Ledger account stays empty: the accountant must verify and save.
+      const ublLines = !isBtwVrijgesteld ? getUblWorkspaceLines(invoice.ocr_data, {
+        amount_excl: invoice.amount_excl,
+        btw_amount: invoice.btw_amount,
+        amount_incl: invoice.amount_incl,
+      }) : null;
+      if (ublLines) {
+        nextLines = ublLines.map((line) => ({
+          omschrijving: line.omschrijving,
+          amount_input: formatAmountInput(line.amount_excl),
+          btw_percentage: String(line.btw_percentage ?? 0),
+          grootboekrekening_id: null,
+          grootboek_label: "",
+        }));
+      } else {
       // Derive prefill from header totals — one line only, never a hidden default.
       const prefill = derivePrefillLine({
         amount_excl: parseAmountInput(nextHeader.amount_excl),
@@ -262,6 +279,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         }];
       } else {
         nextLines = [];
+      }
       }
     }
 
