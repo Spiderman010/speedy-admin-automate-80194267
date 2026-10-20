@@ -373,11 +373,11 @@ describe("Bank pagina UI", () => {
   });
 });
 
-describe("Bank pagina UI — desktop detaildok (>= 1800px)", () => {
+describe("Bank pagina UI — brede desktop (>= 1800px) gebruikt ook de detail-Sheet", () => {
   const originalMatchMedia = window.matchMedia;
 
   beforeEach(() => {
-    // Alleen de dok-breakpoint matcht; alle andere media queries blijven false.
+    // Alleen de voormalige dok-breakpoint matcht; alle andere media queries blijven false.
     window.matchMedia = ((query: string) => ({
       matches: query === "(min-width: 1800px)",
       media: query,
@@ -394,16 +394,14 @@ describe("Bank pagina UI — desktop detaildok (>= 1800px)", () => {
     window.matchMedia = originalMatchMedia;
   });
 
-  it("toont de transactiedetails in het vaste dok en opent de detail-Sheet niet", () => {
+  it("toont geen vast dok en opent de transactiedetails in de Sheet", () => {
     state.transactions = [
       makeRow("t1", { description: "Dok detail check", transaction_date: "2026-03-20", amount: -250 }),
     ];
     renderBank();
 
-    // Het dok staat er al vóór een selectie, zonder detailinhoud.
-    const dock = screen.getByTestId("bank-detail-dock");
-    expect(dock).toHaveAccessibleName("Transactiedetails");
-    expect(within(dock).queryByText("Dok detail check")).not.toBeInTheDocument();
+    // Geen vast dok naast de banklijst.
+    expect(screen.queryByTestId("bank-detail-dock")).not.toBeInTheDocument();
 
     // Selecteren via de bestaande rij-interactie.
     const row = screen.getAllByRole("row").find((r) => r.textContent?.includes("Dok detail check"));
@@ -411,15 +409,10 @@ describe("Bank pagina UI — desktop detaildok (>= 1800px)", () => {
     fireEvent.click(row!);
     expect(row).toHaveAttribute("data-state", "selected");
 
-    // De bestaande detailinhoud staat in het dok.
-    expect(within(dock).getByText("Dok detail check")).toBeInTheDocument();
-    expect(within(dock).getByText("20 maart 2026")).toBeInTheDocument();
-    expect(within(dock).getAllByText(/250/).length).toBeGreaterThan(0);
-    expect(within(dock).getByRole("button", { name: /Afletterdetails bekijken/ })).toBeInTheDocument();
-
-    // De detail-Sheet rendert/opent niet op dit desktoppad.
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Close/i })).not.toBeInTheDocument();
-    expect(screen.getAllByText("Transactiedetails")).toHaveLength(1);
+    // De bestaande detailinhoud staat in de Sheet.
+    const sheet = screen.getByRole("dialog");
+    expect(within(sheet).getByText("Transactiedetails")).toBeInTheDocument();
+    expect(within(sheet).getByText("20 maart 2026")).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: /Afletterdetails bekijken/ })).toBeInTheDocument();
   });
 });
