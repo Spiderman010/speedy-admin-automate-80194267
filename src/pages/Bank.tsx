@@ -2156,8 +2156,9 @@ export default function Bank() {
           onChange={handleClientSelectionChange}
         />
         <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto sm:flex-wrap sm:items-center [&>*]:w-full [&>*]:px-2 [&>*]:text-xs sm:[&>*]:w-auto sm:[&>*]:px-3 sm:[&>*]:text-sm">
-          <Button size="sm" variant="outline" disabled={!hasSelection || !wholeSetReady} onClick={() => {
-            const exportCandidates = transactions ?? [];
+          <Button size="sm" variant="outline" disabled={!singleClientId || !wholeSetReady} onClick={() => {
+            if (!singleClientId) { toast({ title: "Kies één administratie voor de SnelStart-export", variant: "destructive" }); return; }
+            const exportCandidates = (transactions ?? []).filter(t => t.client_id === singleClientId);
             if (!exportCandidates.length) { toast({ title: "Geen bankregels om te exporteren", variant: "destructive" }); return; }
             const gb = grootboekrekeningen ?? [];
             const sources = exportCandidates.map(t => resolveBankExportGrootboek(t, gb).source);
@@ -3342,9 +3343,12 @@ export default function Bank() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setExportPreflightOpen(false)}>Annuleren</Button>
             <Button
-              disabled={!exportPreflightData || exportPreflightData.countBlocked > 0}
+              disabled={!exportPreflightData || exportPreflightData.countBlocked > 0 || !singleClientId}
               onClick={() => {
-                if (!exportPreflightData) return;
+                if (!exportPreflightData || !singleClientId || exportPreflightData.exportCandidates.some(t => t.client_id !== singleClientId)) {
+                  toast({ title: "Export geblokkeerd: kies één administratie", variant: "destructive" });
+                  return;
+                }
                 const meta = exportBankTransactionsCSV(
                   exportPreflightData.exportCandidates,
                   grootboekrekeningen ?? [],
