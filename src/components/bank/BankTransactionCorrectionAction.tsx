@@ -10,7 +10,7 @@ import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { useToast } from "@/hooks/use-toast";
 import type { Tables } from "@/integrations/supabase/types";
 import { useBankTransactionPosting } from "@/hooks/useBankTransactionPosting";
-import { useReclassifyBankTransaction } from "@/hooks/useBankTransactionCorrection";
+import { useBankCorrectionAvailable, useReclassifyBankTransaction } from "@/hooks/useBankTransactionCorrection";
 
 export function BankTransactionCorrectionAction({ transaction, allocationCount }: {
   transaction: Tables<"bank_transactions">;
@@ -32,6 +32,9 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
       return data === true;
     },
   });
+  // Only once the correction RPC is proven to exist in this database
+  // (20261018120000 / 20261018150000); before that the button could never succeed.
+  const { data: correctionAvailable } = useBankCorrectionAvailable(canCorrect === true);
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState("");
@@ -44,6 +47,7 @@ export function BankTransactionCorrectionAction({ transaction, allocationCount }
   // Until the marker is known, fail closed. Invoice-linked transactions are excluded in v1.1.
   if (loading || isError || allocationCount > 0) return null;
   if (!posting || transaction.match_status !== "handmatig_geboekt" || canCorrect !== true) return null;
+  if (correctionAvailable !== true) return null;
 
   const submit = async () => {
     if (!accountId || !reason.trim() || reason.trim().length > 500 || correction.isPending || !openedPostingGroupId) return;
