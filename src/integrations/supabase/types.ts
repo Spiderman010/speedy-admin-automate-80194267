@@ -218,6 +218,141 @@ export type Database = {
           },
         ]
       }
+      bank_transaction_posting_events: {
+        Row: {
+          actor_id: string
+          bank_transaction_id: string
+          client_id: string
+          created_at: string
+          created_xact_id: unknown
+          event_type: string
+          expected_posting_group_id: string | null
+          id: string
+          organization_id: string
+          reason: string | null
+          replacement_description: string | null
+          replacement_posting_group_id: string | null
+          request_id: string
+          request_kind: string
+          requested_btw_percentage: number | null
+          requested_description: string | null
+          requested_grootboekrekening_id: string | null
+          reversal_posting_group_id: string | null
+          seq: number
+          superseded_boekjaar: number | null
+          superseded_btw_amount: number | null
+          superseded_btw_percentage: number | null
+          superseded_description: string | null
+          superseded_grootboekrekening_id: string | null
+          superseded_gross_amount: number | null
+          superseded_net_amount: number | null
+          superseded_posted_at: string | null
+          superseded_posted_by: string | null
+          superseded_posting_date: string | null
+          superseded_posting_group_id: string | null
+        }
+        Insert: {
+          actor_id: string
+          bank_transaction_id: string
+          client_id: string
+          created_at?: string
+          created_xact_id: unknown
+          event_type: string
+          expected_posting_group_id?: string | null
+          id?: string
+          organization_id: string
+          reason?: string | null
+          replacement_description?: string | null
+          replacement_posting_group_id?: string | null
+          request_id: string
+          request_kind: string
+          requested_btw_percentage?: number | null
+          requested_description?: string | null
+          requested_grootboekrekening_id?: string | null
+          reversal_posting_group_id?: string | null
+          seq?: never
+          superseded_boekjaar?: number | null
+          superseded_btw_amount?: number | null
+          superseded_btw_percentage?: number | null
+          superseded_description?: string | null
+          superseded_grootboekrekening_id?: string | null
+          superseded_gross_amount?: number | null
+          superseded_net_amount?: number | null
+          superseded_posted_at?: string | null
+          superseded_posted_by?: string | null
+          superseded_posting_date?: string | null
+          superseded_posting_group_id?: string | null
+        }
+        Update: {
+          actor_id?: string
+          bank_transaction_id?: string
+          client_id?: string
+          created_at?: string
+          created_xact_id?: unknown
+          event_type?: string
+          expected_posting_group_id?: string | null
+          id?: string
+          organization_id?: string
+          reason?: string | null
+          replacement_description?: string | null
+          replacement_posting_group_id?: string | null
+          request_id?: string
+          request_kind?: string
+          requested_btw_percentage?: number | null
+          requested_description?: string | null
+          requested_grootboekrekening_id?: string | null
+          reversal_posting_group_id?: string | null
+          seq?: never
+          superseded_boekjaar?: number | null
+          superseded_btw_amount?: number | null
+          superseded_btw_percentage?: number | null
+          superseded_description?: string | null
+          superseded_grootboekrekening_id?: string | null
+          superseded_gross_amount?: number | null
+          superseded_net_amount?: number | null
+          superseded_posted_at?: string | null
+          superseded_posted_by?: string | null
+          superseded_posting_date?: string | null
+          superseded_posting_group_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bank_transaction_posting_even_requested_grootboekrekening__fkey"
+            columns: ["requested_grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transaction_posting_even_superseded_grootboekrekening_fkey"
+            columns: ["superseded_grootboekrekening_id"]
+            isOneToOne: false
+            referencedRelation: "grootboekrekeningen"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transaction_posting_events_bank_transaction_id_fkey"
+            columns: ["bank_transaction_id"]
+            isOneToOne: false
+            referencedRelation: "bank_transactions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transaction_posting_events_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bank_transaction_posting_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bank_transaction_postings: {
         Row: {
           bank_transaction_id: string
@@ -2138,6 +2273,10 @@ export type Database = {
           workflow_state: string
         }[]
       }
+      bank_transaction_group_is_settled_history: {
+        Args: { _posting_group_id: string; _transaction_id: string }
+        Returns: boolean
+      }
       close_fiscal_year: {
         Args: { _client_id: string; _fiscal_year: number }
         Returns: {
@@ -2221,6 +2360,41 @@ export type Database = {
         Args: { _client_id: string; _organization_id: string }
         Returns: boolean
       }
+      reclassify_bank_transaction: {
+        Args: {
+          _btw_percentage: number
+          _description?: string
+          _expected_posting_group_id: string
+          _grootboekrekening_id: string
+          _reason?: string
+          _request_id: string
+          _transaction_id: string
+        }
+        Returns: {
+          event_id: string
+          outcome: string
+          posting_group_id: string
+          replayed: boolean
+          reversal_posting_group_id: string
+          superseded_posting_group_id: string
+        }[]
+      }
+      release_bank_transaction_posting: {
+        Args: {
+          _expected_posting_group_id: string
+          _reason: string
+          _request_id: string
+          _transaction_id: string
+        }
+        Returns: {
+          event_id: string
+          outcome: string
+          posting_group_id: string
+          replayed: boolean
+          reversal_posting_group_id: string
+          superseded_posting_group_id: string
+        }[]
+      }
       reopen_fiscal_year: {
         Args: { _client_id: string; _fiscal_year: number; _reason: string }
         Returns: {
@@ -2256,6 +2430,17 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      return_bank_transaction_to_workflow: {
+        Args: { _reason: string; _request_id: string; _transaction_id: string }
+        Returns: {
+          event_id: string
+          outcome: string
+          posting_group_id: string
+          replayed: boolean
+          reversal_posting_group_id: string
+          superseded_posting_group_id: string
+        }[]
       }
       reverse_posting_group: {
         Args: {
