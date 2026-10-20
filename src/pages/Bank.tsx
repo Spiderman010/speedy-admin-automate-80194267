@@ -2055,9 +2055,9 @@ export default function Bank() {
     { id: "date",        header: "Datum",          sortField: "date" },
     { id: "description", header: "Omschrijving",   sortField: "description" },
     { id: "amount",      header: "Bedrag",          sortField: "amount", headerClassName: "text-right" },
-    { id: "confidence",  header: "Betrouwbaarheid", headerClassName: "hidden md:table-cell" },
+    { id: "confidence",  header: "Betrouwbaarheid", headerClassName: "whitespace-nowrap" },
     { id: "status",      header: "Status",          sortField: "status" },
-    { id: "linked",      header: "Gekoppeld aan",   headerClassName: "hidden lg:table-cell" },
+    { id: "linked",      header: "Gekoppeld aan",   headerClassName: "whitespace-nowrap" },
     { id: "actions",     header: "",                headerClassName: "w-32" },
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [tableRows.length, selectedIds.size, stalePageData]);
@@ -2684,7 +2684,7 @@ export default function Bank() {
                           );
                         })()}
                       </TableCell>
-                      <TableCell className="hidden whitespace-nowrap md:table-cell">
+                      <TableCell className="whitespace-nowrap">
                         {t.match_confidence != null ? (
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 w-16 rounded-full bg-secondary">
@@ -2747,7 +2747,7 @@ export default function Bank() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="hidden lg:table-cell">
+                      <TableCell className="min-w-[200px]">
                         {(() => {
                           // Determine the booking/link label
                           let label = "—";
