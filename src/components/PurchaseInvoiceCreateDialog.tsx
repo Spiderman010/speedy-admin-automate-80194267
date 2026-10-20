@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -59,6 +59,8 @@ export function PurchaseInvoiceCreateDialog({
   const [lastEdited, setLastEdited] = useState<"excl" | "incl" | "btw" | null>(null);
   const { toast } = useToast();
   const addInvoice = useAddPurchaseInvoice();
+  const submittingRef = useRef(false);
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
 
   const { data: leveranciers } = useLeveranciers({
     organizationId: organizationId ?? undefined,
@@ -103,7 +105,7 @@ export function PurchaseInvoiceCreateDialog({
     }
   }, [form.amount_excl, form.amount_incl, form.btw_percentage, lastEdited, form.amount_excl, form.btw_amount]);
 
-  const canSave = !!form.client_id && form.supplier.trim().length > 0 && !addInvoice.isPending;
+  const canSave = !!form.client_id && form.supplier.trim().length > 0 && !addInvoice.isPending && !checkingDuplicate;
 
 
 
@@ -121,6 +123,7 @@ export function PurchaseInvoiceCreateDialog({
   };
 
   const handleSave = async () => {
+    if (submittingRef.current) return;
     if (!form.client_id) {
       toast({ title: "Kies eerst een klant", variant: "destructive" });
       return;
@@ -150,6 +153,8 @@ export function PurchaseInvoiceCreateDialog({
       return;
     }
 
+    submittingRef.current = true;
+    setCheckingDuplicate(true);
     try {
       // Reuse the overview's supplier-aware duplicate semantics across all pages.
       // Run immediately before insertion; a failed lookup must not silently
@@ -193,8 +198,11 @@ export function PurchaseInvoiceCreateDialog({
       toast({ title: "Factuur aangemaakt" });
       onCreated(created as Tables<"purchase_invoices">);
       onOpenChange(false);
-    } catch (e: any) {
-      toast({ title: "Aanmaken mislukt", description: e.message, variant: "destructive" });
+    } catch {
+      toast({ title: "Aanmaken mislukt", description: "Controleer de gegevens of probeer het opnieuw.", variant: "destructive" });
+    } finally {
+      submittingRef.current = false;
+      setCheckingDuplicate(false);
     }
   };
 
@@ -325,11 +333,11 @@ export function PurchaseInvoiceCreateDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={addInvoice.isPending}>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={addInvoice.isPending || checkingDuplicate}>
             Annuleren
           </Button>
           <Button onClick={handleSave} disabled={!canSave}>
-            {addInvoice.isPending ? (
+            {addInvoice.isPending || checkingDuplicate ? (
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Bezig...</>
             ) : (
               <><Save className="mr-2 h-4 w-4" />Opslaan</>
