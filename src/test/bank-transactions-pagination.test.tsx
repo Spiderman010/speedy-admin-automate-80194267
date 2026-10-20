@@ -242,7 +242,9 @@ describe("Bank overview source guarantees", () => {
     // auto-scan banner is invoice-dependent → gated on both datasets ready
     expect(source).toContain("{matchingReady && (autoScanPreview.autoConfirm > 0");
     // bank-only export stays on wholeSetReady …
-    expect(source).toContain("disabled={!hasSelection || !wholeSetReady}"); // Export Snelstart
+    expect(source).toContain("disabled={!singleClientId || !wholeSetReady}"); // Export Snelstart: exactly one administration
+    expect(source).toContain("(transactions ?? []).filter(t => t.client_id === singleClientId)");
+    expect(source).toContain("exportPreflightData.exportCandidates.some(t => t.client_id !== singleClientId)");
     // … while invoice-dependent afletter report + verwerken require both datasets
     expect(source).toContain("disabled={!hasSelection || !matchingReady}"); // Afletterrapport CSV
     expect(source).toContain("disabled={!hasSelection || !matchingReady || openCount === 0}"); // Verwerken
