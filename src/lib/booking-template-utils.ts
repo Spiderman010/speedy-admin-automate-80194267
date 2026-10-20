@@ -25,6 +25,7 @@ export interface BookingTemplateTransaction {
 
 export interface AppliedBookingTemplateFields {
   grootboekrekeningId?: string | null;
+  btwPercentage?: number | null;
   grootboekText?: string | null;
   templateName?: string | null;
 }
@@ -145,6 +146,7 @@ export function applyBookingTemplatesToTransactions<T extends BookingTemplateTra
         matchStatus: "handmatig_geboekt" as const,
         matchConfidence: 100,
         grootboekrekeningId: template.grootboekrekening_id,
+        btwPercentage: template.btw_percentage ?? null,
         grootboekText: template.ledger_account_text ?? null,
         templateName: template.zoekterm || template.name,
       };

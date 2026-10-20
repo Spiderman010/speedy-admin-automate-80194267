@@ -102,6 +102,15 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("tijdens de controle kan de klant niet worden gewisseld (de preview hoort bij één klant)", async () => {
+    let resolve!: (rows: ExistingBankTransactionForDuplicates[]) => void;
+    renderDialog(() => new Promise((r) => { resolve = r; }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/controleren op duplicaten/);
+    expect(screen.getByRole("combobox")).toBeDisabled();
+    resolve([]);
+    await screen.findByRole("button", { name: /2 transacties importeren/ });
+  });
+
   it("een bewust aangevinkte duplicaat blijft de keuze van de gebruiker", async () => {
     const load = vi.fn().mockResolvedValue([PARKEREN]);
     const { onImport } = renderDialog(load);

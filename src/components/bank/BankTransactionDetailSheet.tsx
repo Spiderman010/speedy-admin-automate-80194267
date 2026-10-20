@@ -215,6 +215,9 @@ export function BankTransactionDetailContent({
           {isHandmatig && (
             <div className="pb-2">
               <BankTransactionPostingAction
+                // Fresh form per bank line: the desktop dock stays mounted when
+                // another row is clicked, and a VAT choice must never carry over.
+                key={tx.id}
                 transaction={tx}
                 allocationCount={allocations.length}
               />

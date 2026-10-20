@@ -1925,6 +1925,9 @@ export default function Bank() {
           match_confidence: tx.matchConfidence,
           matched_invoice_id: tx.matchedInvoiceId,
           grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
+          // A recognition rule may carry its VAT; without one the row stays
+          // "controle nodig" in the Inhaalslag instead of posting at 0%.
+          ...(tx.btwPercentage != null ? { btw_percentage: tx.btwPercentage } : {}),
         });
 
         // Aflettering: update the linked purchase invoice after a confirmed match
@@ -2681,7 +2684,7 @@ export default function Bank() {
                              : "Open"}
                           </Badge>
                           {expectsLedgerPosting(t.match_status) && (() => {
-                            const ledgerState = resolveBankLedgerState(t.id, ledgerFacts ?? null);
+                            const ledgerState = resolveBankLedgerState(t, ledgerFacts ?? null);
                             const tone =
                               ledgerState === "geboekt"
                                 ? "border-emerald-500/60 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200"

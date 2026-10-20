@@ -15,39 +15,53 @@ import {
 } from "@/lib/bank-bulk-posting";
 
 const facts = (over: Partial<BankLedgerFacts> = {}): BankLedgerFacts => ({
-  directlyPosted: new Set(),
-  allocationsByTransaction: new Map(),
-  postedAllocations: new Set(),
+  directPostingGroup: new Map(),
+  allocationPostings: new Map(),
+  reversedGroups: new Set(),
   ...over,
 });
+const tx = (id: string, amount = -100) => ({ id, amount });
 
 describe("grootboekstatus van een bankregel", () => {
   it("zonder feiten (laden of fout) is de status onbekend — nooit 'geboekt'", () => {
-    expect(resolveBankLedgerState("tx-1", null)).toBe("onbekend");
+    expect(resolveBankLedgerState(tx("tx-1"), null)).toBe("onbekend");
   });
 
   it("een directe boekingsmarker ⇒ in grootboek", () => {
-    expect(resolveBankLedgerState("tx-1", facts({ directlyPosted: new Set(["tx-1"]) }))).toBe("geboekt");
+    expect(resolveBankLedgerState(tx("tx-1"), facts({ directPostingGroup: new Map([["tx-1", "g1"]]) }))).toBe("geboekt");
   });
 
-  it("gecodeerd zonder marker en zonder koppelingen ⇒ nog niet in grootboek", () => {
-    expect(resolveBankLedgerState("tx-1", facts())).toBe("niet_geboekt");
+  it("een teruggedraaide directe boeking staat niet meer in het grootboek, ook al staat de marker er nog", () => {
+    const f = facts({ directPostingGroup: new Map([["tx-1", "g1"]]), reversedGroups: new Set(["g1"]) });
+    expect(resolveBankLedgerState(tx("tx-1"), f)).toBe("teruggedraaid");
   });
 
-  it("via facturen: alle koppelingen geboekt ⇒ geboekt; een deel ⇒ deels; geen ⇒ niet", () => {
-    const allocationsByTransaction = new Map([["tx-1", ["a1", "a2"]]]);
-    expect(resolveBankLedgerState("tx-1", facts({ allocationsByTransaction, postedAllocations: new Set(["a1", "a2"]) }))).toBe("geboekt");
-    expect(resolveBankLedgerState("tx-1", facts({ allocationsByTransaction, postedAllocations: new Set(["a1"]) }))).toBe("deels_geboekt");
-    expect(resolveBankLedgerState("tx-1", facts({ allocationsByTransaction }))).toBe("niet_geboekt");
+  it("gecodeerd zonder marker en zonder geboekte koppelingen ⇒ nog niet in grootboek", () => {
+    expect(resolveBankLedgerState(tx("tx-1"), facts())).toBe("niet_geboekt");
+  });
+
+  it("via facturen telt het geboekte bedrag: alles ⇒ geboekt, een deel ⇒ deels (ook als elke koppeling geboekt is)", () => {
+    const vol = facts({ allocationPostings: new Map([["tx-1", [{ postingGroupId: "a", amount: 60 }, { postingGroupId: "b", amount: 40 }]]]) });
+    expect(resolveBankLedgerState(tx("tx-1", -100), vol)).toBe("geboekt");
+    const deel = facts({ allocationPostings: new Map([["tx-1", [{ postingGroupId: "a", amount: 60 }]]]) });
+    expect(resolveBankLedgerState(tx("tx-1", -100), deel)).toBe("deels_geboekt");
+    // Afronding op centen.
+    const afgerond = facts({ allocationPostings: new Map([["tx-1", [{ postingGroupId: "a", amount: 33.33 }, { postingGroupId: "b", amount: 66.67 }]]]) });
+    expect(resolveBankLedgerState(tx("tx-1", 100), afgerond)).toBe("geboekt");
+  });
+
+  it("een teruggedraaide koppeling telt niet mee; alles teruggedraaid ⇒ teruggedraaid", () => {
+    const postings = [{ postingGroupId: "a", amount: 60 }, { postingGroupId: "b", amount: 40 }];
+    const een = facts({ allocationPostings: new Map([["tx-1", postings]]), reversedGroups: new Set(["b"]) });
+    expect(resolveBankLedgerState(tx("tx-1", -100), een)).toBe("deels_geboekt");
+    const alle = facts({ allocationPostings: new Map([["tx-1", postings]]), reversedGroups: new Set(["a", "b"]) });
+    expect(resolveBankLedgerState(tx("tx-1", -100), alle)).toBe("teruggedraaid");
   });
 
   it("een geboekte koppeling van een andere transactie telt niet mee", () => {
-    const f = facts({
-      allocationsByTransaction: new Map([["tx-1", ["a1"]], ["tx-2", ["a2"]]]),
-      postedAllocations: new Set(["a2"]),
-    });
-    expect(resolveBankLedgerState("tx-1", f)).toBe("niet_geboekt");
-    expect(resolveBankLedgerState("tx-2", f)).toBe("geboekt");
+    const f = facts({ allocationPostings: new Map([["tx-2", [{ postingGroupId: "a", amount: 100 }]]]) });
+    expect(resolveBankLedgerState(tx("tx-1"), f)).toBe("niet_geboekt");
+    expect(resolveBankLedgerState(tx("tx-2"), f)).toBe("geboekt");
   });
 
   it("alleen verwerkte regels (gematcht, gecodeerd) krijgen een grootboekstatus", () => {
@@ -61,6 +75,10 @@ describe("grootboekstatus van een bankregel", () => {
     expect(BANK_LEDGER_STATE_LABEL.geboekt).toBe("In grootboek");
     expect(BANK_LEDGER_STATE_LABEL.niet_geboekt).toMatch(/^Nog niet/);
     expect(BANK_LEDGER_STATE_LABEL.onbekend).toMatch(/onbekend/);
+    expect(BANK_LEDGER_STATE_LABEL.teruggedraaid).toMatch(/niet in grootboek/);
+    for (const [state, label] of Object.entries(BANK_LEDGER_STATE_LABEL)) {
+      if (state !== "geboekt") expect(label, state).not.toBe("In grootboek");
+    }
   });
 
   it("de melding na coderen zegt nooit 'geboekt' en wijst de weg naar boeken", () => {

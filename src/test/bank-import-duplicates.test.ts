@@ -129,6 +129,50 @@ describe("detectDuplicates — niet te los", () => {
   });
 });
 
+describe("detectDuplicates — reviewbevindingen", () => {
+  it("ING-typecodes: de parser levert 'NTRFNONREF', en ook dat is geen referentie", () => {
+    const parsed = parseBankStatementFull(`:20:ING
+:25:NL91INGB0001234567
+:28C:00001
+:60F:C260301EUR500,00
+:61:2603020302D12,50NTRFNONREF
+:86:Parkeren Centrum
+:61:2603030303D99,00NMSCNONREF
+:86:Kosten betaalpakket
+:62F:C388,50
+`).transactions;
+    expect(parsed.map((t) => t.reference).sort()).toEqual(["NMSCNONREF", "NTRFNONREF"]);
+    expect(identifyingBankReference("NTRFNONREF")).toBeNull();
+    expect(identifyingBankReference("NDDT NOTPROVIDED".replace(" ", ""))).toBeNull();
+    // Een andere, al opgeslagen NTRFNONREF-regel maakt deze niet tot duplicaat.
+    const existing = [stored({ reference: "NTRFNONREF", description: "Huur", amount: -950, transaction_date: "2026-02-02" })];
+    expect(detectDuplicates(parsed, existing).every((d) => !d.isDuplicate)).toBe(true);
+  });
+
+  it("een vaste incassoreferentie (polisnummer) maakt de betaling van volgende maand geen duplicaat", () => {
+    const existing = [stored({ reference: "POLIS123", amount: -12.5, transaction_date: "2026-01-02", description: "Verzekering jan" })];
+    const volgendeMaand = [tx({ reference: "POLIS123", amount: -12.5, date: "2026-02-02", description: "Verzekering feb" })];
+    expect(detectDuplicates(volgendeMaand, existing)[0].isDuplicate).toBe(false);
+    const paarDagenLater = [tx({ reference: "POLIS123", amount: -12.5, date: "2026-01-05", description: "Verzekering jan" })];
+    expect(detectDuplicates(paarDagenLater, existing)).toEqual([{ isDuplicate: true, reason: "reference" }]);
+  });
+
+  it("oude regel met overschreven omschrijving: zelfde datum, bedrag en tegenrekening ⇒ 'mogelijk duplicaat' (uitgevinkt)", () => {
+    const existing = [stored({ reference: "NONREF", description: "Bankkosten jan", counter_account: "NL02ABNA0123456789" })];
+    const incoming = [tx({ reference: "NONREF", description: "Kosten betaalpakket", counterAccount: "NL02 ABNA 0123 4567 89" })];
+    expect(detectDuplicates(incoming, existing)).toEqual([{ isDuplicate: true, reason: "possible" }]);
+  });
+
+  it("een zwakke match van een eerdere regel pakt nooit de opgeslagen regel die een latere regel exact matcht", () => {
+    const existing = [stored({ description: "Parkeren Centrum" })];
+    const incoming = [tx({ description: "Parkeren Noord" }), tx({ description: "Parkeren Centrum" })];
+    expect(detectDuplicates(incoming, existing)).toEqual([
+      { isDuplicate: false, reason: null },
+      { isDuplicate: true, reason: "composite" },
+    ]);
+  });
+});
+
 describe("hasBankDescription", () => {
   it("alleen echte banktekst telt; leeg en de parser-placeholder niet", () => {
     expect(hasBankDescription("Huur maart /CNTP/NL02")).toBe(true);

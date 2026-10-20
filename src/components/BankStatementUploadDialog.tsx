@@ -48,6 +48,7 @@ export interface MatchedTransaction extends ParsedTransaction {
   matchStatus: "gematcht" | "suggestie" | "niet_gematcht" | "handmatig_geboekt";
   matchedInvoiceLabel: string | null;
   grootboekrekeningId?: string | null;
+  btwPercentage?: number | null;
   grootboekText?: string | null;
   templateName?: string | null;
 }
@@ -128,6 +129,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   const [closingBalance, setClosingBalance] = useState<number | null>(null);
   const [importing, setImporting] = useState(false);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
+  // The client the preview was built for (duplicates, invoices, IBAN). The
+  // import always writes to this client, never to a later dropdown change.
+  const [previewClientId, setPreviewClientId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // Ignores a duplicate check that finishes after the user started over.
@@ -161,6 +165,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     }
     if (token !== checkToken.current) return;
     setCheckingDuplicates(false);
+    setPreviewClientId(clientId);
 
     setOpeningBalance(statement.openingBalance);
     setClosingBalance(statement.closingBalance);
@@ -234,7 +239,8 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   };
 
   const handleImport = async () => {
-    if (!clientId || !parsed) return;
+    const importClientId = previewClientId;
+    if (!importClientId || !parsed) return;
     if (!parsed.some((_, i) => selected[i])) return;
     setImporting(true);
     setError(null);
@@ -245,7 +251,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
       // duplicates now are never written unseen.
       let fresh: ExistingBankTransactionForDuplicates[];
       try {
-        fresh = await loadExistingTransactions(clientId);
+        fresh = await loadExistingTransactions(importClientId);
       } catch {
         setError(DUPLICATE_CHECK_FAILED_MESSAGE);
         return;
@@ -264,8 +270,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
       }
 
       const toImport = parsed.filter((_, i) => selected[i]);
-      await onImport(clientId, toImport);
+      await onImport(importClientId, toImport);
       setParsed(null);
+      setPreviewClientId(null);
       setDuplicateInfos([]);
       setSelected([]);
       setOpeningBalance(null);
@@ -298,6 +305,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         setCheckingDuplicates(false);
         setError(null);
         setParsed(null);
+        setPreviewClientId(null);
         setDuplicateInfos([]);
         setSelected([]);
         setOpeningBalance(null);
@@ -314,7 +322,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium mb-2 block">Klant selecteren *</label>
-              <Select value={clientId} onValueChange={setClientId}>
+              <Select value={clientId} onValueChange={setClientId} disabled={checkingDuplicates}>
                 <SelectTrigger className="w-64"><SelectValue placeholder="Kies klant" /></SelectTrigger>
                 <SelectContent>
                   {clients.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
@@ -461,7 +469,11 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                             {dup?.isDuplicate && (
                               <Badge variant="destructive" className="text-[10px] gap-1">
                                 <Copy className="h-3 w-3" />
-                                {dup.reason === "reference" ? "Duplicaat (TransactionID)" : "Duplicaat (datum/bedrag/omschrijving)"}
+                                {dup.reason === "reference"
+                                  ? "Duplicaat (referentie/bedrag)"
+                                  : dup.reason === "possible"
+                                    ? "Mogelijk duplicaat (datum/bedrag/tegenrekening) — controleer"
+                                    : "Duplicaat (datum/bedrag/omschrijving)"}
                               </Badge>
                             )}
                             {!dup?.isDuplicate && tx.matchStatus === "handmatig_geboekt" && tx.templateName && (
@@ -485,6 +497,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
             <Button variant="outline" disabled={importing} onClick={() => {
               setError(null);
               setParsed(null);
+              setPreviewClientId(null);
               setDuplicateInfos([]);
               setSelected([]);
               setOpeningBalance(null);

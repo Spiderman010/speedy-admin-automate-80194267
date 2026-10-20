@@ -25,7 +25,14 @@ export interface ParsedStatement {
 
 export interface DuplicateInfo {
   isDuplicate: boolean;
-  reason: "reference" | "composite" | null;
+  /**
+   * reference: same real reference, same amount, within a few days.
+   * composite: same date, amount, description and counter account.
+   * possible:  same date, amount and counter account, but a different text —
+   *            typically an older row whose description was overwritten by a
+   *            typed note. Deselected, so the user decides.
+   */
+  reason: "reference" | "composite" | "possible" | null;
 }
 
 // ─── MT940 Parser ───────────────────────────────────────────────────
@@ -323,11 +330,19 @@ export function parseBankStatementFull(content: string): ParsedStatement {
  */
 const PLACEHOLDER_REFERENCES = new Set(["NONREF", "NOTPROVIDED", "NOT PROVIDED"]);
 
+/**
+ * The MT940 parser only strips type codes shaped like N544; ING-style codes
+ * (NTRF, NDDT, NMSC, …) stay glued to the reference, as in "NTRFNONREF".
+ */
+const MT940_TYPE_CODE = /^[NSF][A-Z0-9]{3}/;
+
 /** A trimmed reference that can identify a transaction, or null for none/placeholder. */
 export function identifyingBankReference(reference: string | null | undefined): string | null {
   const trimmed = (reference ?? "").trim();
   if (!trimmed) return null;
-  if (PLACEHOLDER_REFERENCES.has(trimmed.toUpperCase())) return null;
+  const upper = trimmed.toUpperCase();
+  if (PLACEHOLDER_REFERENCES.has(upper)) return null;
+  if (MT940_TYPE_CODE.test(upper) && PLACEHOLDER_REFERENCES.has(upper.slice(4))) return null;
   return trimmed;
 }
 
@@ -343,12 +358,24 @@ function compositeKey(
 }
 
 /**
- * A reference only proves a duplicate together with the same amount. The date
- * is deliberately not part of it: the same transaction can carry its value
- * date in MT940 and its booking date in CAMT.053.
+ * A reference only proves a duplicate together with the same amount and a
+ * date close by. Not the exact date: value date and booking date can differ
+ * by a few days. Not any date either: a direct debit can carry the same
+ * reference (a policy or contract number) every month.
  */
 function referenceKey(reference: string, amount: number): string {
   return `${reference}|${amount.toFixed(2)}`;
+}
+
+const REFERENCE_DATE_WINDOW_DAYS = 7;
+
+function daysApart(a: string, b: string): number {
+  const ms = Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`));
+  return Number.isFinite(ms) ? ms / 86_400_000 : Number.POSITIVE_INFINITY;
+}
+
+function possibleKey(date: string, amount: number, counterAccount: string | null): string {
+  return `${date}|${amount.toFixed(2)}|${(counterAccount || "").replace(/\s/g, "").toLowerCase()}`;
 }
 
 export interface ExistingBankTransactionForDuplicates {
@@ -374,6 +401,7 @@ export function detectDuplicates(
   const consumed = new Array<boolean>(existing.length).fill(false);
   const byReference = new Map<string, number[]>();
   const byComposite = new Map<string, number[]>();
+  const byPossible = new Map<string, number[]>();
   const push = (map: Map<string, number[]>, key: string, index: number) => {
     const list = map.get(key);
     if (list) list.push(index);
@@ -385,6 +413,7 @@ export function detectDuplicates(
     const ref = existingRefs[index];
     if (ref) push(byReference, referenceKey(ref, ex.amount), index);
     push(byComposite, compositeKey(ex.transaction_date, ex.amount, ex.description, ex.counter_account), index);
+    push(byPossible, possibleKey(ex.transaction_date, ex.amount, ex.counter_account), index);
   });
 
   const claim = (
@@ -398,17 +427,33 @@ export function detectDuplicates(
     return true;
   };
 
-  return incoming.map((tx) => {
-    const ref = identifyingBankReference(tx.reference);
-    if (ref && claim(byReference, referenceKey(ref, tx.amount))) {
-      return { isDuplicate: true, reason: "reference" as const };
+  // Strongest evidence first, across the whole file: a weak match of an
+  // earlier row may never take the stored row that a later row matches exactly.
+  const result: DuplicateInfo[] = incoming.map(() => ({ isDuplicate: false, reason: null }));
+  const refs = incoming.map((tx) => identifyingBankReference(tx.reference));
+  const compatible = (ref: string | null) => (index: number) =>
+    // Two different real references prove two different transactions,
+    // however alike the rest looks.
+    !ref || !existingRefs[index] || existingRefs[index] === ref;
+
+  incoming.forEach((tx, i) => {
+    const ref = refs[i];
+    const nearby = (index: number) => daysApart(existing[index].transaction_date, tx.date) <= REFERENCE_DATE_WINDOW_DAYS;
+    if (ref && claim(byReference, referenceKey(ref, tx.amount), nearby)) {
+      result[i] = { isDuplicate: true, reason: "reference" };
     }
-    // Two different real references prove two different transactions, however
-    // alike the rest looks; only fall back to the composite key otherwise.
-    const compatible = (index: number) => !ref || !existingRefs[index] || existingRefs[index] === ref;
-    if (claim(byComposite, compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount), compatible)) {
-      return { isDuplicate: true, reason: "composite" as const };
-    }
-    return { isDuplicate: false, reason: null };
   });
+  incoming.forEach((tx, i) => {
+    if (result[i].isDuplicate) return;
+    if (claim(byComposite, compositeKey(tx.date, tx.amount, tx.description, tx.counterAccount), compatible(refs[i]))) {
+      result[i] = { isDuplicate: true, reason: "composite" };
+    }
+  });
+  incoming.forEach((tx, i) => {
+    if (result[i].isDuplicate) return;
+    if (claim(byPossible, possibleKey(tx.date, tx.amount, tx.counterAccount), compatible(refs[i]))) {
+      result[i] = { isDuplicate: true, reason: "possible" };
+    }
+  });
+  return result;
 }

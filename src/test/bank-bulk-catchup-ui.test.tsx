@@ -222,7 +222,7 @@ describe("geen stille BTW", () => {
     const rij0 = rowOf("tx-geen-btw-keuze");
     expect(within(rij0).getByTestId("inhaalslag-state")).toHaveTextContent("Controle nodig");
     expect(within(rij0).getByTestId("inhaalslag-checkbox")).toBeDisabled();
-    expect(submittableIds(applyVatChoiceGate(state.data), ["tx-geen-btw-keuze", "tx-ready-1"])).toEqual(["tx-ready-1"]);
+    expect(submittableIds(applyVatChoiceGate(state.data as BankBulkCandidate[]), ["tx-geen-btw-keuze", "tx-ready-1"])).toEqual(["tx-ready-1"]);
     fireEvent.click(screen.getByTestId("inhaalslag-selecteer-zichtbaar"));
     expect(screen.getByTestId("bulkbalk-gereed")).toHaveTextContent("2");
   });

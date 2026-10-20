@@ -264,9 +264,9 @@ describe("Bank pagina UI", () => {
       makeRow("open", { description: "Nog open", match_status: "niet_gematcht" }),
     ];
     state.ledgerFacts = {
-      directlyPosted: new Set(["posted"]),
-      allocationsByTransaction: new Map(),
-      postedAllocations: new Set(),
+      directPostingGroup: new Map([["posted", "group-1"]]),
+      allocationPostings: new Map(),
+      reversedGroups: new Set(),
     };
     renderBank();
     const rowOf = (text: string) => screen.getAllByText(text).map((el) => el.closest("tr")).find(Boolean) as HTMLElement;

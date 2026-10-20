@@ -193,7 +193,7 @@ export default function BankInhaalslag() {
     // De selectie opnieuw naast de server leggen zodra de nieuwe gegevens er
     // zijn; geboekte regels zijn dan niet langer `ready` en vallen eruit.
     const vers = await candidates.refetch();
-    setSelectie((huidig) => reconcileSelection(huidig, vers.data ?? []));
+    setSelectie((huidig) => reconcileSelection(huidig, applyVatChoiceGate(vers.data ?? [])));
   };
 
   const samenvatting = resultaat ? summariseBulkResults(resultaat) : null;
