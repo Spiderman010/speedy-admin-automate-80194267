@@ -400,13 +400,15 @@ export default function Facturen() {
       ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(f.type)
     );
 
+    const rejectedFiles = files.filter(f => !validFiles.includes(f));
     if (!validFiles.length) {
-      toast({ title: "Geen geldige bestanden", description: "Gebruik PDF, JPG of PNG.", variant: "destructive" });
+      toast({ title: "Geen geldige bestanden", description: "Gebruik PDF, JPG, PNG of WebP.", variant: "destructive" });
+      setUploadProgress(rejectedFiles.map(f => `❌ ${f.name}: bestandstype niet ondersteund (PDF, JPG, PNG of WebP)`));
       return;
     }
 
     setUploading(true);
-    setUploadProgress([]);
+    setUploadProgress(rejectedFiles.map(f => `❌ ${f.name}: bestandstype niet ondersteund (PDF, JPG, PNG of WebP)`));
     let successCount = 0;
     let failCount = 0;
 
