@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, Save } from "lucide-react";
-import { useAddPurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import { useAddPurchaseInvoice, fetchPurchaseInvoiceDuplicateCandidates, computeDuplicateIds } from "@/hooks/usePurchaseInvoices";
 import { useLeveranciers } from "@/hooks/useLeveranciers";
 import { useToast } from "@/hooks/use-toast";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
@@ -151,6 +151,32 @@ export function PurchaseInvoiceCreateDialog({
     }
 
     try {
+      // Reuse the overview's supplier-aware duplicate semantics across all pages.
+      // Run immediately before insertion; a failed lookup must not silently
+      // bypass duplicate protection. Database-level uniqueness is separate.
+      const number = form.invoice_number.trim();
+      if (number) {
+        const candidate = {
+          id: "__new_purchase_invoice__",
+          client_id: form.client_id,
+          invoice_number: number,
+          supplier: form.supplier.trim(),
+          supplier_btw_number: null,
+          leverancier_id: form.leverancier_id || null,
+        };
+        const existing = await fetchPurchaseInvoiceDuplicateCandidates([candidate], {
+          organizationId: organizationId ?? undefined,
+        });
+        const duplicateIds = computeDuplicateIds([candidate, ...existing]);
+        if (duplicateIds.has(candidate.id)) {
+          toast({
+            title: "Mogelijk dubbele inkoopfactuur",
+            description: "Dit factuurnummer bestaat al voor deze klant en leverancier. Controleer de bestaande factuur voordat je een nieuwe aanmaakt.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
       const created = await addInvoice.mutateAsync({
         client_id: form.client_id,
         leverancier_id: form.leverancier_id || null,
