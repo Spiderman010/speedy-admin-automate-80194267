@@ -9,17 +9,17 @@
 1. Lees `AGENTS.md`, `PROJECT_MAP.md`, `BOOKASSIST_AI_BUILD_STRATEGY.md` en `BOOKASSIST_ACCOUNTING_PATTERNS.md` bij elk werkpakket.
 2. Werk vanuit actuele `main`, featurebranch, samenhangende PR. Geen directe commits op `main`.
 3. Bestaande financiële schrijf-RPC's en `ledger_postings` zijn leidend; bewijs productie-migratiestatus read-only. `src/integrations/supabase/types.ts` niet handmatig wijzigen.
-4. Onafhankelijke Codex-review zonder bevindingen en groene CI op exacte head-SHA vóór merge. Open threads = 0. Reviewlimiet is een blokkade, geen vrijstelling.
+4. Groene CI op exacte head-SHA, 0 open reviewthreads en zelfstandige financiële/security/tenantisolatie-review. Codex waar beschikbaar; gebruikslimiet is na vastgelegde onafhankelijke review geen automatische blokkade. P0/P1 blokkeren altijd.
 5. Geen merge, Lovable Cloud-productie-SQL of productie-uitrol zonder afzonderlijke expliciete GO. Geen productie-SQL via persoonlijk Supabase- of Vercel-account. Projectref: `alxlbdhpbwlehbdbfejw`.
 6. Bundel samenhangende wijzigingen in één eind-tot-eind werkpakket. Vermijd tussenliggende documentatie-, proces- of cosmetische micro-PR's.
 
 ## Volgorde en oplevercriteria
 
 ### P0 — Bankverwerking veilig operationeel (nu)
-**Bestaand werk:** PR [#263](https://github.com/Spiderman010/speedy-admin-automate-80194267/pull/263) en [#260](https://github.com/Spiderman010/speedy-admin-automate-80194267/pull/260).
+**Bestaand werk:** #263 is gemerged (`36c897a`); #260 is gesloten zonder merge wegens oudere overlappende correctie-UI.
 - #263: import-idempotentie, bronbewuste CAMT/MT940-herkenning, geen stil gekozen btw, duidelijk onderscheid gecodeerd/geboekt, behoud originele omschrijving. Nieuwe migratie `20261020120000_add_bank_transaction_import_fingerprint.sql` NIET toegepast.
 - #260: bankboekingen via `reclassify_bank_transaction` corrigeren, inclusief audittrail; RPC en gebeurtenistabel zijn volgens door gebruiker aangeleverde productie-SELECT aanwezig, maar rechten en exacte functiebody nog niet gecontroleerd.
-- **Werkvolgorde:** onafhankelijke review op nieuwste #263-SHA; na expliciete merge-GO integreren van #260 op de actuele `main` in dezelfde bankwerkstroom zonder #263-btw-invarianten te verliezen; actieve bankcorrectie alleen waar server-side toegestaan.
+- **Werkvolgorde:** actuele `main` is leidend. De correctie-UI bevat een fail-closed RPC-beschikbaarheidscontrole. Verifieer productiefunctie, rechten en migratiestatus read-only. De bankimportmigratie `20261020120000` is niet als toegepast bevestigd. Productiehandeling alleen na afzonderlijke GO via Lovable Cloud SQL-editor.
 - Productiehandelingen afzonderlijk plannen: eerst read-only preflight, migraties vergelijken met aanwezige schema's, dan pas GO voor noodzakelijke enkelvoudige migratie.
 - **Klaar wanneer:** voor meerdere Agio-administraties import, controle, afletteren, coderen, boeken en toegestane correcties in end-to-end scenario's betrouwbaar werken; geen dubbelboeken, geen tenantlekken, btw expliciet, audit zichtbaar.
 
@@ -55,8 +55,8 @@
 - Licenties van ingekochte/open-source componenten expliciet toetsen op SaaS-toepassing.
 
 ## Openstaande PR's / opruimen
-- #263: inhoudelijk voorrang; CI groen op `963a48258e1098cf0d36eff00245b57c737171f5`, Codex-herreview geweigerd door gebruikslimiet.
-- #260: behoud functionele waarde; Codex-status bevat bevindingen, ondanks 0 open threads. Laat geen oude UI wijzigingen over #263 heen schrijven.
+- #263: gemerged (`36c897a`); SQL-migratie niet automatisch uitgevoerd.
+- #260: gesloten zonder merge; oude UI niet opnieuw introduceren.
 - #261: optionele UI-pilot met open zoekfilterbevinding; niet leidend.
 - #258/#259: gecombineerde read-only pre-/postchecks; eerst actuele productie-uitrolhistorie verifiëren voordat documentatie wordt verwijderd.
 - #262: gesloten zonder merge.
@@ -64,4 +64,4 @@
 ## Rapportage en tempo
 Per werkpakket alleen: (1) gerealiseerde gebruikersflow, (2) CI/testbewijs op exacte SHA, (3) resterende P0/P1/P2, (4) benodigde GO. Geen eindeloze voortgangsgesprekken.
 
-**Eerste uitvoeractie na deze roadmap:** bankwerkpakket #263/#260 afronden. Geen extra functionele tak openen voordat die integratieplanning duidelijk is.
+**Eerste uitvoeractie na deze roadmap:** read-only productiepreflight voor bankimport en bankcorrecties, resterende migratie- en rechtenverschillen beoordelen, daarna apart GO/NO-GO voor één migratie. Vervolgens P1 inkoopwerkbank.
