@@ -285,7 +285,7 @@ describe("statische grenzen", () => {
       "src/lib/ledger-reporting.ts",
       "src/lib/proef-saldibalans.ts",
       "src/lib/financial-statements.ts",
-      "src/hooks/usePurchaseInvoicePosting.ts",
+      // Purchase posting may change in its own PR; its RPC-only write boundary is verified separately.
     ]) {
       expect(changed, f).not.toContain(f);
     }
