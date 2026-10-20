@@ -228,7 +228,7 @@ describe("PurchaseInvoiceWorkspace atomic save", () => {
     expect(toastSpy).toHaveBeenCalledWith({ title: "Factuur opgeslagen" });
   });
 
-  it("shows a rollback-safe error toast when the atomic RPC fails", async () => {
+  it("does not expose RPC internals when the atomic save fails", async () => {
     atomicMutateAsync.mockRejectedValue(new Error("constraint failure"));
 
     renderWorkspace();
@@ -239,7 +239,7 @@ describe("PurchaseInvoiceWorkspace atomic save", () => {
     await waitFor(() => {
       expect(toastSpy).toHaveBeenCalledWith({
         title: "Opslaan mislukt",
-        description: "Opslaan mislukt. De bestaande factuur en boekingsregels zijn niet gewijzigd. (constraint failure)",
+        description: "De factuur kon niet worden opgeslagen. Vernieuw de factuur en controleer de gegevens voordat je opnieuw probeert.",
         variant: "destructive",
       });
     });
