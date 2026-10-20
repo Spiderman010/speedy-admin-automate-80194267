@@ -69,8 +69,16 @@ export function rankCandidates(
   const parsed = parseMT940Description(tx.description);
   const searchText = `${txDesc} ${txRef} ${(parsed.reference || "").toLowerCase()}`;
 
+  // A matching amount alone cannot identify an invoice.
+  const identityMatches = (number: string | null, name: string | null) => {
+    const ref = (number ?? "").trim().toLowerCase();
+    const party = (name ?? "").trim().toLowerCase();
+    return { number: ref.length >= 4 && searchText.includes(ref),
+      name: party.length >= 4 && txDesc.includes(party) };
+  };
   for (const inv of purchases) {
     if (isClosedInvoiceStatus(inv.status)) continue;
+    const identity = identityMatches(inv.invoice_number, inv.supplier);
     const invoiceAmount = getInvoiceRemainingAmount(inv);
     const absInvoiceAmount = invoiceAmount != null ? Math.abs(invoiceAmount) : null;
 
@@ -98,20 +106,25 @@ export function rankCandidates(
     }
 
     // Invoice number in description/reference
-    if (inv.invoice_number) {
-      const invNum = inv.invoice_number.toLowerCase();
-      if (searchText.includes(invNum)) {
+    if (identity.number) {
         score += 50;
         reasons.push("Factuurnr gevonden");
       }
     }
 
     // Name in description
-    if (txDesc.includes(inv.supplier.toLowerCase())) {
+    if (identity.name) {
       score += 20;
       reasons.push("Naam in omschrijving");
     }
 
+    // Fail closed: never suggest an invoice from amount/partial amount alone.
+    if (!identity.number && !identity.name) {
+      score = 0;
+      reasons.length = 0;
+      isPartialPayment = false;
+      remainingAmount = null;
+    }
     candidates.push({
       id: inv.id,
       type: "inkoop",
@@ -128,6 +141,7 @@ export function rankCandidates(
 
   for (const inv of sales) {
     if (isClosedInvoiceStatus(inv.status)) continue;
+    const identity = identityMatches(inv.invoice_number, inv.customer_name);
     const invoiceAmount = getInvoiceRemainingAmount(inv);
     const absInvoiceAmount = invoiceAmount != null ? Math.abs(invoiceAmount) : null;
 
@@ -153,17 +167,23 @@ export function rankCandidates(
     }
 
     // Invoice number in description/reference
-    const invNum = inv.invoice_number.toLowerCase();
-    if (invNum && searchText.includes(invNum)) {
+    if (identity.number) {
       score += 50;
       reasons.push("Factuurnr gevonden");
     }
 
-    if (txDesc.includes(inv.customer_name.toLowerCase())) {
+    if (identity.name) {
       score += 20;
       reasons.push("Naam in omschrijving");
     }
 
+    // Fail closed: never suggest an invoice from amount/partial amount alone.
+    if (!identity.number && !identity.name) {
+      score = 0;
+      reasons.length = 0;
+      isPartialPayment = false;
+      remainingAmount = null;
+    }
     candidates.push({
       id: inv.id,
       type: "verkoop",
