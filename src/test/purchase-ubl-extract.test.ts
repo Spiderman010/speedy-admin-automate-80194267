@@ -10,7 +10,7 @@ const valid = {
     } },
     LegalMonetaryTotal: { TaxExclusiveAmount: "100.00", PayableAmount: "121.00" },
     TaxTotal: { TaxAmount: "21.00" },
-    InvoiceLine: [{ Item: { ClassifiedTaxCategory: { Percent: "21" } } }],
+    InvoiceLine: [{ Item: { ClassifiedTaxCategory: { Percent: "21" } }, LineExtensionAmount: "100.00" }],
   },
 };
 describe("UBL structured field extraction", () => {

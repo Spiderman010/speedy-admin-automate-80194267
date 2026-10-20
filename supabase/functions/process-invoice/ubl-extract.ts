@@ -21,7 +21,14 @@ const money = (v: unknown): number | null => {
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 };
+export interface UblExtractedLine {
+  description: string;
+  amount_excl: number;
+  btw_percentage: number | null;
+}
 export interface UblExtractedInvoice {
+  invoice_lines: UblExtractedLine[];
+  mixed_vat_rates: boolean;
   supplier: string;
   invoice_number: string;
   invoice_date: string | null;
@@ -47,9 +54,24 @@ export function extractUblInvoice(parsed: unknown): UblExtractedInvoice {
     throw new Error("UBL bevat ongeldige factuurdatum");
   const tax = first(child(field(invoice, "TaxTotal"), "TaxAmount"));
   const subtotal = field(invoice, "LegalMonetaryTotal", "TaxExclusiveAmount");
-  const percent = field(invoice, "InvoiceLine", "Item", "ClassifiedTaxCategory", "Percent");
+  const rawLines = child(invoice, "InvoiceLine");
+  const lineNodes = rawLines === undefined ? [] : Array.isArray(rawLines) ? rawLines : [rawLines];
+  const invoiceLines: UblExtractedLine[] = lineNodes.map((node) => {
+    const amount = money(child(node, "LineExtensionAmount"));
+    if (amount === null) throw new Error("UBL-factuurregel mist geldig bedrag excl. btw");
+    const description = text(field(node, "Item", "Description"))
+      ?? text(field(node, "Item", "Name")) ?? "Factuurregel";
+    const rateRaw = field(node, "Item", "ClassifiedTaxCategory", "Percent");
+    const rate = rateRaw === undefined ? null : money(rateRaw);
+    if (rateRaw !== undefined && (rate === null || rate < 0 || rate > 100))
+      throw new Error("UBL-factuurregel heeft ongeldig btw-percentage");
+    return { description, amount_excl: amount, btw_percentage: rate };
+  });
+  const rates = [...new Set(invoiceLines.map((line) => line.btw_percentage))];
+  const mixedVatRates = rates.length > 1;
+  const percent = !mixedVatRates && rates.length === 1 ? rates[0] : null;
   const vat = money(tax);
-  const rate = money(percent);
+  const rate = percent;
   const supplierVat = text(field(invoice, "AccountingSupplierParty", "Party", "PartyTaxScheme", "CompanyID"));
   const iban = text(field(invoice, "PaymentMeans", "PayeeFinancialAccount", "ID"));
   return {
@@ -57,6 +79,7 @@ export function extractUblInvoice(parsed: unknown): UblExtractedInvoice {
     amount_excl: money(subtotal), btw_amount: vat,
     amount_incl: total, btw_percentage: rate,
     supplier_btw_number: supplierVat, supplier_iban: iban,
+    invoice_lines: invoiceLines, mixed_vat_rates: mixedVatRates,
     source: "ubl",
   };
 }
