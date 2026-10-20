@@ -35,7 +35,7 @@ export function usePurchaseInvoicePosting(invoiceId: string | undefined) {
 function toUserMessage(error: unknown): string {
   const message = (error as { message?: string } | null)?.message?.trim();
   if (!message) return "Boeken is niet gelukt. Probeer het opnieuw.";
-  if (/^[A-Z]{2}\d{3}/.test(message) || message.includes("stack depth")) {
+  if (/^[A-Z]{2}\d{3}/.test(message) || /stack depth|permission denied|relation .* does not exist|function .* does not exist|schema cache|postgrest|supabase|postgres|sqlstate|syntax error|column .* does not exist|https?:\/\//i.test(message)) {
     return "Boeken is niet gelukt. Probeer het opnieuw.";
   }
   return message;
