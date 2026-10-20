@@ -241,6 +241,11 @@ export default function Bank() {
   const [confirmUnlinkOpen, setConfirmUnlinkOpen] = useState(false);
   const [afletteringTx, setAfletteringTx] = useState<Tables<"bank_transactions"> | null>(null);
   const [detailTx, setDetailTx] = useState<Tables<"bank_transactions"> | null>(null);
+  useEffect(() => {
+    const onCorrected = () => setDetailTx(null);
+    window.addEventListener("bookassist:bank-correction-success", onCorrected);
+    return () => window.removeEventListener("bookassist:bank-correction-success", onCorrected);
+  }, []);
   const [showExportBlockers, setShowExportBlockers] = useState(true);
 
   type ExportPreflightData = {
