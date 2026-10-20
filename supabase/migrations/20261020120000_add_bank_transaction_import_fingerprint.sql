@@ -42,6 +42,13 @@
 --   optionele CAMT-velden, en een CAMT-regel zonder die velden is niet van een
 --   MT940-regel te onderscheiden.
 --
+--   En `bank_reference` bewaart de referentie van de bank zelf zoals het
+--   afschrift die meegaf (MT940: het deel na "//"; CAMT.053: <AcctSvcrRef>).
+--   Bij MT940 staat die ook in `reference`, maar bij CAMT nergens anders: zonder
+--   dit veld is een opgeslagen CAMT-regel later niet aan zijn bankreferentie te
+--   herkennen, bijvoorbeeld wanneer dezelfde periode als MT940 opnieuw wordt
+--   ingelezen.
+--
 -- WAT DEZE MIGRATIE NADRUKKELIJK NIET DOET
 --   - Geen backfill en geen UPDATE van bestaande rijen: die houden NULL. Een
 --     partiële index (WHERE import_fingerprint IS NOT NULL) kan daarom bij het
@@ -49,7 +56,7 @@
 --     nooit door deze index geblokkeerd. Historische herimports blijven door de
 --     duplicaatcontrole in de app herkend.
 --   - Geen wijziging aan RLS, rechten, triggers, functies of andere tabellen.
---   - Geen verplichting: een rij zonder vingerafdruk of bronformaat (handmatig,
+--   - Geen verplichting: een rij zonder vingerafdruk, bronformaat of bankreferentie (handmatig,
 --     of een oudere app-versie) blijft gewoon mogelijk.
 --
 -- VERGRENDELING
@@ -62,7 +69,7 @@
 --   alxlbdhpbwlehbdbfejw, ná review en een expliciete GO van de eigenaar:
 --   PRE (supabase/rollout/20261020120000_add_bank_transaction_import_fingerprint/
 --   preflight.sql) → deze migratie → POST (postcheck.sql). Daarna `types.ts`
---   regenereren (er komen twee kolommen bij). Deze PR past niets toe. De app werkt
+--   regenereren (er komen drie kolommen bij). Deze PR past niets toe. De app werkt
 --   vóór en na toepassing: zij stuurt de vingerafdruk pas mee zodra de kolom
 --   bestaat.
 --
@@ -73,6 +80,7 @@
 --   ALTER TABLE public.bank_transactions DROP CONSTRAINT IF EXISTS bank_transactions_import_source_known;
 --   ALTER TABLE public.bank_transactions DROP COLUMN IF EXISTS import_fingerprint;
 --   ALTER TABLE public.bank_transactions DROP COLUMN IF EXISTS import_source;
+--   ALTER TABLE public.bank_transactions DROP COLUMN IF EXISTS bank_reference;
 -- ROLLBACK-END
 -- ═════════════════════════════════════════════════════════════════════════════
 
@@ -138,7 +146,15 @@ BEGIN
 END
 $migratie$;
 
--- ── 4. Uniek per administratie, alleen waar een vingerafdruk is ─────────────
+-- ── 4. Bankreferentie (optioneel; vrije tekst zoals de bank die levert) ─────
+
+ALTER TABLE public.bank_transactions
+  ADD COLUMN IF NOT EXISTS bank_reference text;
+
+COMMENT ON COLUMN public.bank_transactions.bank_reference IS
+  'Referentie van de bank zelf bij import (MT940: deel na //; CAMT.053: AcctSvcrRef). Herkent dezelfde banktransactie in een later of ander afschrift. NULL voor rijen van vóór 20261020120000 en zonder bankreferentie.';
+
+-- ── 5. Uniek per administratie, alleen waar een vingerafdruk is ─────────────
 
 CREATE UNIQUE INDEX IF NOT EXISTS bank_transactions_client_import_fingerprint_key
   ON public.bank_transactions (client_id, import_fingerprint)

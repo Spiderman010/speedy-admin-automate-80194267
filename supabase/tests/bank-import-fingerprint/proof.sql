@@ -8,15 +8,17 @@ SET client_min_messages = warning;
 
 -- ── P1. Kolommen, CHECKs en index: exacte definities; bestaande rijen onaangeroerd
 
-SELECT proof.record('P1a', 'precies twee nieuwe kolommen, import_fingerprint en import_source: text, nullable, geen standaardwaarde, met commentaar',
+SELECT proof.record('P1a', 'precies drie nieuwe kolommen, import_fingerprint, import_source en bank_reference: text, nullable, geen standaardwaarde, met commentaar',
   coalesce(bool_and(c.data_type = 'text' AND c.is_nullable = 'YES' AND c.column_default IS NULL
     AND col_description('public.bank_transactions'::regclass, c.ordinal_position::int)
-        LIKE CASE c.column_name WHEN 'import_fingerprint' THEN 'SHA-256 (hex)%' ELSE 'Bestandsformaat waaruit%' END), false)
-  AND array_agg(c.column_name::text ORDER BY c.column_name) = ARRAY['import_fingerprint', 'import_source'],
+        LIKE CASE c.column_name WHEN 'import_fingerprint' THEN 'SHA-256 (hex)%'
+                                WHEN 'import_source' THEN 'Bestandsformaat waaruit%'
+                                ELSE 'Referentie van de bank zelf%' END), false)
+  AND array_agg(c.column_name::text ORDER BY c.column_name) = ARRAY['bank_reference', 'import_fingerprint', 'import_source'],
   string_agg(format('%s %s %s default=%s', c.column_name, c.data_type, c.is_nullable, c.column_default), '; ' ORDER BY c.column_name))
 FROM information_schema.columns c
 WHERE c.table_schema = 'public' AND c.table_name = 'bank_transactions'
-  AND c.column_name IN ('import_fingerprint', 'import_source');
+  AND c.column_name IN ('import_fingerprint', 'import_source', 'bank_reference');
 
 SELECT proof.record('P1b', 'beide CHECKs (…_import_fingerprint_format, …_import_source_known): exacte expressie, gevalideerd',
   coalesce(bool_and(con.contype = 'c' AND con.convalidated
@@ -45,7 +47,7 @@ FROM pg_index i
 WHERE i.indexrelid = to_regclass('public.bank_transactions_client_import_fingerprint_key')
   AND i.indrelid = 'public.bank_transactions'::regclass;
 
-SELECT proof.record('P1d', 'import_fingerprint: één index en één constraint; import_source: geen index, één constraint; rest van de catalogus gelijk',
+SELECT proof.record('P1d', 'import_fingerprint: één index en één constraint; import_source: geen index, één constraint; bank_reference: geen index, geen constraint; rest van de catalogus gelijk',
   (SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey::int2[])
    WHERE i.indrelid = 'public.bank_transactions'::regclass AND a.attname = 'import_fingerprint') = 1
   AND (SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey::int2[])
@@ -54,12 +56,17 @@ SELECT proof.record('P1d', 'import_fingerprint: één index en één constraint;
        AND pg_get_constraintdef(oid) LIKE '%import_fingerprint%') = 1
   AND (SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.bank_transactions'::regclass
        AND pg_get_constraintdef(oid) LIKE '%import_source%') = 1
+  AND (SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey::int2[])
+   WHERE i.indrelid = 'public.bank_transactions'::regclass AND a.attname = 'bank_reference') = 0
+  AND (SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.bank_transactions'::regclass
+       AND pg_get_constraintdef(oid) LIKE '%bank_reference%') = 0
   AND proof.catalog_rest() = (SELECT v FROM proof.state WHERE k = 'catalog_before'));
 
-SELECT proof.record('P1e', 'bestaande rijen: zelfde aantal, inhoud byte-gelijk (digest), vingerafdruk én bronformaat overal NULL',
+SELECT proof.record('P1e', 'bestaande rijen: zelfde aantal, inhoud byte-gelijk (digest), vingerafdruk, bronformaat en bankreferentie overal NULL',
   (SELECT count(*)::text FROM public.bank_transactions) = (SELECT v FROM proof.state WHERE k = 'rows_before')
   AND proof.digest() = (SELECT v FROM proof.state WHERE k = 'digest_before')
-  AND NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE import_fingerprint IS NOT NULL OR import_source IS NOT NULL),
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transactions
+                  WHERE import_fingerprint IS NOT NULL OR import_source IS NOT NULL OR bank_reference IS NOT NULL),
   format('rijen=%s digest=%s', (SELECT count(*) FROM public.bank_transactions), proof.digest()));
 
 SELECT proof.record('P1f', 'geen herschrijving en geen UPDATE: relfilenode, ctid en xmin van elke rij ongewijzigd',
@@ -260,3 +267,24 @@ FROM o WHERE n = 'P6d';
 
 SELECT proof.record('P6e', 'historische rijen hebben nog steeds import_source NULL',
   NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE id = ANY (proof.historical()) AND import_source IS NOT NULL));
+
+-- ── P7. Bankreferentie: vrije tekst zoals de bank haar levert, of NULL ───────
+
+INSERT INTO o VALUES ('P7a', proof.attempt(format(
+  $s$UPDATE public.bank_transactions SET bank_reference = %L WHERE description = 'bron camt053'$s$, 'ACCTSVCR-2026-0001'))
+  || ' / ' || proof.attempt(
+  $s$UPDATE public.bank_transactions SET bank_reference = NULL WHERE description = 'bron mt940'$s$));
+SELECT proof.record('P7a', 'bank_reference: tekst en NULL toegestaan, ongewijzigd bewaard',
+  v = 'ok / ok'
+  AND (SELECT bank_reference FROM public.bank_transactions WHERE description = 'bron camt053') = 'ACCTSVCR-2026-0001'
+  AND (SELECT bank_reference FROM public.bank_transactions WHERE description = 'bron mt940') IS NULL, v)
+FROM o WHERE n = 'P7a';
+
+INSERT INTO o VALUES ('P7b', proof.attempt(format(
+  $s$UPDATE public.bank_transactions SET bank_reference = %L WHERE description = 'bron null'$s$, 'ACCTSVCR-2026-0001')));
+SELECT proof.record('P7b', 'bank_reference is geen sleutel: dezelfde waarde op twee rijen wordt niet geweigerd (de app beslist over vertrouwen)',
+  v = 'ok' AND (SELECT count(*) FROM public.bank_transactions WHERE bank_reference = 'ACCTSVCR-2026-0001') = 2, v)
+FROM o WHERE n = 'P7b';
+
+SELECT proof.record('P7c', 'historische rijen hebben nog steeds bank_reference NULL',
+  NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE id = ANY (proof.historical()) AND bank_reference IS NOT NULL));

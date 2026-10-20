@@ -17,8 +17,9 @@
 -- Verwacht: één rij, ELKE kolom `true`. Bij ELKE `false`: STOP, niets
 -- herstellen, uitkomst doorgeven. De rollback staat in de kop van de migratie.
 -- Draai dit direct na de migratie: zodra de app de kolom ziet, schrijft een
--- nieuwe import vingerafdrukken en bronformaten, en zijn `bestaande_rijen_null`
--- en `bestaande_rijen_bron_null` niet meer waar.
+-- nieuwe import vingerafdrukken, bronformaten en bankreferenties, en zijn
+-- `bestaande_rijen_null`, `bestaande_rijen_bron_null` en
+-- `bestaande_rijen_bankreferentie_null` niet meer waar.
 -- ═════════════════════════════════════════════════════════════════════════════
 
 WITH pre AS (
@@ -36,6 +37,12 @@ bron AS (
   FROM pg_attribute a
   WHERE a.attrelid = 'public.bank_transactions'::regclass
     AND a.attname = 'import_source' AND NOT a.attisdropped
+),
+bankref AS (
+  SELECT a.attnum, a.attnotnull, a.atthasdef, format_type(a.atttypid, a.atttypmod) AS type
+  FROM pg_attribute a
+  WHERE a.attrelid = 'public.bank_transactions'::regclass
+    AND a.attname = 'bank_reference' AND NOT a.attisdropped
 ),
 chk AS (
   SELECT c.contype, c.convalidated, pg_get_constraintdef(c.oid) AS def
@@ -68,6 +75,9 @@ SELECT
   coalesce((SELECT contype = 'c' AND convalidated
               AND def = $e$CHECK (((import_source IS NULL) OR (import_source = ANY (ARRAY['mt940'::text, 'camt053'::text]))))$e$
             FROM chk_bron), false)                                                 AS bron_check_exact,
+  (SELECT count(*) = 1 AND bool_and(type = 'text') FROM bankref)                   AS bankreferentie_kolom_bestaat_als_text,
+  coalesce((SELECT NOT attnotnull FROM bankref), false)                            AS bankreferentie_kolom_nullable,
+  coalesce((SELECT NOT atthasdef FROM bankref), false)                             AS bankreferentie_geen_standaardwaarde,
   coalesce((SELECT indisunique AND indisvalid AND partieel
               AND def = 'CREATE UNIQUE INDEX bank_transactions_client_import_fingerprint_key ON public.bank_transactions USING btree (client_id, import_fingerprint) WHERE (import_fingerprint IS NOT NULL)'
             FROM idx), false)                                                      AS index_uniek_partieel_exact,
@@ -75,6 +85,8 @@ SELECT
                                                                                    AS bestaande_rijen_null,
   NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE import_source IS NOT NULL)
                                                                                    AS bestaande_rijen_bron_null,
+  NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE bank_reference IS NOT NULL)
+                                                                                   AS bestaande_rijen_bankreferentie_null,
   coalesce((SELECT count(*) FROM public.bank_transactions) = (SELECT pre_banktransacties FROM pre), false)
                                                                                    AS aantal_rijen_gelijk_aan_pre,
   coalesce((SELECT relrowsecurity FROM pg_class WHERE oid = 'public.bank_transactions'::regclass), false)

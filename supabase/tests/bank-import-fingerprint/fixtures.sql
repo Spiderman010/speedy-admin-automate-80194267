@@ -82,10 +82,10 @@ VALUES
 CREATE TABLE proof.state (k text PRIMARY KEY, v text);
 GRANT SELECT ON proof.state TO public;
 
-/** Inhoud van de opgegeven rijen, zonder de twee nieuwe kolommen: vóór en ná vergelijkbaar. */
+/** Inhoud van de opgegeven rijen, zonder de drie nieuwe kolommen: vóór en ná vergelijkbaar. */
 CREATE FUNCTION proof.digest(_ids uuid[] DEFAULT NULL)
 RETURNS text LANGUAGE sql STABLE AS $$
-  SELECT md5(coalesce(string_agg((to_jsonb(t) - 'import_fingerprint' - 'import_source')::text, '|' ORDER BY t.id), ''))
+  SELECT md5(coalesce(string_agg((to_jsonb(t) - 'import_fingerprint' - 'import_source' - 'bank_reference')::text, '|' ORDER BY t.id), ''))
   FROM public.bank_transactions t
   WHERE _ids IS NULL OR t.id = ANY (_ids)
 $$;
@@ -112,13 +112,13 @@ RETURNS text LANGUAGE sql STABLE AS $$
   FROM pg_class c WHERE c.oid = 'public.bank_transactions'::regclass
 $$;
 
-/** Catalogusvoetafdruk van de tabel buiten de vijf nieuwe objecten (2 kolommen, 2 CHECKs, 1 index). */
+/** Catalogusvoetafdruk van de tabel buiten de zes nieuwe objecten (3 kolommen, 2 CHECKs, 1 index). */
 CREATE FUNCTION proof.catalog_rest()
 RETURNS text LANGUAGE sql STABLE AS $$
   SELECT md5(concat_ws(E'\n',
     (SELECT string_agg(format('%s %s %s %s', attname, format_type(atttypid, atttypmod), attnotnull, attnum), ',' ORDER BY attnum)
      FROM pg_attribute WHERE attrelid = 'public.bank_transactions'::regclass AND attnum > 0 AND NOT attisdropped
-       AND attname NOT IN ('import_fingerprint', 'import_source')),
+       AND attname NOT IN ('import_fingerprint', 'import_source', 'bank_reference')),
     (SELECT string_agg(conname || ':' || pg_get_constraintdef(oid), ',' ORDER BY conname)
      FROM pg_constraint WHERE conrelid = 'public.bank_transactions'::regclass
        AND conname NOT IN ('bank_transactions_import_fingerprint_format', 'bank_transactions_import_source_known')),

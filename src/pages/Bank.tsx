@@ -1953,7 +1953,8 @@ export default function Bank() {
           // A recognition rule may carry its VAT; without one the row stays
           // "controle nodig" in the Inhaalslag instead of posting at 0%.
           ...(tx.btwPercentage != null ? { btw_percentage: tx.btwPercentage } : {}),
-        }, sendFingerprint ? tx.importFingerprint : null, sendFingerprint ? tx.importSource : null));
+        }, sendFingerprint ? tx.importFingerprint : null, sendFingerprint ? tx.importSource : null,
+        sendFingerprint ? tx.bankReference : null));
       } catch (e: any) {
         if (isImportFingerprintConflict(e)) {
           // The database refused a second copy of this exact statement line

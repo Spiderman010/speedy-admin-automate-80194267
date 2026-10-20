@@ -38,7 +38,7 @@ describe("importFingerprintSupported", () => {
   it("kolom bestaat ⇒ ja, en dat wordt onthouden", async () => {
     expect(await importFingerprintSupported()).toBe(true);
     expect(await importFingerprintSupported()).toBe(true);
-    expect(selects).toEqual(["import_fingerprint,import_source"]);
+    expect(selects).toEqual(["import_fingerprint,import_source,bank_reference"]);
   });
 
   it("migratie nog niet toegepast (42703) ⇒ nee, zonder fout; de volgende import vraagt opnieuw", async () => {
@@ -46,6 +46,11 @@ describe("importFingerprintSupported", () => {
     expect(await importFingerprintSupported()).toBe(false);
     probe.error = null;
     expect(await importFingerprintSupported()).toBe(true);
+  });
+
+  it("de kolom bank_reference ontbreekt ⇒ nee: alle drie of geen", async () => {
+    probe.error = { message: "column bank_transactions.bank_reference does not exist" };
+    expect(await importFingerprintSupported()).toBe(false);
   });
 
   it("een andere fout ⇒ werpt (de import stopt, fail-closed)", async () => {
@@ -72,5 +77,9 @@ describe("withImportFingerprint (tijdelijke shim)", () => {
     expect(withImportFingerprint(row, undefined)).toBe(row);
     expect(withImportFingerprint(row, "b".repeat(64), "camt053")).toEqual({ ...row, import_fingerprint: "b".repeat(64), import_source: "camt053" });
     expect(withImportFingerprint(row, null, null)).toBe(row);
+    expect(withImportFingerprint(row, "c".repeat(64), "camt053", " ACCT-1 ")).toEqual({
+      ...row, import_fingerprint: "c".repeat(64), import_source: "camt053", bank_reference: "ACCT-1",
+    });
+    expect(withImportFingerprint(row, null, null, "   ")).toBe(row);
   });
 });

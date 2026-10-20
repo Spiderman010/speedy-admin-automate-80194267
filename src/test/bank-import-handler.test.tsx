@@ -144,10 +144,11 @@ vi.mock("@/hooks/use-toast", () => ({
 }));
 vi.mock("@/hooks/bankImportFingerprint", () => ({
   importFingerprintSupported: () => importState.supported(),
-  withImportFingerprint: (row: any, fp: any, source?: any) => ({
+  withImportFingerprint: (row: any, fp: any, source?: any, bankReference?: any) => ({
     ...row,
     ...(fp ? { import_fingerprint: fp } : {}),
     ...(source ? { import_source: source } : {}),
+    ...(bankReference ? { bank_reference: bankReference } : {}),
   }),
   isImportFingerprintConflict: (e: any) => e?.code === "23505" && /import_fingerprint/.test(e?.message ?? ""),
 }))
@@ -203,6 +204,7 @@ const line = (n: number, over: Partial<any> = {}) => ({
   matchedInvoiceLabel: null,
   importFingerprint: String(n).repeat(64).slice(0, 64),
   importSource: "mt940",
+  bankReference: `B6J02XY000000${n}`,
   ...over,
 });
 
@@ -227,6 +229,7 @@ describe("Bank — import met importvingerafdruk", () => {
     await runImport([line(1), line(2)]);
     expect(importState.addTx.mock.calls.map((c: any[]) => c[0].import_fingerprint)).toEqual([line(1).importFingerprint, line(2).importFingerprint]);
     expect(importState.addTx.mock.calls.map((c: any[]) => c[0].import_source)).toEqual(["mt940", "mt940"]);
+    expect(importState.addTx.mock.calls.map((c: any[]) => c[0].bank_reference)).toEqual(["B6J02XY0000001", "B6J02XY0000002"]);
   });
 
   it("migratie nog niet toegepast ⇒ insert zonder de kolom (geen PGRST204)", async () => {
@@ -234,6 +237,7 @@ describe("Bank — import met importvingerafdruk", () => {
     await runImport([line(1)]);
     expect(importState.addTx.mock.calls[0][0]).not.toHaveProperty("import_fingerprint");
     expect(importState.addTx.mock.calls[0][0]).not.toHaveProperty("import_source");
+    expect(importState.addTx.mock.calls[0][0]).not.toHaveProperty("bank_reference");
   });
 
   it("unieke index weigert ⇒ 'stond er al', geen fout en geen advies om opnieuw te importeren", async () => {

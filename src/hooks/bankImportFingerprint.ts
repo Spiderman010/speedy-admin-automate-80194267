@@ -12,8 +12,8 @@ import type { TablesInsert } from "@/integrations/supabase/types";
  *
  * TIJDELIJKE SHIM: `types.ts` kent `import_fingerprint` pas na regeneratie uit
  * het productieschema (nooit met de hand). Tot dan voegt `withImportFingerprint`
- * de kolommen toe met een smalle cast, uitsluitend voor `import_fingerprint` en
- * `import_source`. Verwijderen
+ * de kolommen toe met een smalle cast, uitsluitend voor `import_fingerprint`,
+ * `import_source` en `bank_reference`. Verwijderen
  * in een kleine vervolg-PR zodra de types zijn bijgewerkt.
  */
 
@@ -27,13 +27,13 @@ export async function importFingerprintSupported(): Promise<boolean> {
   const probe = supabase.from("bank_transactions") as unknown as {
     select: (columns: string) => { limit: (n: number) => Promise<{ error: { code?: string; message?: string } | null }> };
   };
-  const { error } = await probe.select("import_fingerprint,import_source").limit(1);
+  const { error } = await probe.select("import_fingerprint,import_source,bank_reference").limit(1);
   if (!error) {
     supportedCache = true;
     return true;
   }
   // 42703: kolom bestaat (nog) niet. Iets anders: onbekend — de aanroeper beslist.
-  if (error.code === "42703" || /import_(fingerprint|source)/.test(error.message ?? "")) return false;
+  if (error.code === "42703" || /import_(fingerprint|source)|bank_reference/.test(error.message ?? "")) return false;
   throw new Error(error.message || "Kon niet bepalen of dubbele imports server-side worden geweigerd.");
 }
 
@@ -46,12 +46,15 @@ export function withImportFingerprint<T extends Partial<TablesInsert<"bank_trans
   row: T,
   fingerprint: string | null | undefined,
   source?: "mt940" | "camt053" | null,
+  bankReference?: string | null,
 ): T {
-  if (!fingerprint && !source) return row;
+  const reference = bankReference?.trim() || null;
+  if (!fingerprint && !source && !reference) return row;
   return {
     ...row,
     ...(fingerprint ? { import_fingerprint: fingerprint } : {}),
     ...(source ? { import_source: source } : {}),
+    ...(reference ? { bank_reference: reference } : {}),
   } as T;
 }
 

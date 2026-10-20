@@ -43,6 +43,9 @@ SELECT
   NOT EXISTS (SELECT 1 FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'bank_transactions'
                 AND column_name = 'import_source')                                 AS kolom_source_nog_afwezig,
+  NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'bank_transactions'
+                AND column_name = 'bank_reference')                                AS kolom_bankreferentie_nog_afwezig,
   NOT EXISTS (SELECT 1 FROM pg_constraint
               WHERE conname = 'bank_transactions_import_fingerprint_format')       AS check_fingerprint_nog_afwezig,
   NOT EXISTS (SELECT 1 FROM pg_constraint

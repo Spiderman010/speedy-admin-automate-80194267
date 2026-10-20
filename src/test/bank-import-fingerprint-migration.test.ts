@@ -15,7 +15,7 @@ import {
  * twee echt gelijktijdige sessies; historische exacte duplicaten die de
  * migratie niet laten falen; 23514 op de vorm; rollback en opnieuw toepassen)
  * wordt bewezen tegen een echte PostgreSQL in
- * supabase/tests/bank-import-fingerprint/ (55 bewijzen). CI heeft geen
+ * supabase/tests/bank-import-fingerprint/ (58 bewijzen). CI heeft geen
  * PostgreSQL; deze test bewaakt de vorm van de migratie, haar grenzen en de
  * samenhang met het harnas en de uitrolcontroles.
  */
@@ -24,7 +24,7 @@ const MIGRATION_DIR = "supabase/migrations";
 const FILE = "20261020120000_add_bank_transaction_import_fingerprint.sql";
 const MIGRATION = `${MIGRATION_DIR}/${FILE}`;
 /** SHA-256 van de migratie zoals beoordeeld en voor productie overgedragen. */
-const REVIEWED_SHA256 = "956b4d003108a101d617c16c0b351c195cd10070fd74f7b9c46c12e5721143d1";
+const REVIEWED_SHA256 = "6c29f55653f49a7fd0bed86c00e3e6ab8f909ae8adf9f8dc9d7e2886e437312f";
 const HARNESS = "supabase/tests/bank-import-fingerprint";
 const ROLLOUT = "supabase/rollout/20261020120000_add_bank_transaction_import_fingerprint";
 
@@ -87,14 +87,14 @@ describe("migratie 20261020120000 — vorm", () => {
     expect(sha256).toBe(REVIEWED_SHA256);
   });
 
-  it("3. twee kolommen, import_fingerprint en import_source: optioneel text, idempotent, geen standaardwaarde, geen NOT NULL", () => {
-    for (const col of ["import_fingerprint", "import_source"]) {
+  it("3. drie kolommen, import_fingerprint, import_source en bank_reference: optioneel text, idempotent, geen standaardwaarde, geen NOT NULL", () => {
+    for (const col of ["import_fingerprint", "import_source", "bank_reference"]) {
       expect(sql, col).toContain(`ALTER TABLE public.bank_transactions\n  ADD COLUMN IF NOT EXISTS ${col} text;`);
       const add = sql.match(new RegExp(`ADD COLUMN IF NOT EXISTS ${col}[^;]*;`))?.[0] ?? "";
       expect(add, col).not.toMatch(/DEFAULT|NOT NULL|GENERATED/i);
       expect(sql, col).toContain(`COMMENT ON COLUMN public.bank_transactions.${col} IS`);
     }
-    expect(sql.match(/ADD COLUMN/g)).toHaveLength(2);
+    expect(sql.match(/ADD COLUMN/g)).toHaveLength(3);
   });
 
   it("4. de CHECK: exact 64 kleine hex-tekens of NULL, idempotent via pg_constraint", () => {
@@ -137,12 +137,13 @@ describe("wat de migratie niet doet", () => {
 
   it("8. ALTER TABLE uitsluitend op public.bank_transactions, en alleen ADD COLUMN / ADD CONSTRAINT", () => {
     const alters = sql.match(/ALTER TABLE[^;]*/g) ?? [];
-    expect(alters).toHaveLength(4);
+    expect(alters).toHaveLength(5);
     expect(alters.map((a) => a.replace(/\s+/g, " ").replace(/ CHECK .*$/, " CHECK"))).toEqual([
       "ALTER TABLE public.bank_transactions ADD COLUMN IF NOT EXISTS import_fingerprint text",
       `ALTER TABLE public.bank_transactions ADD CONSTRAINT ${CHECK} CHECK`,
       "ALTER TABLE public.bank_transactions ADD COLUMN IF NOT EXISTS import_source text",
       `ALTER TABLE public.bank_transactions ADD CONSTRAINT ${SOURCE_CHECK} CHECK`,
+      "ALTER TABLE public.bank_transactions ADD COLUMN IF NOT EXISTS bank_reference text",
     ]);
     for (const t of ["bank_transaction_allocations", "ledger_postings", "clients"]) {
       expect(sql, t).not.toMatch(new RegExp(`ALTER TABLE[^;]*\\b${t}\\b`));
@@ -157,7 +158,7 @@ describe("wat de migratie niet doet", () => {
     expect(sql).not.toMatch(/session_replication_role|DISABLE TRIGGER/i);
   });
 
-  it("10. een gedocumenteerde rollback die exact de index, beide CHECKs en beide kolommen weghaalt; geen verkeerde projectrefs", () => {
+  it("10. een gedocumenteerde rollback die exact de index, beide CHECKs en alle drie kolommen weghaalt; geen verkeerde projectrefs", () => {
     const block = raw.match(/-- ROLLBACK-BEGIN\n([\s\S]*?)-- ROLLBACK-END/)?.[1] ?? "";
     const lines = block.split("\n").filter(Boolean).map((l) => l.replace(/^-- {3}/, ""));
     expect(lines).toEqual([
@@ -166,6 +167,7 @@ describe("wat de migratie niet doet", () => {
       `ALTER TABLE public.bank_transactions DROP CONSTRAINT IF EXISTS ${SOURCE_CHECK};`,
       "ALTER TABLE public.bank_transactions DROP COLUMN IF EXISTS import_fingerprint;",
       "ALTER TABLE public.bank_transactions DROP COLUMN IF EXISTS import_source;",
+      "ALTER TABLE public.bank_transactions DROP COLUMN IF EXISTS bank_reference;",
     ]);
     expect(raw).not.toMatch(/olumcwneiejjefhkzgmz|ycuofllsdssoezwwpqmv/);
     expect(raw).toContain("alxlbdhpbwlehbdbfejw");
@@ -201,6 +203,7 @@ describe("harnas en uitrolcontroles", () => {
     expect(seed).not.toBe("");
     expect(seed).not.toContain("import_fingerprint");
     expect(seed).not.toContain("import_source");
+    expect(seed).not.toContain("bank_reference");
     expect(seed.match(/'PARKEREN Q-PARK', -4\.50, 'NL00BANK0000000001', NULL/g)?.length).toBeGreaterThanOrEqual(2);
     expect(seed.match(/'NTRFNONREF\/\/BANKREF-0001'/g)?.length).toBeGreaterThanOrEqual(2);
   });
@@ -253,7 +256,11 @@ describe("harnas en uitrolcontroles", () => {
     expect(post).toContain("NULL::bigint AS pre_policies");
     expect(pre).toContain("AS kolom_fingerprint_nog_afwezig");
     expect(pre).toContain("AS kolom_source_nog_afwezig");
-    for (const col of ["bron_kolom_nullable", "bron_geen_standaardwaarde", "bron_check_exact", "bestaande_rijen_bron_null"]) {
+    expect(pre).toContain("AS kolom_bankreferentie_nog_afwezig");
+    for (const col of [
+      "bron_kolom_nullable", "bron_geen_standaardwaarde", "bron_check_exact", "bestaande_rijen_bron_null",
+      "bankreferentie_kolom_nullable", "bankreferentie_geen_standaardwaarde", "bestaande_rijen_bankreferentie_null",
+    ]) {
       expect(post, col).toContain(`AS ${col}`);
     }
   });

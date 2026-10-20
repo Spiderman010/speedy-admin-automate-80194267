@@ -490,7 +490,9 @@ function statementTrustsBankReferences(
 }
 
 function storedReferenceIds(existing: readonly ExistingBankTransactionForDuplicates[]): ReferenceIds[] {
-  return existing.map((ex) => referenceIdsFor({ reference: ex.reference, source: storedReferenceSource(ex) }));
+  return existing.map((ex) =>
+    referenceIdsFor({ reference: ex.reference, source: storedReferenceSource(ex), bankReference: ex.bank_reference }),
+  );
 }
 
 function incomingReferenceIds(
@@ -562,6 +564,11 @@ export interface ExistingBankTransactionForDuplicates {
   reference: string | null;
   /** Stored format (20261020120000); authoritative when present. */
   import_source?: string | null;
+  /**
+   * The bank's own reference as imported (20261020120000). For MT940 it is also
+   * in `reference` after "//"; for CAMT.053 (<AcctSvcrRef>) it is stored nowhere else.
+   */
+  bank_reference?: string | null;
   /** Present on rows imported from CAMT.053; a fallback for rows without import_source. */
   camt_ustrd?: string | null;
   camt_addtl_ntry_inf?: string | null;

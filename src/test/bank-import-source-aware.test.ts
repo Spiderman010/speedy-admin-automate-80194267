@@ -241,3 +241,57 @@ describe("Codex-ronde op b60c15a", () => {
   });
 });
 
+
+describe("Codex-ronde op 427204f: de CAMT-bankreferentie wordt bewaard", () => {
+  const CAMT_REGEL = `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>
+<Acct><Id><IBAN>NL91INGB0001234567</IBAN></Id></Acct>
+<Ntry><Amt Ccy="EUR">80.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><BookgDt><Dt>2026-10-05</Dt></BookgDt><ValDt><Dt>2026-10-02</Dt></ValDt>
+<AcctSvcrRef>B6J02XY0009999</AcctSvcrRef><NtryDtls><TxDtls><Refs><EndToEndId>POLIS-77</EndToEndId></Refs>
+<RmtInf><Ustrd>Premie oktober</Ustrd></RmtInf></TxDtls></NtryDtls></Ntry>
+</Stmt></BkToCstmrStmt></Document>`;
+  // Hetzelfde, nu als MT940: andere datum (valutadatum), andere omschrijving, geen tegenrekening.
+  const MT940_REGEL = `:20:X
+:25:NL91INGB0001234567
+:28C:00001
+:60F:C261001EUR100,00
+:61:2610021002D80,00N544NONREF//B6J02XY0009999
+:86:Verzekering
+:62F:C20,00
+`;
+
+  /** Zoals de import een CAMT-regel opslaat (Bank.tsx handleImport). */
+  const opgeslagenCamt = (bewaarBankReferentie: boolean): ExistingBankTransactionForDuplicates => {
+    const [t] = parseBankStatementFull(CAMT_REGEL).transactions;
+    return {
+      ...asStored(t),
+      import_source: "camt053",
+      camt_ustrd: t.ustrd ?? null,
+      ...(bewaarBankReferentie ? { bank_reference: t.bankReference ?? null } : {}),
+    };
+  };
+
+  it("met bewaarde bankreferentie: dezelfde betaling als MT940 opnieuw ingelezen is een duplicaat", () => {
+    const [mt] = parseBankStatementFull(MT940_REGEL).transactions;
+    const stored = opgeslagenCamt(true);
+    // Geen van de zwakkere sleutels zou hem vinden: datum, omschrijving en tegenrekening verschillen of ontbreken.
+    expect(stored.transaction_date).not.toBe(mt.date);
+    expect(mt.counterAccount).toBeNull();
+    expect(detectDuplicates([mt], [stored])[0]).toEqual({ isDuplicate: true, reason: "reference" });
+  });
+
+  it("zonder bewaarde bankreferentie (rij van vóór de migratie) wordt hij niet herkend — het gedocumenteerde restrisico", () => {
+    const [mt] = parseBankStatementFull(MT940_REGEL).transactions;
+    expect(detectDuplicates([mt], [opgeslagenCamt(false)])[0].isDuplicate).toBe(false);
+  });
+
+  it("een bewaarde bankreferentie die verschilt, bewijst een andere transactie", () => {
+    const [mt] = parseBankStatementFull(MT940_REGEL.replace("B6J02XY0009999", "B6J02XY0001111")).transactions;
+    expect(detectDuplicates([mt], [opgeslagenCamt(true)])[0].isDuplicate).toBe(false);
+  });
+
+  it("een placeholder als bewaarde bankreferentie telt niet", () => {
+    const stored = { ...opgeslagenCamt(true), bank_reference: "NOTPROVIDED" };
+    expect(referenceIdsFor({ reference: stored.reference, source: "camt053", bankReference: stored.bank_reference }).bank).toBeNull();
+  });
+});
