@@ -502,6 +502,38 @@ export default function Bank() {
     return m;
   }, [allAllocations]);
 
+  const [repairingSuggestionId, setRepairingSuggestionId] = useState<string | null>(null);
+  const handleRepairLegacySuggestion = useCallback(async (id: string) => {
+    const entry = legacySuggestionReview.find(row => row.id === id && row.reason === "Geen betrouwbare identiteitsmatch");
+    const tx = transactions?.find(row => row.id === id);
+    if (!entry || !tx?.matched_invoice_id || tx.match_status !== "suggestie" || !activeOrganizationId) return;
+    if ((allocationsByTxId.get(id) ?? []).length > 0) {
+      toast({ title: "Herstel geblokkeerd", description: "Er bestaan afletteringen; controleer deze transactie handmatig.", variant: "destructive" });
+      return;
+    }
+    if (!window.confirm(`Suggestie van ${tx.description || "banktransactie"} verwijderen? De transactie wordt niet gematcht; bestaande boekingen blijven staan.`)) return;
+    setRepairingSuggestionId(id);
+    try {
+      // Atomic compare-and-set avoids overwriting a recently confirmed or changed match.
+      const { data, error } = await supabase.from("bank_transactions")
+        .update({ match_status: "niet_gematcht", matched_invoice_id: null, match_confidence: null })
+        .eq("id", id).eq("organization_id", activeOrganizationId)
+        .eq("client_id", tx.client_id).eq("match_status", "suggestie")
+        .eq("matched_invoice_id", tx.matched_invoice_id)
+        .select("id");
+      if (error) throw error;
+      if (!data?.length) throw new Error("Suggestie inmiddels gewijzigd; ververs de pagina.");
+      await refetchWholeSet();
+      toast({ title: "Oude suggestie verwijderd", description: "De banktransactie is weer niet gematcht." });
+    } catch (error: any) {
+      toast({ title: "Herstel mislukt", description: error.message, variant: "destructive" });
+    } finally {
+      setRepairingSuggestionId(null);
+    }
+  }, [legacySuggestionReview, transactions, activeOrganizationId, allocationsByTxId, toast, refetchWholeSet]);
+
+
+
   const vraagpostByBankTransactionId = useMemo(() => {
     const m = new Map<string, NonNullable<typeof vraagposten>[number]>();
     for (const vp of vraagposten ?? []) {
@@ -2333,10 +2365,18 @@ export default function Bank() {
       {legacySuggestionReview.length > 0 && (
         <div className="mb-3 rounded-md border border-amber-400/60 bg-amber-50/60 p-3 text-sm text-amber-950 dark:bg-amber-950/20 dark:text-amber-100" role="alert" data-testid="bank-legacy-suggestion-audit">
           <p className="font-medium">{legacySuggestionReview.length} opgeslagen banksuggestie(s) vereisen herbeoordeling</p>
-          <p className="mt-1 text-xs">Read-only controle: geen koppelingen of boekingen gewijzigd. Een ontbrekende factuur kan ook al afgesloten zijn.</p>
+          <p className="mt-1 text-xs">Controleoverzicht. Alleen suggesties zonder identiteitsbewijs en zonder aflettering kunnen na bevestiging worden hersteld. Ontbrekende of gesloten facturen blijven voor handmatige controle.</p>
           <ul className="mt-2 list-disc pl-5 text-xs">
             {legacySuggestionReview.slice(0, 10).map((row) => (
-              <li key={row.id}>{row.description} — {row.reason}</li>
+              <li key={row.id} className="mb-1">
+                {row.description} — {row.reason}
+                {row.reason === "Geen betrouwbare identiteitsmatch" && (allocationsByTxId.get(row.id) ?? []).length === 0 && (
+                  <Button size="sm" variant="outline" className="ml-2 h-7" disabled={repairingSuggestionId !== null}
+                    onClick={() => handleRepairLegacySuggestion(row.id)}>
+                    {repairingSuggestionId === row.id ? "Herstellen..." : "Verwijder oude suggestie"}
+                  </Button>
+                )}
+              </li>
             ))}
           </ul>
           {legacySuggestionReview.length > 10 && <p className="mt-1 text-xs">En {legacySuggestionReview.length - 10} andere transacties.</p>}
