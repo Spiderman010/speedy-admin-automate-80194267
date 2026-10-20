@@ -52,6 +52,8 @@ export interface MatchedTransaction extends ParsedTransaction {
   btwPercentage?: number | null;
   /** Database idempotency key (20261020120000), computed over the whole statement. */
   importFingerprint?: string | null;
+  /** Stored as import_source (20261020120000), so the reference is read right later. */
+  importSource?: "mt940" | "camt053" | null;
   grootboekText?: string | null;
   templateName?: string | null;
 }
@@ -180,7 +182,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     // and with it its fingerprint — never depends on what the user ticks.
     let fingerprints: (string | null)[] = statement.transactions.map(() => null);
     try {
-      fingerprints = await importFingerprints(statement);
+      fingerprints = await importFingerprints(statement, existing);
     } catch {
       // No Web Crypto: import as before; the duplicate check below still runs.
     }
@@ -195,7 +197,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     const clientInvoices = invoices.filter(i => i.client_id === forClientId);
     const matched = autoMatch(statement.transactions, clientInvoices);
     const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, forClientId)
-      .map((t, i) => ({ ...t, importFingerprint: fingerprints[i] ?? null }));
+      .map((t, i) => ({ ...t, importFingerprint: fingerprints[i] ?? null, importSource: t.source ?? null }));
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(statement.transactions, existing);

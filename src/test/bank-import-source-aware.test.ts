@@ -188,3 +188,56 @@ describe("importvingerafdruk", () => {
     expect(await importFingerprints(plain)).toEqual(fps);
   });
 });
+
+describe("Codex-ronde op b60c15a", () => {
+  it("opgeslagen bronformaat wint: een CAMT-regel zonder CAMT-velden wordt niet meer als 'onbekend' dubbel gelezen", () => {
+    const zonderVelden = { transaction_date: "2026-10-02", amount: -80, description: "x", counter_account: null, reference: "NTRFABC123" };
+    expect(storedReferenceSource({ ...zonderVelden, import_source: "camt053" })).toBe("camt053");
+    const incoming: ParsedTransaction = { date: "2026-10-03", amount: -80, description: "y", counterAccount: null, reference: "ABC123", source: "camt053" };
+    expect(detectDuplicates([incoming], [{ ...zonderVelden, import_source: "camt053" }])[0].isDuplicate).toBe(false);
+    // Zonder opgeslagen bronformaat (rij van vóór 20261020120000) blijft de dubbele lezing — bewust, voor historische herimports.
+    expect(detectDuplicates([incoming], [zonderVelden])[0].isDuplicate).toBe(true);
+  });
+
+  it("dezelfde transactie uit MT940 en CAMT (CAMT leidt met de boekdatum) geeft dezelfde vingerafdruk: de valutadatum telt", async () => {
+    const mt940 = parseBankStatementFull(`:20:X
+:25:NL91INGB0001234567
+:28C:00001
+:60F:C261001EUR100,00
+:61:2610021003D80,00N544NONREF//B6J02XY0009999
+:86:Verzekering
+:62F:C20,00
+`);
+    const camt = parseBankStatementFull(`<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>
+<Acct><Id><IBAN>NL91INGB0001234567</IBAN></Id></Acct>
+<Ntry><Amt Ccy="EUR">80.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><BookgDt><Dt>2026-10-03</Dt></BookgDt><ValDt><Dt>2026-10-02</Dt></ValDt>
+<AcctSvcrRef>B6J02XY0009999</AcctSvcrRef><AddtlNtryInf>Verzekering</AddtlNtryInf></Ntry>
+</Stmt></BkToCstmrStmt></Document>`);
+    expect(camt.transactions[0]).toMatchObject({ date: "2026-10-03", valueDate: "2026-10-02", bankReference: "B6J02XY0009999", source: "camt053" });
+    const [a] = await importFingerprints(mt940);
+    const [b] = await importFingerprints(camt);
+    expect(a).toBe(b);
+  });
+
+  it("een bankreferentie die al bij een opgeslagen regel met een ander bedrag hoort: het afschrift vertrouwt zijn bankreferenties niet", async () => {
+    const statement = parseBankStatementFull(MT940);
+    const stored = [{ transaction_date: "2026-09-02", amount: -999, description: "vorige maand", counter_account: null, reference: "NONREF//B6J02XY0000001" }];
+    const trusted = await importFingerprints(statement);
+    const distrusted = await importFingerprints(statement, stored);
+    // Geen enkele regel gebruikt dan nog de bankreferentie-afdruk, ook de regels met een andere referentie niet.
+    expect(distrusted.some((f) => trusted.includes(f))).toBe(false);
+    expect(new Set(distrusted).size).toBe(distrusted.length);
+    // En de duplicaatcontrole ziet de regel niet als dezelfde transactie.
+    expect(detectDuplicates([statement.transactions[0]], stored)[0].isDuplicate).toBe(false);
+  });
+
+  it("één herhaalde bankreferentie in het afschrift: geen enkele regel van dat afschrift gebruikt de bankreferentie", async () => {
+    const herhaald = parseBankStatementFull(MT940.replace("B6J02XY0000002", "B6J02XY0000001"));
+    const normaal = await importFingerprints(parseBankStatementFull(MT940));
+    const fps = await importFingerprints(herhaald);
+    // Regel 3 en 4 hebben nog een eigen, unieke bankreferentie, maar krijgen toch de afschrift-afdruk.
+    expect(fps.some((f) => normaal.includes(f))).toBe(false);
+  });
+});
+

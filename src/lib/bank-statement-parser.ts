@@ -18,6 +18,12 @@ export interface ParsedTransaction {
    * transaction at the bank and stable across re-exports.
    */
   bankReference?: string | null;
+  /**
+   * Value date (YYYY-MM-DD). MT940's :61: date is the value date; CAMT.053
+   * leads with the booking date, so its <ValDt> is kept here. Used where the
+   * same transaction must give the same key in both formats.
+   */
+  valueDate?: string;
   /** CAMT.053 Ustrd (unstructured remittance info) — only set for CAMT.053 sources. */
   ustrd?: string | null;
   /** CAMT.053 AddtlNtryInf (additional entry information) — only set for CAMT.053 sources. */
@@ -176,6 +182,7 @@ function parseMT940Transaction(
     reference,
     source: "mt940",
     bankReference,
+    valueDate: date,
   };
 }
 
@@ -254,6 +261,8 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
     if (valDt.length) dateStr = getTextNS(valDt[0] as Element, ns, "Dt");
   }
   if (!dateStr) return null;
+  const valDtEls = ns ? entry.getElementsByTagNameNS(ns, "ValDt") : entry.getElementsByTagName("ValDt");
+  const valueDate = (valDtEls.length ? getTextNS(valDtEls[0] as Element, ns, "Dt") : "") || dateStr;
 
   const addtlNtryInf = getTextNS(entry, ns, "AddtlNtryInf") || null;
   const ustrd = getTextNS(entry, ns, "Ustrd") || null;
@@ -300,6 +309,7 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
     reference,
     source: "camt053",
     bankReference,
+    valueDate,
     ustrd,
     addtlNtryInf,
     counterpartyName,
@@ -447,6 +457,57 @@ function withoutRepeatedBankReferences(list: ReferenceIds[]): ReferenceIds[] {
   return list.map((ids) => (ids.bank && (counts.get(ids.bank) ?? 0) > 1 ? { ...ids, bank: null } : ids));
 }
 
+/**
+ * Whether the bank references of one incoming statement may be trusted as
+ * unique keys at all. A single repeat within the statement, or a reference
+ * already stored for this administratie with a different amount, shows that
+ * this bank does not write unique references — then none of the statement's
+ * bank references is used (one line appearing once in a file proves nothing).
+ */
+function statementTrustsBankReferences(
+  incoming: { ids: ReferenceIds; amount: number }[],
+  stored: { ids: ReferenceIds; amount: number }[],
+): boolean {
+  const seen = new Set<string>();
+  for (const { ids } of incoming) {
+    if (!ids.bank) continue;
+    if (seen.has(ids.bank)) return false;
+    seen.add(ids.bank);
+  }
+  const storedAmounts = new Map<string, Set<string>>();
+  for (const { ids, amount } of stored) {
+    if (!ids.bank) continue;
+    const set = storedAmounts.get(ids.bank) ?? new Set<string>();
+    set.add(amount.toFixed(2));
+    storedAmounts.set(ids.bank, set);
+  }
+  for (const { ids, amount } of incoming) {
+    if (!ids.bank) continue;
+    const amounts = storedAmounts.get(ids.bank);
+    if (amounts && (amounts.size > 1 || !amounts.has(amount.toFixed(2)))) return false;
+  }
+  return true;
+}
+
+function storedReferenceIds(existing: readonly ExistingBankTransactionForDuplicates[]): ReferenceIds[] {
+  return existing.map((ex) => referenceIdsFor({ reference: ex.reference, source: storedReferenceSource(ex) }));
+}
+
+function incomingReferenceIds(
+  incoming: readonly ParsedTransaction[],
+  existing: readonly ExistingBankTransactionForDuplicates[],
+  existingIds: readonly ReferenceIds[],
+): ReferenceIds[] {
+  const ids = incoming.map((tx) =>
+    referenceIdsFor({ reference: tx.reference, source: tx.source ?? "unknown", bankReference: tx.bankReference }),
+  );
+  const trusted = statementTrustsBankReferences(
+    incoming.map((tx, i) => ({ ids: ids[i], amount: tx.amount })),
+    existing.map((ex, i) => ({ ids: existingIds[i], amount: ex.amount })),
+  );
+  return trusted ? ids : ids.map((r) => ({ ...r, bank: null }));
+}
+
 function sameReference(a: ReferenceIds, b: ReferenceIds): "bank" | "owner" | null {
   if (a.bank && b.bank) return a.bank === b.bank ? "bank" : null;
   return a.owners.some((o) => b.owners.includes(o)) ? "owner" : null;
@@ -499,7 +560,9 @@ export interface ExistingBankTransactionForDuplicates {
   description: string | null;
   counter_account: string | null;
   reference: string | null;
-  /** Present on rows imported from CAMT.053; used to read the reference right. */
+  /** Stored format (20261020120000); authoritative when present. */
+  import_source?: string | null;
+  /** Present on rows imported from CAMT.053; a fallback for rows without import_source. */
   camt_ustrd?: string | null;
   camt_addtl_ntry_inf?: string | null;
   camt_counterparty_name?: string | null;
@@ -507,6 +570,7 @@ export interface ExistingBankTransactionForDuplicates {
 
 /** A stored row does not record its format; "//" means MT940, CAMT fields mean CAMT.053. */
 export function storedReferenceSource(row: ExistingBankTransactionForDuplicates): ReferenceSource {
+  if (row.import_source === "mt940" || row.import_source === "camt053") return row.import_source;
   if ((row.reference ?? "").includes("//")) return "mt940";
   if (row.camt_ustrd || row.camt_addtl_ntry_inf || row.camt_counterparty_name) return "camt053";
   return "unknown";
@@ -534,9 +598,7 @@ export function detectDuplicates(
     else map.set(key, [index]);
   };
 
-  const existingRefs = withoutRepeatedBankReferences(
-    existing.map((ex) => referenceIdsFor({ reference: ex.reference, source: storedReferenceSource(ex) })),
-  );
+  const existingRefs = withoutRepeatedBankReferences(storedReferenceIds(existing));
   existing.forEach((ex, index) => {
     const ids = existingRefs[index];
     if (ids.bank) push(byReference, `B:${ids.bank}`, index);
@@ -556,11 +618,7 @@ export function detectDuplicates(
   // Strongest evidence first, across the whole file: a weak match of an
   // earlier row may never take the stored row that a later row matches exactly.
   const result: DuplicateInfo[] = incoming.map(() => ({ isDuplicate: false, reason: null }));
-  const refs = withoutRepeatedBankReferences(
-    incoming.map((tx) =>
-      referenceIdsFor({ reference: tx.reference, source: tx.source ?? "unknown", bankReference: tx.bankReference }),
-    ),
-  );
+  const refs = incomingReferenceIds(incoming, existing, storedReferenceIds(existing));
   const compatible = (ids: ReferenceIds) => (index: number) => !differentReferences(ids, existingRefs[index]);
 
   incoming.forEach((tx, i) => {
@@ -603,7 +661,10 @@ async function sha256Hex(text: string): Promise<string> {
  * The database refuses a second row with the same fingerprint for the same
  * administratie (unique index), also when two people import at the same time.
  *
- *   - With the bank's own reference: account + bank reference + date + amount.
+ *   - With the bank's own reference: account + bank reference + value date +
+ *     amount (the value date, because MT940 and CAMT.053 lead with different
+ *     dates for the same transaction), and only when the statement's bank
+ *     references can be trusted (see statementTrustsBankReferences).
  *     That identifies the bank transaction itself, so the same line in another
  *     or overlapping statement of the same account is recognised too. The
  *     date is in it so that a bank writing a constant instead of a unique
@@ -613,7 +674,10 @@ async function sha256Hex(text: string): Promise<string> {
  *     again, but can never make two different lines equal — two genuine,
  *     identical payments always get different fingerprints.
  */
-export async function importFingerprints(statement: ParsedStatement): Promise<string[]> {
+export async function importFingerprints(
+  statement: ParsedStatement,
+  existing: readonly ExistingBankTransactionForDuplicates[] = [],
+): Promise<string[]> {
   const account = core(statement.accountIban);
   const statementKey = await sha256Hex(
     JSON.stringify([
@@ -624,15 +688,11 @@ export async function importFingerprints(statement: ParsedStatement): Promise<st
       statement.transactions.map((t) => [t.date, t.amount.toFixed(2), t.description, t.counterAccount, t.reference]),
     ]),
   );
-  const ids = withoutRepeatedBankReferences(
-    statement.transactions.map((t) =>
-      referenceIdsFor({ reference: t.reference, source: t.source ?? "unknown", bankReference: t.bankReference }),
-    ),
-  );
+  const ids = incomingReferenceIds(statement.transactions, existing, storedReferenceIds(existing));
   return Promise.all(
     statement.transactions.map((t, index) => {
       return ids[index].bank
-        ? sha256Hex(`v1|bank|${account}|${ids[index].bank}|${t.date}|${t.amount.toFixed(2)}`)
+        ? sha256Hex(`v1|bank|${account}|${ids[index].bank}|${t.valueDate ?? t.date}|${t.amount.toFixed(2)}`)
         : sha256Hex(`v1|stmt|${statementKey}|${index}`);
     }),
   );

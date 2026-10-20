@@ -12,7 +12,8 @@ import type { TablesInsert } from "@/integrations/supabase/types";
  *
  * TIJDELIJKE SHIM: `types.ts` kent `import_fingerprint` pas na regeneratie uit
  * het productieschema (nooit met de hand). Tot dan voegt `withImportFingerprint`
- * de kolom toe met een smalle cast, uitsluitend voor deze ene kolom. Verwijderen
+ * de kolommen toe met een smalle cast, uitsluitend voor `import_fingerprint` en
+ * `import_source`. Verwijderen
  * in een kleine vervolg-PR zodra de types zijn bijgewerkt.
  */
 
@@ -26,13 +27,13 @@ export async function importFingerprintSupported(): Promise<boolean> {
   const probe = supabase.from("bank_transactions") as unknown as {
     select: (columns: string) => { limit: (n: number) => Promise<{ error: { code?: string; message?: string } | null }> };
   };
-  const { error } = await probe.select("import_fingerprint").limit(1);
+  const { error } = await probe.select("import_fingerprint,import_source").limit(1);
   if (!error) {
     supportedCache = true;
     return true;
   }
   // 42703: kolom bestaat (nog) niet. Iets anders: onbekend — de aanroeper beslist.
-  if (error.code === "42703" || /import_fingerprint/.test(error.message ?? "")) return false;
+  if (error.code === "42703" || /import_(fingerprint|source)/.test(error.message ?? "")) return false;
   throw new Error(error.message || "Kon niet bepalen of dubbele imports server-side worden geweigerd.");
 }
 
@@ -44,9 +45,14 @@ export function resetImportFingerprintSupportForTests() {
 export function withImportFingerprint<T extends Partial<TablesInsert<"bank_transactions">>>(
   row: T,
   fingerprint: string | null | undefined,
+  source?: "mt940" | "camt053" | null,
 ): T {
-  if (!fingerprint) return row;
-  return { ...row, import_fingerprint: fingerprint } as T;
+  if (!fingerprint && !source) return row;
+  return {
+    ...row,
+    ...(fingerprint ? { import_fingerprint: fingerprint } : {}),
+    ...(source ? { import_source: source } : {}),
+  } as T;
 }
 
 /** Een weigering door de unieke index: deze regel staat er al (bijvoorbeeld door een gelijktijdige import). */
