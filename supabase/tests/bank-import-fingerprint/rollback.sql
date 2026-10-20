@@ -1,6 +1,6 @@
 -- NA de gedocumenteerde ROLLBACK (letterlijk uit de kop van de migratie, TWEE
 -- keer toegepast). Throwaway database only.
---   R1  kolom, CHECK en index zijn weg
+--   R1  beide kolommen, beide CHECKs en de index zijn weg
 --   R2  de historische rijen zijn byte-gelijk aan vóór de migratie, en hun
 --       fysieke identiteit ook (geen UPDATE); alle later geïmporteerde rijen
 --       bestaan nog (de rollback verwijdert geen transacties)
@@ -10,10 +10,11 @@
 \set QUIET on
 SET client_min_messages = warning;
 
-SELECT proof.record('R1', 'rollback (2x): kolom, CHECK en index zijn weg',
+SELECT proof.record('R1', 'rollback (2x): beide kolommen, beide CHECKs en de index zijn weg',
   NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.bank_transactions'::regclass
-              AND attname = 'import_fingerprint' AND NOT attisdropped)
-  AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bank_transactions_import_fingerprint_format')
+              AND attname IN ('import_fingerprint', 'import_source') AND NOT attisdropped)
+  AND NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conname IN ('bank_transactions_import_fingerprint_format', 'bank_transactions_import_source_known'))
   AND to_regclass('public.bank_transactions_client_import_fingerprint_key') IS NULL);
 
 SELECT proof.record('R2a', 'rollback: historische rijen inhoudelijk gelijk aan vóór de migratie (zelfde digest, zelfde ids)',

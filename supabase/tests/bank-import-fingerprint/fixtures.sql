@@ -13,7 +13,7 @@
 --    20260613001452 ze aanmaakt (insert/update vanaf assistant, delete vanaf
 --    accountant) en het tabelrecht dat Supabase authenticated geeft. Dit is de
 --    toestand waarvan de migratie moet afblijven.
--- 2. Historische rijen, zonder vingerafdruk, met precies de gevallen die de
+-- 2. Historische rijen, zonder vingerafdruk en zonder bronformaat, met precies de gevallen die de
 --    migratie NIET mag blokkeren of laten falen:
 --      • twee echt verschillende, maar op inhoud identieke betalingen
 --        (zelfde administratie, datum, bedrag, omschrijving, tegenrekening,
@@ -82,10 +82,10 @@ VALUES
 CREATE TABLE proof.state (k text PRIMARY KEY, v text);
 GRANT SELECT ON proof.state TO public;
 
-/** Inhoud van de opgegeven rijen, zonder de nieuwe kolom: vóór en ná vergelijkbaar. */
+/** Inhoud van de opgegeven rijen, zonder de twee nieuwe kolommen: vóór en ná vergelijkbaar. */
 CREATE FUNCTION proof.digest(_ids uuid[] DEFAULT NULL)
 RETURNS text LANGUAGE sql STABLE AS $$
-  SELECT md5(coalesce(string_agg((to_jsonb(t) - 'import_fingerprint')::text, '|' ORDER BY t.id), ''))
+  SELECT md5(coalesce(string_agg((to_jsonb(t) - 'import_fingerprint' - 'import_source')::text, '|' ORDER BY t.id), ''))
   FROM public.bank_transactions t
   WHERE _ids IS NULL OR t.id = ANY (_ids)
 $$;
@@ -112,16 +112,16 @@ RETURNS text LANGUAGE sql STABLE AS $$
   FROM pg_class c WHERE c.oid = 'public.bank_transactions'::regclass
 $$;
 
-/** Catalogusvoetafdruk van de tabel buiten de drie nieuwe objecten. */
+/** Catalogusvoetafdruk van de tabel buiten de vijf nieuwe objecten (2 kolommen, 2 CHECKs, 1 index). */
 CREATE FUNCTION proof.catalog_rest()
 RETURNS text LANGUAGE sql STABLE AS $$
   SELECT md5(concat_ws(E'\n',
     (SELECT string_agg(format('%s %s %s %s', attname, format_type(atttypid, atttypmod), attnotnull, attnum), ',' ORDER BY attnum)
      FROM pg_attribute WHERE attrelid = 'public.bank_transactions'::regclass AND attnum > 0 AND NOT attisdropped
-       AND attname <> 'import_fingerprint'),
+       AND attname NOT IN ('import_fingerprint', 'import_source')),
     (SELECT string_agg(conname || ':' || pg_get_constraintdef(oid), ',' ORDER BY conname)
      FROM pg_constraint WHERE conrelid = 'public.bank_transactions'::regclass
-       AND conname <> 'bank_transactions_import_fingerprint_format'),
+       AND conname NOT IN ('bank_transactions_import_fingerprint_format', 'bank_transactions_import_source_known')),
     (SELECT string_agg(pg_get_indexdef(indexrelid), ',' ORDER BY indexrelid::regclass::text)
      FROM pg_index WHERE indrelid = 'public.bank_transactions'::regclass
        AND indexrelid <> coalesce(to_regclass('public.bank_transactions_client_import_fingerprint_key'), 0)),
@@ -167,12 +167,14 @@ END $$;
 CREATE FUNCTION proof.import_sql(_fp text, _description text DEFAULT 'PARKEREN Q-PARK',
                                  _client uuid DEFAULT '00000000-0000-0000-0000-0000000c0001',
                                  _org uuid DEFAULT '00000000-0000-0000-0000-00000000a001',
-                                 _user uuid DEFAULT '00000000-0000-0000-0000-0000000000e2')
+                                 _user uuid DEFAULT '00000000-0000-0000-0000-0000000000e2',
+                                 _source text DEFAULT NULL)
 RETURNS text LANGUAGE sql IMMUTABLE AS $$
   SELECT format($f$INSERT INTO public.bank_transactions
-      (user_id, client_id, organization_id, transaction_date, description, amount, counter_account, reference, import_fingerprint)
-    VALUES (%L, %L, %L, '2026-03-02', %L, -4.50, 'NL00BANK0000000001', NULL, %s)$f$,
-    _user, _client, _org, _description, coalesce(quote_literal(_fp), 'NULL'))
+      (user_id, client_id, organization_id, transaction_date, description, amount, counter_account, reference,
+       import_fingerprint, import_source)
+    VALUES (%L, %L, %L, '2026-03-02', %L, -4.50, 'NL00BANK0000000001', NULL, %s, %s)$f$,
+    _user, _client, _org, _description, coalesce(quote_literal(_fp), 'NULL'), coalesce(quote_literal(_source), 'NULL'))
 $$;
 
 /** In een sessie: start, poging, einde, met tijdstempels. Vorm: 'start|einde|uitkomst'. */

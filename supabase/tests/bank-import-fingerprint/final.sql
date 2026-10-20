@@ -6,12 +6,14 @@
 \set QUIET on
 SET client_min_messages = warning;
 
-SELECT proof.record('F1', 'opnieuw vooruit: kolom, CHECK en geldige unieke partiële index terug; alle rijen NULL',
-  EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.bank_transactions'::regclass AND attname = 'import_fingerprint')
-  AND EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bank_transactions_import_fingerprint_format')
+SELECT proof.record('F1', 'opnieuw vooruit: beide kolommen, beide CHECKs en geldige unieke partiële index terug; alle rijen NULL',
+  (SELECT count(*) FROM pg_attribute WHERE attrelid = 'public.bank_transactions'::regclass
+     AND attname IN ('import_fingerprint', 'import_source') AND NOT attisdropped) = 2
+  AND (SELECT count(*) FROM pg_constraint
+       WHERE conname IN ('bank_transactions_import_fingerprint_format', 'bank_transactions_import_source_known')) = 2
   AND (SELECT indisunique AND indisvalid AND indpred IS NOT NULL FROM pg_index
        WHERE indexrelid = to_regclass('public.bank_transactions_client_import_fingerprint_key'))
-  AND NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE import_fingerprint IS NOT NULL));
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE import_fingerprint IS NOT NULL OR import_source IS NOT NULL));
 
 SELECT proof.record('F2', 'opnieuw vooruit: X kan in A weer precies één keer',
   proof.attempt(proof.import_sql(proof.fp('X'), 'X na herinvoering')) = 'ok'

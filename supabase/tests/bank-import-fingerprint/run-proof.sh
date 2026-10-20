@@ -22,7 +22,7 @@
 #   rollout preflight.sql                           must run cleanly (read-only) before the migration
 #   20261020120000 (REAL)                           the migration under test, applied TWICE
 #   rollout postcheck.sql                           placeholders filled in; every column true
-#   proof.sql                                       P1–P5
+#   proof.sql                                       P1–P6
 #   concurrency.sql                                 C1–C4, two real sessions
 #   the ROLLBACK block from the migration header    applied TWICE, then rollback.sql
 #   20261020120000 + final.sql                      re-applied after rollback

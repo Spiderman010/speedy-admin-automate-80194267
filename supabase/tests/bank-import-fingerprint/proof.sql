@@ -1,28 +1,36 @@
--- Bewijzen P1–P5 voor 20261020120000_add_bank_transaction_import_fingerprint.sql.
+-- Bewijzen P1–P6 voor 20261020120000_add_bank_transaction_import_fingerprint.sql.
 -- Throwaway database only. Draait NA twee toepassingen van de migratie en
--- vóórdat er een rij met vingerafdruk bestaat.
+-- vóórdat er een rij met vingerafdruk of bronformaat bestaat.
 
 \set ON_ERROR_STOP on
 \set QUIET on
 SET client_min_messages = warning;
 
--- ── P1. Kolom, CHECK en index: exacte definities; bestaande rijen onaangeroerd ─
+-- ── P1. Kolommen, CHECKs en index: exacte definities; bestaande rijen onaangeroerd
 
-SELECT proof.record('P1a', 'kolom import_fingerprint: text, nullable, geen standaardwaarde, met commentaar',
+SELECT proof.record('P1a', 'precies twee nieuwe kolommen, import_fingerprint en import_source: text, nullable, geen standaardwaarde, met commentaar',
   coalesce(bool_and(c.data_type = 'text' AND c.is_nullable = 'YES' AND c.column_default IS NULL
-    AND col_description('public.bank_transactions'::regclass, c.ordinal_position::int) LIKE 'SHA-256 (hex)%'), false)
-  AND count(*) = 1,
-  string_agg(format('%s %s default=%s', c.data_type, c.is_nullable, c.column_default), ';'))
+    AND col_description('public.bank_transactions'::regclass, c.ordinal_position::int)
+        LIKE CASE c.column_name WHEN 'import_fingerprint' THEN 'SHA-256 (hex)%' ELSE 'Bestandsformaat waaruit%' END), false)
+  AND array_agg(c.column_name::text ORDER BY c.column_name) = ARRAY['import_fingerprint', 'import_source'],
+  string_agg(format('%s %s %s default=%s', c.column_name, c.data_type, c.is_nullable, c.column_default), '; ' ORDER BY c.column_name))
 FROM information_schema.columns c
-WHERE c.table_schema = 'public' AND c.table_name = 'bank_transactions' AND c.column_name = 'import_fingerprint';
+WHERE c.table_schema = 'public' AND c.table_name = 'bank_transactions'
+  AND c.column_name IN ('import_fingerprint', 'import_source');
 
-SELECT proof.record('P1b', 'CHECK bank_transactions_import_fingerprint_format: exacte expressie, gevalideerd',
+SELECT proof.record('P1b', 'beide CHECKs (…_import_fingerprint_format, …_import_source_known): exacte expressie, gevalideerd',
   coalesce(bool_and(con.contype = 'c' AND con.convalidated
-    AND pg_get_constraintdef(con.oid) = $e$CHECK (((import_fingerprint IS NULL) OR (import_fingerprint ~ '^[0-9a-f]{64}$'::text)))$e$), false)
-  AND count(*) = 1,
-  string_agg(pg_get_constraintdef(con.oid), ';'))
+    AND pg_get_constraintdef(con.oid) = CASE con.conname
+      WHEN 'bank_transactions_import_fingerprint_format'
+        THEN $e$CHECK (((import_fingerprint IS NULL) OR (import_fingerprint ~ '^[0-9a-f]{64}$'::text)))$e$
+      WHEN 'bank_transactions_import_source_known'
+        THEN $e$CHECK (((import_source IS NULL) OR (import_source = ANY (ARRAY['mt940'::text, 'camt053'::text]))))$e$ END), false)
+  AND array_agg(con.conname::text ORDER BY con.conname)
+      = ARRAY['bank_transactions_import_fingerprint_format', 'bank_transactions_import_source_known'],
+  string_agg(pg_get_constraintdef(con.oid), '; ' ORDER BY con.conname))
 FROM pg_constraint con
-WHERE con.conrelid = 'public.bank_transactions'::regclass AND con.conname = 'bank_transactions_import_fingerprint_format';
+WHERE con.conrelid = 'public.bank_transactions'::regclass
+  AND con.conname IN ('bank_transactions_import_fingerprint_format', 'bank_transactions_import_source_known');
 
 SELECT proof.record('P1c', 'index: UNIQUE, partieel (WHERE import_fingerprint IS NOT NULL), op (client_id, import_fingerprint), geldig',
   coalesce(bool_and(i.indisunique AND i.indisvalid AND i.indisready AND NOT i.indnullsnotdistinct AND NOT i.indisprimary
@@ -37,17 +45,21 @@ FROM pg_index i
 WHERE i.indexrelid = to_regclass('public.bank_transactions_client_import_fingerprint_key')
   AND i.indrelid = 'public.bank_transactions'::regclass;
 
-SELECT proof.record('P1d', 'precies één index en één constraint raken import_fingerprint; de rest van de catalogus is gelijk',
+SELECT proof.record('P1d', 'import_fingerprint: één index en één constraint; import_source: geen index, één constraint; rest van de catalogus gelijk',
   (SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey::int2[])
    WHERE i.indrelid = 'public.bank_transactions'::regclass AND a.attname = 'import_fingerprint') = 1
+  AND (SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey::int2[])
+   WHERE i.indrelid = 'public.bank_transactions'::regclass AND a.attname = 'import_source') = 0
   AND (SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.bank_transactions'::regclass
        AND pg_get_constraintdef(oid) LIKE '%import_fingerprint%') = 1
+  AND (SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.bank_transactions'::regclass
+       AND pg_get_constraintdef(oid) LIKE '%import_source%') = 1
   AND proof.catalog_rest() = (SELECT v FROM proof.state WHERE k = 'catalog_before'));
 
-SELECT proof.record('P1e', 'bestaande rijen: zelfde aantal, inhoud byte-gelijk (digest), vingerafdruk overal NULL',
+SELECT proof.record('P1e', 'bestaande rijen: zelfde aantal, inhoud byte-gelijk (digest), vingerafdruk én bronformaat overal NULL',
   (SELECT count(*)::text FROM public.bank_transactions) = (SELECT v FROM proof.state WHERE k = 'rows_before')
   AND proof.digest() = (SELECT v FROM proof.state WHERE k = 'digest_before')
-  AND NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE import_fingerprint IS NOT NULL),
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE import_fingerprint IS NOT NULL OR import_source IS NOT NULL),
   format('rijen=%s digest=%s', (SELECT count(*) FROM public.bank_transactions), proof.digest()));
 
 SELECT proof.record('P1f', 'geen herschrijving en geen UPDATE: relfilenode, ctid en xmin van elke rij ongewijzigd',
@@ -201,3 +213,50 @@ SELECT proof.record('P5h', 'relacl, RLS aan, FORCE uit en eigenaar van bank_tran
   proof.acl() = (SELECT v FROM proof.state WHERE k = 'acl_before')
   AND NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'public.bank_transactions'::regclass AND attacl IS NOT NULL),
   proof.acl());
+
+-- ── P6. Bronformaat: alleen 'mt940', 'camt053' of NULL ──────────────────────
+
+INSERT INTO o
+SELECT 'P6-' || label, proof.attempt(proof.import_sql(proof.fp('src-' || label), 'bron ' || label,
+  _source => val))
+FROM (VALUES ('mt940', 'mt940'), ('camt053', 'camt053'), ('null', NULL)) v(label, val);
+SELECT proof.record('P6a', 'import_source mt940, camt053 en NULL: elk toegestaan',
+  count(*) = 3 AND bool_and(v = 'ok')
+  AND (SELECT array_agg(coalesce(import_source, '<null>') ORDER BY description) FROM public.bank_transactions
+       WHERE description IN ('bron camt053', 'bron mt940', 'bron null')) = ARRAY['camt053', 'mt940', '<null>'],
+  string_agg(n || '=' || v, ' ' ORDER BY n))
+FROM o WHERE n IN ('P6-mt940', 'P6-camt053', 'P6-null');
+
+INSERT INTO o
+SELECT 'P6x-' || label, proof.attempt(proof.import_sql(proof.fp('srcx-' || label), 'bron fout ' || label,
+  _source => val))
+FROM (VALUES ('MT940', 'MT940'), ('csv', 'csv'), ('leeg', ''), ('spatie', 'mt940 ')) v(label, val);
+SELECT proof.record('P6b', 'import_source MT940, csv, leeg en ''mt940 '' bij INSERT: elk 23514 op …_import_source_known, niets geschreven',
+  count(*) = 4 AND bool_and(v LIKE '23514: %bank_transactions_import_source_known%')
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE description LIKE 'bron fout %'),
+  string_agg(n || '=' || left(v, 5), ' ' ORDER BY n))
+FROM o WHERE n LIKE 'P6x-%';
+
+-- UPDATE op de rij uit P6a (geen historische rij: die moeten fysiek onaangeroerd blijven).
+INSERT INTO o
+SELECT 'P6u-' || label, proof.attempt(format(
+  $s$UPDATE public.bank_transactions SET import_source = %L WHERE description = 'bron mt940'$s$, val))
+FROM (VALUES ('MT940', 'MT940'), ('csv', 'csv'), ('leeg', '')) v(label, val);
+SELECT proof.record('P6c', 'import_source MT940, csv en leeg bij UPDATE: elk 23514, de rij houdt mt940',
+  count(*) = 3 AND bool_and(v LIKE '23514: %bank_transactions_import_source_known%')
+  AND (SELECT import_source FROM public.bank_transactions WHERE description = 'bron mt940') = 'mt940',
+  string_agg(n || '=' || left(v, 5), ' ' ORDER BY n))
+FROM o WHERE n LIKE 'P6u-%';
+
+INSERT INTO o VALUES ('P6d', proof.attempt(
+  $s$UPDATE public.bank_transactions SET import_source = 'camt053' WHERE description = 'bron null'$s$)
+  || ' / ' || proof.attempt(
+  $s$UPDATE public.bank_transactions SET import_source = NULL WHERE description = 'bron camt053'$s$));
+SELECT proof.record('P6d', 'UPDATE naar een geldig formaat of terug naar NULL: toegestaan',
+  v = 'ok / ok'
+  AND (SELECT import_source FROM public.bank_transactions WHERE description = 'bron null') = 'camt053'
+  AND (SELECT import_source FROM public.bank_transactions WHERE description = 'bron camt053') IS NULL, v)
+FROM o WHERE n = 'P6d';
+
+SELECT proof.record('P6e', 'historische rijen hebben nog steeds import_source NULL',
+  NOT EXISTS (SELECT 1 FROM public.bank_transactions WHERE id = ANY (proof.historical()) AND import_source IS NOT NULL));

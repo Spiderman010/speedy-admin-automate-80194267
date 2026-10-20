@@ -19,8 +19,8 @@
 -- toegepast (alles of niets): STOP en melden.
 --
 -- STOP (niet uitvoeren, niets herstellen, uitkomst doorgeven) als:
---   • PRE 1 ergens `false` geeft (een vereiste ontbreekt, of de kolom, CHECK of
---     index bestaat al — een onbekende eerdere poging);
+--   • PRE 1 ergens `false` geeft (een vereiste ontbreekt, of een van de twee
+--     kolommen, CHECKs of de index bestaat al — een onbekende eerdere poging);
 --   • PRE 2 `rls_aan = false` geeft.
 -- PRE 3 t/m PRE 5 zijn INFORMATIEF en nooit een STOP: historische regels houden
 -- NULL en worden door de partiële index nooit geblokkeerd, ook niet als ze
@@ -39,9 +39,14 @@ SELECT
                          'counter_account', 'reference')) = 6                       AS kolommen,
   NOT EXISTS (SELECT 1 FROM information_schema.columns
               WHERE table_schema = 'public' AND table_name = 'bank_transactions'
-                AND column_name = 'import_fingerprint')                            AS kolom_nog_afwezig,
+                AND column_name = 'import_fingerprint')                            AS kolom_fingerprint_nog_afwezig,
+  NOT EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'bank_transactions'
+                AND column_name = 'import_source')                                 AS kolom_source_nog_afwezig,
   NOT EXISTS (SELECT 1 FROM pg_constraint
-              WHERE conname = 'bank_transactions_import_fingerprint_format')       AS check_nog_afwezig,
+              WHERE conname = 'bank_transactions_import_fingerprint_format')       AS check_fingerprint_nog_afwezig,
+  NOT EXISTS (SELECT 1 FROM pg_constraint
+              WHERE conname = 'bank_transactions_import_source_known')             AS check_source_nog_afwezig,
   to_regclass('public.bank_transactions_client_import_fingerprint_key') IS NULL    AS index_nog_afwezig;
 
 
