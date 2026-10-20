@@ -90,6 +90,18 @@ serve(async (req) => {
       });
     }
 
+    // Reject unsupported MIME types before persisting anything in storage.
+    // UBL/XML needs a separate structured parser; never send it to image OCR.
+    const supportedMimeTypes = new Set([
+      "application/pdf", "image/jpeg", "image/png", "image/webp",
+    ]);
+    if (!supportedMimeTypes.has(file.type)) {
+      return new Response(
+        JSON.stringify({ error: "Niet-ondersteund bestandstype. Gebruik PDF, JPG, PNG of WebP." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     // Upload file to storage
     const fileExt = file.name.split(".").pop();
     const filePath = `${user.id}/${clientId}/${crypto.randomUUID()}.${fileExt}`;
@@ -112,7 +124,7 @@ serve(async (req) => {
       new Uint8Array(fileBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
     );
 
-    const mimeType = file.type || "image/jpeg";
+    const mimeType = file.type;
     const isImage = mimeType.startsWith("image/");
     const isPdf = mimeType === "application/pdf";
 
