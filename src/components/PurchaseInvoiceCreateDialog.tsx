@@ -134,6 +134,22 @@ export function PurchaseInvoiceCreateDialog({
     const btwAmount = parseAmountInput(form.btw_amount);
     const btwPct = parseAmountInput(form.btw_percentage);
 
+    // Reject contradictory header amounts before creating a new draft.
+    // Empty amount fields are allowed; drafts may be completed in the workspace.
+    if (btwPct != null && (!Number.isFinite(btwPct) || btwPct < 0 || btwPct > 100)) {
+      toast({ title: "Ongeldig BTW-percentage", variant: "destructive" });
+      return;
+    }
+    if (amountExcl != null && btwAmount != null && amountIncl != null &&
+        Math.abs(Math.round((amountExcl + btwAmount - amountIncl) * 100)) > 2) {
+      toast({
+        title: "Factuurbedragen sluiten niet aan",
+        description: "Het bedrag inclusief BTW moet gelijk zijn aan exclusief BTW plus het BTW-bedrag.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       const created = await addInvoice.mutateAsync({
         client_id: form.client_id,
