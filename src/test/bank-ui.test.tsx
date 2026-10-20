@@ -312,14 +312,13 @@ describe("Bank pagina UI", () => {
     expect(bedragHeader.className).toContain("cursor-pointer");
   });
 
-  it("betrouwbaarheid- en gekoppeld-aan-kolommen zijn verborgen op kleine schermen (responsive)", () => {
+  it("betrouwbaarheid- en gekoppeld-aan-kolommen zijn op elke breedte aanwezig (bereikbaar via horizontaal scrollen)", () => {
     state.transactions = [makeRow("t1", { match_confidence: 80 })];
     renderBank();
     const confHeader = screen.getByRole("columnheader", { name: /Betrouwbaarheid/ });
     const linkedHeader = screen.getByRole("columnheader", { name: /Gekoppeld aan/ });
-    // md:table-cell hides on small screens
-    expect(confHeader.className).toContain("hidden");
-    expect(linkedHeader.className).toContain("hidden");
+    expect(confHeader.className).not.toMatch(/(^|\s)hidden(\s|$)/);
+    expect(linkedHeader.className).not.toMatch(/(^|\s)hidden(\s|$)/);
   });
 
   it("klik op rij opent transactiedetail-Sheet", () => {
