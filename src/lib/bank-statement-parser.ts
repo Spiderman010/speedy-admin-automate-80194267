@@ -332,18 +332,29 @@ const PLACEHOLDER_REFERENCES = new Set(["NONREF", "NOTPROVIDED", "NOT PROVIDED"]
 
 /**
  * The MT940 parser only strips type codes shaped like N544; ING-style codes
- * (NTRF, NDDT, NMSC, …) stay glued to the reference, as in "NTRFNONREF".
+ * (NTRF, NDDT, NMSC, …) stay glued to the reference, as in "NTRFNONREF" or
+ * "NTRFABC123". The same payment arrives from CAMT.053 as plain "ABC123".
  */
-const MT940_TYPE_CODE = /^[NSF][A-Z0-9]{3}/;
+const SWIFT_TYPE_CODES =
+  "BNK|BOE|BRF|CHG|CHK|CLR|CMI|CMN|CMP|CMS|CMT|CMZ|COL|COM|CPN|DCR|DDT|DIV|EQA|EXT|FEX|INT|LBX|LDP|MAR|MAT|MGT|MSC|NWI|ODC|OPT|PCH|POP|PRN|REC|RED|RIG|RTI|SAL|SEC|SLE|STO|STP|SUB|SWP|TAX|TCK|TCM|TRA|TRF|TRN|UWC|VDA|WAR";
+/** Only the official SWIFT transaction type codes, so "NOTA2026-01" stays intact. */
+const MT940_LETTER_TYPE_CODE = new RegExp(`^N(?:${SWIFT_TYPE_CODES})(?=.)`);
 
-/** A trimmed reference that can identify a transaction, or null for none/placeholder. */
+/**
+ * The account owner's reference in a comparable form, or null when there is
+ * none or only a placeholder. Normalised so MT940 and CAMT.053 agree: the
+ * MT940 type code and the "//bank reference" tail are dropped (the bank's own
+ * reference is not what CAMT carries as EndToEndId), case and spaces ignored.
+ */
 export function identifyingBankReference(reference: string | null | undefined): string | null {
-  const trimmed = (reference ?? "").trim();
-  if (!trimmed) return null;
-  const upper = trimmed.toUpperCase();
-  if (PLACEHOLDER_REFERENCES.has(upper)) return null;
-  if (MT940_TYPE_CODE.test(upper) && PLACEHOLDER_REFERENCES.has(upper.slice(4))) return null;
-  return trimmed;
+  let core = (reference ?? "").trim().toUpperCase();
+  const tail = core.indexOf("//");
+  if (tail >= 0) core = core.slice(0, tail);
+  core = core.replace(/\s+/g, "");
+  if (!core || PLACEHOLDER_REFERENCES.has(core)) return null;
+  if (MT940_LETTER_TYPE_CODE.test(core)) core = core.slice(4);
+  if (!core || PLACEHOLDER_REFERENCES.has(core)) return null;
+  return core;
 }
 
 function compositeKey(
@@ -374,8 +385,14 @@ function daysApart(a: string, b: string): number {
   return Number.isFinite(ms) ? ms / 86_400_000 : Number.POSITIVE_INFINITY;
 }
 
-function possibleKey(date: string, amount: number, counterAccount: string | null): string {
-  return `${date}|${amount.toFixed(2)}|${(counterAccount || "").replace(/\s/g, "").toLowerCase()}`;
+/**
+ * Only with a counter account on both sides: without one, "possible" would
+ * shrink to date + amount and drop a second, different card payment of the
+ * same amount on the same day.
+ */
+function possibleKey(date: string, amount: number, counterAccount: string | null): string | null {
+  const account = (counterAccount || "").replace(/\s/g, "").toLowerCase();
+  return account ? `${date}|${amount.toFixed(2)}|${account}` : null;
 }
 
 export interface ExistingBankTransactionForDuplicates {
@@ -413,7 +430,8 @@ export function detectDuplicates(
     const ref = existingRefs[index];
     if (ref) push(byReference, referenceKey(ref, ex.amount), index);
     push(byComposite, compositeKey(ex.transaction_date, ex.amount, ex.description, ex.counter_account), index);
-    push(byPossible, possibleKey(ex.transaction_date, ex.amount, ex.counter_account), index);
+    const possible = possibleKey(ex.transaction_date, ex.amount, ex.counter_account);
+    if (possible) push(byPossible, possible, index);
   });
 
   const claim = (
@@ -451,7 +469,8 @@ export function detectDuplicates(
   });
   incoming.forEach((tx, i) => {
     if (result[i].isDuplicate) return;
-    if (claim(byPossible, possibleKey(tx.date, tx.amount, tx.counterAccount), compatible(refs[i]))) {
+    const possible = possibleKey(tx.date, tx.amount, tx.counterAccount);
+    if (possible && claim(byPossible, possible, compatible(refs[i]))) {
       result[i] = { isDuplicate: true, reason: "possible" };
     }
   });

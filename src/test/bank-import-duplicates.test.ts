@@ -41,9 +41,17 @@ describe("identifyingBankReference", () => {
     }
   });
 
-  it("een echte referentie blijft, getrimd; ook NONREF met bankreferentie erachter", () => {
+  it("een echte referentie blijft, genormaliseerd zodat MT940 en CAMT overeenkomen", () => {
     expect(identifyingBankReference(" E2E-2026-0042 ")).toBe("E2E-2026-0042");
-    expect(identifyingBankReference("NONREF//B6C02XY0001")).toBe("NONREF//B6C02XY0001");
+    expect(identifyingBankReference("e2e-2026-0042")).toBe("E2E-2026-0042");
+    // MT940 met ING-typecode en bankreferentie ⇔ CAMT EndToEndId.
+    expect(identifyingBankReference("NTRFABC123//B6C02XY0001")).toBe("ABC123");
+    expect(identifyingBankReference("ABC123")).toBe("ABC123");
+    // Alleen een bankreferentie achter NONREF is geen referentie van de opdrachtgever.
+    expect(identifyingBankReference("NONREF//B6C02XY0001")).toBeNull();
+    // Alleen echte SWIFT-typecodes worden gestript; een referentie die toevallig zo begint niet.
+    expect(identifyingBankReference("NOTA2026-01")).toBe("NOTA2026-01");
+    expect(identifyingBankReference("NDDTPOLIS123")).toBe("POLIS123");
   });
 });
 
@@ -161,6 +169,18 @@ describe("detectDuplicates — reviewbevindingen", () => {
     const existing = [stored({ reference: "NONREF", description: "Bankkosten jan", counter_account: "NL02ABNA0123456789" })];
     const incoming = [tx({ reference: "NONREF", description: "Kosten betaalpakket", counterAccount: "NL02 ABNA 0123 4567 89" })];
     expect(detectDuplicates(incoming, existing)).toEqual([{ isDuplicate: true, reason: "possible" }]);
+  });
+
+  it("dezelfde betaling uit MT940 (NTRFABC123) en CAMT (ABC123) wordt als duplicaat herkend", () => {
+    const existing = [stored({ reference: "ABC123", amount: -80, transaction_date: "2026-03-02", description: "camt tekst" })];
+    const incoming = [tx({ reference: "NTRFABC123//B6C02", amount: -80, date: "2026-03-01", description: "mt940 tekst" })];
+    expect(detectDuplicates(incoming, existing)).toEqual([{ isDuplicate: true, reason: "reference" }]);
+  });
+
+  it("zonder tegenrekening is er geen 'mogelijk duplicaat': twee kaartbetalingen van hetzelfde bedrag blijven allebei", () => {
+    const existing = [stored({ description: "BEA Albert Heijn", counter_account: null })];
+    const incoming = [tx({ description: "BEA Jumbo", counterAccount: null })];
+    expect(detectDuplicates(incoming, existing)).toEqual([{ isDuplicate: false, reason: null }]);
   });
 
   it("een zwakke match van een eerdere regel pakt nooit de opgeslagen regel die een latere regel exact matcht", () => {
