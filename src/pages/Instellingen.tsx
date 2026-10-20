@@ -539,6 +539,9 @@ function HerkenningsregelsTab() {
             .update({
               match_status: "handmatig_geboekt",
               grootboekrekening_id: ledger.id,
+              // The rule's own VAT, when it has one; otherwise the row stays
+              // "controle nodig" in the Inhaalslag instead of posting at 0%.
+              ...(rule.btw_percentage != null ? { btw_percentage: rule.btw_percentage } : {}),
               matched_invoice_id: null,
               match_confidence: null,
             })

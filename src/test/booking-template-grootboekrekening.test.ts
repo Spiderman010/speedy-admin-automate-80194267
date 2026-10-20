@@ -81,6 +81,20 @@ describe("booking template grootboekrekening flow", () => {
     expect(resolveBookingTemplateLedger(bookingTemplate, accounts)?.id).toBe("gb-4400");
   });
 
+  it("geeft het BTW-percentage van de herkenningsregel mee aan de import (geen stille 0%)", () => {
+    const tx = {
+      description: "Kantoor huur juli",
+      reference: "",
+      counterAccount: "Verhuurder BV",
+      matchConfidence: null,
+      matchStatus: "niet_gematcht" as const,
+    };
+    const [met21] = applyBookingTemplatesToTransactions([tx], [{ ...bookingTemplate, btw_percentage: 21 }], "client-1");
+    expect(met21.btwPercentage).toBe(21);
+    const [zonder] = applyBookingTemplatesToTransactions([tx], [{ ...bookingTemplate, btw_percentage: null }], "client-1");
+    expect(zonder.btwPercentage).toBeNull();
+  });
+
   it("applies booking templates to bank import using grootboekrekening_id", () => {
     const [applied] = applyBookingTemplatesToTransactions(
       [
