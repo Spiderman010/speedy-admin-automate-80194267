@@ -1,3 +1,4 @@
+import { parseUblXml, UBL_MIME_TYPES, UBL_MAX_BYTES } from "./ubl-parse.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
@@ -94,10 +95,11 @@ serve(async (req) => {
     // UBL/XML needs a separate structured parser; never send it to image OCR.
     const supportedMimeTypes = new Set([
       "application/pdf", "image/jpeg", "image/png", "image/webp",
+      ...UBL_MIME_TYPES,
     ]);
     if (!supportedMimeTypes.has(file.type)) {
       return new Response(
-        JSON.stringify({ error: "Niet-ondersteund bestandstype. Gebruik PDF, JPG, PNG of WebP." }),
+        JSON.stringify({ error: "Niet-ondersteund bestandstype. Gebruik PDF, JPG, PNG, WebP of UBL/XML." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
@@ -106,6 +108,23 @@ serve(async (req) => {
     const fileExt = file.name.split(".").pop();
     const filePath = `${user.id}/${clientId}/${crypto.randomUUID()}.${fileExt}`;
     const fileBuffer = await file.arrayBuffer();
+    const isUbl = UBL_MIME_TYPES.has(file.type);
+    let ublExtracted: ReturnType<typeof parseUblXml> | null = null;
+    if (isUbl) {
+      if (fileBuffer.byteLength > UBL_MAX_BYTES) {
+        return new Response(JSON.stringify({ error: "UBL-bestand is te groot (maximaal 1 MB)" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      try {
+        ublExtracted = parseUblXml(new TextDecoder("utf-8", { fatal: true }).decode(fileBuffer));
+      } catch {
+        return new Response(JSON.stringify({ error: "UBL-bestand kon niet veilig worden verwerkt" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
 
     const { error: uploadError } = await supabase.storage
       .from("invoices")
@@ -119,6 +138,10 @@ serve(async (req) => {
       });
     }
 
+    let extracted: any = {};
+    if (ublExtracted) {
+      extracted = ublExtracted;
+    } else {
     // Convert file to base64 for AI vision
     const base64 = btoa(
       new Uint8Array(fileBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
@@ -294,7 +317,7 @@ Extra instructies:
     }
 
     const aiData = await aiResponse.json();
-    let extracted: any = {};
+    extracted = {};
 
     try {
       const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
@@ -303,6 +326,8 @@ Extra instructies:
       }
     } catch (e) {
       console.error("Failed to parse AI response:", e);
+    }
+
     }
 
     // Normalize Dutch VAT number: uppercase, strip separators
