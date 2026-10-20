@@ -1910,8 +1910,12 @@ export default function Bank() {
     let allocationErrors = 0;
     let firstAllocationError = "";
     for (const tx of txs) {
+      // Saving the bank line and finishing its match are reported separately:
+      // a row that was saved must never be reported as "not saved, import
+      // again" (the retry would then skip it as a duplicate).
+      let newTx: Awaited<ReturnType<typeof addTx.mutateAsync>> | undefined;
       try {
-        const newTx = await addTx.mutateAsync({
+        newTx = await addTx.mutateAsync({
           client_id: importClientId,
           transaction_date: tx.date,
           amount: tx.amount,
@@ -1929,9 +1933,17 @@ export default function Bank() {
           // "controle nodig" in the Inhaalslag instead of posting at 0%.
           ...(tx.btwPercentage != null ? { btw_percentage: tx.btwPercentage } : {}),
         });
+      } catch (e: any) {
+        failed++;
+        if (!firstImportError) firstImportError = e?.message || "Onbekende fout";
+        console.error("Import error:", e);
+        continue;
+      }
+      success++;
 
-        // Aflettering: update the linked purchase invoice after a confirmed match
-        if (tx.matchedInvoiceId && tx.matchStatus === "gematcht") {
+      // Aflettering: update the linked purchase invoice after a confirmed match
+      if (tx.matchedInvoiceId && tx.matchStatus === "gematcht") {
+        try {
           const purchaseInv = invoices?.find(i => i.id === tx.matchedInvoiceId);
           if (purchaseInv) {
             const txAmount = Math.abs(tx.amount);
@@ -1946,35 +1958,28 @@ export default function Bank() {
               await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: newRemaining });
             }
           }
-          if (newTx) {
-            try {
-              await upsertSingleAllocationForMatch(newTx, tx.matchedInvoiceId);
-            } catch (allocErr: any) {
-              allocationErrors++;
-              if (!firstAllocationError) firstAllocationError = allocErr?.message || "Onbekende fout";
-              console.error("Allocation write failed during import:", allocErr);
-            }
-          }
+          if (newTx) await upsertSingleAllocationForMatch(newTx, tx.matchedInvoiceId);
+        } catch (allocErr: any) {
+          allocationErrors++;
+          if (!firstAllocationError) firstAllocationError = allocErr?.message || "Onbekende fout";
+          console.error("Allocation write failed during import:", allocErr);
         }
-
-        success++;
-      } catch (e: any) {
-        failed++;
-        if (!firstImportError) firstImportError = e?.message || "Onbekende fout";
-        console.error("Import error:", e);
       }
     }
     await refetchPurchase();
+    const allocationWarning = allocationErrors > 0
+      ? `${allocationErrors} ${allocationErrors === 1 ? "regel is" : "regels zijn"} wel opgeslagen, maar de koppeling met de factuur is niet afgerond (${firstAllocationError}). Controleer de afletterdetails en openstaande bedragen; niet opnieuw importeren.`
+      : "";
     if (failed > 0) {
       toast({
         title: `${success} van ${txs.length} transacties geïmporteerd`,
-        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.`,
+        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.${allocationWarning ? ` ${allocationWarning}` : ""}`,
         variant: "destructive",
       });
     } else if (allocationErrors > 0) {
       toast({
         title: "Bankafschrift geïmporteerd met waarschuwing",
-        description: `${success} transacties geïmporteerd. ${allocationErrors} afletteringen konden niet worden bijgewerkt. Controleer openstaande bedragen.`,
+        description: `${success} transacties geïmporteerd. ${allocationWarning}`,
         variant: "destructive",
       });
     } else {

@@ -111,6 +111,29 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
     await screen.findByRole("button", { name: /2 transacties importeren/ });
   });
 
+  it("de klant staat al vast terwijl het bestand nog wordt gelezen", async () => {
+    let release!: (text: string) => void;
+    const slow = new File([STATEMENT], "afschrift.sta", { type: "text/plain" });
+    Object.defineProperty(slow, "text", { value: () => new Promise<string>((r) => { release = r; }) });
+    const load = vi.fn().mockResolvedValue([]);
+    render(
+      <BankStatementUploadDialog
+        open
+        onOpenChange={() => {}}
+        clients={[CLIENT]}
+        invoices={[]}
+        onImport={vi.fn()}
+        loadExistingTransactions={load}
+        defaultClientId={CLIENT.id}
+      />,
+    );
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [slow] } });
+    expect(screen.getByRole("combobox")).toBeDisabled();
+    release(STATEMENT);
+    await screen.findByRole("button", { name: /2 transacties importeren/ });
+    expect(load).toHaveBeenCalledWith("client-a");
+  });
+
   it("een bewust aangevinkte duplicaat blijft de keuze van de gebruiker", async () => {
     const load = vi.fn().mockResolvedValue([PARKEREN]);
     const { onImport } = renderDialog(load);

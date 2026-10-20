@@ -140,14 +140,15 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   // IBAN mismatch warning state
   const [ibanWarning, setIbanWarning] = useState<{ fileIban: string; clientName: string } | null>(null);
   const [pendingFileText, setPendingFileText] = useState<string | null>(null);
+  const [pendingClientId, setPendingClientId] = useState<string | null>(null);
 
-  const processFile = useCallback(async (text: string) => {
+  const processFile = useCallback(async (text: string, forClientId: string) => {
     const statement = parseBankStatementFull(text);
     if (!statement.transactions.length) {
       setError("Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
       return;
     }
-    if (!clientId) return;
+    if (!forClientId) return;
 
     // Fail closed: without the client's stored transactions there is no
     // duplicate check, so nothing may be offered for import.
@@ -155,7 +156,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     setCheckingDuplicates(true);
     let existing: ExistingBankTransactionForDuplicates[];
     try {
-      existing = await loadExistingTransactions(clientId);
+      existing = await loadExistingTransactions(forClientId);
     } catch {
       if (token === checkToken.current) {
         setCheckingDuplicates(false);
@@ -165,43 +166,51 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     }
     if (token !== checkToken.current) return;
     setCheckingDuplicates(false);
-    setPreviewClientId(clientId);
+    setPreviewClientId(forClientId);
 
     setOpeningBalance(statement.openingBalance);
     setClosingBalance(statement.closingBalance);
 
     // Only match against invoices for the selected client
-    const clientInvoices = invoices.filter(i => i.client_id === clientId);
+    const clientInvoices = invoices.filter(i => i.client_id === forClientId);
     const matched = autoMatch(statement.transactions, clientInvoices);
-    const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, clientId);
+    const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, forClientId);
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(statement.transactions, existing);
     setDuplicateInfos(dupInfos);
     setSelected(dupInfos.map(d => !d.isDuplicate));
-  }, [invoices, loadExistingTransactions, clientId, bookingTemplates]);
+  }, [invoices, loadExistingTransactions, bookingTemplates]);
 
   const handleFile = useCallback(async (file: File) => {
     setError(null);
+    // The client is fixed the moment a file is chosen: the dropdown closes
+    // before the file is even read, and everything below uses this value.
+    const forClientId = clientId;
+    if (!forClientId) return;
+    setCheckingDuplicates(true);
     try {
       const text = await file.text();
       const statement = parseBankStatementFull(text);
 
       // Check IBAN match
-      if (statement.accountIban && clientId) {
-        const client = clients.find(c => c.id === clientId);
+      if (statement.accountIban) {
+        const client = clients.find(c => c.id === forClientId);
         const clientIbans = (client?.ibans || []).map(i => i.replace(/\s/g, "").toUpperCase());
         const fileIban = statement.accountIban.replace(/\s/g, "").toUpperCase();
 
         if (clientIbans.length > 0 && !clientIbans.includes(fileIban)) {
+          setCheckingDuplicates(false);
           setIbanWarning({ fileIban: statement.accountIban, clientName: client?.name || "" });
           setPendingFileText(text);
+          setPendingClientId(forClientId);
           return;
         }
       }
 
-      await processFile(text);
+      await processFile(text, forClientId);
     } catch (e: any) {
+      setCheckingDuplicates(false);
       setError(`Fout bij verwerken: ${e.message}`);
     }
   }, [clientId, clients, processFile]);
@@ -218,7 +227,8 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         matchedInvoiceLabel: null,
       };
     } else {
-      const inv = invoices.find(i => i.id === invoiceId);
+      const inv = invoices.find(i => i.id === invoiceId && i.client_id === previewClientId);
+      if (!inv) return;
       updated[index] = {
         ...updated[index],
         matchedInvoiceId: invoiceId,
@@ -451,7 +461,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                                 </SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="none">— Geen match —</SelectItem>
-                                  {invoices.filter(i => !clientId || i.client_id === clientId).map(inv => (
+                                  {invoices.filter(i => i.client_id === previewClientId).map(inv => (
                                     <SelectItem key={inv.id} value={inv.id}>
                                       {invoiceLabel(inv)}
                                     </SelectItem>
@@ -531,7 +541,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
             Annuleren
           </Button>
           <Button onClick={() => {
-            if (pendingFileText) void processFile(pendingFileText);
+            if (pendingFileText && pendingClientId) void processFile(pendingFileText, pendingClientId);
             setIbanWarning(null);
             setPendingFileText(null);
           }}>
