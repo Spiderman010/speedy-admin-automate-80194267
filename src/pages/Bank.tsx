@@ -429,24 +429,27 @@ export default function Bank() {
     if (!transactions) return ids;
 
     for (const t of transactions) {
-      if (t.match_status === "suggestie") {
-        ids.add(t.id);
-        continue;
-      }
-
-      if (!invoices || !salesInvs) continue;
-      if (t.match_status !== "niet_gematcht") continue;
+      if (t.match_status !== "suggestie" && t.match_status !== "niet_gematcht") continue;
+      if (!invoices || !salesInvs || !rejectionIndex) continue;
       const candidates = rankAllowedCandidates(
         t,
         invoices.filter(i => i.client_id === t.client_id),
         salesInvs.filter(i => i.client_id === t.client_id),
       );
-      if (candidates.some(c => c.score > 0)) {
+      if (t.match_status === "suggestie") {
+        // A persisted suggestion is not a valid suggestion without its
+        // current, non-rejected invoice link.
+        if (t.matched_invoice_id && candidates.some(c =>
+          c.id === t.matched_invoice_id && c.type === expectedInvoiceTypeForTx(t) && c.score > 0)) ids.add(t.id);
+      } else if ((rejectionCounts.get(t.id) ?? 0) === 0 && candidates.some(c =>
+        c.type === expectedInvoiceTypeForTx(t) && c.score > 0)) {
+        // After rejecting a suggestion, show Open until the user explicitly
+        // chooses a new candidate. Do not resurrect a badge from a fallback.
         ids.add(t.id);
       }
     }
     return ids;
-  }, [transactions, invoices, salesInvs, rankAllowedCandidates]);
+  }, [transactions, invoices, salesInvs, rankAllowedCandidates, rejectionCounts, rejectionIndex]);
 
   // Read-only inventory of legacy persisted suggestions. Never clear or alter
   // existing links from an audit result: an invoice may have changed since then.
@@ -2864,13 +2867,13 @@ export default function Bank() {
                           })();
                           return (
                             <div className="flex flex-col gap-1 min-w-0">
-                              {t.match_status !== "suggestie" && (
+                              {!isSuggestion && (
                                 <span
                                   className={`text-sm truncate max-w-[200px] block ${isOrphanMatch ? "text-amber-600 dark:text-amber-400" : ""}`}
                                   title={label}
                                 >{label}</span>
                               )}
-                              {t.match_status === "suggestie" && (() => {
+                              {isSuggestion && (() => {
                                 const detail = matchDetailMap.get(t.id);
                                 if (!detail) return <span className="text-sm text-muted-foreground">—</span>;
                                 const { best, bestIsWrongDirection, isSafe, unsafeReasons } = detail;
@@ -2969,7 +2972,7 @@ export default function Bank() {
                                 <TooltipContent>Ontkoppelen</TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
-                          ) : t.match_status === "suggestie" ? (
+                          ) : isSuggestion ? (
                             <>
                               <Button
                                 size="sm"

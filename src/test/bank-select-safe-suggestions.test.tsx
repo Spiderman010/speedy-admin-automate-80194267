@@ -428,8 +428,10 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
 
     expect(screen.queryByText(BANNER_RE)).toBeNull();
     expect(safeButton()).toBeNull();
-    // Rijknop toont "Controleer" (handmatige beoordeling), niet "✓ Bevestig".
-    expect(screen.getByRole("button", { name: "Controleer" })).toBeInTheDocument();
+    // Legacy status suggestie zonder actuele gekoppelde factuur mag niet opnieuw
+    // als suggestie verschijnen; handmatig koppelen blijft beschikbaar.
+    expect(screen.getByRole("button", { name: "Koppel" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Controleer" })).toBeNull();
     expect(screen.queryByRole("button", { name: "✓ Bevestig" })).toBeNull();
     expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
   });
