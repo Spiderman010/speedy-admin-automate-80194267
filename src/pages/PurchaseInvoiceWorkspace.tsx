@@ -562,11 +562,12 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
       });
       toast({ title: approve ? "Factuur goedgekeurd" : "Factuur opgeslagen" });
       if (approve && hasNext) goNext();
-    } catch (e: any) {
-      const raw = String(e?.message ?? "");
+    } catch {
+      // Never expose raw RPC/database details (SQL, schema, RLS, row IDs) in
+      // the UI. The atomic save RPC rejects the entire change on failure.
       toast({
         title: "Opslaan mislukt",
-        description: "Opslaan mislukt. De bestaande factuur en boekingsregels zijn niet gewijzigd." + (raw ? ` (${raw})` : ""),
+        description: "De factuur kon niet worden opgeslagen. Vernieuw de factuur en controleer de gegevens voordat je opnieuw probeert.",
         variant: "destructive",
       });
     } finally {
