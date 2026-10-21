@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -438,5 +439,15 @@ describe("Verkoopfactuur — onopgeslagen statuswijziging blokkeert boeken", () 
     fireEvent.click(postButton());
     await waitFor(() => expect(rpcSpy).toHaveBeenCalledTimes(1));
     expect(rpcSpy).toHaveBeenCalledWith("post_sales_invoice", { _invoice_id: "si-1" });
+  });
+});
+
+
+describe("Sales invoice status persistence", () => {
+  it("includes edited status in save payload without changing the posting RPC", () => {
+    const src = readFileSync("src/components/SalesInvoiceEditDialog.tsx", "utf8");
+    expect(src).toContain("status: form.status,");
+    expect(src).toContain("await onSave(invoice.id, buildUpdates());");
+    expect(src).toContain('await onApprove(invoice.id, { ...buildUpdates(), status: "gecontroleerd" });');
   });
 });
