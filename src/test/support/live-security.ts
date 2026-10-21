@@ -14,6 +14,7 @@
  * - Productie (alxlbdhpbwlehbdbfejw, in de URL of als `ref` in de sleutel) wordt
  *   hard geweigerd, tenzij BOEKASSIST_LIVE_SECURITY_ALLOW_PRODUCTION de
  *   productieref zelf bevat. Ook dan gaat er naar productie NOOIT een upload:
+ *   de uploadpoging vereist bovendien BOEKASSIST_LIVE_SECURITY_ALLOW_UPLOAD=1;
  *   `attemptAnonUpload` weigert dat vóór er een verzoek is.
  * - Een 5xx telt nooit als "geweigerd" (`classifyRefusal`).
  */
@@ -25,6 +26,7 @@ export const LIVE_SECURITY_ENV = {
   url: "BOEKASSIST_LIVE_SECURITY_URL",
   anonKey: "BOEKASSIST_LIVE_SECURITY_ANON_KEY",
   allowProduction: "BOEKASSIST_LIVE_SECURITY_ALLOW_PRODUCTION",
+  allowUpload: "BOEKASSIST_LIVE_SECURITY_ALLOW_UPLOAD",
 } as const;
 
 export type LiveSecurityConfig =
@@ -96,7 +98,10 @@ export function resolveLiveSecurityConfig(env: Record<string, string | undefined
         "eigen domein of proxy is niet vast te stellen of het productie is.",
     );
   }
-  return { status: "on", url: url.origin, anonKey, production, uploadAllowed: !production };
+  // De uploadpoging schrijft: alleen met een eigen, expliciete opt-in, en nooit
+  // tegen productie (review H-4: een tunnel op loopback kan productie zijn).
+  const uploadAllowed = !production && env[E.allowUpload] === "1";
+  return { status: "on", url: url.origin, anonKey, production, uploadAllowed };
 }
 
 /** Gooit als een schrijfpoging naar productie zou gaan. */

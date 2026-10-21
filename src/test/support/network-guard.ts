@@ -24,13 +24,17 @@
  * die ene, expliciet opgegeven projectorigin. Dat lukt alleen met
  * `BOEKASSIST_LIVE_SECURITY_TESTS=1`; zonder die opt-in gooit de functie.
  *
- * BEKENDE GRENS
- * Directe `node:http`/`node:https`/`node:net`-verbindingen worden niet
- * onderschept; geen test gebruikt ze (nulmeting E §5). Draai de suite lokaal
- * daarom ook zonder netwerk (`unshare -rn`, zie AGENTS.md).
+ * NODE-SOCKETS (review H-1)
+ * Ook `net.Socket.prototype.connect` wordt bewaakt. Daarlangs lopen
+ * `node:http`, `node:https`, `node:tls` en undici: een TCP-verbinding naar een
+ * host die geen loopback is, krijgt een `[network-guard] BLOCKED socket`-fout
+ * (asynchroon, als een gewone verbindingsfout) en wordt gelogd en vastgelegd.
+ * Unix-sockets (`path`) en loopback blijven toegestaan.
  */
 
-export type NetworkChannel = "fetch" | "xhr" | "websocket";
+import net from "node:net";
+
+export type NetworkChannel = "fetch" | "xhr" | "websocket" | "socket";
 
 export interface BlockedNetworkAttempt {
   channel: NetworkChannel;
@@ -45,6 +49,8 @@ export interface NetworkGuard {
   take(): BlockedNetworkAttempt[];
   /** De `fetch` van vóór de installatie (alleen voor de opt-in live-laag). */
   readonly nativeFetch: typeof fetch | undefined;
+  /** Legt een geweigerde poging vast en logt haar; geeft de melding terug. */
+  record(channel: NetworkChannel, target: string): string;
 }
 
 export interface NetworkGuardOptions {
@@ -140,7 +146,61 @@ export function createNetworkGuard(env: any, options: NetworkGuardOptions): Netw
     blocked,
     take: () => blocked.splice(0, blocked.length),
     nativeFetch,
+    record: (channel: NetworkChannel, target: string) => {
+      const test = options.currentTest?.();
+      blocked.push({ channel, target, test });
+      const message =
+        `[network-guard] BLOCKED ${channel} ${target}${test ? ` (test: ${test})` : ""} — ` +
+        "tests draaien offline; alleen loopback is toegestaan (zie src/test/support/network-guard.ts)";
+      options.log(message);
+      return message;
+    },
   };
+}
+
+/** Het doel van `socket.connect(...)`: null voor een Unix-socket (`path`). */
+export function socketConnectTarget(args: unknown[]): { host: string; port: string } | null {
+  let first = args[0];
+  if (Array.isArray(first)) first = first[0]; // interne aanroep met normalizedArgs
+  if (first && typeof first === "object") {
+    const o = first as { path?: unknown; host?: unknown; port?: unknown };
+    if (typeof o.path === "string" && o.path) return null;
+    return { host: typeof o.host === "string" && o.host ? o.host : "localhost", port: String(o.port ?? "") };
+  }
+  if (typeof first === "string" && !/^\d+$/.test(first)) return null; // pad
+  const host = typeof args[1] === "string" && args[1] ? (args[1] as string) : "localhost";
+  return { host, port: String(first ?? "") };
+}
+
+/** Hosts die de live-laag (liveSecurityFetch) bewust mag bereiken. */
+const liveAllowedHosts = new Set<string>();
+
+/**
+ * Bewaakt `SocketCtor.prototype.connect` (standaard `net.Socket`). Exporteerbaar
+ * met een eigen klasse, zodat de wacht zelf getest kan worden.
+ */
+export function guardSocketConnect(
+  SocketCtor: { prototype: { connect: (...args: any[]) => unknown } },
+  record: (channel: NetworkChannel, target: string) => string,
+): void {
+  const proto = SocketCtor.prototype as { connect: (...args: any[]) => unknown; __networkGuard?: boolean; destroy?: (e: Error) => void };
+  if (proto.__networkGuard) return;
+  const nativeConnect = proto.connect;
+  proto.connect = function guardedConnect(this: any, ...args: unknown[]) {
+    const t = socketConnectTarget(args);
+    if (t) {
+      const host = t.host.replace(/^\[|\]$/g, "").toLowerCase();
+      const urlHost = host.includes(":") ? `[${host}]` : host;
+      if (!isAllowedTestTarget(`http://${urlHost}/`) && !liveAllowedHosts.has(host)) {
+        const message = record("socket", `${urlHost}:${t.port}`);
+        const error = new Error(message);
+        process.nextTick(() => (typeof this.destroy === "function" ? this.destroy(error) : undefined));
+        return this;
+      }
+    }
+    return Reflect.apply(nativeConnect, this, args);
+  };
+  Object.defineProperty(proto, "__networkGuard", { value: true });
 }
 
 // ── De ene wacht van de suite ────────────────────────────────────────────────
@@ -160,6 +220,7 @@ export function installNetworkGuard(options: Partial<NetworkGuardOptions> = {}):
     currentTest: options.currentTest,
   });
   (globalThis as Record<symbol, NetworkGuard | undefined>)[GLOBAL_KEY] = guard;
+  guardSocketConnect(net.Socket, guard.record);
   return guard;
 }
 
@@ -193,6 +254,8 @@ export function liveSecurityFetch(
     throw new Error(`[network-guard] de ongeguarde fetch is alleen beschikbaar met ${LIVE_SECURITY_OPT_IN}=1`);
   }
   const origin = new URL(allowedOrigin).origin;
+  // Native fetch (undici) gaat via net.Socket: alleen dit ene project mag erdoor.
+  liveAllowedHosts.add(new URL(allowedOrigin).hostname.replace(/^\[|\]$/g, "").toLowerCase());
   const guard = installed();
   const native = guard ? guard.nativeFetch : globalThis.fetch;
   if (!native) throw new Error("[network-guard] er is geen fetch beschikbaar");

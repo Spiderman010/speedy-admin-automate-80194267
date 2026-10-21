@@ -140,6 +140,8 @@ describe("storage 'invoices': alleen eigen map of eigen organisatie", () => {
 //   BOEKASSIST_LIVE_SECURITY_TESTS=1
 //   BOEKASSIST_LIVE_SECURITY_URL=https://<preview-ref>.supabase.co   (of http://127.0.0.1:54321)
 //   BOEKASSIST_LIVE_SECURITY_ANON_KEY=<publishable key van dát project>
+// De uploadpoging (een schrijfactie) draait alleen met ook
+//   BOEKASSIST_LIVE_SECURITY_ALLOW_UPLOAD=1
 // Productie wordt hard geweigerd, tenzij ook
 //   BOEKASSIST_LIVE_SECURITY_ALLOW_PRODUCTION=alxlbdhpbwlehbdbfejw
 // is gezet; ook dan doet deze laag tegen productie geen upload. De laag leest
@@ -208,7 +210,7 @@ describe.runIf(live.status === "on")("live: anonieme gebruiker heeft geen toegan
   });
 
   it("kan niet uploaden naar de invoices-bucket (nooit tegen productie)", async (ctx) => {
-    if (!cfg.uploadAllowed) return ctx.skip("upload-poging draait nooit tegen productie");
+    if (!cfg.uploadAllowed) return ctx.skip("upload-poging alleen met BOEKASSIST_LIVE_SECURITY_ALLOW_UPLOAD=1, en nooit tegen productie");
     assertNotProductionWrite(cfg.url, cfg.anonKey);
     const objectPath = `00000000-0000-0000-0000-000000000000/regressie-${Date.now()}.txt`;
     let res: Response | null;
@@ -291,7 +293,7 @@ describe("live-laag: opt-in, productieweigering en uitslag (offline)", () => {
       url: "http://127.0.0.1:54321",
       anonKey: "lokale-sleutel",
       production: false,
-      uploadAllowed: true,
+      uploadAllowed: false,
     });
   });
 
@@ -307,14 +309,23 @@ describe("live-laag: opt-in, productieweigering en uitslag (offline)", () => {
     });
   });
 
-  it("een preview-project mag, inclusief de uploadpoging", () => {
-    expect(resolveLiveSecurityConfig(on({ [E.url]: `${PREVIEW}/`, [E.anonKey]: PREVIEW_KEY }))).toEqual({
+  it("de uploadpoging vereist een eigen opt-in (ALLOW_UPLOAD=1), en nooit tegen productie (review H-4)", () => {
+    // Zonder upload-opt-in: lezen mag, schrijven niet — ook niet op loopback (een tunnel kan productie zijn).
+    for (const url of [`${PREVIEW}/`, "http://127.0.0.1:54321"]) {
+      expect(resolveLiveSecurityConfig(on({ [E.url]: url, [E.anonKey]: "sb_publishable_zonder_ref" })), url).toMatchObject({ status: "on", uploadAllowed: false });
+      expect(resolveLiveSecurityConfig(on({ [E.url]: url, [E.anonKey]: "sb_publishable_zonder_ref", [E.allowUpload]: "true" })), url).toMatchObject({ uploadAllowed: false });
+    }
+    expect(resolveLiveSecurityConfig(on({ [E.url]: `${PREVIEW}/`, [E.anonKey]: PREVIEW_KEY, [E.allowUpload]: "1" }))).toEqual({
       status: "on",
       url: PREVIEW,
       anonKey: PREVIEW_KEY,
       production: false,
       uploadAllowed: true,
     });
+    // Productie met beide productie-opt-ins én de upload-opt-in: nog steeds geen upload.
+    expect(
+      resolveLiveSecurityConfig(on({ [E.url]: PROD_URL, [E.anonKey]: PROD_KEY, [E.allowProduction]: PRODUCTION_REF, [E.allowUpload]: "1" })),
+    ).toMatchObject({ status: "on", production: true, uploadAllowed: false });
   });
 
   it("de uploadfunctie weigert productie vóór er één verzoek de deur uit gaat", async () => {

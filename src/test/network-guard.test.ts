@@ -1,7 +1,11 @@
+import https from "node:https";
+import net from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assertNoBlockedNetworkAttempts,
   createNetworkGuard,
+  guardSocketConnect,
+  socketConnectTarget,
   isAllowedTestTarget,
   liveSecurityFetch,
   takeBlockedNetworkAttempts,
@@ -180,5 +184,69 @@ describe("de geïnstalleerde wacht van de suite", () => {
     }
     // De omzeiling gaat langs de wacht, dus er is ook niets geweigerd of gelogd.
     expect(takeBlockedNetworkAttempts()).toEqual([]);
+  });
+
+  it("node:https (en dus http, tls, undici) naar een externe host faalt hard via net.Socket.connect (review H-1)", async () => {
+    const error = await new Promise<Error>((resolve) => {
+      const req = https.request("https://alxlbdhpbwlehbdbfejw.supabase.co/rest/v1/", (res) => resolve(new Error(`onverwacht antwoord ${res.statusCode}`)));
+      req.on("error", resolve);
+      req.end();
+    });
+    expect(error.message).toMatch(/\[network-guard\] BLOCKED socket alxlbdhpbwlehbdbfejw\.supabase\.co:443/);
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("BLOCKED socket alxlbdhpbwlehbdbfejw.supabase.co:443"));
+    expect(takeBlockedNetworkAttempts()).toEqual([
+      expect.objectContaining({ channel: "socket", target: "alxlbdhpbwlehbdbfejw.supabase.co:443" }),
+    ]);
+  });
+
+  it("ook een rechtstreekse net.connect naar een extern IP-adres wordt geweigerd", async () => {
+    const error = await new Promise<Error>((resolve) => {
+      const socket = net.connect({ host: "10.0.0.1", port: 5432 });
+      socket.on("error", resolve);
+      socket.on("connect", () => resolve(new Error("onverwacht verbonden")));
+    });
+    expect(error.message).toMatch(/BLOCKED socket 10\.0\.0\.1:5432/);
+    expect(takeBlockedNetworkAttempts().map((a) => a.channel)).toEqual(["socket"]);
+  });
+});
+
+describe("guardSocketConnect (nagebouwde socket, geen echte verbinding)", () => {
+  it("weigert externe hosts, laat loopback en Unix-sockets door", async () => {
+    const calls: unknown[][] = [];
+    const destroyed: string[] = [];
+    class FakeSocket {
+      connect(...args: unknown[]) {
+        calls.push(args);
+        return this;
+      }
+      destroy(e: Error) {
+        destroyed.push(e.message);
+      }
+    }
+    const recorded: string[] = [];
+    guardSocketConnect(FakeSocket, (channel, target) => {
+      recorded.push(`${channel} ${target}`);
+      return `[network-guard] BLOCKED ${channel} ${target}`;
+    });
+    const s = new FakeSocket();
+    s.connect({ host: "example.com", port: 443 });
+    s.connect(443, "example.com");
+    s.connect({ host: "127.0.0.1", port: 54321 });
+    s.connect({ port: 5432 }); // standaardhost localhost
+    s.connect({ host: "::1", port: 80 });
+    s.connect({ path: "/tmp/pgP1/sock/.s.PGSQL.5441" });
+    s.connect("/tmp/een.sock");
+    await new Promise((r) => process.nextTick(r));
+    expect(recorded).toEqual(["socket example.com:443", "socket example.com:443"]);
+    expect(destroyed).toHaveLength(2);
+    expect(calls).toHaveLength(5);
+  });
+
+  it("socketConnectTarget leest options-, (port, host)- en interne array-aanroepen", () => {
+    expect(socketConnectTarget([{ host: "a.example", port: 1 }])).toEqual({ host: "a.example", port: "1" });
+    expect(socketConnectTarget([[{ host: "b.example", port: 2 }, null]])).toEqual({ host: "b.example", port: "2" });
+    expect(socketConnectTarget([3, "c.example"])).toEqual({ host: "c.example", port: "3" });
+    expect(socketConnectTarget([{ port: 4 }])).toEqual({ host: "localhost", port: "4" });
+    expect(socketConnectTarget([{ path: "/x.sock" }])).toBeNull();
   });
 });
