@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { postingGuardOf } from "@/test/support/effective-sql";
 
 /**
  * Fase 6C-b3 — inkoopboekingen.
@@ -90,8 +91,13 @@ describe("Migratie — de writer", () => {
     expect(fn).toMatch(/EXTRACT\(YEAR FROM v_inv\.invoice_date\)/);
   });
 
-  it("11. weigert boeken in een afgesloten boekjaar", () => {
-    expect(fn).toMatch(/v_boekjaar <= v_client\.afgesloten_boekjaar/);
+  it("11. effectief (PR H): geen weigering op het jaarwatermerk, wel de boekingsblokkade op de factuurdatum vóór het grootboek", () => {
+    // E-04 (herstel P7): deze migratie is niet meer de effectieve definitie. Sinds
+  // PR H (20261002120000) weigert geen gedateerde schrijver nog op het
+  // jaarwatermerk; de boekingsblokkade is de enige datumgrendel. Het gedrag
+  // staat in supabase/tests/posting-decoupled (scenario's A–G).
+    const g = postingGuardOf("post_purchase_invoice", "PERFORM public.assert_posting_allowed(v_inv.client_id, v_inv.invoice_date);");
+    expect(g).toMatchObject({ watermarkRefusal: false, lockCalled: true, lockBeforeLedger: true });
   });
 
   it("12. eist de geconfigureerde rekeningen en verzint er nooit een", () => {

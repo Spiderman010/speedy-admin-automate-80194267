@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { postingGuardOf } from "@/test/support/effective-sql";
 
 /**
  * Fase 6C-b5b — bankafletteringen (bank settlement writer).
@@ -197,9 +198,13 @@ describe("Migratie — de writer", () => {
     expect(fn).not.toMatch(/current_date/i);
   });
 
-  it("18. weigert boeken in een afgesloten boekjaar", () => {
-    expect(fn).toMatch(/v_boekjaar <= v_client\.afgesloten_boekjaar/);
-    expect(fn).toMatch(/Boekjaar % is afgesloten voor deze administratie/);
+  it("18. effectief (PR H): geen weigering op het jaarwatermerk, wel de boekingsblokkade op de transactiedatum vóór het grootboek", () => {
+    // E-04 (herstel P7): deze migratie is niet meer de effectieve definitie. Sinds
+  // PR H (20261002120000) weigert geen gedateerde schrijver nog op het
+  // jaarwatermerk; de boekingsblokkade is de enige datumgrendel. Het gedrag
+  // staat in supabase/tests/posting-decoupled (scenario's A–G).
+    const g = postingGuardOf("post_bank_allocation", "PERFORM public.assert_posting_allowed(v_alloc.client_id, v_tx.transaction_date);");
+    expect(g).toMatchObject({ watermarkRefusal: false, lockCalled: true, lockBeforeLedger: true });
   });
 
   it("19. weigert overallocatie en overbetaling op alle vier de manieren, exact en zonder tolerantie", () => {

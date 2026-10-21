@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { postingGuardOf } from "@/test/support/effective-sql";
 
 /**
  * Fase 6C-b8 (PR 1) — beginbalans (opening balance writer): schema + writers.
@@ -288,9 +289,16 @@ describe("6C-b8 PR 1 — de boekingsfunctie", () => {
     expect(postFn).toContain("NOT g.actief");
   });
 
-  it("25. weigert een afgesloten boekjaar, net als de vier bestaande schrijvers", () => {
-    expect(postFn).toContain("v_client.afgesloten_boekjaar IS NOT NULL AND v_header.boekjaar <= v_client.afgesloten_boekjaar");
+  it("25. effectief (PR H): de nihilverklaring weigert een afgesloten boekjaar; het boeken toetst de boekingsblokkade", () => {
+    // De nihilverklaring schrijft geen grootboekregel; haar levenscyclusregel
+    // (geen uitspraak over een afgesloten jaar) is bewust gebleven.
     expect(nilFn).toContain("v_client.afgesloten_boekjaar IS NOT NULL AND v_header.boekjaar <= v_client.afgesloten_boekjaar");
+    // E-04 (herstel P7): deze migratie is niet meer de effectieve definitie. Sinds
+  // PR H (20261002120000) weigert geen gedateerde schrijver nog op het
+  // jaarwatermerk; de boekingsblokkade is de enige datumgrendel. Het gedrag
+  // staat in supabase/tests/posting-decoupled (scenario's A–G).
+    const g = postingGuardOf("post_opening_balance", "PERFORM public.assert_posting_allowed(v_header.client_id, v_header.opening_date);");
+    expect(g).toMatchObject({ watermarkRefusal: false, lockCalled: true, lockBeforeLedger: true });
   });
 
   it("26. weigert een beginbalans die niet het eerste feit van de administratie is", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { effectiveFunction, postingGuardOf } from "@/test/support/effective-sql";
 
 /**
  * Fase 6C-b6 (PR 1) — memoriaalboekingen (manual journal writer): schema + writer.
@@ -326,20 +327,25 @@ describe("Migratie — post_manual_journal", () => {
     expect(postFn).not.toMatch(/created_xact_id/);
   });
 
-  it("19. volgt de grendelvolgorde: kop FOR UPDATE → afgesloten boekjaar → regels FOR UPDATE → scope → claim → grootboek", () => {
-    const headerLock = postFn.search(/FROM public\.manual_journals\s+WHERE id = _journal_id\s+FOR UPDATE;/);
-    const closedYear = postFn.indexOf("afgesloten_boekjaar");
-    const linesLock = postFn.search(/FROM public\.manual_journal_lines\s+WHERE manual_journal_id = v_journal\.id\s+ORDER BY sort_order, id\s+FOR UPDATE;/);
-    const scope = postFn.indexOf("posting_account_ok");
-    const claim = postFn.indexOf("INSERT INTO public.manual_journal_postings");
-    const ledger = postFn.indexOf("INSERT INTO public.ledger_postings");
+  it("19. volgt de grendelvolgorde: kop FOR UPDATE → datumgrendel → regels FOR UPDATE → scope → claim → grootboek", () => {
+    // E-04 (herstel P7): de volgorde geldt voor de EFFECTIEVE definitie. Daar is
+    // de datumgrendel sinds PR D/H de boekingsblokkade, niet langer het
+    // jaarwatermerk (dat in de oorspronkelijke migratie op deze plek stond).
+    const { body } = effectiveFunction("post_manual_journal");
+    const headerLock = body.search(/FROM public\.manual_journals\s+WHERE id = _journal_id\s+FOR UPDATE;/);
+    const dateGate = body.indexOf("PERFORM public.assert_posting_allowed(v_journal.client_id, v_journal.posting_date);");
+    const linesLock = body.search(/FROM public\.manual_journal_lines\s+WHERE manual_journal_id = v_journal\.id\s+ORDER BY sort_order, id\s+FOR UPDATE;/);
+    const scope = body.indexOf("posting_account_ok");
+    const claim = body.indexOf("INSERT INTO public.manual_journal_postings");
+    const ledger = body.indexOf("INSERT INTO public.ledger_postings");
     expect(headerLock).toBeGreaterThan(-1);
-    expect(closedYear).toBeGreaterThan(headerLock);
-    expect(linesLock).toBeGreaterThan(closedYear);
+    expect(dateGate).toBeGreaterThan(headerLock);
+    expect(linesLock).toBeGreaterThan(dateGate);
     expect(scope).toBeGreaterThan(linesLock);
     expect(claim).toBeGreaterThan(scope);
     expect(ledger).toBeGreaterThan(claim);
-    expect(postFn.match(/INSERT INTO public\.ledger_postings/g) ?? []).toHaveLength(1);
+    expect(body.match(/INSERT INTO public\.ledger_postings/g) ?? []).toHaveLength(1);
+    expect(body).not.toMatch(/afgesloten_boekjaar/);
   });
 
   it("20. claimt via de primary key: EXCEPTION WHEN unique_violation → 23505, zonder EXISTS-voorcontrole", () => {
@@ -404,9 +410,13 @@ describe("Migratie — post_manual_journal", () => {
     expect(postFn).not.toMatch(/, NULL, v_uid/);
     expect(postFn).not.toMatch(/reversal_of_posting_id/);
     expect(postFn).toMatch(/EXTRACT\(YEAR FROM v_journal\.posting_date\)/);
-    expect(postFn).toMatch(/v_boekjaar <= v_client\.afgesloten_boekjaar/);
-    expect(postFn).toMatch(/Boekjaar % is afgesloten voor deze administratie/);
     expect(postFn).not.toMatch(/now\(\)|current_date/i);
+    // E-04 (herstel P7): de weigering op het jaarwatermerk die hier werd
+    // geëist, bestaat sinds PR H (20261002120000) niet meer in de effectieve
+    // definitie; de boekingsblokkade op de boekingsdatum is de datumgrendel.
+    // Gedrag: supabase/tests/posting-decoupled (scenario A en D).
+    const g = postingGuardOf("post_manual_journal", "PERFORM public.assert_posting_allowed(v_journal.client_id, v_journal.posting_date);");
+    expect(g).toMatchObject({ watermarkRefusal: false, lockCalled: true, lockBeforeLedger: true });
   });
 
   it("25. eist een omschrijving (whitespace-bewust: tabs/newlines tellen als leeg) en een administratie binnen de organisatie", () => {
