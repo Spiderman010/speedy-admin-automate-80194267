@@ -308,6 +308,7 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
       // and the existing SnelStart export, which is unchanged by this phase.
       grootboekrekening_id: form.grootboekrekening_id || null,
       notes: form.notes || null,
+      status: form.status,
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
     } as any;
   };
