@@ -54,7 +54,8 @@ vi.mock("@/hooks/useActiveOrganization", () => ({
 
 vi.mock("@/hooks/useClients", () => ({
   useClients: () => ({
-    data: [{ id: "c1", name: "Klant 1", btw_status: "btw_plichtig" }],
+    // Zoals de echte rij: de import weigert een administratie buiten de actieve organisatie (B2-10).
+    data: [{ id: "c1", name: "Klant 1", organization_id: "org-1", btw_status: "btw_plichtig" }],
   }),
 }));
 

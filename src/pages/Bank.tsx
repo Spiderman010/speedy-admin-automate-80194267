@@ -184,6 +184,23 @@ type SuggestionDetail = {
   unsafeReasons: string[];
 };
 
+/**
+ * The match fields an imported bank row is stored with (nulmeting A1-11). The
+ * import only ever PROPOSES an invoice: never "gematcht" — whatever the caller
+ * hands in — and never an allocation, a payment status or an open amount.
+ */
+function importMatchFields(tx: Pick<MatchedTransaction, "matchStatus" | "matchedInvoiceId" | "matchConfidence">) {
+  const status: string = tx.matchStatus;
+  if (status === "handmatig_geboekt") {
+    // Coded by a recognition rule: an account, no invoice.
+    return { match_status: "handmatig_geboekt", matched_invoice_id: null, match_confidence: tx.matchConfidence };
+  }
+  if ((status === "suggestie" || status === "gematcht") && tx.matchedInvoiceId) {
+    return { match_status: "suggestie", matched_invoice_id: tx.matchedInvoiceId, match_confidence: tx.matchConfidence };
+  }
+  return { match_status: "niet_gematcht", matched_invoice_id: null, match_confidence: null };
+}
+
 
 export default function Bank() {
   const [searchParams] = useSearchParams();
@@ -1965,6 +1982,19 @@ export default function Bank() {
   }, [recordSuggestionRejection, updateTx, toast]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]): Promise<void | false> => {
+    // Hard refusal (B2-10): only an administratie of the ACTIVE organisation.
+    // `clients` holds exactly the active organisation's administraties; a stale
+    // choice from before an organisation switch is not among them, and the
+    // organisation of the row itself must match as well.
+    const importClient = clients?.find((c) => c.id === importClientId);
+    if (!activeOrganizationId || !importClient || importClient.organization_id !== activeOrganizationId) {
+      toast({
+        title: "Importeren is niet gestart",
+        description: "De gekozen administratie hoort niet bij de actieve organisatie. Kies de administratie opnieuw.",
+        variant: "destructive",
+      });
+      return false;
+    }
     // Database idempotency (20261020120000) only once the column exists; before
     // the migration the import works exactly as it did. An unknown answer stops
     // the import, like a failed duplicate check.
@@ -1983,15 +2013,9 @@ export default function Bank() {
     let alreadyImported = 0;
     let failed = 0;
     let firstImportError = "";
-    let allocationErrors = 0;
-    let firstAllocationError = "";
     for (const tx of txs) {
-      // Saving the bank line and finishing its match are reported separately:
-      // a row that was saved must never be reported as "not saved, import
-      // again" (the retry would then skip it as a duplicate).
-      let newTx: Awaited<ReturnType<typeof addTx.mutateAsync>> | undefined;
       try {
-        newTx = await addTx.mutateAsync(withImportFingerprint({
+        await addTx.mutateAsync(withImportFingerprint({
           client_id: importClientId,
           transaction_date: tx.date,
           amount: tx.amount,
@@ -2001,9 +2025,7 @@ export default function Bank() {
           camt_ustrd: tx.ustrd ?? null,
           camt_addtl_ntry_inf: tx.addtlNtryInf ?? null,
           camt_counterparty_name: tx.counterpartyName ?? null,
-          match_status: tx.matchStatus,
-          match_confidence: tx.matchConfidence,
-          matched_invoice_id: tx.matchedInvoiceId,
+          ...importMatchFields(tx),
           grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
           // A recognition rule may carry its VAT; without one the row stays
           // "controle nodig" in the Inhaalslag instead of posting at 0%.
@@ -2023,49 +2045,18 @@ export default function Bank() {
         continue;
       }
       success++;
-
-      // Aflettering: update the linked purchase invoice after a confirmed match
-      if (tx.matchedInvoiceId && tx.matchStatus === "gematcht") {
-        try {
-          const purchaseInv = invoices?.find(i => i.id === tx.matchedInvoiceId);
-          if (purchaseInv) {
-            const txAmount = Math.abs(tx.amount);
-            const totalAmount = getInvoiceTotalAmount(purchaseInv);
-            const remainingAmount = getInvoiceRemainingAmount(purchaseInv);
-            const effectiveRemaining = remainingAmount ?? totalAmount ?? txAmount;
-            const isExact = Math.abs(effectiveRemaining - txAmount) < 0.02;
-            if (isExact) {
-              await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: 0 });
-            } else if (totalAmount != null) {
-              const newRemaining = Math.max(0, effectiveRemaining - txAmount);
-              await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: newRemaining });
-            }
-          }
-          if (newTx) await upsertSingleAllocationForMatch(newTx, tx.matchedInvoiceId);
-        } catch (allocErr: any) {
-          allocationErrors++;
-          if (!firstAllocationError) firstAllocationError = allocErr?.message || "Onbekende fout";
-          console.error("Allocation write failed during import:", allocErr);
-        }
-      }
+      // Nothing else is written: no invoice, no allocation, no payment status
+      // and no open amount. An invoice suggestion is confirmed later, on the
+      // bank page, through the confirm path (D1: the database derives the
+      // payment status).
     }
-    await refetchPurchase();
     const alreadyImportedNote = alreadyImported > 0
       ? ` ${alreadyImported} ${alreadyImported === 1 ? "regel stond" : "regels stonden"} er intussen al (bijvoorbeeld door een gelijktijdige import) en ${alreadyImported === 1 ? "is" : "zijn"} niet nog eens opgeslagen.`
-      : "";
-    const allocationWarning = allocationErrors > 0
-      ? `${allocationErrors} ${allocationErrors === 1 ? "regel is" : "regels zijn"} wel opgeslagen, maar de koppeling met de factuur is niet afgerond (${firstAllocationError}). Controleer de afletterdetails en openstaande bedragen; niet opnieuw importeren.`
       : "";
     if (failed > 0) {
       toast({
         title: `${success} van ${txs.length} transacties geïmporteerd`,
-        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.${allocationWarning ? ` ${allocationWarning}` : ""}${alreadyImportedNote}`,
-        variant: "destructive",
-      });
-    } else if (allocationErrors > 0) {
-      toast({
-        title: "Bankafschrift geïmporteerd met waarschuwing",
-        description: `${success} transacties geïmporteerd. ${allocationWarning}${alreadyImportedNote}`,
+        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.${alreadyImportedNote}`,
         variant: "destructive",
       });
     } else {
@@ -2074,7 +2065,7 @@ export default function Bank() {
         ...(alreadyImportedNote ? { description: alreadyImportedNote.trim() } : {}),
       });
     }
-  }, [addTx, invoices, salesInvs, updatePurchase, upsertSingleAllocationForMatch, refetchPurchase, toast]);
+  }, [addTx, clients, activeOrganizationId, toast]);
 
   const toggleSelect = (id: string) => {
     if (stalePageData) return;
@@ -3247,6 +3238,7 @@ export default function Bank() {
         onOpenChange={setUploadOpen}
         clients={clients ?? []}
         invoices={invoices ?? []}
+        salesInvoices={salesInvs ?? []}
         onImport={handleImport}
         loadExistingTransactions={(importClientId) =>
           fetchAllBankTransactions({ organizationId: activeOrganizationId ?? undefined, clientId: importClientId })
