@@ -168,11 +168,15 @@ describe("A3-10 — de verkoopdialoog zelf", () => {
     expect(serverAccepts(f.amount_excl, f.btw_amount, f.amount_incl)).toBe(true);
   });
 
-  it("de telling van A3 door de echte dialoog (10,50 … 299,50 bij 21%): 0 onbalans, 0 afwijkingen van half-up", () => {
+  // Steekproef uit de A3-telling (10,50 … 299,50) door de echte dialoog: elke
+  // render kost tijd, dus elk tiende bedrag. De uitputtende telling over alle
+  // bedragen loopt hierboven over `vatAmountsFromExclText`, de helper die de
+  // dialoog aanroept.
+  it("steekproef uit de A3-telling door de echte dialoog (10,50, 20,50 … 290,50 bij 21%): 0 onbalans, 0 afwijkingen van half-up", () => {
     const { exclInput, btwInput, inclInput } = renderDialog("21");
     let onbalans = 0;
     let afwijking = 0;
-    for (let i = 0; i < 290; i++) {
+    for (let i = 0; i < 290; i += 10) {
       const c = 1050 + i * 100;
       fireEvent.change(exclInput, { target: { value: formatCents(c) } });
       fireEvent.blur(exclInput);
