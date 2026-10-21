@@ -443,10 +443,12 @@ describe("Verkoopfactuur — onopgeslagen statuswijziging blokkeert boeken", () 
 });
 
 
-describe("Sales invoice status persistence", () => {
-  it("includes edited status in save payload without changing the posting RPC", () => {
+describe("Sales invoice payment-status safety", () => {
+  it("does not offer direct status editing and keeps Save status-neutral", () => {
     const src = readFileSync("src/components/SalesInvoiceEditDialog.tsx", "utf8");
-    expect(src).toContain("status: form.status,");
+    expect(src).not.toContain("status: form.status,");
+    expect(src).not.toContain('<Select value={form.status} onValueChange={(v) => set("status", v)}>');
+    expect(src).toContain("Status wordt beheerd via de goedkeurings- en betalingsworkflow");
     expect(src).toContain("await onSave(invoice.id, buildUpdates());");
     expect(src).toContain('await onApprove(invoice.id, { ...buildUpdates(), status: "gecontroleerd" });');
   });
