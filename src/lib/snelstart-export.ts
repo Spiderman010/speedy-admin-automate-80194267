@@ -280,7 +280,10 @@ export function assertSnelstartExportScope(
 // drie exacte gelijkheden in centen, dezelfde als `post_purchase_invoice`
 // (20261002120000, r. 255-281) plus de btw:
 //   Σ regel.excl = kop.excl,  kop.excl + kop.btw = kop.incl,  Σ regel.btw = kop.btw.
-// Bij een verschil wordt de factuur geweigerd, nooit gerepareerd.
+// Rondt de kop de btw over het totaal af (zoals de werkbank), en is het verschil
+// met de afronding per regel binnen de werkbanktolerantie ±max(0,02; 0,01·n), dan
+// wordt de kop-btw per tarief met de grootste-restmethode over de regels verdeeld
+// (allocateVatCents, H6-01). Bij een groter verschil wordt de factuur geweigerd.
 //
 // Grootboekrekening = `grootboekrekeningen.nummer` van de regel (dezelfde rekening
 // waarop `post_purchase_invoice` de regel debiteert), btw-code per regel volgens
@@ -311,6 +314,43 @@ function toPercentage(value: unknown): number | null {
 function lineVatCents(exclCents: number, percentage: number): number {
   const vat = Math.floor((Math.abs(exclCents) * percentage + 50) / 100);
   return exclCents < 0 ? -vat : vat;
+}
+
+/**
+ * H6-01 — verdeelt de kop-btw (centen) over de regels met de grootste-restmethode,
+ * eerst over de tarieven en dan binnen elk tarief over de regels; bij gelijke rest
+ * telt de volgorde (tarief oplopend; regels in `sort_order, id`, de volgorde van
+ * `planned`). Elke regel krijgt de naar beneden afgeronde exacte btw (excl × tarief
+ * / 100) of één cent meer, dus nooit meer dan één cent van de exacte btw af. Lukt
+ * dat niet binnen die grens, dan null (weigeren). Σ resultaat = `headerVat` exact.
+ */
+function allocateVatCents(planned: readonly { exclCents: number; percentage: number }[], headerVat: number): number[] | null {
+  const num = planned.map((p) => p.exclCents * p.percentage); // exacte btw × 100 (geheel getal)
+  const base = num.map((n) => Math.floor(n / 100));
+  const frac = num.map((n, i) => n - 100 * base[i]); // 0..99
+  const rates = [...new Set(planned.map((p) => p.percentage))].sort((a, b) => a - b);
+  const groups = rates.map((rate) => {
+    const idx = planned.map((p, i) => (p.percentage === rate ? i : -1)).filter((i) => i >= 0);
+    const g = idx.reduce((s, i) => s + num[i], 0);
+    const floor = Math.floor(g / 100);
+    return { idx, floor, frac: g - 100 * floor };
+  });
+  // 1. Tarieven: Σ doel per tarief = kop-btw.
+  let k = headerVat - groups.reduce((s, g) => s + g.floor, 0);
+  const groupOrder = groups.map((_, i) => i).filter((i) => groups[i].frac > 0).sort((a, b) => groups[b].frac - groups[a].frac || a - b);
+  if (k < 0 || k > groupOrder.length) return null;
+  const target = groups.map((g) => g.floor);
+  for (const i of groupOrder.slice(0, k)) target[i] += 1;
+  // 2. Binnen elk tarief: Σ regels = doel van het tarief.
+  const out = [...base];
+  for (let gi = 0; gi < groups.length; gi++) {
+    const { idx } = groups[gi];
+    const kr = target[gi] - idx.reduce((s, i) => s + base[i], 0);
+    const order = idx.filter((i) => frac[i] > 0).sort((a, b) => frac[b] - frac[a] || a - b);
+    if (kr < 0 || kr > order.length) return null;
+    for (const i of order.slice(0, kr)) out[i] += 1;
+  }
+  return out;
 }
 
 function euro(cents: number): string {
@@ -402,7 +442,16 @@ function planPurchaseInvoice(
   }
   const sumVat = planned.reduce((s, p) => s + p.vatCents, 0);
   if (sumVat !== headerVat) {
-    return { reason: `de btw per boekingsregel (${euro(sumVat)}) wijkt af van de btw op de factuur (${euro(headerVat)})` };
+    // H6-01: de werkbank rondt de btw over het totaal af en accepteert een
+    // verschil van ±max(0,02; 0,01·n) (lineTolerance). Binnen precies die
+    // tolerantie wordt de kop-btw per tarief over de regels verdeeld; daarbuiten
+    // blijft het een weigering.
+    const toleranceCents = Math.max(2, Math.max(1, lines.length));
+    const allocated = Math.abs(headerVat - sumVat) <= toleranceCents ? allocateVatCents(planned, headerVat) : null;
+    if (!allocated) {
+      return { reason: `de btw per boekingsregel (${euro(sumVat)}) wijkt af van de btw op de factuur (${euro(headerVat)})` };
+    }
+    allocated.forEach((v, i) => { planned[i].vatCents = v; });
   }
 
   const label = purchaseInvoiceLabel(inv);

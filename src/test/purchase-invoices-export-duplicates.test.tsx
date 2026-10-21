@@ -40,6 +40,7 @@ function makeQueryMock() {
   query.eq = chain("eq");
   query.in = chain("in");
   query.order = chain("order");
+  query.lte = chain("lte");
   query.range = vi.fn((...args: unknown[]) => {
     state.calls.push({ method: "range", args });
     return Promise.resolve(state.responses.shift() ?? defaultResponse());
@@ -246,7 +247,32 @@ describe("markPurchaseInvoicesExported", () => {
         clientId: "c-1",
         invoiceIds: ids(STATUS_UPDATE_BATCH_SIZE + 1),
       }),
-    ).rejects.toMatchObject({ message: "rls denied", marked: STATUS_UPDATE_BATCH_SIZE, expected: STATUS_UPDATE_BATCH_SIZE + 1 });
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("rls denied"),
+      marked: STATUS_UPDATE_BATCH_SIZE,
+      expected: STATUS_UPDATE_BATCH_SIZE + 1,
+      unmarkedIds: [`id-${STATUS_UPDATE_BATCH_SIZE}`],
+    });
+  });
+
+  it("H6-02: probeert na een mislukte reeks ook de volgende reeksen, en noemt precies de niet-gemarkeerde id's", async () => {
+    const all = ids(3 * STATUS_UPDATE_BATCH_SIZE);
+    const second = all.slice(STATUS_UPDATE_BATCH_SIZE, 2 * STATUS_UPDATE_BATCH_SIZE);
+    state.responses = [
+      { data: all.slice(0, STATUS_UPDATE_BATCH_SIZE).map(id => ({ id })), error: null },
+      { data: second.slice(1).map(id => ({ id })), error: null }, // één factuur uit reeks 2 niet geraakt
+      { data: [], error: { message: "timeout" } },                  // reeks 3 faalt
+    ];
+    const err: any = await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: all }).catch(e => e);
+    expect(callsFor("update")).toHaveLength(3); // alle reeksen geprobeerd
+    expect(err.marked).toBe(2 * STATUS_UPDATE_BATCH_SIZE - 1);
+    expect(err.unmarkedIds).toEqual([second[0], ...all.slice(2 * STATUS_UPDATE_BATCH_SIZE)]);
+    expect(err.message).toMatch(new RegExp(`${2 * STATUS_UPDATE_BATCH_SIZE - 1} van ${3 * STATUS_UPDATE_BATCH_SIZE}.*timeout`));
+  });
+
+  it("H6-03: met notUpdatedAfter toetst elke reeks ook updated_at (compare-and-set)", async () => {
+    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(3), notUpdatedAfter: "2026-10-20T08:00:00+00:00" });
+    expect(callsFor("lte").map(c => c.args)).toEqual([["updated_at", "2026-10-20T08:00:00+00:00"]]);
   });
 
   it("rejects when an update silently touches fewer rows (RLS, changed status) instead of reporting success", async () => {

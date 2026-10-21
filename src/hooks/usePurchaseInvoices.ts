@@ -237,9 +237,14 @@ export async function fetchExportLedgerAccounts(opts: {
 
 export const STATUS_UPDATE_BATCH_SIZE = 150;
 
-/** De markering raakte niet precies de geëxporteerde facturen. */
+/** De markering raakte niet precies de geëxporteerde facturen; `unmarkedIds` noemt welke niet. */
 export class PurchaseExportMarkError extends Error {
-  constructor(message: string, readonly marked: number, readonly expected: number) {
+  constructor(
+    message: string,
+    readonly marked: number,
+    readonly expected: number,
+    readonly unmarkedIds: readonly string[] = [],
+  ) {
     super(message);
     this.name = "PurchaseExportMarkError";
   }
@@ -248,19 +253,22 @@ export class PurchaseExportMarkError extends Error {
 // Marks exactly the exported invoices in safe ID chunks, and only AFTER the
 // file was built and its download started (the caller's job). Every update is
 // scoped to the organization and the administratie, and only flips an invoice
-// that is still exportable (compare-and-set on status), so a concurrent export
-// or status change is not overwritten. It writes `status` only — never
+// that is still exportable (compare-and-set on status) and — when
+// `notUpdatedAfter` is given — that was not edited after it was read for the
+// file (compare-and-set on updated_at, H6-03). It writes `status` only — never
 // `remaining_amount`, never a payment status (D1). Each batch must report back
-// (RETURNING) exactly the rows it was asked to mark: an update that RLS or a
-// status change silently reduces is an error, not a success. Earlier batches
-// stay committed; the caller shows a partial-failure message and must
-// invalidate ["purchase_invoices"] once after this settles.
+// (RETURNING) exactly the rows it was asked to mark. ALL batches are tried
+// (H6-02): every invoice in the downloaded file gets its chance to be marked;
+// afterwards the unmarked ids are reported in one PurchaseExportMarkError,
+// never as success. The caller must invalidate ["purchase_invoices"] once
+// after this settles.
 export async function markPurchaseInvoicesExported(opts: {
   organizationId: string;
   clientId: string;
   invoiceIds: readonly string[];
+  notUpdatedAfter?: string | null;
 }): Promise<{ marked: number }> {
-  const { organizationId, clientId } = opts;
+  const { organizationId, clientId, notUpdatedAfter } = opts;
   if (!organizationId) {
     throw new Error("Geen actieve organisatie: export-status kan niet worden bijgewerkt");
   }
@@ -269,26 +277,37 @@ export async function markPurchaseInvoicesExported(opts: {
   }
   const invoiceIds = [...new Set(opts.invoiceIds)];
   let marked = 0;
+  const unmarked: string[] = [];
+  const errors: string[] = [];
   for (let i = 0; i < invoiceIds.length; i += STATUS_UPDATE_BATCH_SIZE) {
     const batch = invoiceIds.slice(i, i + STATUS_UPDATE_BATCH_SIZE);
-    const { data, error } = await supabase
+    let query = supabase
       .from("purchase_invoices")
       .update({ status: "geexporteerd" })
       .eq("organization_id", organizationId)
       .eq("client_id", clientId)
       .in("id", batch)
-      .in("status", [...EXPORTABLE_STATUSES])
-      .select("id");
-    if (error) throw new PurchaseExportMarkError(error.message, marked, invoiceIds.length);
-    const hit = (data ?? []).length;
-    marked += hit;
-    if (hit !== batch.length) {
-      throw new PurchaseExportMarkError(
-        `${marked} van ${invoiceIds.length} facturen op 'geëxporteerd' gezet; ${batch.length - hit} uit deze reeks niet (geen rechten, of de status is intussen gewijzigd).`,
-        marked,
-        invoiceIds.length,
-      );
+      .in("status", [...EXPORTABLE_STATUSES]);
+    if (notUpdatedAfter) query = query.lte("updated_at", notUpdatedAfter);
+    const { data, error } = await query.select("id");
+    if (error) {
+      errors.push(error.message);
+      unmarked.push(...batch);
+      continue;
     }
+    const hit = new Set((data ?? []).map((r: { id: string }) => r.id));
+    marked += batch.filter((id) => hit.has(id)).length;
+    unmarked.push(...batch.filter((id) => !hit.has(id)));
+  }
+  if (unmarked.length) {
+    throw new PurchaseExportMarkError(
+      `${marked} van ${invoiceIds.length} facturen op 'geëxporteerd' gezet; ${unmarked.length} niet ` +
+        `(geen rechten, de status is intussen gewijzigd of de factuur is na het ophalen bewerkt)` +
+        (errors.length ? `: ${[...new Set(errors)].join("; ")}` : "."),
+      marked,
+      invoiceIds.length,
+      unmarked,
+    );
   }
   return { marked };
 }

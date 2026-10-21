@@ -17,6 +17,9 @@ import { buildPurchaseInvoiceExport, type SnelstartLedgerAccount, type Snelstart
  *   btw               Σ btw(export)    = debet BTW te vorderen (1520)
  *   crediteur         Σ bedrag(export) = credit crediteuren (1600)
  *
+ * S5 (B-5) rondt de kop-btw over het totaal af (0,27); sinds H6-01 verdeelt de
+ * export die per tarief over de regels (0,14 + 0,13) en sluit hij op het journaal.
+ *
  * waarbij excl en btw per exportregel worden afgeleid zoals SnelStart dat uit
  * "bedrag incl. + btw-code" doet: btw = afronden(incl × p / (100 + p)). Of
  * SnelStart precies zo afrondt, is niet getoetst (SnelStart-testimport,
@@ -89,7 +92,7 @@ describe("A2-04 — export per boekingsregel tegenover de journaalregels van pos
     ]);
   });
 
-  it.each(["000123", "V-0", "G-77", "D-4"])("factuur %s: export en journaal zijn regel voor regel gelijk", (nummer) => {
+  it.each(["000123", "V-0", "G-77", "D-4", "B-5"])("factuur %s: export en journaal zijn regel voor regel gelijk", (nummer) => {
     const { invoice, plan, expense, vat, creditor, rows } = compare(nummer);
     expect(invoice.posted).toBe(true);
     expect(plan.refused).toEqual([]);
@@ -99,14 +102,6 @@ describe("A2-04 — export per boekingsregel tegenover de journaalregels van pos
     expect(rows.reduce((s, r) => s + r.vatCents, 0)).toBe(vat);
     expect(rows.reduce((s, r) => s + r.inclCents, 0)).toBe(creditor);
     expect(rows.every((r) => r.datum === "20-10-2026")).toBe(true);
-  });
-
-  it("VERSCHIL S5: het journaal boekt de kop-btw (0,27, over het totaal); per regel is dat niet weer te geven (0,28) — de export weigert", () => {
-    const { invoice, plan, vat } = compare("B-5");
-    expect(invoice.posted).toBe(true);
-    expect(vat).toBe(27);
-    expect(plan.rows).toEqual([]);
-    expect(plan.refused[0].reason).toMatch(/btw per boekingsregel \(€0,28\) wijkt af van de btw op de factuur \(€0,27\)/);
   });
 
   it("VERSCHIL S6: de schrijver negeert het regeltarief en boekt een regel zonder btw-% — de export weigert (onbekende btw)", () => {

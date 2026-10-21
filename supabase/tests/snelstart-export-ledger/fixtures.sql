@@ -158,9 +158,10 @@ SELECT proof.line(proof.uid(2000, 4), 41, 0, 'Flyers',     10.00, 21, 4400);
 SELECT proof.line(proof.uid(2000, 4), 42, 1, 'Posters',    20.50, 21, 4400);
 SELECT proof.line(proof.uid(2000, 4), 43, 2, 'Visitekaart', 33.33, 21, 4400);
 
--- S5  VERSCHIL: de kop rondt de btw over het totaal af (2 × 1,50 @ 9% = 0,27),
---     per regel is het 0,14 + 0,14 = 0,28. Het grootboek boekt de kop-btw 0,27;
---     de export per regel kan dat niet weergeven en weigert de factuur.
+-- S5  de kop rondt de btw over het totaal af (2 × 1,50 @ 9% = 0,27), zoals de
+--     werkbank; per regel afgerond zou het 0,28 zijn. Het grootboek boekt de
+--     kop-btw 0,27; de export verdeelt die per tarief over de regels (0,14 + 0,13,
+--     H6-01) en sluit zo op het journaal.
 SELECT proof.invoice(5, 'Boekhandel VOF', 'B-5', 3.00, 0.27, 3.27, 9);
 SELECT proof.line(proof.uid(2000, 5), 51, 0, 'Tijdschrift A', 1.50, 9, 4600);
 SELECT proof.line(proof.uid(2000, 5), 52, 1, 'Tijdschrift B', 1.50, 9, 4600);
