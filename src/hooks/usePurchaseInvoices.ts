@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "./useAuth";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
@@ -10,6 +11,8 @@ type PurchaseInvoiceInsert = TablesInsert<"purchase_invoices">;
 export interface UsePurchaseInvoicesOptions {
   organizationId?: string;
   clientId?: string;
+  /** Beperk de query server-side tot deze klant-IDs. Leeg = geen resultaten. */
+  clientIds?: string[];
   enabled?: boolean;
 }
 
@@ -324,19 +327,37 @@ export function useResetPageOnChange(reset: () => void, deps: readonly unknown[]
   }, [signature]);
 }
 
+/**
+ * Every purchase invoice of the scope, page by page, so the list is complete
+ * beyond PostgREST's row cap. Bank uses it as the full candidate and
+ * recalculation set; a truncated list silently dropped the oldest invoices
+ * (invoice_date DESC). Same order as before, with id as unique tiebreaker.
+ */
+export async function fetchAllPurchaseInvoices(
+  opts: Omit<UsePurchaseInvoicesOptions, "enabled"> = {},
+): Promise<PurchaseInvoice[]> {
+  const { organizationId, clientId, clientIds } = opts;
+  if (clientIds && clientIds.length === 0) return [];
+  return fetchAllRows<PurchaseInvoice>(async (from, to) => {
+    let query = supabase.from("purchase_invoices").select("*");
+    if (organizationId) query = query.eq("organization_id", organizationId);
+    if (clientId) query = query.eq("client_id", clientId);
+    if (clientIds) query = query.in("client_id", clientIds);
+    const { data, error } = await query
+      .order("invoice_date", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: data as PurchaseInvoice[] | null, error };
+  });
+}
+
 export function usePurchaseInvoices(options: UsePurchaseInvoicesOptions = {}) {
-  const { organizationId, clientId, enabled = true } = options;
+  const { organizationId, clientId, clientIds, enabled = true } = options;
   const { user } = useAuth();
+  const clientIdsKey = clientIds ? [...clientIds].sort().join(",") : "";
   return useQuery({
-    queryKey: ["purchase_invoices", organizationId ?? "all", clientId ?? "all"],
-    queryFn: async () => {
-      let query = supabase.from("purchase_invoices").select("*").order("invoice_date", { ascending: false });
-      if (organizationId) query = query.eq("organization_id", organizationId);
-      if (clientId) query = query.eq("client_id", clientId);
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as PurchaseInvoice[];
-    },
+    queryKey: ["purchase_invoices", organizationId ?? "all", clientId ?? "all", clientIdsKey],
+    queryFn: () => fetchAllPurchaseInvoices({ organizationId, clientId, clientIds }),
     enabled: !!user && enabled,
   });
 }

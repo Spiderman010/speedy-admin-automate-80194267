@@ -342,10 +342,21 @@ export default function Bank() {
   // Whole-dataset is "ready" only after a successful load; gate all
   // whole-set-dependent UI on this.
   const wholeSetReady = hasSelection && !wholeSetLoading && !wholeSetError && !!rawTransactions;
-  const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices({
+  // Purchase invoices are scoped and gated exactly like the sales invoices
+  // below: only the chosen administration(s), never organisation-wide, and
+  // complete beyond the row cap (fetched page by page in the hook).
+  const {
+    data: invoices,
+    isLoading: purchaseLoading,
+    isError: purchaseError,
+    refetch: refetchPurchase,
+  } = usePurchaseInvoices({
     organizationId: activeOrganizationId ?? undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
+    enabled: orgEnabled && hasSelection,
   });
+  const purchaseReady = hasSelection && !purchaseLoading && !purchaseError && !!invoices;
   // Gate the whole-dataset sales fetch the same way as bank transactions:
   // empty selection ⇒ no query; subset ⇒ server-scoped; all-mode ⇒ only after
   // an explicit "all clients" selection.
@@ -363,8 +374,9 @@ export default function Bank() {
   // treated as an empty successful result (which would silently hide matches).
   const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;
   // Invoice-dependent matching / reconciliation / afletter-report actions need
-  // BOTH the bank transactions and the sales invoices successfully loaded.
-  const matchingReady = wholeSetReady && salesReady;
+  // the bank transactions AND both invoice sets successfully loaded: a failed
+  // purchase load is not an empty candidate list either.
+  const matchingReady = wholeSetReady && salesReady && purchaseReady;
   const addTx = useAddBankTransaction();
   const updateTx = useUpdateBankTransaction();
   const updatePurchase = useUpdatePurchaseInvoice();
@@ -2259,7 +2271,7 @@ export default function Bank() {
         </Card>
       ) : (
       <>
-      {(wholeSetError || salesError) && (
+      {(wholeSetError || salesError || purchaseError) && (
         <div className="mb-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2.5 flex items-center gap-3">
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
           <p className="text-sm text-destructive flex-1">
@@ -2267,12 +2279,14 @@ export default function Bank() {
               ? "Bank- en verkoopgegevens voor matching, statistieken en export laden mislukt."
               : wholeSetError
                 ? "Bankgegevens voor matching, statistieken en export laden mislukt."
-                : "Verkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."}
+                : salesError
+                  ? "Verkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."
+                  : "Inkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."}
           </p>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { if (wholeSetError) refetchWholeSet(); if (salesError) refetchSales(); }}
+            onClick={() => { if (wholeSetError) refetchWholeSet(); if (salesError) refetchSales(); if (purchaseError) refetchPurchase(); }}
           >
             Opnieuw laden
           </Button>
