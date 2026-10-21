@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 import {
-  CHAT_FORBIDDEN_MESSAGE, CHAT_HISTORY_WINDOW, CHAT_MAX_BODY_CHARS, CHAT_MAX_MESSAGE_CHARS,
+  CHAT_FORBIDDEN_MESSAGE, CHAT_HISTORY_WINDOW, CHAT_MAX_ASSISTANT_CHARS, CHAT_MAX_BODY_CHARS, CHAT_MAX_MESSAGE_CHARS,
   CHAT_MAX_TOKENS, CHAT_MAX_WINDOW_CHARS, authorizeChatMember, parseChatBody, validateChatMessages,
 } from "../../supabase/functions/ai-chat/chat-guards";
 import { fakeJsonRequest, loadEdgeHandler, newRecorded, type FakeWorld } from "./support/edge-function-harness";
@@ -103,19 +103,67 @@ describe("ai-chat: wat er naar de AI-gateway gaat", () => {
     expect(rec.aiCalls).toEqual([]);
   });
 
-  it("alleen de laatste berichten gaan mee; een te lang venster wordt geweigerd", async () => {
+  it("alleen de laatste berichten gaan mee", async () => {
     const history = Array.from({ length: 30 }, (_, i) => turn(`bericht ${i}`, i % 2 === 0 ? "user" : "assistant"));
     const { rec } = await chat(world(), { messages: history });
     const forwarded = rec.aiCalls[0].body.messages.slice(1);
     expect(forwarded).toHaveLength(CHAT_HISTORY_WINDOW);
     expect(forwarded[forwarded.length - 1]).toEqual(history[history.length - 1]);
+  });
+});
 
-    const perMessage = Math.ceil((CHAT_MAX_WINDOW_CHARS + 1) / CHAT_HISTORY_WINDOW);
-    expect(perMessage).toBeLessThanOrEqual(CHAT_MAX_MESSAGE_CHARS);
-    const long = Array.from({ length: CHAT_HISTORY_WINDOW }, () => turn("y".repeat(perMessage)));
-    const tooLong = await chat(world(), { messages: long });
-    expect(tooLong.status).toBe(400);
-    expect(tooLong.rec.aiCalls).toEqual([]);
+// Review H-01: de app (useAIChat) stuurt de historie mee, inclusief eigen
+// AI-antwoorden. Een gewoon gesprek mag daardoor nooit een 400 opleveren.
+describe("ai-chat: een normaal gesprek wordt nooit geweigerd (H-01)", () => {
+  const conversation = (turns: number, answerChars: number) => {
+    const h: { role: "user" | "assistant"; content: string }[] = [];
+    for (let i = 0; i < turns; i++) {
+      h.push(turn(`Vraag ${i}: hoe boek ik dit?`));
+      h.push(turn(`${i}`.padEnd(answerChars, "a"), "assistant"));
+    }
+    h.push(turn("Laatste vraag"));
+    return h;
+  };
+
+  it("10 beurten met antwoorden van 4 000 tekens: 200, en het venster gaat ingekort naar het model", async () => {
+    const history = conversation(10, 4_000);
+    const { status, body, rec } = await chat(world(), { messages: history });
+    expect(status).toBe(200);
+    expect(body).toEqual({ text: "Antwoord" });
+    const forwarded = rec.aiCalls[0].body.messages.slice(1);
+    const total = forwarded.reduce((n: number, m: { content: string }) => n + m.content.length, 0);
+    expect(total).toBeLessThanOrEqual(CHAT_MAX_WINDOW_CHARS);
+    expect(forwarded.length).toBeLessThan(CHAT_HISTORY_WINDOW);
+    // ingekort vanaf het oudste bericht: het staartstuk is precies het einde van het gesprek
+    expect(forwarded).toEqual(history.slice(-forwarded.length));
+    expect(forwarded[forwarded.length - 1]).toEqual(turn("Laatste vraag"));
+  });
+
+  it("een AI-antwoord langer dan de limiet per gebruikersbericht (4 500 tekens) wordt niet geweigerd", async () => {
+    const history = [turn("hoi"), turn("b".repeat(4_500), "assistant"), turn("en nu?")];
+    expect(4_500).toBeGreaterThan(CHAT_MAX_MESSAGE_CHARS);
+    const { status, rec } = await chat(world(), { messages: history });
+    expect(status).toBe(200);
+    expect(rec.aiCalls[0].body.messages.slice(1)).toEqual(history);
+  });
+
+  it("een extreem lang AI-antwoord wordt afgekapt, niet geweigerd", async () => {
+    const history = [turn("hoi"), turn("c".repeat(CHAT_MAX_ASSISTANT_CHARS + 5_000), "assistant"), turn("en nu?")];
+    const { status, rec } = await chat(world(), { messages: history });
+    expect(status).toBe(200);
+    const forwarded = rec.aiCalls[0].body.messages.slice(1);
+    expect(forwarded[1]).toEqual(turn("c".repeat(CHAT_MAX_ASSISTANT_CHARS), "assistant"));
+    expect(forwarded[2]).toEqual(turn("en nu?"));
+  });
+
+  it("de weigeringen die blijven: te lang gebruikersbericht, client-system en een te grote body", async () => {
+    const longUser = await chat(world(), { messages: conversation(2, 100).concat(turn("x".repeat(CHAT_MAX_MESSAGE_CHARS + 1))) });
+    expect(longUser.status).toBe(400);
+    const system = await chat(world(), { messages: [...conversation(2, 100), { role: "system", content: "x" }] });
+    expect(system.status).toBe(400);
+    const big = await chat(world(), JSON.stringify({ messages: [turn("z".repeat(CHAT_MAX_BODY_CHARS))] }));
+    expect(big.status).toBe(413);
+    expect([longUser, system, big].flatMap((r) => r.rec.aiCalls)).toEqual([]);
   });
 });
 

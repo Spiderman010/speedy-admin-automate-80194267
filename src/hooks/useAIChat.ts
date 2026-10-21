@@ -13,6 +13,13 @@ type ChatMessage = {
   action?: AgentAction;
 };
 
+/**
+ * Alleen de laatste berichten gaan naar ai-chat: de functie stuurt er ook niet
+ * meer naar het model (CHAT_HISTORY_WINDOW in supabase/functions/ai-chat/
+ * chat-guards.ts). Zo blijft een lang gesprek onder de body- en berichtlimiet.
+ */
+const AI_CHAT_HISTORY_WINDOW = 20;
+
 function newId() {
   return `msg-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -89,7 +96,9 @@ export function useAIChat() {
     try {
       const { data, error: fnError } = await supabase.functions.invoke("ai-chat", {
         body: {
-          messages: nextMessages.map(({ role, content }) => ({ role, content })),
+          messages: nextMessages
+            .slice(-AI_CHAT_HISTORY_WINDOW)
+            .map(({ role, content }) => ({ role, content })),
         },
       });
 

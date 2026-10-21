@@ -14,11 +14,20 @@
 export const CHAT_MAX_BODY_CHARS = 200_000;
 /** Bovengrens voor het aantal berichten in één verzoek. */
 export const CHAT_MAX_MESSAGES = 200;
-/** Alleen de laatste berichten gaan naar het model; de app stuurt het hele gesprek mee. */
+/** Alleen de laatste berichten gaan naar het model. */
 export const CHAT_HISTORY_WINDOW = 20;
-/** Bovengrens per bericht. */
+/** Bovengrens voor een bericht van de gebruiker; daarboven volgt een weigering. */
 export const CHAT_MAX_MESSAGE_CHARS = 4_000;
-/** Bovengrens voor de tekst die naar het model gaat (het venster samen). */
+/**
+ * Bovengrens voor een eerder AI-antwoord in de historie. Een langer antwoord
+ * wordt afgekapt, niet geweigerd: de app stuurt eigen antwoorden terug, en
+ * die zijn door CHAT_MAX_TOKENS doorgaans 4 000 à 5 000 tekens (review H-01).
+ */
+export const CHAT_MAX_ASSISTANT_CHARS = 8_000;
+/**
+ * Bovengrens voor de tekst die naar het model gaat (het venster samen). Een
+ * langer venster wordt vanaf het oudste bericht ingekort, niet geweigerd.
+ */
 export const CHAT_MAX_WINDOW_CHARS = 24_000;
 /** Bovengrens voor het antwoord van het model. */
 export const CHAT_MAX_TOKENS = 1_024;
@@ -69,8 +78,12 @@ export function parseChatBody(
 /**
  * De berichten die naar het model mogen. Alleen de rollen user en assistant
  * met tekst: een door de client meegegeven system-bericht (of een andere rol,
- * of multimodale inhoud) wordt geweigerd, niet stil weggelaten. Van elk bericht
- * gaan alleen role en content mee, en alleen de laatste CHAT_HISTORY_WINDOW.
+ * of multimodale inhoud) wordt geweigerd, niet stil weggelaten. Een te lang
+ * bericht van de gebruiker wordt geweigerd; een eerder AI-antwoord wordt
+ * afgekapt op CHAT_MAX_ASSISTANT_CHARS. Van elk bericht gaan alleen role en
+ * content mee, en alleen de laatste CHAT_HISTORY_WINDOW; past dat venster niet
+ * in CHAT_MAX_WINDOW_CHARS, dan vallen de oudste berichten weg. Het laatste
+ * bericht gaat altijd mee (het is per bericht begrensd, ruim onder het venster).
  */
 export function validateChatMessages(body: Record<string, unknown>): { ok: true; messages: ChatMessage[] } | Refusal {
   const messages = body.messages;
@@ -94,16 +107,17 @@ export function validateChatMessages(body: Record<string, unknown>): { ok: true;
     if (typeof content !== "string") {
       return { ok: false, status: 400, error: "Berichtinhoud moet tekst zijn." };
     }
-    if (content.length > CHAT_MAX_MESSAGE_CHARS) {
+    if (role === "user" && content.length > CHAT_MAX_MESSAGE_CHARS) {
       return { ok: false, status: 400, error: `Een bericht is te lang (maximaal ${CHAT_MAX_MESSAGE_CHARS} tekens).` };
     }
   }
-  const window = messages
-    .slice(-CHAT_HISTORY_WINDOW)
-    .map((m) => ({ role: (m as ChatMessage).role, content: (m as ChatMessage).content }));
-  const total = window.reduce((sum, m) => sum + m.content.length, 0);
-  if (total > CHAT_MAX_WINDOW_CHARS) {
-    return { ok: false, status: 400, error: "Het gesprek is te lang; begin een nieuw gesprek." };
+  const window: ChatMessage[] = messages.slice(-CHAT_HISTORY_WINDOW).map((m) => {
+    const { role, content } = m as ChatMessage;
+    return { role, content: role === "assistant" ? content.slice(0, CHAT_MAX_ASSISTANT_CHARS) : content };
+  });
+  let total = window.reduce((sum, m) => sum + m.content.length, 0);
+  while (window.length > 1 && total > CHAT_MAX_WINDOW_CHARS) {
+    total -= window.shift()!.content.length;
   }
   return { ok: true, messages: window };
 }
