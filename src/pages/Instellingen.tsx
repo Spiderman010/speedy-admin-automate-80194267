@@ -314,9 +314,10 @@ function matchTransactionToTemplate(tx: any, activeRules: any[]) {
     // Scope: client-specific rules must only match transactions from that client.
     if (rule.client_id_filter && rule.client_id_filter !== tx.client_id) continue;
 
-    // Note: rule.geldt_voor (eenmanszaak / bv / alle) is not enforced here.
-    // bank_transactions has no company-type column, so this scope cannot be applied
-    // to retroactive bank matching without additional data.
+    // Fail closed: this retroactive path has no reliable company legal form.
+    // Rules restricted to BV or eenmanszaak must never silently apply to all.
+    if (rule.geldt_voor === "bv" || rule.geldt_voor === "eenmanszaak") continue;
+    if (rule.geldt_voor === "specifieke_klant" && !rule.client_id_filter) continue;
 
     const term = (rule.zoekterm || "").toLowerCase();
     let field = "";

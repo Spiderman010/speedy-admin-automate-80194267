@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -187,5 +188,15 @@ describe("booking template grootboekrekening flow", () => {
 
     expect(findSafeBackfillMatch(noTextTemplate, accounts)).toBeNull();
     expect(findSafeBackfillMatch(duplicateTemplate, duplicateAccounts)).toBeNull();
+  });
+});
+
+
+describe("retroactieve herkenningsregels rechtsvormscope", () => {
+  it("weigert rechtsvormgebonden regels zonder betrouwbare rechtsvorm en onvolledige klantfilters", () => {
+    const source = readFileSync("src/pages/Instellingen.tsx", "utf8");
+    expect(source).toContain('if (rule.geldt_voor === "bv" || rule.geldt_voor === "eenmanszaak") continue;');
+    expect(source).toContain('if (rule.geldt_voor === "specifieke_klant" && !rule.client_id_filter) continue;');
+    expect(source).toContain("if (rule.client_id_filter && rule.client_id_filter !== tx.client_id) continue;");
   });
 });
