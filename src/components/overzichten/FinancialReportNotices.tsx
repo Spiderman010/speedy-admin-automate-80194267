@@ -12,6 +12,7 @@ import {
   UNCLASSIFIED_WARNING,
   accountLabel,
   formatCents,
+  type ReportDocumentsState,
 } from "@/lib/financial-statements-presentation";
 import type { StatementCompleteness, UnclassifiedAccount } from "@/lib/financial-statements";
 import { unclassifiedRelevanceFor } from "@/lib/unclassified-attribution";
@@ -37,6 +38,61 @@ export function StatementCompletenessNotice({ completeness }: { completeness: St
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle>{presentation.label}</AlertTitle>
       <AlertDescription>{presentation.description}</AlertDescription>
+    </Alert>
+  );
+}
+
+/**
+ * Herstel P7 (A3-11): het ongeboekte bronwerk van deze periode, telbaar. Er
+ * staat geen bedrag in — alleen aantallen per bronsoort — en het verbergt
+ * niets: de cijfers in het rapport blijven de geboekte grootboekmutaties.
+ */
+export function StatementDocumentsNotice({
+  documents,
+  what,
+}: {
+  documents: ReportDocumentsState;
+  what: "balans" | "winst_verlies";
+}) {
+  if (documents.state === "pending") return null;
+  if (documents.state === "unknown") {
+    return (
+      <Alert data-testid="statement-documents-notice" data-status="unknown">
+        <Info className="h-4 w-4" />
+        <AlertTitle>Volledigheid niet vastgesteld</AlertTitle>
+        <AlertDescription>
+          Het openstaande bronwerk kon niet worden gelezen. Dit overzicht toont de geboekte grootboekmutaties; of
+          er documenten ontbreken, is nu niet bekend.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  const d = documents.value;
+  if (d.status === "complete" || !d.summary) return null;
+  const jaren = d.scope.fromYear === null ? `t/m ${d.scope.throughYear}` : d.scope.fromYear === d.scope.throughYear
+    ? `${d.scope.throughYear}`
+    : `${d.scope.fromYear} t/m ${d.scope.throughYear}`;
+  return (
+    <Alert
+      variant="destructive"
+      data-testid="statement-documents-notice"
+      data-status="incomplete"
+      data-unposted={d.totalUnposted}
+      data-refused={d.totalRefused}
+    >
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>Onvolledig: {d.summary}</AlertTitle>
+      <AlertDescription>
+        <p>
+          Deze {STATEMENT_WORD[what]} bevat alleen geboekte grootboekmutaties. Bronwerk met boekjaar {jaren} dat
+          nog niet in het grootboek staat, ontbreekt hierin.
+        </p>
+        {d.bankWorkOpen && (
+          <Button variant="outline" size="sm" className="mt-3" asChild>
+            <Link to="/bank/inhaalslag">Naar de bank-inhaalslag</Link>
+          </Button>
+        )}
+      </AlertDescription>
     </Alert>
   );
 }

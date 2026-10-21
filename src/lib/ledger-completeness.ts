@@ -4,6 +4,7 @@ import {
   type OpeningBalanceRow,
 } from "@/lib/opening-balance-utils";
 import type { LedgerPeriod } from "@/lib/ledger-reporting";
+import type { UnpostedWorkItem, UnpostedWorkSource } from "@/lib/year-close-readiness";
 
 // Fase 6C-b7 PR 2 — volledigheid van het grootboek (metadata, geen geld).
 //
@@ -380,5 +381,129 @@ export function unknownOpeningBalanceCompleteness(year: number | null): OpeningB
     label: OPENING_BALANCE_STATE_LABELS.unknown,
     severity: "unknown",
     note: "Kon beginbalansstatus niet controleren.",
+  };
+}
+
+// ── Bronwerk per rapportperiode (herstel P7, A3-11) ─────────────────────────
+//
+// "Volledig" op de balans en de winst-en-verliesrekening betekende alleen
+// "alle grootboekactiviteit is geclassificeerd" (de statement-engine weet niets
+// van documenten). Een rapport mag pas volledig heten als er ook geen
+// ongeboekt bronwerk is dat erin thuishoort. Deze functie telt dat werk per
+// rapportperiode, uitsluitend met de bestaande definities:
+//   • postbaar maar nog niet geboekt — exact `fetchUnpostedSourceWork()`, de
+//     bron van de jaarafsluiting (vijf schrijvers, incl. gecodeerde bankregels);
+//   • door de schrijver GEWEIGERD — een verkoopfactuur met verlegde btw
+//     (post_sales_invoice weigert die altijd). Die staat nooit in het
+//     grootboek, dus een rapport met zo'n factuur is aantoonbaar niet volledig.
+// Welk werk bij welk rapport hoort, volgt uit het boekjaar (de boekhoudkundige
+// datum, nooit created_at):
+//   • balans (stand op de einddatum): boekjaar t/m het laatste jaar van de periode;
+//   • W&V (mutatie in de periode): boekjaar binnen de jaren van de periode.
+// Boekjaar = kalenderjaar, dus een kwartaal telt het werk van het hele jaar
+// mee: strenger, nooit soepeler. Een document zonder datum telt altijd mee.
+
+export interface RefusedWorkItem {
+  source: "sales_invoice";
+  id: string;
+  /** Uit invoice_date; null = onbekend (telt dan altijd mee). */
+  boekjaar: number | null;
+  reason: "btw_verlegd";
+}
+
+export type ReportStatementKind = "balans" | "winst_verlies";
+
+export interface ReportDocumentCompleteness {
+  status: "complete" | "incomplete";
+  /** Postbaar, nog niet geboekt, per bron (alleen bronnen met > 0), in vaste volgorde. */
+  unposted: Array<{ source: UnpostedWorkSource; count: number }>;
+  /** Door de schrijver geweigerd: staat niet in het grootboek. */
+  refused: Array<{ source: "sales_invoice"; reason: "btw_verlegd"; count: number }>;
+  totalUnposted: number;
+  totalRefused: number;
+  /** Er staat bankwerk open (gecodeerde bankregels of bankafletteringen): de bank-inhaalslag helpt. */
+  bankWorkOpen: boolean;
+  /** De meegetelde boekjaren, inclusief; `fromYear` null = alle eerdere jaren. */
+  scope: { fromYear: number | null; throughYear: number };
+  /** Telbare zin, bv. "3 bankregels en 1 inkoopfactuur nog niet geboekt"; null als alles geboekt is. */
+  summary: string | null;
+}
+
+const SOURCE_ORDER: readonly UnpostedWorkSource[] = [
+  "purchase_invoice",
+  "sales_invoice",
+  "bank_transaction",
+  "bank_allocation",
+  "manual_journal",
+];
+
+const SOURCE_NOUN: Readonly<Record<UnpostedWorkSource, [string, string]>> = {
+  purchase_invoice: ["inkoopfactuur", "inkoopfacturen"],
+  sales_invoice: ["verkoopfactuur", "verkoopfacturen"],
+  bank_transaction: ["bankregel", "bankregels"],
+  bank_allocation: ["bankaflettering", "bankafletteringen"],
+  manual_journal: ["memoriaalboeking", "memoriaalboekingen"],
+};
+
+function telling(n: number, [enkel, meervoud]: [string, string]): string {
+  return `${n} ${n === 1 ? enkel : meervoud}`;
+}
+
+function opsomming(delen: readonly string[]): string {
+  if (delen.length <= 1) return delen.join("");
+  return `${delen.slice(0, -1).join(", ")} en ${delen[delen.length - 1]}`;
+}
+
+/** De kalenderjaren van een half-open periode [from, toExclusive). */
+export function periodYears(period: LedgerPeriod): { fromYear: number; throughYear: number } {
+  const fromYear = Number(period.from.slice(0, 4));
+  const end = new Date(`${period.toExclusive}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() - 1);
+  return { fromYear, throughYear: end.getUTCFullYear() };
+}
+
+export function reportDocumentCompleteness(input: {
+  unposted: readonly UnpostedWorkItem[];
+  refused: readonly RefusedWorkItem[];
+  period: LedgerPeriod;
+  statement: ReportStatementKind;
+}): ReportDocumentCompleteness {
+  const { fromYear, throughYear } = periodYears(input.period);
+  const lowerBound = input.statement === "balans" ? null : fromYear;
+  const hoortErbij = (boekjaar: number | null | undefined) =>
+    boekjaar === null || boekjaar === undefined ||
+    (boekjaar <= throughYear && (lowerBound === null || boekjaar >= lowerBound));
+
+  const perBron = new Map<UnpostedWorkSource, number>();
+  for (const item of input.unposted) {
+    if (!hoortErbij(item.boekjaar)) continue;
+    perBron.set(item.source, (perBron.get(item.source) ?? 0) + 1);
+  }
+  const unposted = SOURCE_ORDER.filter((s) => (perBron.get(s) ?? 0) > 0).map((source) => ({
+    source,
+    count: perBron.get(source)!,
+  }));
+  const geweigerd = input.refused.filter((r) => hoortErbij(r.boekjaar)).length;
+  const refused = geweigerd > 0 ? [{ source: "sales_invoice" as const, reason: "btw_verlegd" as const, count: geweigerd }] : [];
+
+  const totalUnposted = unposted.reduce((n, u) => n + u.count, 0);
+  const delen: string[] = [];
+  if (totalUnposted > 0) {
+    delen.push(`${opsomming(unposted.map((u) => telling(u.count, SOURCE_NOUN[u.source])))} nog niet geboekt`);
+  }
+  if (geweigerd > 0) {
+    delen.push(
+      `${telling(geweigerd, ["verkoopfactuur", "verkoopfacturen"])} met verlegde btw ${geweigerd === 1 ? "kan" : "kunnen"} niet worden geboekt`,
+    );
+  }
+  return {
+    status: totalUnposted + geweigerd > 0 ? "incomplete" : "complete",
+    unposted,
+    refused,
+    totalUnposted,
+    totalRefused: geweigerd,
+    bankWorkOpen: unposted.some((u) => u.source === "bank_transaction" || u.source === "bank_allocation"),
+    scope: { fromYear: lowerBound, throughYear },
+    summary: delen.length > 0 ? delen.join("; ") : null,
   };
 }

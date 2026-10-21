@@ -65,7 +65,14 @@ vi.mock("@/integrations/supabase/client", () => ({
   },
 }));
 
-import { fetchUnpostedSourceWork } from "@/hooks/useUnpostedSourceWork";
+import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+import {
+  fetchRefusedSourceWork,
+  fetchUnpostedSourceWork,
+  useReportDocumentCompleteness,
+} from "@/hooks/useUnpostedSourceWork";
 import { fetchLedgerCompletenessCounts } from "@/hooks/useLedgerCompleteness";
 import { computeLedgerCompleteness } from "@/lib/ledger-completeness";
 import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
@@ -199,5 +206,46 @@ describe("A3-02 — de volledigheidsmeter heeft een vijfde bron: gecodeerde bank
     });
     expect(c.sources.find((s) => s.key === "bank_transaction")!.status).toBe("unknown");
     expect(c.mayBeIncomplete).toBe(true);
+  });
+});
+
+describe("A3-11 — het bronwerk per rapport, door de echte hooks", () => {
+  beforeEach(() => {
+    seed();
+    tables.sales_invoices = [
+      { id: "si-verlegd", client_id: C, status: "gecontroleerd", btw_verlegd: true, invoice_date: "2026-05-01" },
+      { id: "si-verlegd-concept", client_id: C, status: "concept", btw_verlegd: true, invoice_date: "2026-05-02" },
+      { id: "si-gewoon", client_id: C, status: "gecontroleerd", btw_verlegd: false, invoice_date: "2026-05-03" },
+    ];
+    tables.sales_invoice_postings = [{ sales_invoice_id: "si-gewoon", client_id: C }];
+  });
+
+  it("9. fetchRefusedSourceWork: alleen postbare verkoopfacturen met verlegde btw, mét boekjaar, zonder bedrag", async () => {
+    const items = await fetchRefusedSourceWork(C);
+    expect(items).toEqual([{ source: "sales_invoice", id: "si-verlegd", boekjaar: 2026, reason: "btw_verlegd" }]);
+    const call = calls.find((c) => c.table === "sales_invoices")!;
+    expect(call.filters).toContainEqual(["btw_verlegd", "eq", true]);
+    expect(call.columns).not.toMatch(/amount/);
+  });
+
+  it("10. useReportDocumentCompleteness: balans 2026 telt de open bankregel en de verlegde factuur; 2025 niets", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result: r2026 } = renderHook(
+      () => useReportDocumentCompleteness(C, { from: "2026-01-01", toExclusive: "2027-01-01" }, "balans"),
+      { wrapper },
+    );
+    await waitFor(() => expect(r2026.current.data).toBeDefined());
+    expect(r2026.current.isError).toBe(false);
+    expect(r2026.current.data!.summary).toBe("1 bankregel nog niet geboekt; 1 verkoopfactuur met verlegde btw kan niet worden geboekt");
+
+    const { result: r2025 } = renderHook(
+      () => useReportDocumentCompleteness(C, { from: "2025-01-01", toExclusive: "2026-01-01" }, "balans"),
+      { wrapper },
+    );
+    await waitFor(() => expect(r2025.current.data).toBeDefined());
+    expect(r2025.current.data!.status).toBe("complete");
   });
 });

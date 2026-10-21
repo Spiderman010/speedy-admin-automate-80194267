@@ -1,11 +1,17 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import {
   DIRECT_BANK_POSTABLE_STATUS,
   PURCHASE_POSTABLE_STATUSES,
+  reportDocumentCompleteness,
   SALES_POSTABLE_STATUSES,
+  type RefusedWorkItem,
+  type ReportDocumentCompleteness,
+  type ReportStatementKind,
 } from "@/lib/ledger-completeness";
+import type { LedgerPeriod } from "@/lib/ledger-reporting";
 import type { UnpostedWorkItem } from "@/lib/year-close-readiness";
 
 /**
@@ -200,4 +206,59 @@ export function useUnpostedSourceWork(clientId: string | undefined, enabled = tr
     enabled: enabled && !!user && !!clientId,
     queryFn: () => fetchUnpostedSourceWork(clientId!),
   });
+}
+
+// ── Geweigerd bronwerk en het oordeel per rapport (herstel P7, A3-11) ───────
+
+export const REFUSED_SOURCE_WORK_QUERY_KEY = "refused-source-work" as const;
+
+/**
+ * Bronwerk dat de schrijver ALTIJD weigert en dat dus nooit in het grootboek
+ * komt: een verkoopfactuur met een postbare status en btw_verlegd = true
+ * (post_sales_invoice, 6C-b4). Zelfde telling als `refusedVerlegd` in
+ * `fetchLedgerCompletenessCounts()`, maar mét boekjaar, zodat een rapport over
+ * één periode alleen zijn eigen werk meetelt. Nooit een bedrag.
+ */
+export async function fetchRefusedSourceWork(clientId: string): Promise<RefusedWorkItem[]> {
+  if (!clientId) throw new Error("Geweigerd bronwerk vereist een administratie (client_id)");
+  const rows = await fetchAll<{ id: string; invoice_date: string | null }>(
+    "sales_invoices", "id, invoice_date", "id", clientId,
+    (q) => q.in("status", [...SALES_POSTABLE_STATUSES]).eq("btw_verlegd", true),
+  );
+  return rows.map((r) => ({ source: "sales_invoice", id: r.id, boekjaar: boekjaarVan(r.invoice_date), reason: "btw_verlegd" }));
+}
+
+export function useRefusedSourceWork(clientId: string | undefined, enabled = true) {
+  const { user } = useAuth();
+  return useQuery<RefusedWorkItem[]>({
+    queryKey: [REFUSED_SOURCE_WORK_QUERY_KEY, clientId ?? ""],
+    enabled: enabled && !!user && !!clientId,
+    queryFn: () => fetchRefusedSourceWork(clientId!),
+  });
+}
+
+/**
+ * Het documentdeel van "Volledig" op de balans en de W&V: is er voor deze
+ * periode nog bronwerk dat niet in het grootboek staat? Deelt de cache met de
+ * jaarafsluiting (dezelfde query voor het openstaande werk). `isError` en
+ * `isPending` zijn eerlijk: zolang een van beide bronnen niet gelezen is, is
+ * er geen oordeel — en dus nooit "Volledig".
+ */
+export function useReportDocumentCompleteness(
+  clientId: string | undefined,
+  period: LedgerPeriod,
+  statement: ReportStatementKind,
+  enabled = true,
+) {
+  const unposted = useUnpostedSourceWork(clientId, enabled);
+  const refused = useRefusedSourceWork(clientId, enabled);
+  const data = useMemo<ReportDocumentCompleteness | undefined>(() => {
+    if (!unposted.data || !refused.data) return undefined;
+    return reportDocumentCompleteness({ unposted: unposted.data, refused: refused.data, period, statement });
+  }, [unposted.data, refused.data, period, statement]);
+  return {
+    data,
+    isPending: unposted.isPending || refused.isPending,
+    isError: unposted.isError || refused.isError,
+  };
 }

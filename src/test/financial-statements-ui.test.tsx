@@ -59,6 +59,20 @@ vi.mock("@/hooks/useLedgerCompleteness", () => ({
     isError: false,
   }),
 }));
+// Herstel P7 (A3-11): "Volledig" weegt ook het ongeboekte bronwerk van de
+// periode. Testinfrastructuur: standaard staat er niets open, zodat deze tests
+// het classificatiedeel blijven toetsen; het documentdeel staat in
+// statement-volledig-documenten.test.tsx.
+vi.mock("@/hooks/useUnpostedSourceWork", () => ({
+  useReportDocumentCompleteness: () => ({
+    data: {
+      status: "complete", unposted: [], refused: [], totalUnposted: 0, totalRefused: 0, bankWorkOpen: false,
+      scope: { fromYear: null, throughYear: 2026 }, summary: null,
+    },
+    isPending: false,
+    isError: false,
+  }),
+}));
 vi.mock("@/hooks/useLedgerPostings", () => ({
   useLedgerPostings: (opts: any) => {
     // Zoals de echte hook: filteren op administratie én op de half-open

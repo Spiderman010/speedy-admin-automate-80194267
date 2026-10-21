@@ -7,6 +7,7 @@
 
 import { CSV_SEPARATOR, formatAmountNl } from "@/lib/proef-saldibalans";
 import { formatCents } from "@/lib/grootboek-saldi-utils";
+import type { ReportDocumentCompleteness } from "@/lib/ledger-completeness";
 import type {
   BalanceSheetResult,
   FinancialStatementGroup,
@@ -49,6 +50,93 @@ export const COMPLETENESS_PRESENTATION: Readonly<Record<StatementCompleteness, C
       "De periode is geen volledig boekjaar, dus de splitsing tussen lopend en eerder resultaat is niet als boekjaar te duiden.",
   },
 };
+
+/**
+ * LET OP (herstel P7, A3-11): `COMPLETENESS_PRESENTATION` is het oordeel van
+ * de statement-engine alleen — "alle activiteit geclassificeerd". Dat is NIET
+ * genoeg om een rapport "Volledig" te noemen. Het scherm toont daarom altijd
+ * `reportCompletenessView()`, dat ook het ongeboekte bronwerk weegt.
+ */
+
+// ── Het oordeel van het rapport: classificatie ÉN documenten ────────────────
+
+/** Wat er over het bronwerk bekend is. Zolang het niet gelezen is: geen oordeel. */
+export type ReportDocumentsState =
+  | { state: "pending" }
+  | { state: "unknown" }
+  | { state: "ready"; value: ReportDocumentCompleteness };
+
+export type ReportCompleteness = StatementCompleteness | "pending";
+
+export interface ReportCompletenessView extends CompletenessPresentation {
+  verdict: ReportCompleteness;
+  /** Waarom niet volledig — één zin per oorzaak, telbaar. Leeg bij "Volledig". */
+  reasons: string[];
+}
+
+const CLASSIFICATIE_ONVOLLEDIG = "Er is grootboekactiviteit die nog niet is geclassificeerd.";
+
+/**
+ * "Volledig" alleen als de engine alles kon indelen (een heel boekjaar, niets
+ * ongeclassificeerd) ÉN er voor deze periode geen ongeboekt of door de
+ * schrijver geweigerd bronwerk is. De volgorde is bewust:
+ *   1. onvolledig (classificatie of documenten) — het sterkste, concrete feit;
+ *   2. niet vastgesteld (engine of documenten onleesbaar);
+ *   3. controle vereist (geen heel boekjaar) — nooit groen;
+ *   4. nog bezig (documenten nog niet gelezen) — nooit groen;
+ *   5. volledig.
+ */
+export function reportCompletenessView(
+  engine: StatementCompleteness,
+  documents: ReportDocumentsState,
+): ReportCompletenessView {
+  const docs = documents.state === "ready" ? documents.value : null;
+  const reasons: string[] = [];
+  if (engine === "incomplete") reasons.push(CLASSIFICATIE_ONVOLLEDIG);
+  if (docs && docs.status === "incomplete" && docs.summary) reasons.push(`${docs.summary}.`);
+
+  if (engine === "incomplete" || docs?.status === "incomplete") {
+    return {
+      verdict: "incomplete",
+      label: "Onvolledig",
+      tone: "warning",
+      description: reasons.join(" "),
+      reasons,
+    };
+  }
+  if (engine === "unknown" || documents.state === "unknown") {
+    return {
+      verdict: "unknown",
+      label: "Niet vastgesteld",
+      tone: "neutral",
+      description:
+        documents.state === "unknown"
+          ? "Het openstaande bronwerk kon niet worden gelezen; de volledigheid is niet vastgesteld."
+          : COMPLETENESS_PRESENTATION.unknown.description,
+      reasons: [],
+    };
+  }
+  if (engine === "ambiguous") {
+    return { verdict: "ambiguous", ...COMPLETENESS_PRESENTATION.ambiguous, reasons: [] };
+  }
+  if (documents.state === "pending") {
+    return {
+      verdict: "pending",
+      label: "Wordt gecontroleerd…",
+      tone: "neutral",
+      description: "Het openstaande bronwerk wordt nog gelezen.",
+      reasons: [],
+    };
+  }
+  return {
+    verdict: "complete",
+    label: "Volledig",
+    tone: "success",
+    description:
+      "Alle grootboekactiviteit in deze periode is geclassificeerd en er staat geen ongeboekt of geweigerd bronwerk open.",
+    reasons: [],
+  };
+}
 
 export const UNCLASSIFIED_REASON_LABELS: Readonly<Record<UnclassifiedReason, string>> = {
   missing_statement_type: "Geen rapport gekozen",
