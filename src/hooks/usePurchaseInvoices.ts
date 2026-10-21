@@ -176,29 +176,121 @@ export async function fetchAllExportablePurchaseInvoices(opts: {
   }
 }
 
+// SnelStart-inkoopexport per boekingsregel (A2-04): de regels en hun
+// grootboekrekeningen worden pas bij de exportklik opgehaald, in batches. Mist
+// er iets, dan weigert de exportopbouw de factuur (Σ regels moet exact op de kop
+// sluiten); er wordt niets gerepareerd. Structureel gelijk aan
+// `SnelstartPurchaseLine` / `SnelstartLedgerAccount` in snelstart-export.ts.
+export type PurchaseExportLine = Pick<
+  Tables<"purchase_invoice_lines">,
+  "id" | "purchase_invoice_id" | "omschrijving" | "amount_excl" | "btw_percentage" | "grootboekrekening_id" | "sort_order" | "organization_id"
+>;
+export type PurchaseExportAccount = Pick<Tables<"grootboekrekeningen">, "id" | "nummer" | "organization_id" | "client_id">;
+
+export const EXPORT_LOOKUP_ID_BATCH_SIZE = 100;
+
+export async function fetchPurchaseInvoiceExportLines(opts: {
+  invoiceIds: readonly string[];
+}): Promise<PurchaseExportLine[]> {
+  const ids = [...new Set(opts.invoiceIds)];
+  const all: PurchaseExportLine[] = [];
+  for (let i = 0; i < ids.length; i += EXPORT_LOOKUP_ID_BATCH_SIZE) {
+    const batch = ids.slice(i, i + EXPORT_LOOKUP_ID_BATCH_SIZE);
+    for (let offset = 0; ; offset += EXPORT_BATCH_SIZE) {
+      const { data, error } = await supabase
+        .from("purchase_invoice_lines")
+        .select("id, purchase_invoice_id, omschrijving, amount_excl, btw_percentage, grootboekrekening_id, sort_order, organization_id")
+        .in("purchase_invoice_id", batch)
+        .order("purchase_invoice_id", { ascending: true })
+        .order("sort_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + EXPORT_BATCH_SIZE - 1);
+      if (error) throw error;
+      const rows = (data ?? []) as PurchaseExportLine[];
+      all.push(...rows);
+      if (rows.length < EXPORT_BATCH_SIZE) break;
+    }
+  }
+  return all;
+}
+
+export async function fetchExportLedgerAccounts(opts: {
+  organizationId: string;
+  accountIds: readonly (string | null | undefined)[];
+}): Promise<PurchaseExportAccount[]> {
+  if (!opts.organizationId) {
+    throw new Error("Geen actieve organisatie: grootboekrekeningen kunnen niet worden geladen");
+  }
+  const ids = [...new Set(opts.accountIds.filter((id): id is string => !!id))];
+  const all: PurchaseExportAccount[] = [];
+  for (let i = 0; i < ids.length; i += EXPORT_LOOKUP_ID_BATCH_SIZE) {
+    const { data, error } = await supabase
+      .from("grootboekrekeningen")
+      .select("id, nummer, organization_id, client_id")
+      .eq("organization_id", opts.organizationId)
+      .in("id", ids.slice(i, i + EXPORT_LOOKUP_ID_BATCH_SIZE));
+    if (error) throw error;
+    all.push(...((data ?? []) as PurchaseExportAccount[]));
+  }
+  return all;
+}
+
 export const STATUS_UPDATE_BATCH_SIZE = 150;
 
-// Marks exported invoices in safe ID chunks. Every update is scoped to the
-// organization; the caller must invalidate ["purchase_invoices"] once after
-// this resolves. Throws on the first failed batch (earlier batches are
-// already committed — surface a partial-failure message, not success).
+/** De markering raakte niet precies de geëxporteerde facturen. */
+export class PurchaseExportMarkError extends Error {
+  constructor(message: string, readonly marked: number, readonly expected: number) {
+    super(message);
+    this.name = "PurchaseExportMarkError";
+  }
+}
+
+// Marks exactly the exported invoices in safe ID chunks, and only AFTER the
+// file was built and its download started (the caller's job). Every update is
+// scoped to the organization and the administratie, and only flips an invoice
+// that is still exportable (compare-and-set on status), so a concurrent export
+// or status change is not overwritten. It writes `status` only — never
+// `remaining_amount`, never a payment status (D1). Each batch must report back
+// (RETURNING) exactly the rows it was asked to mark: an update that RLS or a
+// status change silently reduces is an error, not a success. Earlier batches
+// stay committed; the caller shows a partial-failure message and must
+// invalidate ["purchase_invoices"] once after this settles.
 export async function markPurchaseInvoicesExported(opts: {
   organizationId: string;
+  clientId: string;
   invoiceIds: readonly string[];
-}): Promise<void> {
-  const { organizationId, invoiceIds } = opts;
+}): Promise<{ marked: number }> {
+  const { organizationId, clientId } = opts;
   if (!organizationId) {
     throw new Error("Geen actieve organisatie: export-status kan niet worden bijgewerkt");
   }
+  if (!clientId || clientId === "all") {
+    throw new Error("Geen administratie gekozen: export-status kan niet worden bijgewerkt");
+  }
+  const invoiceIds = [...new Set(opts.invoiceIds)];
+  let marked = 0;
   for (let i = 0; i < invoiceIds.length; i += STATUS_UPDATE_BATCH_SIZE) {
     const batch = invoiceIds.slice(i, i + STATUS_UPDATE_BATCH_SIZE);
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("purchase_invoices")
       .update({ status: "geexporteerd" })
       .eq("organization_id", organizationId)
-      .in("id", batch);
-    if (error) throw error;
+      .eq("client_id", clientId)
+      .in("id", batch)
+      .in("status", [...EXPORTABLE_STATUSES])
+      .select("id");
+    if (error) throw new PurchaseExportMarkError(error.message, marked, invoiceIds.length);
+    const hit = (data ?? []).length;
+    marked += hit;
+    if (hit !== batch.length) {
+      throw new PurchaseExportMarkError(
+        `${marked} van ${invoiceIds.length} facturen op 'geëxporteerd' gezet; ${batch.length - hit} uit deze reeks niet (geen rechten, of de status is intussen gewijzigd).`,
+        marked,
+        invoiceIds.length,
+      );
+    }
   }
+  return { marked };
 }
 
 export const DUPLICATE_LOOKUP_BATCH_SIZE = 25;

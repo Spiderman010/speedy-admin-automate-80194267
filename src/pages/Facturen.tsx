@@ -20,6 +20,8 @@ import {
   useUpdatePurchaseInvoice,
   useDeletePurchaseInvoice,
   fetchAllExportablePurchaseInvoices,
+  fetchPurchaseInvoiceExportLines,
+  fetchExportLedgerAccounts,
   markPurchaseInvoicesExported,
   buildYearOptions,
   PURCHASE_INVOICES_PAGE_SIZE,
@@ -35,7 +37,8 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { exportPurchaseInvoicesCSV } from "@/lib/snelstart-export";
+import { exportPurchaseInvoicesCSV, type SnelstartRefusal } from "@/lib/snelstart-export";
+import { SnelstartExportRefusals } from "@/components/SnelstartExportRefusals";
 import { useClients } from "@/hooks/useClients";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
@@ -480,32 +483,54 @@ export default function Facturen() {
 
   const getClientName = (clientId: string) => clients?.find((c) => c.id === clientId)?.name ?? "—";
 
+  // SnelStart-export alleen bij precies één administratie (A2-05); de
+  // exportfunctie toetst dat nogmaals op de opgehaalde rijen.
+  const exportClient = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter) : undefined;
+  const exportBlockReason = clientFilter === "all"
+    ? "Kies één administratie om naar SnelStart te exporteren. Een export over meerdere administraties wordt niet gemaakt."
+    : !exportClient ? "De gekozen administratie hoort niet bij de actieve organisatie of is nog niet geladen." : null;
+  const [exportRefusals, setExportRefusals] = useState<SnelstartRefusal[]>([]);
+
   const handleExportSnelstart = async () => {
     if (exporting) return;
     if (!activeOrganizationId) {
       toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
       return;
     }
+    if (!exportClient) {
+      toast({ title: "Export niet gestart", description: exportBlockReason ?? undefined, variant: "destructive" });
+      return;
+    }
     setExporting(true);
+    setExportRefusals([]);
     try {
       const exportable = await fetchAllExportablePurchaseInvoices({
         organizationId: activeOrganizationId,
-        clientId: clientFilter !== "all" ? clientFilter : undefined,
+        clientId: exportClient.id,
         year: yearFilter,
       });
       if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
-      const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-      const ids = exportPurchaseInvoicesCSV(exportable, clientName, yearFilter === "all" ? undefined : yearFilter);
+      const lines = await fetchPurchaseInvoiceExportLines({ invoiceIds: exportable.map(i => i.id) });
+      const accounts = await fetchExportLedgerAccounts({ organizationId: activeOrganizationId, accountIds: lines.map(l => l.grootboekrekening_id) });
+      // Per boekingsregel; gooit bij een gemengde administratie of een mislukte download.
+      const result = exportPurchaseInvoicesCSV({
+        invoices: exportable, lines, accounts, clientId: exportClient.id, organizationId: activeOrganizationId,
+        clientName: exportClient.name, year: yearFilter === "all" ? undefined : yearFilter,
+      });
+      setExportRefusals(result.refused);
+      const ids = result.exportedInvoiceIds;
+      const refusedNote = result.refused.length ? `${result.refused.length} niet geëxporteerd; zie de lijst met redenen.` : undefined;
+      if (!ids.length) { toast({ title: "Geen facturen geëxporteerd", description: refusedNote, variant: "destructive" }); return; }
       try {
-        await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, invoiceIds: ids });
+        await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, clientId: exportClient.id, invoiceIds: ids });
         queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
-        toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
+        toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart`, description: refusedNote });
       } catch (statusErr: any) {
         // CSV is already downloaded; earlier batches may be committed.
         queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
         toast({
           title: "CSV gedownload, maar status bijwerken mislukt",
-          description: `Mogelijk staan niet alle facturen op 'geëxporteerd'. Probeer opnieuw of controleer de lijst. (${statusErr?.message ?? "onbekende fout"})`,
+          description: `Niet alle geëxporteerde facturen staan op 'geëxporteerd'; een volgende export neemt die opnieuw mee. Controleer de lijst. (${statusErr?.message ?? "onbekende fout"})`,
           variant: "destructive",
         });
       }
@@ -551,10 +576,25 @@ export default function Facturen() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button size="sm" variant="outline" disabled={exporting} onClick={handleExportSnelstart}>
+        {exportBlockReason && (
+          <span id="inkoop-snelstart-export-uitleg" className="text-xs text-muted-foreground">{exportBlockReason}</span>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={exporting || !exportClient}
+          aria-describedby={exportBlockReason ? "inkoop-snelstart-export-uitleg" : undefined}
+          onClick={handleExportSnelstart}
+        >
           {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}Export Snelstart
         </Button>
       </div>
+
+      <SnelstartExportRefusals
+        refusals={exportRefusals}
+        description="Deze facturen staan niet in het SnelStart-bestand en zijn niet als geëxporteerd gemarkeerd. Los de reden op en exporteer opnieuw."
+        onDismiss={() => setExportRefusals([])}
+      />
 
       <Tabs defaultValue="overview">
         <TabsList>

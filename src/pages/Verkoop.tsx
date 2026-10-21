@@ -649,6 +649,13 @@ export default function Verkoop() {
     },
   };
 
+  // SnelStart-export alleen bij precies één administratie (A2-05); de
+  // exportfunctie toetst dat nogmaals op de opgehaalde rijen.
+  const exportClient = scopedClientId ? clients?.find(c => c.id === scopedClientId) : undefined;
+  const exportBlockReason = !scopedClientId
+    ? "Kies één administratie om naar SnelStart te exporteren. Een export over meerdere administraties wordt niet gemaakt."
+    : !exportClient ? "De gekozen administratie is niet gevonden of nog niet geladen." : null;
+
   return (
     <>
       <h1 className="sr-only">Verkoopfacturen</h1>
@@ -672,17 +679,24 @@ export default function Verkoop() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button size="sm" variant="outline" disabled={exporting} onClick={async () => {
+        {exportBlockReason && (
+          <span id="verkoop-snelstart-export-uitleg" className="text-xs text-muted-foreground">{exportBlockReason}</span>
+        )}
+        <Button size="sm" variant="outline" disabled={exporting || !exportClient} aria-describedby={exportBlockReason ? "verkoop-snelstart-export-uitleg" : undefined} onClick={async () => {
           if (exporting) return;
           if (!activeOrganizationId) {
             toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
+            return;
+          }
+          if (!exportClient) {
+            toast({ title: "Export niet gestart", description: exportBlockReason ?? undefined, variant: "destructive" });
             return;
           }
           setExporting(true);
           try {
             const exportable = await fetchAllSalesInvoices({
               organizationId: activeOrganizationId,
-              clientId: scopedClientId,
+              clientId: exportClient.id,
               statuses: ["gecontroleerd", "betaald"],
             });
             if (!exportable.length) {
@@ -697,8 +711,8 @@ export default function Verkoop() {
               });
               return;
             }
-            const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-            exportSalesInvoicesCSV(exportable, clientName);
+            // Gooit bij rijen van een andere of meer dan één administratie: dan geen bestand.
+            exportSalesInvoicesCSV(exportable, { clientId: exportClient.id, organizationId: activeOrganizationId, clientName: exportClient.name });
             toast({ title: `${exportable.length} verkoopfacturen geëxporteerd voor Snelstart` });
           } catch (e: any) {
             toast({ title: "Export mislukt", description: e?.message, variant: "destructive" });

@@ -6,6 +6,34 @@ type JournalEntry = Tables<"journal_entries">;
 type BankTransaction = Tables<"bank_transactions">;
 type Grootboek = { id: string; nummer: number; omschrijving: string };
 
+/** Eén boekingsregel van een inkoopfactuur, zoals de inkoopexport hem leest. */
+export type SnelstartPurchaseLine = Pick<
+  Tables<"purchase_invoice_lines">,
+  "id" | "purchase_invoice_id" | "omschrijving" | "amount_excl" | "btw_percentage" | "grootboekrekening_id" | "sort_order" | "organization_id"
+>;
+
+/** De velden van een grootboekrekening die de inkoopexport nodig heeft. */
+export type SnelstartLedgerAccount = Pick<Tables<"grootboekrekeningen">, "id" | "nummer" | "organization_id" | "client_id">;
+
+/** Een factuur die niet in het bestand staat, met de reden. Zij is ook niet gemarkeerd. */
+export interface SnelstartRefusal {
+  invoiceId: string;
+  label: string;
+  reason: string;
+}
+
+/**
+ * Een export die niet mag ontstaan: een gemengde of verkeerde administratie,
+ * of een ontbrekende instelling (zoals het bankdagboek). Er is dan geen bestand
+ * gemaakt en niets gemarkeerd.
+ */
+export class SnelstartExportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SnelstartExportError";
+  }
+}
+
 /**
  * Build the SnelStart omschrijving for a bank transaction.
  *
@@ -129,6 +157,27 @@ function btwCode(percentage: number | null): string {
   return "";
 }
 
+// ── B2-14: CSV- en formule-injectie ─────────────────────────────────────────
+//
+// Een tekstveld dat met `=`, `+`, `-`, `@`, een tab of een CR begint, wordt in
+// een spreadsheet als formule gelezen. De omschrijving bevat tekst van derden:
+// de leveranciersnaam uit de OCR van het leveranciersdocument, de klantnaam en
+// de bankomschrijving die de betaler kiest. Zo'n tekstveld krijgt daarom een
+// apostrof vooraan (de aanpak van OWASP, "CSV Injection"): de tekst blijft
+// volledig leesbaar, en een spreadsheet behandelt de cel als tekst.
+//
+// Alleen tekstvelden. Bedrag-, datum- en codevelden (Datum, Grootboekrekening,
+// Bedrag, Btw-code, fldDagboek, fldBoekingcode, fldDatum, fldGrootboeknummer,
+// fldDebet, fldCredit) gaan hier nooit doorheen, zodat een negatief bedrag als
+// `-121,00` exact blijft staan. Een spatie vooraan is geen betrouwbare
+// neutralisatie (sommige spreadsheets negeren voorloopspaties), en het teken
+// weghalen zou de inhoud stil veranderen.
+const FORMULA_START = /^[=+\-@\t\r]/;
+
+export function neutralizeCsvText(value: string): string {
+  return FORMULA_START.test(value) ? `'${value}` : value;
+}
+
 function csvRow(fields: string[]): string {
   return fields.map(f => `"${(f ?? "").replace(/"/g, '""')}"`).join(SEP);
 }
@@ -147,7 +196,7 @@ function downloadCSV(content: string, filename: string) {
 function toStandardRow(datum: string | null, omschrijving: string | null, grootboek: string | null, bedrag: number | null, btwPerc: number | null): string {
   return csvRow([
     formatDate(datum),
-    omschrijving ?? "",
+    neutralizeCsvText(omschrijving ?? ""),
     grootboek ?? "",
     formatAmount(bedrag),
     btwCode(btwPerc),
@@ -158,14 +207,294 @@ function buildStandardCSV(rows: string[]): string {
   return [csvRow(STANDARD_HEADERS), ...rows].join("\r\n");
 }
 
-export function exportPurchaseInvoicesCSV(invoices: PurchaseInvoice[], clientName?: string, year?: number) {
-  const rows = invoices.map(inv =>
-    toStandardRow(inv.invoice_date, inv.supplier + (inv.invoice_number ? ` - ${inv.invoice_number}` : ""), inv.ledger_account_text, inv.amount_incl, inv.btw_percentage)
-  );
-  const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
-  const yearSuffix = year != null ? `_${year}` : "";
-  downloadCSV(buildStandardCSV(rows), `${prefix}inkoopfacturen_snelstart${yearSuffix}.csv`);
-  return invoices.map(i => i.id);
+// ── A2-05 / D-04 / B2-12 / C-11: één administratie per bestand ──────────────
+//
+// SnelStart importeert per administratie, en het bestand heeft geen kolom voor
+// de administratie. Een bestand met rijen van twee administraties kan de
+// gebruiker dus niet meer splitsen. De pagina's laten de export alleen toe bij
+// precies één gekozen administratie; deze toets is de tweede laag, in de
+// exportfunctie zelf, zodat ook een omzeilde knop of een server die het filter
+// negeert geen gemengd bestand oplevert.
+
+export const SNELSTART_ONE_ADMINISTRATIE =
+  "Kies één administratie om naar SnelStart te exporteren. Een SnelStart-bestand hoort bij precies één administratie.";
+
+export interface SnelstartExportScope {
+  /** De gekozen administratie (`clients.id`). Leeg of "all" wordt geweigerd. */
+  clientId: string;
+  /** De actieve organisatie. Als zij is meegegeven, moet elke rij erbij horen. */
+  organizationId?: string | null;
+}
+
+type ScopedRow = { client_id?: string | null; organization_id?: string | null };
+
+function countAdministraties(rows: readonly ScopedRow[]): number {
+  return new Set(rows.map((r) => r.client_id ?? null)).size;
+}
+
+/**
+ * Gooit een `SnelstartExportError` als de rijen bij meer dan één administratie
+ * horen, bij een andere dan de gekozen administratie, of bij een andere
+ * organisatie. Er wordt dan geen bestand gemaakt.
+ */
+export function assertSnelstartExportScope(
+  rows: readonly ScopedRow[],
+  scope: SnelstartExportScope,
+  soort: string,
+): void {
+  const gekozen = scope?.clientId;
+  if (!gekozen || gekozen === "all") {
+    throw new SnelstartExportError(`Export geweigerd: er is geen administratie gekozen. ${SNELSTART_ONE_ADMINISTRATIE}`);
+  }
+  const aantal = countAdministraties(rows);
+  if (aantal > 1) {
+    throw new SnelstartExportError(
+      `Export geweigerd: de ${soort} horen bij ${aantal} administraties. ${SNELSTART_ONE_ADMINISTRATIE}`,
+    );
+  }
+  if (rows.some((r) => r.client_id !== gekozen)) {
+    throw new SnelstartExportError(
+      `Export geweigerd: de ${soort} horen niet bij de gekozen administratie. Er is geen bestand gemaakt.`,
+    );
+  }
+  if (scope.organizationId && rows.some((r) => r.organization_id !== scope.organizationId)) {
+    throw new SnelstartExportError(
+      `Export geweigerd: de ${soort} horen niet bij de actieve organisatie. Er is geen bestand gemaakt.`,
+    );
+  }
+}
+
+// ── A2-04: inkoop per boekingsregel, in lijn met het grootboek ──────────────
+//
+// Betekenis van "Bedrag" (ongewijzigd ten opzichte van de export per kop): het
+// bedrag INCLUSIEF btw, met het teken zoals opgeslagen (positief voor een
+// gewone inkoopfactuur). SnelStart leidt de btw af uit dat bedrag en de
+// btw-code. Per boekingsregel is het bedrag daarom:
+//
+//   regel.amount_excl + btw van de regel, met btw = excl × tarief / 100,
+//   in hele centen, half van nul af afgerond (zoals `round2` in btw-calc.ts en
+//   PostgreSQL `round()`).
+//
+// De regels tellen dan op tot het factuurtotaal in dezelfde betekenis:
+// Σ regels = kop `amount_incl`, tot op de cent. Dat wordt gecontroleerd via
+// drie exacte gelijkheden in centen, dezelfde als `post_purchase_invoice`
+// (20261002120000, r. 255-281) plus de btw:
+//   Σ regel.excl = kop.excl,  kop.excl + kop.btw = kop.incl,  Σ regel.btw = kop.btw.
+// Bij een verschil wordt de factuur geweigerd, nooit gerepareerd.
+//
+// Grootboekrekening = `grootboekrekeningen.nummer` van de regel (dezelfde rekening
+// waarop `post_purchase_invoice` de regel debiteert), btw-code per regel volgens
+// het percentage van de regel (codetabel `btwCode`, AGENTS.md).
+//
+// Fail-closed: een factuur zonder regels, met een regel zonder rekening, met een
+// rekening buiten de administratie, met een regel zonder btw-percentage (NULL) of
+// met een percentage zonder SnelStart-code komt niet in het bestand. Zij staat in
+// `refused`, met de reden, en wordt niet gemarkeerd. 0% blijft code "0".
+
+/** Bedrag in hele centen, of null als het geen eindig bedrag in hele centen is (subcenten: A3-16). */
+function toCents(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return null;
+  const cents = Math.round(n * 100);
+  const tolerance = Math.max(1e-6, Math.abs(n * 100) * 1e-14);
+  return Math.abs(n * 100 - cents) <= tolerance ? cents : null;
+}
+
+function toPercentage(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Btw van één regel in centen; `percentage` is 0, 9 of 21, dus `|excl| × percentage` is een geheel getal. */
+function lineVatCents(exclCents: number, percentage: number): number {
+  const vat = Math.floor((Math.abs(exclCents) * percentage + 50) / 100);
+  return exclCents < 0 ? -vat : vat;
+}
+
+function euro(cents: number): string {
+  return `€${formatAmount(cents / 100)}`;
+}
+
+function purchaseInvoiceLabel(inv: Pick<PurchaseInvoice, "supplier" | "invoice_number">): string {
+  return inv.supplier + (inv.invoice_number ? ` - ${inv.invoice_number}` : "");
+}
+
+function byLineOrder(a: SnelstartPurchaseLine, b: SnelstartPurchaseLine): number {
+  // Zelfde volgorde als post_purchase_invoice: ORDER BY sort_order, id.
+  if (a.sort_order !== b.sort_order) return (a.sort_order ?? 0) - (b.sort_order ?? 0);
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+function plural(n: number, een: string, meer: string): string {
+  return `${n} ${n === 1 ? een : meer}`;
+}
+
+type PlannedLine = { line: SnelstartPurchaseLine; exclCents: number; vatCents: number; percentage: number; nummer: number };
+
+function planPurchaseInvoice(
+  inv: PurchaseInvoice,
+  lines: readonly SnelstartPurchaseLine[],
+  accountById: ReadonlyMap<string, SnelstartLedgerAccount>,
+  forMarking: boolean,
+): { rows: string[] } | { reason: string } {
+  if (!inv.invoice_date) return { reason: "de factuur heeft geen factuurdatum" };
+  // D1: de exportmarkering mag de betaalstatus niet veranderen. Bij inkoop deelt
+  // zij de kolom `status` met de oude waarde 'betaald'; een 'betaald'-factuur met
+  // een openstaand bedrag dat geen 0 is, zou na het markeren als open tonen.
+  if (forMarking && inv.status === "betaald" && toCents(inv.remaining_amount) !== 0) {
+    return {
+      reason:
+        "de factuur staat op 'betaald' terwijl het openstaande bedrag niet 0 is; als geëxporteerd markeren zou de betaalstatus veranderen. Laat eerst de betaalstatus herstellen",
+    };
+  }
+  if (lines.length === 0) return { reason: "de factuur heeft geen boekingsregels" };
+
+  const reasons: string[] = [];
+  let otherOrganization = 0;
+  let invalidAmount = 0;
+  let withoutAccount = 0;
+  let foreignAccount = 0;
+  let withoutVat = 0;
+  const withoutCode = new Set<number>();
+  const planned: PlannedLine[] = [];
+  for (const line of lines) {
+    if (line.organization_id !== inv.organization_id) { otherOrganization++; continue; }
+    const exclCents = toCents(line.amount_excl);
+    if (exclCents == null) { invalidAmount++; continue; }
+    if (!line.grootboekrekening_id) { withoutAccount++; continue; }
+    const account = accountById.get(line.grootboekrekening_id);
+    // Zelfde rekeningtoets als posting_account_ok(): dezelfde organisatie, en
+    // organisatiebreed of van deze administratie.
+    if (
+      !account ||
+      account.organization_id !== inv.organization_id ||
+      (account.client_id != null && account.client_id !== inv.client_id)
+    ) { foreignAccount++; continue; }
+    const percentage = toPercentage(line.btw_percentage);
+    if (percentage == null) { withoutVat++; continue; }
+    if (btwCode(percentage) === "") { withoutCode.add(percentage); continue; }
+    planned.push({ line, exclCents, vatCents: lineVatCents(exclCents, percentage), percentage, nummer: account.nummer });
+  }
+  if (otherOrganization) reasons.push(`${plural(otherOrganization, "boekingsregel hoort", "boekingsregels horen")} bij een andere organisatie`);
+  if (invalidAmount) reasons.push(`${plural(invalidAmount, "boekingsregel heeft", "boekingsregels hebben")} geen geldig bedrag in hele centen`);
+  if (withoutAccount) reasons.push(`${plural(withoutAccount, "boekingsregel", "boekingsregels")} zonder grootboekrekening`);
+  if (foreignAccount) reasons.push(`${plural(foreignAccount, "boekingsregel", "boekingsregels")} met een grootboekrekening die niet gevonden is of niet bij deze administratie hoort`);
+  if (withoutVat) reasons.push(`${plural(withoutVat, "boekingsregel", "boekingsregels")} zonder btw-percentage (onbekende btw)`);
+  if (withoutCode.size) {
+    reasons.push(`btw-percentage ${[...withoutCode].sort((a, b) => a - b).join("%, ")}% heeft geen SnelStart-btw-code (alleen 21%, 9% en 0%)`);
+  }
+  if (reasons.length) return { reason: reasons.join("; ") };
+
+  const headerExcl = toCents(inv.amount_excl);
+  const headerIncl = toCents(inv.amount_incl);
+  const headerVat = inv.btw_amount == null ? 0 : toCents(inv.btw_amount);
+  if (headerExcl == null || headerIncl == null || headerVat == null) {
+    return { reason: "de factuur mist een geldig bedrag excl. btw, btw of incl. btw" };
+  }
+  const sumExcl = planned.reduce((s, p) => s + p.exclCents, 0);
+  if (sumExcl !== headerExcl) {
+    return { reason: `de boekingsregels (excl. btw ${euro(sumExcl)}) sluiten niet aan op de factuur (excl. btw ${euro(headerExcl)})` };
+  }
+  if (headerExcl + headerVat !== headerIncl) {
+    return { reason: `de factuur sluit niet: excl. btw ${euro(headerExcl)} plus btw ${euro(headerVat)} is niet het bedrag incl. btw ${euro(headerIncl)}` };
+  }
+  const sumVat = planned.reduce((s, p) => s + p.vatCents, 0);
+  if (sumVat !== headerVat) {
+    return { reason: `de btw per boekingsregel (${euro(sumVat)}) wijkt af van de btw op de factuur (${euro(headerVat)})` };
+  }
+
+  const label = purchaseInvoiceLabel(inv);
+  const rows = planned.map((p) => {
+    const regel = (p.line.omschrijving ?? "").trim();
+    return toStandardRow(
+      inv.invoice_date,
+      regel ? `${label} - ${regel}` : label,
+      String(p.nummer),
+      (p.exclCents + p.vatCents) / 100,
+      p.percentage,
+    );
+  });
+  return { rows };
+}
+
+export interface PurchaseInvoiceExportPlan {
+  /** CSV-regels zonder kop, in de volgorde van de facturen en hun boekingsregels. */
+  rows: string[];
+  /** Precies de facturen die volledig in `rows` staan. Alleen deze mogen gemarkeerd worden. */
+  exportedInvoiceIds: string[];
+  /** De facturen die niet in het bestand staan, met de reden. */
+  refused: SnelstartRefusal[];
+}
+
+/**
+ * Pure opbouw van de inkoopexport per boekingsregel. Geen download, geen
+ * netwerk. `forMarking` zet de D1-toets aan voor een export die daarna markeert.
+ */
+export function buildPurchaseInvoiceExport(input: {
+  invoices: readonly PurchaseInvoice[];
+  lines: readonly SnelstartPurchaseLine[];
+  accounts: readonly SnelstartLedgerAccount[];
+  forMarking?: boolean;
+}): PurchaseInvoiceExportPlan {
+  const linesByInvoice = new Map<string, SnelstartPurchaseLine[]>();
+  for (const line of input.lines) {
+    const list = linesByInvoice.get(line.purchase_invoice_id);
+    if (list) list.push(line);
+    else linesByInvoice.set(line.purchase_invoice_id, [line]);
+  }
+  const accountById = new Map(input.accounts.map((a) => [a.id, a] as const));
+  const rows: string[] = [];
+  const exportedInvoiceIds: string[] = [];
+  const refused: SnelstartRefusal[] = [];
+  for (const inv of input.invoices) {
+    const lines = [...(linesByInvoice.get(inv.id) ?? [])].sort(byLineOrder);
+    const result = planPurchaseInvoice(inv, lines, accountById, input.forMarking ?? false);
+    if ("reason" in result) {
+      refused.push({ invoiceId: inv.id, label: purchaseInvoiceLabel(inv), reason: result.reason });
+    } else {
+      rows.push(...result.rows);
+      exportedInvoiceIds.push(inv.id);
+    }
+  }
+  return { rows, exportedInvoiceIds, refused };
+}
+
+export interface PurchaseInvoiceExportResult {
+  exportedInvoiceIds: string[];
+  refused: SnelstartRefusal[];
+  rowCount: number;
+  /** De naam van het gedownloade bestand, of null als er niets te exporteren was. */
+  filename: string | null;
+}
+
+/**
+ * Inkoopexport voor SnelStart, per boekingsregel. Toetst eerst de administratie
+ * (gooit bij gemengde of vreemde rijen), bouwt dan het bestand en start de
+ * download. Gooit de download, dan gooit deze functie ook: de aanroeper
+ * markeert pas na een geslaagde terugkeer, en alleen `exportedInvoiceIds`.
+ * Is er niets exporteerbaar, dan is er geen download (`filename` = null).
+ */
+export function exportPurchaseInvoicesCSV(input: {
+  invoices: readonly PurchaseInvoice[];
+  lines: readonly SnelstartPurchaseLine[];
+  accounts: readonly SnelstartLedgerAccount[];
+  clientId: string;
+  organizationId?: string | null;
+  clientName?: string;
+  year?: number;
+}): PurchaseInvoiceExportResult {
+  assertSnelstartExportScope(input.invoices, { clientId: input.clientId, organizationId: input.organizationId }, "inkoopfacturen");
+  const plan = buildPurchaseInvoiceExport({ invoices: input.invoices, lines: input.lines, accounts: input.accounts, forMarking: true });
+  if (!plan.exportedInvoiceIds.length) {
+    return { exportedInvoiceIds: [], refused: plan.refused, rowCount: 0, filename: null };
+  }
+  const prefix = input.clientName ? `${input.clientName.replace(/\s+/g, "_")}_` : "";
+  const yearSuffix = input.year != null ? `_${input.year}` : "";
+  const filename = `${prefix}inkoopfacturen_snelstart${yearSuffix}.csv`;
+  downloadCSV(buildStandardCSV(plan.rows), filename);
+  return { exportedInvoiceIds: plan.exportedInvoiceIds, refused: plan.refused, rowCount: plan.rows.length, filename };
 }
 
 export function exportJournalEntriesCSV(entries: JournalEntry[], clientName?: string) {
@@ -176,11 +505,20 @@ export function exportJournalEntriesCSV(entries: JournalEntry[], clientName?: st
   downloadCSV(buildStandardCSV(rows), `${prefix}boekingen_snelstart.csv`);
 }
 
-export function exportSalesInvoicesCSV(invoices: SalesInvoice[], clientName?: string) {
+/**
+ * Verkoopexport voor SnelStart. Toetst eerst de administratie (A2-05): bij
+ * rijen van meer dan één of van een andere administratie gooit zij, en is er
+ * geen bestand.
+ */
+export function exportSalesInvoicesCSV(
+  invoices: readonly SalesInvoice[],
+  opts: SnelstartExportScope & { clientName?: string },
+) {
+  assertSnelstartExportScope(invoices, opts, "verkoopfacturen");
   const rows = invoices.map(inv =>
     toStandardRow(inv.invoice_date, inv.customer_name + (inv.invoice_number ? ` - ${inv.invoice_number}` : ""), inv.ledger_account_text, inv.amount_incl, inv.btw_percentage)
   );
-  const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
+  const prefix = opts.clientName ? `${opts.clientName.replace(/\s+/g, "_")}_` : "";
   downloadCSV(buildStandardCSV(rows), `${prefix}verkoopfacturen_snelstart.csv`);
   return invoices.map(i => i.id);
 }
@@ -215,6 +553,24 @@ function downloadSnelstartCSV(content: string, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+// ── C-11: het bankdagboek is verplicht en expliciet ingesteld ───────────────
+//
+// De bron is `clients.bank_dagboek` (Klanten → "Bank-dagboek"; client-readiness
+// meldt een ontbrekend dagboek al als `config_ontbreekt`). Er is geen standaard:
+// 1100 is een gok, en het dagboeknummer staat in de SnelStart 12-bankregel ook
+// als grootboeknummer van de bank. Ontbreekt het, dan is er geen bankbestand.
+
+export const SNELSTART_BANKDAGBOEK_ONTBREEKT =
+  "Geen SnelStart-bankdagboek ingesteld voor deze administratie. Stel het bankdagboek in bij Klanten (veld 'Bank-dagboek'); BoekAssist valt niet terug op 1100.";
+
+/** Het ingestelde bankdagboek (een positief geheel getal), of een `SnelstartExportError`. */
+export function requireSnelstartBankDagboek(bankDagboek: number | null | undefined): number {
+  if (typeof bankDagboek !== "number" || !Number.isInteger(bankDagboek) || bankDagboek <= 0) {
+    throw new SnelstartExportError(SNELSTART_BANKDAGBOEK_ONTBREEKT);
+  }
+  return bankDagboek;
+}
+
 /**
  * Pure SnelStart 12 bank row builder — shared by exportBankTransactionsCSV
  * (standalone download) and exportAllForClient (ZIP entry) so both paths
@@ -222,7 +578,8 @@ function downloadSnelstartCSV(content: string, filename: string) {
  *
  * Uses resolveBankExportGrootboek to determine exportability; blocked
  * transactions are silently skipped. Does not produce a BOM (SnelStart 12
- * rejects BOM).
+ * rejects BOM). Requires an explicitly configured bank dagboek (no 1100
+ * fallback); the omschrijving is neutralised against formula injection (B2-14).
  *
  * Exported so it can be unit-tested without a browser.
  */
@@ -240,6 +597,7 @@ export function buildBankSnelstartRows(
   skippedUnconfirmed: number;
   skippedUnprocessed: number;
 } {
+  const dagboek = requireSnelstartBankDagboek(bankDagboek);
   const rows: string[] = [];
   let boekingcode = 1;
   let exportedTransactions = 0;
@@ -263,24 +621,26 @@ export function buildBankSnelstartRows(
     }
 
     const datum = formatDate(t.transaction_date);
-    const omschrijving = buildBankOmschrijving(t).substring(0, 100).replace(/[\r\n;]/g, " ");
+    // Eerst `;` en regeleinden vervangen (1 op 1), dan neutraliseren, dan pas
+    // inkorten tot 100 tekens: voor gewone tekst exact het oude resultaat.
+    const omschrijving = neutralizeCsvText(buildBankOmschrijving(t).replace(/[\r\n;]/g, " ")).substring(0, 100);
     const bedrag = Math.abs(t.amount);
     const isPositief = t.amount >= 0;
 
     // Positief bedrag (inkomend) → bank debet, tegenrekening credit
     // Negatief bedrag (uitgaand) → bank credit, tegenrekening debet
     rows.push(snelstartRow([
-      bankDagboek,
+      dagboek,
       boekingcode,
       datum,
-      bankDagboek,
+      dagboek,
       isPositief ? formatAmount(bedrag) : "0",
       isPositief ? "0" : formatAmount(bedrag),
       omschrijving,
     ]));
 
     rows.push(snelstartRow([
-      bankDagboek,
+      dagboek,
       boekingcode,
       datum,
       gb.nummer,
@@ -306,13 +666,26 @@ export function buildBankSnelstartRows(
   };
 }
 
+/**
+ * Bankexport (SnelStart 12). Het bankdagboek is verplicht: zonder ingesteld
+ * dagboek gooit deze functie en is er geen bestand. Een bestand hoort bij één
+ * administratie; rijen van meer administraties worden geweigerd (de pagina toetst
+ * daarnaast de gekozen administratie, #290).
+ */
 export function exportBankTransactionsCSV(
   transactions: BankTransaction[],
   grootboekrekeningen: Grootboek[],
-  clientName?: string,
-  bankDagboek: number = 1100
+  clientName: string | undefined,
+  bankDagboek: number | null | undefined,
 ): BankExportMeta {
-  const result = buildBankSnelstartRows(transactions, grootboekrekeningen, bankDagboek);
+  const aantal = countAdministraties(transactions);
+  if (aantal > 1) {
+    throw new SnelstartExportError(
+      `Export geweigerd: de banktransacties horen bij ${aantal} administraties. ${SNELSTART_ONE_ADMINISTRATIE}`,
+    );
+  }
+  const dagboek = requireSnelstartBankDagboek(bankDagboek);
+  const result = buildBankSnelstartRows(transactions, grootboekrekeningen, dagboek);
   const prefix = clientName ? `${clientName.replace(/\s+/g, "_")}_` : "";
   downloadSnelstartCSV(buildSnelstartCSV(result.rows), `${prefix}banktransacties_snelstart.csv`);
   return {
@@ -327,36 +700,67 @@ export function exportBankTransactionsCSV(
   };
 }
 
-export async function exportAllForClient(
-  clientName: string,
-  invoices: PurchaseInvoice[],
-  entries: JournalEntry[],
-  transactions: BankTransaction[],
-  grootboekrekeningen: Grootboek[],
-  bankDagboek: number = 1100,
-) {
+export interface ExportAllForClientResult {
+  /** De inkoopfacturen die in `<prefix>_inkoopfacturen.csv` staan. De ZIP markeert niets. */
+  purchaseExportedInvoiceIds: string[];
+  /** De inkoopfacturen die niet in de ZIP staan, met de reden. */
+  purchaseRefused: SnelstartRefusal[];
+  bankExportedTransactions: number;
+}
+
+/**
+ * ZIP-export per administratie. Structuur en bestandsnamen zijn ongewijzigd:
+ * `<prefix>_inkoopfacturen.csv`, `<prefix>_boekingen.csv`,
+ * `<prefix>_banktransacties.csv` (SnelStart 12, zonder BOM) in
+ * `<prefix>_snelstart_export.zip`; een deel zonder regels wordt weggelaten.
+ *
+ * Vóór er iets wordt gebouwd: alle rijen horen bij de gekozen administratie
+ * (anders een `SnelstartExportError`), de inkoop gaat per boekingsregel
+ * (`buildPurchaseInvoiceExport`), en zijn er exporteerbare bankregels, dan is
+ * het bankdagboek verplicht.
+ */
+export async function exportAllForClient(input: {
+  clientId: string;
+  organizationId?: string | null;
+  clientName: string;
+  invoices: readonly PurchaseInvoice[];
+  lines: readonly SnelstartPurchaseLine[];
+  accounts: readonly SnelstartLedgerAccount[];
+  entries: readonly JournalEntry[];
+  transactions: BankTransaction[];
+  grootboekrekeningen: Grootboek[];
+  bankDagboek: number | null | undefined;
+}): Promise<ExportAllForClientResult> {
+  const scope: SnelstartExportScope = { clientId: input.clientId, organizationId: input.organizationId };
+  assertSnelstartExportScope(input.invoices, scope, "inkoopfacturen");
+  assertSnelstartExportScope(input.entries, scope, "boekingen");
+  assertSnelstartExportScope(input.transactions, scope, "banktransacties");
+  const { transactions, grootboekrekeningen } = input;
+
   const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
-  const prefix = clientName.replace(/\s+/g, "_");
+  const prefix = input.clientName.replace(/\s+/g, "_");
   const bom = "﻿";
 
-  if (invoices.length) {
-    const rows = invoices.map(inv =>
-      toStandardRow(inv.invoice_date, inv.supplier + (inv.invoice_number ? ` - ${inv.invoice_number}` : ""), inv.ledger_account_text, inv.amount_incl, inv.btw_percentage)
-    );
-    zip.file(`${prefix}_inkoopfacturen.csv`, bom + buildStandardCSV(rows));
+  const purchase = buildPurchaseInvoiceExport({ invoices: input.invoices, lines: input.lines, accounts: input.accounts });
+  if (purchase.rows.length) {
+    zip.file(`${prefix}_inkoopfacturen.csv`, bom + buildStandardCSV(purchase.rows));
   }
 
-  if (entries.length) {
-    const rows = entries.map(e =>
+  if (input.entries.length) {
+    const rows = input.entries.map(e =>
       toStandardRow(e.entry_date, e.description, e.ledger_account_text, e.amount, e.btw_percentage)
     );
     zip.file(`${prefix}_boekingen.csv`, bom + buildStandardCSV(rows));
   }
 
+  let bankExportedTransactions = 0;
   if (transactions.length) {
-    const { rows } = buildBankSnelstartRows(transactions, grootboekrekeningen, bankDagboek);
-    if (rows.length > 0) {
+    const exportable = transactions.filter(t => resolveBankExportGrootboek(t, grootboekrekeningen).grootboek).length;
+    if (exportable > 0) {
+      const dagboek = requireSnelstartBankDagboek(input.bankDagboek);
+      const { rows, exportedTransactions } = buildBankSnelstartRows(transactions, grootboekrekeningen, dagboek);
+      bankExportedTransactions = exportedTransactions;
       // SnelStart 12 verwacht GEEN BOM marker
       zip.file(`${prefix}_banktransacties.csv`, buildSnelstartCSV(rows));
     }
@@ -369,4 +773,9 @@ export async function exportAllForClient(
   a.download = `${prefix}_snelstart_export.zip`;
   a.click();
   URL.revokeObjectURL(url);
+  return {
+    purchaseExportedInvoiceIds: purchase.exportedInvoiceIds,
+    purchaseRefused: purchase.refused,
+    bankExportedTransactions,
+  };
 }
