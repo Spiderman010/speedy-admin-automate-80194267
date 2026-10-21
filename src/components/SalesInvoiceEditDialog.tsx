@@ -308,7 +308,6 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
       // and the existing SnelStart export, which is unchanged by this phase.
       grootboekrekening_id: form.grootboekrekening_id || null,
       notes: form.notes || null,
-      status: form.status,
       remaining_amount: shouldSyncRemainingAmount(invoice) ? nextTotal : undefined,
     } as any;
   };
@@ -524,15 +523,12 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
 
             <div>
               <Label>Status</Label>
-              <Select value={form.status} onValueChange={(v) => set("status", v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="concept">Concept</SelectItem>
-                  <SelectItem value="verzonden">Verzonden</SelectItem>
-                  <SelectItem value="betaald">Betaald</SelectItem>
-                  <SelectItem value="gecontroleerd">Gecontroleerd</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                {statusLabel[invoice.status] || invoice.status}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Status wordt beheerd via de goedkeurings- en betalingsworkflow, niet via Opslaan.
+              </p>
             </div>
 
             <div>
