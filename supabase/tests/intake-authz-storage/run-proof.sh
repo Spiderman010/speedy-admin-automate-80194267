@@ -28,6 +28,7 @@
 #   rollout-postcheck.sql    de plakbare read-only postcheck uit het rapport
 #   alle echte migraties na het P2-venster (na een merge van andere pakketten)
 #   proof-after.sql          Q, S, O, R, W, P: genummerde bewijzen
+#   W14–W17                  twee gelijktijdige sessies (rijgrendel, review H-02)
 # en drukt één regel per bewijs af, plus een samenvatting.
 
 set -euo pipefail
@@ -89,6 +90,39 @@ capture postcheck "$HERE/rollout-postcheck.sql"
 for f in "${AFTER[@]}"; do run -1 -f "$MIG/$f" >/dev/null; done
 
 run -f "$HERE/proof-after.sql" >/dev/null
+
+# ═════ W14–W17 — gelijktijdige opslag (review H-02) ═════════════════════════
+# Twee sessies van dezelfde accountant vervangen tegelijk de regels van
+# factuur e1. T1 houdt zijn transactie open (pg_sleep); T2 start pas als T1
+# aantoonbaar slaapt. Met de rijgrendel wacht T2 op T1 en wint daarna; zonder
+# grendel weigerde de guard T2 met 42501 (nulmeting in de review).
+ACC="a0000000-0000-4000-8000-000000000002"
+INV="2a000000-0000-4000-8000-0000000000e1"
+replace_sql() {  # $1 = omschrijving, $2 = extra SQL vóór COMMIT
+  printf "BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('%s');
+SELECT 'OK rows=' || count(*) FROM public.replace_purchase_invoice_lines('%s', '[{\"omschrijving\":\"%s\",\"amount_excl\":100,\"sort_order\":0}]'::jsonb);
+%s COMMIT;" "$ACC" "$INV" "$1" "$2"
+}
+T1_OUT="$(mktemp)"; T2_OUT="$(mktemp)"
+PGAPPNAME=p2_t1 psql -X -q -At -v ON_ERROR_STOP=1 -d "$DB" -c "$(replace_sql T1 "SELECT pg_sleep(3);")" >"$T1_OUT" 2>&1 &
+T1_PID=$!
+for _ in $(seq 1 100); do
+  [ "$(psql -X -q -At -d "$DB" -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'p2_t1' AND query LIKE '%pg_sleep%' AND wait_event = 'PgSleep'")" = "1" ] && break
+  sleep 0.1
+done
+T2_START=$(date +%s%N)
+psql -X -q -At -d "$DB" -c "$(replace_sql T2 "")" >"$T2_OUT" 2>&1 || true
+T2_MS=$(( ($(date +%s%N) - T2_START) / 1000000 ))
+wait "$T1_PID" || true
+lit() { printf "'%s'" "$(tr '\n' ' ' <"$1" | sed "s/'/''/g; s/ *$//")"; }
+run >/dev/null <<SQL
+SELECT proof.expect('W14', 'gelijktijdige opslag: de eerste sessie slaagt', $(lit "$T1_OUT"), '%OK rows=1%');
+SELECT proof.expect('W15', '… de tweede sessie wacht op de eerste en slaagt ook (geen misleidende 42501)', $(lit "$T2_OUT"), '%OK rows=1%');
+SELECT proof.expect('W16', '… de tweede sessie heeft echt gewacht (≥ 1 500 ms)', ($T2_MS >= 1500)::text, 'true');
+SELECT proof.expect('W17', '… daarna precies één regel: die van de laatste opslag',
+  (SELECT count(*) || '|' || min(omschrijving) FROM public.purchase_invoice_lines WHERE purchase_invoice_id = '$INV'), '1|T2');
+SQL
+rm -f "$T1_OUT" "$T2_OUT"
 
 echo "keten: ${#BEFORE[@]} migraties vóór het venster, ${#OWN[@]} eigen (elk 2×), ${#AFTER[@]} erna"
 

@@ -36,11 +36,15 @@
 --   aanroeper, sort_order-fallback, dezelfde returnset en dezelfde rechten
 --   (CREATE OR REPLACE behoudt de bestaande EXECUTE-toekenningen).
 --
+-- TOEGEVOEGD (naast de guard): een rijgrendel FOR UPDATE op de factuur vóór de
+--   DELETE, zodat gelijktijdige opslagen serialiseren en de guard geen
+--   rechtmatige tweede opslag weigert (review H-02).
+--
 -- IDEMPOTENT: CREATE OR REPLACE.
 --
 -- ROLLBACK: de functie uit 20260718202037 opnieuw toepassen (zelfde
---   signatuur; dat bestand is zelf CREATE OR REPLACE), zonder het blok
---   "A2-07-guard" hieronder.
+--   signatuur; dat bestand is zelf CREATE OR REPLACE), zonder de blokken
+--   "A2-07-grendel" en "A2-07-guard" hieronder.
 -- ═════════════════════════════════════════════════════════════════════════════
 
 DO $migratie$
@@ -103,6 +107,15 @@ BEGIN
     PERFORM v_amount_txt::numeric;
   END LOOP;
 
+  -- A2-07-grendel (H-02). Gelijktijdige opslagen van dezelfde factuur
+  -- serialiseren op de factuurrij (dezelfde grendel als post_purchase_invoice
+  -- en de kop-UPDATE van save_purchase_invoice_with_lines). Zonder deze
+  -- grendel ziet de guard hieronder de regels die een gelijktijdige opslag net
+  -- heeft ingevoegd en weigert hij een rechtmatige tweede opslag. Onder RLS
+  -- (UPDATE-policy, vloer assistant) slaat FOR UPDATE een rij stil over voor
+  -- wie hem niet mag bijwerken; dat verandert niets aan de weigering verderop.
+  PERFORM 1 FROM public.purchase_invoices WHERE id = _invoice_id FOR UPDATE;
+
   -- Atomic replace. If either statement raises, the enclosing function
   -- transaction rolls back and the original rows remain intact.
   DELETE FROM public.purchase_invoice_lines
@@ -113,7 +126,7 @@ BEGIN
   -- een regel van deze factuur zichtbaar, dan mag de nieuwe set er niet naast
   -- komen: weigeren, en alles rolt terug.
   IF EXISTS (SELECT 1 FROM public.purchase_invoice_lines WHERE purchase_invoice_id = _invoice_id) THEN
-    RAISE EXCEPTION 'Je rol mag de bestaande boekingsregels van deze inkoopfactuur niet vervangen; er is niets opgeslagen. Laat een accountant of eigenaar de regels opslaan.'
+    RAISE EXCEPTION 'De bestaande boekingsregels van deze inkoopfactuur konden niet allemaal worden vervangen; er is niets opgeslagen.'
       USING ERRCODE = '42501';
   END IF;
 

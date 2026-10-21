@@ -212,7 +212,7 @@ BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('a0000000-0000-4000-8000-0
 SELECT proof.expect('W01', 'assistent slaat een factuur met regels op: geweigerd in plaats van verdubbeld',
   proof.try_keep($q$SELECT public.save_purchase_invoice_with_lines('2a000000-0000-4000-8000-0000000000e1',
     '{"notes":"door assistent"}'::jsonb, '[{"omschrijving":"Regel W1","amount_excl":100,"btw_percentage":21,"sort_order":0}]'::jsonb)$q$),
-  'ERR 42501: Je rol mag de bestaande boekingsregels van deze inkoopfactuur niet vervangen%');
+  'ERR 42501: De bestaande boekingsregels van deze inkoopfactuur konden niet allemaal worden vervangen%');
 SELECT proof.expect('W02', '… de regels en de kop zijn ongewijzigd (alles teruggerold)',
   proof.val($q$SELECT (SELECT count(*) FROM public.purchase_invoice_lines WHERE purchase_invoice_id = '2a000000-0000-4000-8000-0000000000e1')
     || '|' || (SELECT notes FROM public.purchase_invoices WHERE id = '2a000000-0000-4000-8000-0000000000e1')$q$),
@@ -226,7 +226,7 @@ SELECT proof.expect('W04', '… en daarna heeft die factuur precies één regel'
 SELECT proof.expect('W05', 'een tweede opslag door de assistent wordt geweigerd',
   proof.try_keep($q$SELECT public.save_purchase_invoice_with_lines('2a000000-0000-4000-8000-0000000000e2',
     '{"notes":"tweede opslag"}'::jsonb, '[{"omschrijving":"Regel W2","amount_excl":100,"btw_percentage":21,"sort_order":0}]'::jsonb)$q$),
-  'ERR 42501: Je rol mag%');
+  'ERR 42501: De bestaande boekingsregels%');
 SELECT proof.expect('W06', '… en laat de ene regel en de kop staan',
   proof.val($q$SELECT (SELECT count(*) FROM public.purchase_invoice_lines WHERE purchase_invoice_id = '2a000000-0000-4000-8000-0000000000e2')
     || '|' || (SELECT notes FROM public.purchase_invoices WHERE id = '2a000000-0000-4000-8000-0000000000e2')$q$),
@@ -234,7 +234,7 @@ SELECT proof.expect('W06', '… en laat de ene regel en de kop staan',
 SELECT proof.expect('W07', 'ook de directe aanroep van replace_purchase_invoice_lines weigert',
   proof.try_keep($q$SELECT * FROM public.replace_purchase_invoice_lines('2a000000-0000-4000-8000-0000000000e1',
     '[{"omschrijving":"Regel W1","amount_excl":100,"sort_order":0}]'::jsonb)$q$),
-  'ERR 42501: Je rol mag%');
+  'ERR 42501: De bestaande boekingsregels%');
 COMMIT;
 
 BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('a0000000-0000-4000-8000-000000000002');

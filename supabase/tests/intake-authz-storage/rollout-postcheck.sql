@@ -48,7 +48,7 @@ SELECT
   (SELECT NOT convalidated FROM fk) AS regel_fk_nog_not_valid,
   -- A2-07: de guard zit erin, de rest is ongewijzigd
   coalesce((SELECT NOT prosecdef AND proconfig = ARRAY['search_path=public']
-              AND md5(prosrc) = '99b7632ec27ce79782473b2b9f617dfb'
+              AND md5(prosrc) = 'b7f59d6ef12c604df535c6504211ad82'
               AND has_function_privilege('authenticated', oid, 'EXECUTE')
             FROM pg_proc WHERE oid = to_regprocedure('public.replace_purchase_invoice_lines(uuid,jsonb)')), false) AS replace_guard_ok,
   coalesce((SELECT md5(prosrc) = '155930f2b08953e6e81468bd13c5e596' FROM pg_proc
