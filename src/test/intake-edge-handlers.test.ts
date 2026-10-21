@@ -6,7 +6,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
 import {
-  fakeFile, fakeMultipartRequest, loadEdgeHandler, newRecorded, pdfBytes,
+  DEFAULT_ENV, fakeFile, fakeMultipartRequest, loadEdgeHandler, newRecorded, pdfBytes,
   type FakeWorld, type Role,
 } from "./support/edge-function-harness";
 import { INTAKE_FORBIDDEN_MESSAGE, INTAKE_ROLE_CHECK_FAILED_MESSAGE } from "../../supabase/functions/process-invoice/intake-guards";
@@ -55,11 +55,18 @@ describe("process-invoice: rolcheck vóór elke schrijfactie (A2-06/B2-01)", () 
     expect(rec.aiCalls).toEqual([]);
   });
 
-  it("de rol wordt getoetst in de organisatie van de opgeslagen klantrij, via de gebruikersclient", async () => {
+  it("de rol wordt getoetst in de organisatie van de opgeslagen klantrij, via de gebruikersclient (vóór de schrijfacties en opnieuw vóór de insert)", async () => {
     const { rec } = await call("process-invoice", world("assistant"));
-    expect(rec.rpcs).toEqual([
-      { service: false, fn: "has_min_role", args: { _user_id: USER.id, _organization_id: ORG_A, _min: "assistant" } },
-    ]);
+    const check = { service: false, fn: "has_min_role", args: { _user_id: USER.id, _organization_id: ORG_A, _min: "assistant" } };
+    expect(rec.rpcs).toEqual([check, check]);
+  });
+
+  it("H-03: wie zijn rol verliest terwijl de AI-aanroep loopt, krijgt 403 en er wordt niets ingevoegd", async () => {
+    const { status, body, rec } = await call("process-invoice", world("assistant", { roleLostAfterChecks: 1 }));
+    expect(status).toBe(403);
+    expect(body).toEqual({ error: INTAKE_FORBIDDEN_MESSAGE });
+    expect(rec.aiCalls).toHaveLength(1);
+    expect(rec.inserts).toEqual([]);
   });
 
   it("assistant in een ándere organisatie dan die van de klant telt niet", async () => {
@@ -172,11 +179,33 @@ describe("process-sales-invoice: rolvloer SALES_WRITE_MIN_ROLE = owner (D2 open)
     expect(rec.inserts).toEqual([]);
   });
 
-  it("de handler vraagt has_min_role met _min = 'owner' in de organisatie van de klantrij", async () => {
+  it("de handler vraagt has_min_role met _min = 'owner' in de organisatie van de klantrij (vóór de AI en opnieuw vóór de upload)", async () => {
     const { rec } = await call("process-sales-invoice", world("owner", { ai: { status: 200, toolArgs: SALES_OCR } }));
-    expect(rec.rpcs).toEqual([
-      { service: false, fn: "has_min_role", args: { _user_id: USER.id, _organization_id: ORG_A, _min: "owner" } },
-    ]);
+    const check = { service: false, fn: "has_min_role", args: { _user_id: USER.id, _organization_id: ORG_A, _min: "owner" } };
+    expect(rec.rpcs).toEqual([check, check]);
+  });
+
+  it("H-03: wie zijn rol verliest terwijl de AI-aanroep loopt, krijgt 403; geen upload en geen insert", async () => {
+    const { status, body, rec } = await call("process-sales-invoice", world("owner", { roleLostAfterChecks: 1, ai: { status: 200, toolArgs: SALES_OCR } }));
+    expect(status).toBe(403);
+    expect(body).toEqual({ error: INTAKE_FORBIDDEN_MESSAGE });
+    expect(rec.aiCalls).toHaveLength(1);
+    expect(rec.uploads).toEqual([]);
+    expect(rec.inserts).toEqual([]);
+  });
+
+  it("H-04: werkt ook als alleen SUPABASE_PUBLISHABLE_KEY is gezet (alias van SUPABASE_ANON_KEY)", async () => {
+    const { SUPABASE_ANON_KEY: anon, ...rest } = DEFAULT_ENV;
+    const rec = newRecorded();
+    const res = await loadEdgeHandler("process-sales-invoice", world("owner", { ai: { status: 200, toolArgs: SALES_OCR } }), rec, {
+      ...rest, SUPABASE_PUBLISHABLE_KEY: anon,
+    })(pdfUpload());
+    expect(res.status).toBe(200);
+    expect(rec.inserts).toHaveLength(1);
+    const missing = newRecorded();
+    const none = await loadEdgeHandler("process-sales-invoice", world("owner"), missing, rest)(pdfUpload());
+    expect(none.status).toBe(500);
+    expect(missing.uploads).toEqual([]);
   });
 
   it("owner: upload en insert via de service role, status concept, saldo = incl.", async () => {

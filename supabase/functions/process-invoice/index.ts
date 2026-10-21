@@ -423,6 +423,22 @@ Extra instructies:
       now: new Date(),
     });
 
+    // H-03: de AI-aanroep hierboven kan tientallen seconden duren. Wie in dat
+    // venster zijn rol of lidmaatschap verliest, mag niets meer opslaan: de
+    // rolcheck wordt vlak vóór de INSERT met de service role herhaald.
+    const recheck = await authorizeIntakeWrite(
+      userClient,
+      user.id,
+      clientRow.organization_id,
+      PURCHASE_WRITE_MIN_ROLE,
+    );
+    if (!recheck.allowed) {
+      return new Response(JSON.stringify({ error: recheck.error }), {
+        status: recheck.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { data: invoice, error: insertError } = await supabase
       .from("purchase_invoices")
       .insert(invoiceRow)

@@ -24,7 +24,7 @@ serve(async (req) => {
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+    const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
 
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
       console.error("Missing env vars:", { hasUrl: !!SUPABASE_URL, hasSRK: !!SUPABASE_SERVICE_ROLE_KEY, hasAnon: !!SUPABASE_ANON_KEY });
@@ -263,6 +263,22 @@ Extra instructies:
         JSON.stringify({ error: decisionRow.error, missing: decisionRow.missing }),
         { status: decisionRow.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    }
+
+    // H-03: de AI-aanroep hierboven kan tientallen seconden duren. Wie in dat
+    // venster zijn rol of lidmaatschap verliest, mag niets meer opslaan: de
+    // rolcheck wordt vlak vóór de upload en de INSERT met de service role herhaald.
+    const recheck = await authorizeIntakeWrite(
+      userClient,
+      user.id,
+      clientRow.organization_id,
+      SALES_WRITE_MIN_ROLE,
+    );
+    if (!recheck.allowed) {
+      return new Response(JSON.stringify({ error: recheck.error }), {
+        status: recheck.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const { error: uploadError } = await supabase.storage

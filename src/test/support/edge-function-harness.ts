@@ -59,6 +59,11 @@ export interface FakeWorld {
   roles: Record<string, Role>;
   /** Organisaties waarvan de gebruiker lid is (zonder rol telt ook). */
   memberships: string[];
+  /**
+   * H-03: na dit aantal has_min_role-aanroepen is de gebruiker zijn rol kwijt
+   * (bijvoorbeeld uit de organisatie gezet terwijl de AI-aanroep liep).
+   */
+  roleLostAfterChecks?: number;
   /** Laat elke rpc een fout teruggeven ("error") of gooien ("throw"). */
   rpcFailure?: "error" | "throw";
   /** Laat de lidmaatschapsquery een fout teruggeven. */
@@ -72,11 +77,18 @@ export interface FakeWorld {
 export const SERVICE_KEY = "fake-service-role-key";
 export const ANON_KEY = "fake-anon-key";
 
+const roleChecks = new WeakMap<FakeWorld, number>();
+
 function rpcResult(world: FakeWorld, fn: string, args: Dict): { data: unknown; error: unknown } {
   if (world.rpcFailure === "error") return { data: null, error: { message: "rpc mislukt" } };
   if (world.rpcFailure === "throw") throw new Error("netwerkfout");
   const userOk = world.user !== null && args._user_id === world.user.id;
   if (fn === "has_min_role") {
+    const checks = (roleChecks.get(world) ?? 0) + 1;
+    roleChecks.set(world, checks);
+    if (world.roleLostAfterChecks !== undefined && checks > world.roleLostAfterChecks) {
+      return { data: false, error: null };
+    }
     const role = world.roles[String(args._organization_id)];
     const member = world.memberships.includes(String(args._organization_id));
     return { data: Boolean(userOk && role && member && RANK[role] >= RANK[args._min as Role]), error: null };
