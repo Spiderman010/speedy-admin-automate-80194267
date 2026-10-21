@@ -56,7 +56,9 @@ describe("Bank page reject feedback integration", () => {
   });
 
   it("blocks direct invoice confirmation when rejection feedback is unavailable", () => {
-    expect(bankPage).toContain("if (!rejectionIndex) throw new Error");
+    // "if (!rejectionIndex) throw new Error" stond alleen in de dode handleConfirm
+    // (nulmeting A1-19); het gedrag van het levende pad staat in
+    // bank-import-and-org-guards.test.tsx ("directe bevestiging zonder afwijzingsdata").
     expect(bankPage).toContain("isRejectedCandidate(rejectionIndex, tx.id, { id: invoiceId, type: invoiceType })");
   });
 });
@@ -66,7 +68,9 @@ const processingScreen = readFileSync(resolve(process.cwd(), "src/components/Ver
 describe("Codex P1: processing screen rejection guard", () => {
   it("hides rejected invoices and fails closed while feedback is unavailable", () => {
     expect(processingScreen).toContain("if (!current || !rejectionIndex) return []");
-    expect(processingScreen).toContain("!isRejectedCandidate(rejectionIndex, current.id, { id: i.id, type: i.type })");
+    // Het afwijzingsfilter zit sinds P3 in de veilige-matchpoort
+    // (src/lib/bank-candidate-gate.ts); gedrag: verwerkingsscherm-gate.test.tsx
+    // ("geen afgewezen factuur", "zonder afwijzingsdata geen enkele kandidaat").
     expect(bankPage).toContain("rejectionIndex={rejectionIndex}");
   });
 

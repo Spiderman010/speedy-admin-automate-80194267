@@ -231,11 +231,9 @@ describe("Bank overview source guarantees", () => {
     expect(source).toMatch(/\) : tableError \? \(/);
   });
 
-  it("hercontroleert bestaande koppelingen voordat bevestigen een bankmatch finaliseert", () => {
-    expect(source).toContain("const safeCandidate = getSafeMatchCandidate(tx, invoices ?? [], salesInvs ?? [], rejectionIndex)");
-    expect(source).toContain("tx.matched_invoice_id && (!safeCandidate || safeCandidate.id !== tx.matched_invoice_id)");
-    expect(source).toContain("const best = pickSafeMatchCandidate(tx, candidates)");
-  });
+  // Het stringcontract "hercontroleert bestaande koppelingen voordat bevestigen
+  // een bankmatch finaliseert" pinde de dode handleConfirm; vervangen door de
+  // gedragstest "Verwerken → Factuur koppelen" onderaan dit bestand.
 
   it("gates stats, auto-matching, processing and exports on whole-dataset readiness", () => {
     expect(source).toContain(
@@ -272,5 +270,52 @@ describe("Bank overview source guarantees", () => {
     // whole-set failure surfaces a retry (banner now also covers sales errors)
     expect(source).toContain("Bankgegevens voor matching, statistieken en export laden mislukt.");
     expect(source).toContain("if (wholeSetError) refetchWholeSet();");
+  });
+});
+
+// Vervangt het stringcontract "hercontroleert bestaande koppelingen voordat
+// bevestigen een bankmatch finaliseert". Dat pinde tekst in handleConfirm, een
+// functie zonder aanroeper (nulmeting A1-19, C-14): #291 raakte alleen die dode
+// code. Het levende pad is Verwerken → "Factuur koppelen"; daar moet de
+// veilige-matchpoort gelden vóórdat er iets wordt gekoppeld.
+describe("Verwerken → Factuur koppelen: de veilige-matchpoort op het levende pad", () => {
+  it("biedt alleen toegestane kandidaten aan en koppelt bij een gelijke topscore pas na een eigen keuze", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    const { VerwerkingsScherm } = await import("@/components/VerwerkingsScherm");
+    const purchase = (id: string, over: Record<string, unknown> = {}) => ({
+      id, client_id: "c1", supplier: "Vodafone Libertel", invoice_number: id.toUpperCase(), status: "gecontroleerd",
+      amount_excl: null, amount_incl: 121, remaining_amount: 121, invoice_date: "2026-09-01", ...over,
+    });
+    const onMatchInvoice = vi.fn(async () => undefined);
+    render(
+      <VerwerkingsScherm
+        open
+        onOpenChange={() => {}}
+        transactions={[{
+          id: "t1", client_id: "c1", transaction_date: "2026-10-02", amount: -121, description: "VODAFONE LIBERTEL maandtermijn",
+          reference: null, counter_account: null, match_status: "niet_gematcht", matched_invoice_id: null, btw_percentage: null,
+        } as any]}
+        purchaseInvoices={[purchase("vf-jan"), purchase("vf-feb"), purchase("vf-betaald", { remaining_amount: 0 })] as any}
+        salesInvoices={[{ id: "s1", client_id: "c1", customer_name: "Vodafone Libertel", invoice_number: "VF-S1", status: "verzonden", amount_excl: null, amount_incl: 121, remaining_amount: 121 }] as any}
+        rejectionIndex={new Set<string>()}
+        onBookPrivate={async () => {}}
+        onBookLedger={async () => {}}
+        onMatchInvoice={onMatchInvoice}
+        onSkip={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Factuur koppelen/ }));
+    const offered = screen.getAllByRole("button").filter((b) => b.hasAttribute("aria-pressed")).map((b) => b.textContent ?? "");
+    // Geen betaalde inkoopfactuur en geen verkoopfactuur bij geld uit; alleen de twee open kandidaten.
+    expect(offered).toHaveLength(2);
+    expect(offered.some((t) => t.includes("VF-BETAALD") || t.includes("VF-S1"))).toBe(false);
+    // Gelijke topscore: niets vooraf gekozen, en niets gekoppeld zonder keuze.
+    const submit = screen.getByTestId("verwerking-match-submit");
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    expect(onMatchInvoice).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /VF-FEB/ }));
+    fireEvent.click(submit);
+    expect(onMatchInvoice).toHaveBeenCalledWith("t1", "vf-feb", "inkoop");
   });
 });
