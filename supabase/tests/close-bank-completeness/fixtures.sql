@@ -323,7 +323,9 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA proof TO public;
 --
 -- K1  A3-02: een gecodeerde, nog niet geboekte bankregel in 2026 (het
 --     scenario van de nulmeting, probe Y2/Y4), naast een geboekte verkoop.
--- K2  FD-N3: een bankregel op 'gematcht' zonder koppeling in 2026.
+-- K2  FD-N3: bankregels op 'gematcht' zonder koppeling in 2026, zonder én met
+--     rekening (review H-5: de tweede laat een mutant die 'gematcht' telt op
+--     gedrag falen, niet alleen op de md5).
 -- K3  gecodeerd maar ZONDER grootboekrekening        (schrijver: review_needed)
 -- K4  gecodeerd, bedrag 0                            (schrijver weigert altijd)
 -- K5  'suggestie' en 'niet_gematcht' mét rekening    (niet gecodeerd)
@@ -337,6 +339,9 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA proof TO public;
 --     vrijgave zet de regel terug op niet_gematcht zonder rekening
 -- K12 rol, tenant, idempotentie, herafsluiten, gelijktijdigheid
 -- K13 de bankregel wordt geboekt terwijl een afsluiting wacht
+-- K14 D8: een gecodeerde bankregel van 2025, aangemaakt vóór de directe
+--     bankschrijver, in een administratie met een geboekte beginbalans per
+--     1-1-2026 (alleen de marker, nagebootst); voor impact.sql en bewijs 12c
 -- KB  een administratie van de andere organisatie
 
 SELECT proof.new_client(1,  'K1 — A3-02');
@@ -352,6 +357,7 @@ SELECT proof.new_client(10, 'K10 — bank zonder organisatie');
 SELECT proof.new_client(11, 'K11 — vrijgegeven bankregel');
 SELECT proof.new_client(12, 'K12 — rol, tenant, levenscyclus');
 SELECT proof.new_client(13, 'K13 — gelijktijdig');
+SELECT proof.new_client(14, 'K14 — bankwerk van vóór de beginbalans');
 SELECT proof.new_client(99, 'KB — andere organisatie', '00000000-0000-0000-0000-00000000a002');
 
 -- K1: gewone activiteit + de gecodeerde, ongeboekte huur van juni.
@@ -360,6 +366,7 @@ SELECT proof.tx(101, proof.client(1), DATE '2026-06-01', -1210);
 
 -- K2: 'gematcht' zonder koppelingsrij (de halve toestand van D-03).
 SELECT proof.tx(201, proof.client(2), DATE '2026-06-01', 605, 'gematcht', NULL);
+SELECT proof.tx(202, proof.client(2), DATE '2026-06-02', -121, 'gematcht');
 
 -- K3..K7: de postbaarheidsregels van de directe bankschrijver, één per administratie.
 SELECT proof.tx(301, proof.client(3), DATE '2026-06-01', -121, 'handmatig_geboekt', NULL);
@@ -399,6 +406,18 @@ SELECT proof.sales_posted(1202, proof.client(12), DATE '2026-03-01', 500);
 
 -- K13: één gecodeerde, ongeboekte bankregel; geboekt in de gelijktijdigheidsproef.
 SELECT proof.tx(1301, proof.client(13), DATE '2026-06-01', -121);
+
+-- K14: de regel van 2025 en de beginbalansmarker per 1-1-2026. De marker is
+--     alleen voor de telling in impact.sql nagebootst (replica-modus, geen
+--     grootboekregels); geen ander bewijs leest K14.
+SELECT proof.tx(1401, proof.client(14), DATE '2025-11-01', -121);
+SET session_replication_role = replica;
+UPDATE public.bank_transactions SET created_at = TIMESTAMPTZ '2026-05-01 12:00:00+00' WHERE id = proof.uid(1000, 1401);
+INSERT INTO public.opening_balance_postings
+  (opening_balance_id, posting_group_id, organization_id, client_id, boekjaar, opening_date, line_count, total_amount, user_id)
+VALUES (proof.uid(3000, 1401), proof.uid(3001, 1401), '00000000-0000-0000-0000-00000000a001', proof.client(14),
+        2026, DATE '2026-01-01', 2, 100, proof.accountant());
+RESET session_replication_role;
 
 -- KB: de andere organisatie (voor de tenantproef).
 SELECT proof.tx(9901, proof.client(99), DATE '2026-06-01', -100, 'handmatig_geboekt', '00000000-0000-0000-0000-00000000fb06');

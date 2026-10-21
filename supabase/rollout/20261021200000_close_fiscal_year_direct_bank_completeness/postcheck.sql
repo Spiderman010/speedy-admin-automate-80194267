@@ -25,7 +25,7 @@ WITH pre AS (
 )
 SELECT
   -- Structuur: exact het beoordeelde lichaam, verder niets aan de functie veranderd.
-  (SELECT md5(f.prosrc) = '8b87b888e2468a58ecf378a643121151' FROM f)                  AS lichaam_p7,
+  (SELECT md5(f.prosrc) = 'aea0f0adc7e44613112615365d4eb38a' FROM f)                  AS lichaam_p7,
   (SELECT f.prosecdef AND f.proconfig = ARRAY['search_path=public'] FROM f)          AS definer_en_search_path,
   (SELECT pg_get_function_arguments(f.oid) = '_client_id uuid, _fiscal_year integer'
       AND pg_get_function_result(f.oid) =

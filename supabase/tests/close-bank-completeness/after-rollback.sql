@@ -20,7 +20,7 @@ SELECT proof.expect_true('R3', 'rollback: het commentaar is weer dat van PR E',
      AND obj_description('public.close_fiscal_year(uuid,integer)'::regprocedure, 'pg_proc') LIKE 'Sluit één boekjaar af%Rolvloer: accountant.'$q$);
 SELECT proof.expect_true('R4', 'rollback: data-neutraal — elke boekhoudkundige en bronrij exact gelijk',
   $q$proof.data_digest() = proof.get('digest_voor_rollback')$q$);
-SELECT proof.record('R5', 'rollback: het oude gedrag is terug — de gecodeerde bankregel zonder organisatie (K10) telt weer niet',
+SELECT proof.record('R5', 'rollback: de gecodeerde bankregel zonder organisatie (K10) telt ook onder PR E niet',
   proof.try_close(proof.client(10), 2026) = 'created=true', NULL);
 SELECT proof.record('R6', 'rollback: en de rij van de andere organisatie (K8) telt weer wél (zonder organisatiefilter)',
   proof.try_close(proof.client(8), 2026) LIKE '[23514]%postbaar brondocument(en) open%', NULL);

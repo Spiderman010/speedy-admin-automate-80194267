@@ -45,7 +45,7 @@ SELECT
   (SELECT md5(p.prosrc) = '14cdfaa498bbbc305e95dbf0faa52e26'
    FROM pg_proc p WHERE p.oid = to_regprocedure('public.close_fiscal_year(uuid,integer)'))
                                                                     AS lichaam_is_pr_e,
-  (SELECT md5(p.prosrc) <> '8b87b888e2468a58ecf378a643121151'
+  (SELECT md5(p.prosrc) <> 'aea0f0adc7e44613112615365d4eb38a'
    FROM pg_proc p WHERE p.oid = to_regprocedure('public.close_fiscal_year(uuid,integer)'))
                                                                     AS nog_niet_toegepast,
   (SELECT md5(p.prosrc) = '3aa768e46f8de8e3f50291501d29d22c'

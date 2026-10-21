@@ -85,7 +85,7 @@ describe("P7 — close_fiscal_year telt de directe bankschrijver en alleen de ei
     expect(voor).toBe(md5(bodyPrE));
     expect(na).toBe(md5(bodyP7));
     expect(voor).toBe("14cdfaa498bbbc305e95dbf0faa52e26");
-    expect(na).toBe("8b87b888e2468a58ecf378a643121151");
+    expect(na).toBe("aea0f0adc7e44613112615365d4eb38a");
     const sql = code(text);
     expect(sql.indexOf("md5(p.prosrc)")).toBeGreaterThan(-1);
     expect(sql.indexOf("md5(p.prosrc)")).toBeLessThan(sql.indexOf("CREATE OR REPLACE FUNCTION public.close_fiscal_year("));
@@ -116,7 +116,10 @@ describe("P7 — close_fiscal_year telt de directe bankschrijver en alleen de ei
     // De tak zelf: precies de documentvoorwaarden van de directe bankschrijver.
     const takCode = tak.join("\n");
     expect(takCode).toMatch(/bt\.client_id = _client_id/);
-    expect(takCode).toMatch(/\(bt\.organization_id = v_org OR bt\.organization_id IS NULL\)/);
+    // Review H-1: één-op-één de schrijver — die weigert een bankregel zonder
+    // organisatie altijd (42501), dus de tak telt alleen de eigen organisatie.
+    expect(takCode).toMatch(/AND bt\.organization_id = v_org\n/);
+    expect(takCode).not.toMatch(/bt\.organization_id IS NULL/);
     expect(takCode).toMatch(/bt\.match_status = 'handmatig_geboekt'/);
     expect(takCode).toMatch(/bt\.grootboekrekening_id IS NOT NULL/);
     expect(takCode).toMatch(/bt\.amount <> 0/);
@@ -141,6 +144,8 @@ describe("P7 — close_fiscal_year telt de directe bankschrijver en alleen de ei
     expect(lichaam).toMatch(/IF EXISTS \(SELECT 1 FROM public\.bank_transaction_allocations WHERE bank_transaction_id = v_tx\.id\) THEN\s+RAISE EXCEPTION/);
     expect(lichaam).toMatch(/IF v_tx\.grootboekrekening_id IS NULL THEN\s+RAISE EXCEPTION/);
     expect(lichaam).toMatch(/IF v_tx\.amount = 0 THEN\s+RAISE EXCEPTION/);
+    // ... en de organisatieweigering waar de banktak (H-1) op steunt.
+    expect(lichaam).toMatch(/OR v_tx\.organization_id IS NULL\s+OR NOT public\.has_min_role/);
     expect(lichaam).toMatch(/INSERT INTO public\.bank_transaction_postings/);
   });
 
@@ -151,7 +156,7 @@ describe("P7 — close_fiscal_year telt de directe bankschrijver en alleen de ei
     expect(sectie4).toMatch(/COMMENT ON FUNCTION public\.close_fiscal_year\(uuid, integer\) IS\n'[^']*Rolvloer: accountant\.';$/);
     expect(rollback.includes(sectie4)).toBe(true);
     const guard = rollback.slice(0, rollback.indexOf(sectie4));
-    expect(guard).toMatch(/NOT IN \('8b87b888e2468a58ecf378a643121151', '14cdfaa498bbbc305e95dbf0faa52e26'\)/);
+    expect(guard).toMatch(/NOT IN \('aea0f0adc7e44613112615365d4eb38a', '14cdfaa498bbbc305e95dbf0faa52e26'\)/);
     expect(guard).toMatch(/RAISE EXCEPTION 'Rollback geweigerd/);
   });
 

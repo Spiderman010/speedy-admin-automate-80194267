@@ -143,7 +143,14 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
     // De directe bankschrijver: het bedrag is alleen een filter, geen gelezen kolom.
     fetchAll<{ id: string; transaction_date: string | null }>(
       "bank_transactions", "id, transaction_date", "id", clientId,
-      (q) => q.eq("match_status", DIRECT_BANK_POSTABLE_STATUS).not("grootboekrekening_id", "is", null).neq("amount", 0),
+      (q) => q
+        .eq("match_status", DIRECT_BANK_POSTABLE_STATUS)
+        .not("grootboekrekening_id", "is", null)
+        .neq("amount", 0)
+        // Review H-1: de schrijver weigert een regel zonder organisatie altijd
+        // (42501), dus die is niet postbaar — gelijk aan close_fiscal_year(),
+        // ook los van RLS.
+        .not("organization_id", "is", null),
     ),
     fetchAll<{ bank_transaction_id: string }>(
       "bank_transaction_postings", "bank_transaction_id", "bank_transaction_id", clientId,

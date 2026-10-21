@@ -48,7 +48,7 @@ SELECT proof.expect_true('2d', 'de bankboeking staat in het grootboek: bank cred
 
 -- ── 2. FD-N3 — gematcht zonder koppeling: BEWUST ONGEWIJZIGD ────────────────
 SELECT proof.put('post_k2_2026', proof.try_close(proof.client(2), 2026));
-SELECT proof.record('3', 'VASTGELEGD, ontwerpvraag D7 (FD-N3): een ''gematcht''-bankregel zonder koppeling telt, net als onder PR E, niet mee',
+SELECT proof.record('3', 'VASTGELEGD, ontwerpvraag D7 (FD-N3): ''gematcht''-bankregels zonder koppeling — ook één MET rekening — tellen, net als onder PR E, niet mee',
   proof.get('post_k2_2026') = 'created=true' AND proof.get('pre_k2_2026') = proof.get('post_k2_2026'),
   proof.get('pre_k2_2026') || ' → ' || proof.get('post_k2_2026'));
 
@@ -86,10 +86,15 @@ SELECT proof.put('post_k9_2026', proof.try_close(proof.client(9), 2026));
 SELECT proof.record('11', 'B1-04 verzwakt niets: een postbare inkoopfactuur ZONDER organisatie (erfenis) telt nog steeds mee',
   proof.get('post_k9_2026') LIKE '[23514]%postbaar brondocument(en) open met boekjaar t/m 2026%', proof.get('post_k9_2026'));
 SELECT proof.put('post_k10_2026', proof.try_close(proof.client(10), 2026));
-SELECT proof.record('12', 'een gecodeerde bankregel ZONDER organisatie (erfenis) telt mee (onder PR E telde de bank nergens)',
-  proof.get('post_k10_2026') LIKE '[23514]%postbaar brondocument(en) open met boekjaar t/m 2026%'
-  AND proof.get('pre_k10_2026') = 'created=true',
+SELECT proof.record('12', 'review H-1: een gecodeerde bankregel ZONDER organisatie telt NIET — de schrijver kan haar niet boeken, dus zij is niet postbaar (gelijk aan schrijver en app)',
+  proof.get('post_k10_2026') = 'created=true' AND proof.get('pre_k10_2026') = 'created=true',
   proof.get('pre_k10_2026') || ' → ' || proof.get('post_k10_2026'));
+SELECT proof.as_user(proof.accountant());
+SELECT proof.expect_error('12b', '... want post_bank_transaction weigert die regel altijd (42501 "Banktransactie niet beschikbaar")',
+  format('SELECT public.post_bank_transaction(%L)', proof.uid(1000, 1001)), '42501', 'Banktransactie niet beschikbaar');
+SELECT proof.as_user(NULL);
+SELECT proof.record('12c', 'VASTGELEGD, ontwerpbesluit D8: controle D kent geen ondergrens — bankwerk van 2025 (vóór de beginbalans per 1-1-2026) blokkeert het afsluiten van 2025',
+  proof.try_close(proof.client(14), 2025) LIKE '[23514]%postbaar brondocument(en) open met boekjaar t/m 2025%', proof.try_close(proof.client(14), 2025));
 SELECT proof.expect_true('13', 'de rijen van de andere organisatie zijn onaangeroerd en nog steeds ongeboekt',
   format($q$(SELECT count(*) = 2 FROM (
                SELECT id FROM public.purchase_invoices WHERE id = %L AND organization_id = '00000000-0000-0000-0000-00000000a002'
@@ -182,8 +187,8 @@ SELECT proof.expect_true('26', 'PR H ongewijzigd: een assistent boekt in het afg
 SELECT proof.as_user(NULL);
 
 -- ── 6. functiedefinitie, rechten en wat er verder NIET veranderde ───────────
-SELECT proof.expect_true('27', 'het lichaam is exact het beoordeelde P7-lichaam (md5 8b87b888…)',
-  $q$proof.close_md5() = '8b87b888e2468a58ecf378a643121151'$q$);
+SELECT proof.expect_true('27', 'het lichaam is exact het beoordeelde P7-lichaam (md5 aea0f0ad…)',
+  $q$proof.close_md5() = 'aea0f0adc7e44613112615365d4eb38a'$q$);
 SELECT proof.expect_true('27b', 'SECURITY DEFINER, search_path = public, dezelfde eigenaar en exact de ACL van PR E',
   $q$(SELECT prosecdef AND proconfig = ARRAY['search_path=public'] AND proacl::text = proof.get('acl_pr_e')
              AND proowner::regrole::text = proof.get('owner_pr_e')

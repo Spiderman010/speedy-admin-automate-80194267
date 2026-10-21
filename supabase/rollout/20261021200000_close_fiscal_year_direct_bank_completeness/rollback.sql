@@ -24,7 +24,7 @@ DECLARE v_md5 text;
 BEGIN
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_proc p
   WHERE p.oid = to_regprocedure('public.close_fiscal_year(uuid,integer)');
-  IF v_md5 IS NULL OR v_md5 NOT IN ('8b87b888e2468a58ecf378a643121151', '14cdfaa498bbbc305e95dbf0faa52e26') THEN
+  IF v_md5 IS NULL OR v_md5 NOT IN ('aea0f0adc7e44613112615365d4eb38a', '14cdfaa498bbbc305e95dbf0faa52e26') THEN
     RAISE EXCEPTION 'Rollback geweigerd: close_fiscal_year is niet de beoordeelde versie (md5 %). Niets is gewijzigd.', v_md5
       USING ERRCODE = '55000';
   END IF;

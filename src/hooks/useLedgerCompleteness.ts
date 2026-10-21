@@ -126,7 +126,14 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     // geen bedragkolom gelezen. Of de regel gekoppeld is, volgt uit de
     // koppelingen hierboven — exact de regels van post_bank_transaction().
     fetchIds<{ id: string }>("bank_transactions", "id", "id", clientId, (q) =>
-      q.eq("match_status", DIRECT_BANK_POSTABLE_STATUS).not("grootboekrekening_id", "is", null).neq("amount", 0),
+      q
+        .eq("match_status", DIRECT_BANK_POSTABLE_STATUS)
+        .not("grootboekrekening_id", "is", null)
+        .neq("amount", 0)
+        // Review H-1: de schrijver weigert een regel zonder organisatie altijd
+        // (42501), dus die is niet postbaar — gelijk aan close_fiscal_year(),
+        // ook los van RLS.
+        .not("organization_id", "is", null),
     ),
     fetchIds<{ bank_transaction_id: string }>(
       "bank_transaction_postings",

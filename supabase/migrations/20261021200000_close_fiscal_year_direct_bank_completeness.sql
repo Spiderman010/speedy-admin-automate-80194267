@@ -37,11 +37,16 @@
 --      draagt nu ook de organisatie van de administratie. Een bronrij die
 --      uitdrukkelijk bij een ANDERE organisatie hoort (bijvoorbeeld via het
 --      directe API-pad van B1-02 met dit client_id aangemaakt) telt niet meer
---      mee. Een bronrij ZONDER organisatie (erfenis van vóór de backfill,
---      B1-07) blijft meetellen: zij hoort via client_id bij deze
---      administratie, en haar uitsluiten zou de controle stilzwijgend
---      verzwakken. Grootboekregels en memoriaalboekingen hebben een NOT NULL
---      organisatie en krijgen een gewone gelijkheid.
+--      mee. Een factuur of koppeling ZONDER organisatie (erfenis van vóór de
+--      backfill, B1-07) blijft meetellen zoals onder PR E: zij hoort via
+--      client_id bij deze administratie. De NIEUWE banktak volgt daarentegen
+--      één-op-één de schrijver: post_bank_transaction() weigert een bankregel
+--      zonder organisatie altijd (42501, 20261002120000), dus zo'n regel is
+--      niet postbaar en telt niet; tellen zou de afsluiting voorgoed
+--      blokkeren met een opdracht ("boek eerst") die onuitvoerbaar is
+--      (review H-1). Zulke regels telt rollout/…/impact.sql apart.
+--      Grootboekregels en memoriaalboekingen hebben een NOT NULL organisatie
+--      en krijgen een gewone gelijkheid.
 --   3. De weigeringstekst van controle D zegt niet langer dat afsluiten werk
 --      "voorgoed onboekbaar" maakt; dat is sinds PR H (20261002120000) onjuist
 --      (nulmeting A3-18). SQLSTATE 23514 en de woorden "postbaar
@@ -102,7 +107,7 @@ DO $migratie$
 DECLARE
   v_hash text;
   v_voor constant text := '14cdfaa498bbbc305e95dbf0faa52e26';
-  v_na   constant text := '8b87b888e2468a58ecf378a643121151';
+  v_na   constant text := 'aea0f0adc7e44613112615365d4eb38a';
 BEGIN
   IF to_regprocedure('public.close_fiscal_year(uuid,integer)') IS NULL THEN
     RAISE EXCEPTION 'P7 vereist public.close_fiscal_year(uuid,integer) (PR E, 20261001120000)';
@@ -386,7 +391,7 @@ BEGIN
     SELECT EXTRACT(YEAR FROM bt.transaction_date)::integer
     FROM public.bank_transactions bt
     WHERE bt.client_id = _client_id
-      AND (bt.organization_id = v_org OR bt.organization_id IS NULL)
+      AND bt.organization_id = v_org
       AND bt.match_status = 'handmatig_geboekt'
       AND bt.grootboekrekening_id IS NOT NULL
       AND bt.amount <> 0

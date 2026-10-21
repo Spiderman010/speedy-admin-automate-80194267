@@ -82,6 +82,7 @@ const C = "c-1";
 const tx = (id: string, o: Partial<Row>): Row => ({
   id,
   client_id: C,
+  organization_id: "org-1",
   transaction_date: "2026-06-01",
   match_status: "handmatig_geboekt",
   grootboekrekening_id: "gb-4400",
@@ -101,6 +102,8 @@ function seed() {
     tx("t-ongecodeerd", { match_status: "niet_gematcht", grootboekrekening_id: null }), // K5/K11 → telt niet
     tx("t-gekoppeld", {}), // K6: gecodeerd met koppeling → afletteringstak
     tx("t-gematcht", { match_status: "gematcht", grootboekrekening_id: null, amount: 605 }), // K2 FD-N3 → telt niet (D7)
+    tx("t-gematcht-rekening", { match_status: "gematcht" }), // H-5: gematcht MÉT rekening → telt ook niet
+    tx("t-zonder-org", { organization_id: null }), // H-1: zonder organisatie → schrijver weigert, telt niet
     tx("t-2027", { transaction_date: "2027-01-15" }), // K7: later jaar
     tx("t-ander", { client_id: "c-2" }), // andere administratie
   ];
@@ -149,6 +152,7 @@ describe("A3-02 — het openstaande bronwerk van de jaarafsluiting telt de direc
       expect(c.filters).toContainEqual(["match_status", "eq", "handmatig_geboekt"]);
       expect(c.filters).toContainEqual(["grootboekrekening_id", "not.is", null]);
       expect(c.filters).toContainEqual(["amount", "neq", 0]);
+      expect(c.filters).toContainEqual(["organization_id", "not.is", null]);
       expect(c.filters).toContainEqual(["client_id", "eq", C]);
     }
   });
