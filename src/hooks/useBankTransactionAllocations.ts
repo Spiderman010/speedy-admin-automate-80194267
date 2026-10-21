@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "./useAuth";
 
 // Local type until src/integrations/supabase/types.ts is regenerated from the DB schema.
@@ -34,9 +35,35 @@ export interface UseBankTransactionAllocationsOptions {
 }
 
 /**
+ * Every allocation row of the scope, fetched page by page so the list is
+ * complete beyond PostgREST's row cap. Callers sum these rows to recalculate
+ * what is still open on an invoice, so a silently truncated list (the newest
+ * rows fell off: created_at ASC) would write a wrong remaining amount.
+ */
+export async function fetchAllBankTransactionAllocations(
+  opts: Omit<UseBankTransactionAllocationsOptions, "enabled"> = {},
+): Promise<BankTransactionAllocation[]> {
+  const { organizationId, clientId, clientIds } = opts;
+  if (clientIds && clientIds.length === 0) return [];
+  return fetchAllRows<BankTransactionAllocation>(async (from, to) => {
+    let query = supabase.from(TABLE).select("*");
+    if (organizationId) query = query.eq("organization_id", organizationId);
+    if (clientId) query = query.eq("client_id", clientId);
+    if (clientIds) query = query.in("client_id", clientIds);
+    // The previous order (created_at ASC), with id as the unique tiebreaker so
+    // page windows never overlap or skip rows.
+    const { data, error } = await query
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: data as BankTransactionAllocation[] | null, error };
+  });
+}
+
+/**
  * List all allocation rows, optionally scoped to an org and/or client.
  * Suitable for building a lookup map (allocationsByTransactionId, etc.)
- * for the Bankafschriften table.
+ * for the Bankafschriften table. Complete beyond 1000 rows.
  */
 export function useBankTransactionAllocations(options: UseBankTransactionAllocationsOptions = {}) {
   const { organizationId, clientId, clientIds, enabled = true } = options;
@@ -44,21 +71,7 @@ export function useBankTransactionAllocations(options: UseBankTransactionAllocat
   const clientIdsKey = clientIds ? [...clientIds].sort().join(",") : "";
   return useQuery({
     queryKey: [...QUERY_KEY, organizationId ?? "all", clientId ?? "all", clientIdsKey],
-    queryFn: async () => {
-      let query = supabase
-        .from(TABLE)
-        .select("*")
-        .order("created_at", { ascending: true });
-      if (organizationId) query = query.eq("organization_id", organizationId);
-      if (clientId) query = query.eq("client_id", clientId);
-      if (clientIds) {
-        if (clientIds.length === 0) return [] as BankTransactionAllocation[];
-        query = query.in("client_id", clientIds);
-      }
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as BankTransactionAllocation[];
-    },
+    queryFn: () => fetchAllBankTransactionAllocations({ organizationId, clientId, clientIds }),
     enabled: !!user && enabled,
   });
 }

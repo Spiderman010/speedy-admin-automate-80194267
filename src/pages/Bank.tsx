@@ -184,6 +184,23 @@ type SuggestionDetail = {
   unsafeReasons: string[];
 };
 
+/**
+ * The match fields an imported bank row is stored with (nulmeting A1-11). The
+ * import only ever PROPOSES an invoice: never "gematcht" — whatever the caller
+ * hands in — and never an allocation, a payment status or an open amount.
+ */
+function importMatchFields(tx: Pick<MatchedTransaction, "matchStatus" | "matchedInvoiceId" | "matchConfidence">) {
+  const status: string = tx.matchStatus;
+  if (status === "handmatig_geboekt") {
+    // Coded by a recognition rule: an account, no invoice.
+    return { match_status: "handmatig_geboekt", matched_invoice_id: null, match_confidence: tx.matchConfidence };
+  }
+  if ((status === "suggestie" || status === "gematcht") && tx.matchedInvoiceId) {
+    return { match_status: "suggestie", matched_invoice_id: tx.matchedInvoiceId, match_confidence: tx.matchConfidence };
+  }
+  return { match_status: "niet_gematcht", matched_invoice_id: null, match_confidence: null };
+}
+
 
 export default function Bank() {
   const [searchParams] = useSearchParams();
@@ -271,6 +288,28 @@ export default function Bank() {
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
 
+  // B2-10: na een wissel van de actieve organisatie blijft niets van de vorige
+  // actief. De gekozen administratie(s) worden leeggemaakt (de context wordt
+  // "all", en die negeert de sync hierboven bewust), de importdialoog sluit en
+  // alles wat aan een bankregel van de vorige organisatie hangt, ook. Het eerste
+  // vaststellen van de organisatie (null → id) is geen wissel.
+  const previousOrganizationId = useRef(activeOrganizationId);
+  useEffect(() => {
+    const previous = previousOrganizationId.current;
+    previousOrganizationId.current = activeOrganizationId;
+    if (previous === null || previous === activeOrganizationId) return;
+    setClientSelection({ allMode: false, selectedIds: [] });
+    setUploadOpen(false);
+    setVerwerkingOpen(false);
+    setMatchTx(null);
+    setMatchDialogMode("primary");
+    setAdditionalMaxAmount(undefined);
+    setAdditionalExcludedIds([]);
+    setDetailTx(null);
+    setAfletteringTx(null);
+    setLastBatch(null);
+  }, [activeOrganizationId]);
+
   // ─ Afgeleide klantselectie voor data-laden ─
   const hasSelection = clientSelection.allMode || clientSelection.selectedIds.length > 0;
   const singleClientId =
@@ -342,10 +381,21 @@ export default function Bank() {
   // Whole-dataset is "ready" only after a successful load; gate all
   // whole-set-dependent UI on this.
   const wholeSetReady = hasSelection && !wholeSetLoading && !wholeSetError && !!rawTransactions;
-  const { data: invoices, refetch: refetchPurchase } = usePurchaseInvoices({
+  // Purchase invoices are scoped and gated exactly like the sales invoices
+  // below: only the chosen administration(s), never organisation-wide, and
+  // complete beyond the row cap (fetched page by page in the hook).
+  const {
+    data: invoices,
+    isLoading: purchaseLoading,
+    isError: purchaseError,
+    refetch: refetchPurchase,
+  } = usePurchaseInvoices({
     organizationId: activeOrganizationId ?? undefined,
-    enabled: orgEnabled,
+    clientId: singleClientId,
+    clientIds: singleClientId ? undefined : clientIdsForQuery,
+    enabled: orgEnabled && hasSelection,
   });
+  const purchaseReady = hasSelection && !purchaseLoading && !purchaseError && !!invoices;
   // Gate the whole-dataset sales fetch the same way as bank transactions:
   // empty selection ⇒ no query; subset ⇒ server-scoped; all-mode ⇒ only after
   // an explicit "all clients" selection.
@@ -363,8 +413,9 @@ export default function Bank() {
   // treated as an empty successful result (which would silently hide matches).
   const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;
   // Invoice-dependent matching / reconciliation / afletter-report actions need
-  // BOTH the bank transactions and the sales invoices successfully loaded.
-  const matchingReady = wholeSetReady && salesReady;
+  // the bank transactions AND both invoice sets successfully loaded: a failed
+  // purchase load is not an empty candidate list either.
+  const matchingReady = wholeSetReady && salesReady && purchaseReady;
   const addTx = useAddBankTransaction();
   const updateTx = useUpdateBankTransaction();
   const updatePurchase = useUpdatePurchaseInvoice();
@@ -1022,90 +1073,6 @@ export default function Bank() {
     if (firstSelectionScopeRun.current) { firstSelectionScopeRun.current = false; return; }
     setSelectedIds(new Set());
   }, [selectionScopeSignature]);
-
-  const handleConfirm = useCallback(async (id: string) => {
-    try {
-      if (!rejectionIndex) throw new Error("Bankmatch-afwijzingen zijn nog niet beschikbaar");
-      const tx = transactions?.find(t => t.id === id);
-      if (!tx) return;
-
-      // Re-evaluate safety at confirmation time, including persisted import links.
-      // A stale or unsafe link must be reviewed manually, never promoted blindly.
-      const safeCandidate = getSafeMatchCandidate(tx, invoices ?? [], salesInvs ?? [], rejectionIndex);
-      if (tx.matched_invoice_id && (!safeCandidate || safeCandidate.id !== tx.matched_invoice_id)) {
-        setMatchTx(tx);
-        toast({ title: "Handmatige controle vereist", description: "De opgeslagen factuurkoppeling voldoet niet aan de veilige matchcriteria.", variant: "destructive" });
-        return;
-      }
-      if (tx.matched_invoice_id) {
-        if (isRejectedCandidate(rejectionIndex, tx.id, { id: tx.matched_invoice_id, type: expectedInvoiceTypeForTx(tx) })) {
-          throw new Error("Deze factuurkoppeling is eerder afgewezen");
-        }
-        await assertBankMatchNotRejected(tx.id, expectedInvoiceTypeForTx(tx), tx.matched_invoice_id, tx.client_id, activeOrganizationId!);
-        await updateTx.mutateAsync({ id, match_status: "gematcht" });
-        await upsertSingleAllocationForMatch(tx, tx.matched_invoice_id);
-        toast({ title: "Transactie bevestigd" });
-        return;
-      }
-
-      // No existing link — try to rank candidates and use the best scoring one.
-      const candidates =
-        invoices && salesInvs
-          ? rankAllowedCandidates(
-              tx,
-              invoices.filter(i => i.client_id === tx.client_id),
-              salesInvs.filter(i => i.client_id === tx.client_id),
-            )
-          : [];
-      const expectedType = expectedInvoiceTypeForTx(tx);
-      const best = pickSafeMatchCandidate(tx, candidates);
-
-      if (best) {
-        await assertBankMatchNotRejected(tx.id, best.type, best.id, tx.client_id, activeOrganizationId!);
-        const exactMatch =
-          best.reasons.includes("Exact bedrag") ||
-          best.reasons.includes("Bedrag ≈ gelijk (≤€0,50)");
-        await updateTx.mutateAsync({
-          id,
-          match_status: "gematcht",
-          matched_invoice_id: best.id,
-          match_confidence:
-            exactMatch && !best.isPartialPayment ? 100 : best.isPartialPayment ? 60 : 80,
-        });
-        if (exactMatch && !best.isPartialPayment) {
-          if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
-          }
-          await upsertSingleAllocationForMatch(tx, best.id);
-          toast({ title: "Transactie bevestigd", description: "Factuur status → Betaald" });
-        } else {
-          await upsertSingleAllocationForMatch(tx, best.id);
-          toast({ title: "Transactie bevestigd" });
-        }
-        return;
-      }
-
-      // Open BankMatchDialog so the user picks manually.
-      setMatchTx(tx);
-      if (candidates.some(c => c.score > 0)) {
-        toast({
-          title: "Geen veilige match gevonden",
-          description: "Alle gevonden matches hebben tegengestelde richting. Koppel handmatig als dit klopt.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Geen automatische factuurkoppeling",
-          description: "Selecteer een factuur of boek handmatig.",
-          variant: "destructive",
-        });
-      }
-    } catch (e: any) {
-      toast({ title: "Fout", description: e.message, variant: "destructive" });
-    }
-  }, [transactions, invoices, salesInvs, rejectionIndex, rankAllowedCandidates, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
 
   const closeMatchDialog = useCallback(() => {
     setMatchTx(null);
@@ -1953,6 +1920,19 @@ export default function Bank() {
   }, [recordSuggestionRejection, updateTx, toast]);
 
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]): Promise<void | false> => {
+    // Hard refusal (B2-10): only an administratie of the ACTIVE organisation.
+    // `clients` holds exactly the active organisation's administraties; a stale
+    // choice from before an organisation switch is not among them, and the
+    // organisation of the row itself must match as well.
+    const importClient = clients?.find((c) => c.id === importClientId);
+    if (!activeOrganizationId || !importClient || importClient.organization_id !== activeOrganizationId) {
+      toast({
+        title: "Importeren is niet gestart",
+        description: "De gekozen administratie hoort niet bij de actieve organisatie. Kies de administratie opnieuw.",
+        variant: "destructive",
+      });
+      return false;
+    }
     // Database idempotency (20261020120000) only once the column exists; before
     // the migration the import works exactly as it did. An unknown answer stops
     // the import, like a failed duplicate check.
@@ -1971,15 +1951,9 @@ export default function Bank() {
     let alreadyImported = 0;
     let failed = 0;
     let firstImportError = "";
-    let allocationErrors = 0;
-    let firstAllocationError = "";
     for (const tx of txs) {
-      // Saving the bank line and finishing its match are reported separately:
-      // a row that was saved must never be reported as "not saved, import
-      // again" (the retry would then skip it as a duplicate).
-      let newTx: Awaited<ReturnType<typeof addTx.mutateAsync>> | undefined;
       try {
-        newTx = await addTx.mutateAsync(withImportFingerprint({
+        await addTx.mutateAsync(withImportFingerprint({
           client_id: importClientId,
           transaction_date: tx.date,
           amount: tx.amount,
@@ -1989,9 +1963,7 @@ export default function Bank() {
           camt_ustrd: tx.ustrd ?? null,
           camt_addtl_ntry_inf: tx.addtlNtryInf ?? null,
           camt_counterparty_name: tx.counterpartyName ?? null,
-          match_status: tx.matchStatus,
-          match_confidence: tx.matchConfidence,
-          matched_invoice_id: tx.matchedInvoiceId,
+          ...importMatchFields(tx),
           grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
           // A recognition rule may carry its VAT; without one the row stays
           // "controle nodig" in the Inhaalslag instead of posting at 0%.
@@ -2011,49 +1983,18 @@ export default function Bank() {
         continue;
       }
       success++;
-
-      // Aflettering: update the linked purchase invoice after a confirmed match
-      if (tx.matchedInvoiceId && tx.matchStatus === "gematcht") {
-        try {
-          const purchaseInv = invoices?.find(i => i.id === tx.matchedInvoiceId);
-          if (purchaseInv) {
-            const txAmount = Math.abs(tx.amount);
-            const totalAmount = getInvoiceTotalAmount(purchaseInv);
-            const remainingAmount = getInvoiceRemainingAmount(purchaseInv);
-            const effectiveRemaining = remainingAmount ?? totalAmount ?? txAmount;
-            const isExact = Math.abs(effectiveRemaining - txAmount) < 0.02;
-            if (isExact) {
-              await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: 0 });
-            } else if (totalAmount != null) {
-              const newRemaining = Math.max(0, effectiveRemaining - txAmount);
-              await updatePurchase.mutateAsync({ id: purchaseInv.id, remaining_amount: newRemaining });
-            }
-          }
-          if (newTx) await upsertSingleAllocationForMatch(newTx, tx.matchedInvoiceId);
-        } catch (allocErr: any) {
-          allocationErrors++;
-          if (!firstAllocationError) firstAllocationError = allocErr?.message || "Onbekende fout";
-          console.error("Allocation write failed during import:", allocErr);
-        }
-      }
+      // Nothing else is written: no invoice, no allocation, no payment status
+      // and no open amount. An invoice suggestion is confirmed later, on the
+      // bank page, through the confirm path (D1: the database derives the
+      // payment status).
     }
-    await refetchPurchase();
     const alreadyImportedNote = alreadyImported > 0
       ? ` ${alreadyImported} ${alreadyImported === 1 ? "regel stond" : "regels stonden"} er intussen al (bijvoorbeeld door een gelijktijdige import) en ${alreadyImported === 1 ? "is" : "zijn"} niet nog eens opgeslagen.`
-      : "";
-    const allocationWarning = allocationErrors > 0
-      ? `${allocationErrors} ${allocationErrors === 1 ? "regel is" : "regels zijn"} wel opgeslagen, maar de koppeling met de factuur is niet afgerond (${firstAllocationError}). Controleer de afletterdetails en openstaande bedragen; niet opnieuw importeren.`
       : "";
     if (failed > 0) {
       toast({
         title: `${success} van ${txs.length} transacties geïmporteerd`,
-        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.${allocationWarning ? ` ${allocationWarning}` : ""}${alreadyImportedNote}`,
-        variant: "destructive",
-      });
-    } else if (allocationErrors > 0) {
-      toast({
-        title: "Bankafschrift geïmporteerd met waarschuwing",
-        description: `${success} transacties geïmporteerd. ${allocationWarning}${alreadyImportedNote}`,
+        description: `${failed} ${failed === 1 ? "transactie is" : "transacties zijn"} niet opgeslagen: ${firstImportError}. Importeer het afschrift opnieuw; al opgeslagen regels worden dan als duplicaat herkend.${alreadyImportedNote}`,
         variant: "destructive",
       });
     } else {
@@ -2062,7 +2003,7 @@ export default function Bank() {
         ...(alreadyImportedNote ? { description: alreadyImportedNote.trim() } : {}),
       });
     }
-  }, [addTx, invoices, salesInvs, updatePurchase, upsertSingleAllocationForMatch, refetchPurchase, toast]);
+  }, [addTx, clients, activeOrganizationId, toast]);
 
   const toggleSelect = (id: string) => {
     if (stalePageData) return;
@@ -2259,7 +2200,7 @@ export default function Bank() {
         </Card>
       ) : (
       <>
-      {(wholeSetError || salesError) && (
+      {(wholeSetError || salesError || purchaseError) && (
         <div className="mb-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2.5 flex items-center gap-3">
           <AlertTriangle className="h-4 w-4 text-destructive shrink-0" />
           <p className="text-sm text-destructive flex-1">
@@ -2267,12 +2208,14 @@ export default function Bank() {
               ? "Bank- en verkoopgegevens voor matching, statistieken en export laden mislukt."
               : wholeSetError
                 ? "Bankgegevens voor matching, statistieken en export laden mislukt."
-                : "Verkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."}
+                : salesError
+                  ? "Verkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."
+                  : "Inkoopfacturen voor matching en aflettering laden mislukt — matching is uitgeschakeld tot dit is opgelost."}
           </p>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { if (wholeSetError) refetchWholeSet(); if (salesError) refetchSales(); }}
+            onClick={() => { if (wholeSetError) refetchWholeSet(); if (salesError) refetchSales(); if (purchaseError) refetchPurchase(); }}
           >
             Opnieuw laden
           </Button>
@@ -3233,6 +3176,7 @@ export default function Bank() {
         onOpenChange={setUploadOpen}
         clients={clients ?? []}
         invoices={invoices ?? []}
+        salesInvoices={salesInvs ?? []}
         onImport={handleImport}
         loadExistingTransactions={(importClientId) =>
           fetchAllBankTransactions({ organizationId: activeOrganizationId ?? undefined, clientId: importClientId })

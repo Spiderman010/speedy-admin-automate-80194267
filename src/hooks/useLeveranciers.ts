@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "./useAuth";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
@@ -17,14 +18,19 @@ export function useLeveranciers(options: UseLeveranciersOptions = {}) {
   const { user } = useAuth();
   return useQuery({
     queryKey: ["leveranciers", organizationId ?? "all", clientId ?? "all"],
-    queryFn: async () => {
-      let query = supabase.from("leveranciers").select("*").order("naam");
-      if (organizationId) query = query.eq("organization_id", organizationId);
-      if (clientId && clientId !== "all") query = query.eq("client_id", clientId);
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as Leverancier[];
-    },
+    // Volledig voorbij de rijgrens van PostgREST, in de vorige volgorde (naam)
+    // met id als unieke tiebreaker.
+    queryFn: () =>
+      fetchAllRows<Leverancier>(async (from, to) => {
+        let query = supabase.from("leveranciers").select("*");
+        if (organizationId) query = query.eq("organization_id", organizationId);
+        if (clientId && clientId !== "all") query = query.eq("client_id", clientId);
+        const { data, error } = await query
+          .order("naam", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: data as Leverancier[] | null, error };
+      }),
     enabled: !!user && enabled,
   });
 }

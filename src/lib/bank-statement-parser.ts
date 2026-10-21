@@ -1,5 +1,17 @@
 /**
  * Client-side parser for MT940 (SWIFT) and CAMT.053 (XML) bank statements.
+ *
+ * Nothing is dropped silently. A statement line that cannot be read becomes a
+ * `StatementParseError` carrying the raw line, and `statementImportBlockers()`
+ * blocks the import while there is one. The balances are checked per balance
+ * section (MT940 :60F:/:60M: … :62F:/:62M:, CAMT.053 per <Stmt>): opening
+ * balance plus every line read must equal the closing balance, otherwise a
+ * line is missing or was misread and the import is blocked too.
+ *
+ * The fields that existed before (date, amount, reference, bank reference,
+ * the statement-level balances and account IBAN) are produced exactly as
+ * before for every line that was already readable, so duplicate detection and
+ * the import fingerprints of earlier imports keep working.
  */
 
 export type BankStatementSource = "mt940" | "camt053";
@@ -30,6 +42,33 @@ export interface ParsedTransaction {
   addtlNtryInf?: string | null;
   /** CAMT.053 counterparty name from RltdPties (Dbtr/Cdtr <Nm>). */
   counterpartyName?: string | null;
+  /**
+   * A reversal (storno): MT940 RC/RD, CAMT.053 <RvslInd>. Only set when true.
+   * The sign already is the economic direction of this booking (RC = money
+   * out, RD = money in); a reversal undoes an earlier booking and is never
+   * offered as the payment of an invoice.
+   */
+  isReversal?: boolean;
+}
+
+/** A statement line that could not be read. It is never left out silently. */
+export interface StatementParseError {
+  /** 1-based line in the file (MT940); null for CAMT.053. */
+  lineNumber: number | null;
+  /** The line exactly as in the file (MT940), or an excerpt of the entry (CAMT.053). */
+  raw: string;
+  reason: string;
+}
+
+/** One balance-bounded section: opening balance + Σ lines = closing balance. */
+export interface StatementBalanceSection {
+  /** The account of the section (IBAN where readable). */
+  account: string | null;
+  openingBalance: number | null;
+  closingBalance: number | null;
+  /** Sum of the amounts read in this section, in cents. */
+  totalCents: number;
+  transactionCount: number;
 }
 
 export interface ParsedStatement {
@@ -37,6 +76,16 @@ export interface ParsedStatement {
   closingBalance: number | null;
   accountIban: string | null;
   transactions: ParsedTransaction[];
+  /** Lines that could not be read. The import is blocked while there is one. */
+  errors: StatementParseError[];
+  /** Balance sections, for the balance check per statement. */
+  sections: StatementBalanceSection[];
+  /** Every distinct account in the file (IBAN where readable, otherwise as written). */
+  accounts: string[];
+  /** Every ISO currency code in the file (balances, amounts, account). */
+  currencies: string[];
+  /** MT940 funds codes (the third letter of the currency, "R" for EUR) seen in :61:. */
+  fundsCodes: string[];
 }
 
 export interface DuplicateInfo {
@@ -51,99 +100,114 @@ export interface DuplicateInfo {
   reason: "reference" | "composite" | "possible" | null;
 }
 
+// ─── Shared helpers ─────────────────────────────────────────────────
+
+/** "1234" + "5" → 123450 cents. Null for more than two decimals that are not zero. */
+function decimalToCents(intPart: string, fracPart: string): number | null {
+  const frac = fracPart ?? "";
+  if (frac.length > 2 && /[1-9]/.test(frac.slice(2))) return null;
+  const cents = Number(intPart) * 100 + Number(`${frac}00`.slice(0, 2));
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+function isoDate(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+const IBAN_IN_TEXT = /([A-Z]{2}\d{2}[A-Z]{4}\d{10,})/;
+
+function normalizeAccount(value: string | null | undefined): string | null {
+  const v = (value ?? "").replace(/\s+/g, "").toUpperCase();
+  return v || null;
+}
+
+function emptyStatement(): ParsedStatement {
+  return {
+    openingBalance: null,
+    closingBalance: null,
+    accountIban: null,
+    transactions: [],
+    errors: [],
+    sections: [],
+    accounts: [],
+    currencies: [],
+    fundsCodes: [],
+  };
+}
+
+const sortNewestFirst = (a: ParsedTransaction, b: ParsedTransaction) =>
+  a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+
 // ─── MT940 Parser ───────────────────────────────────────────────────
 export function parseMT940(text: string): ParsedTransaction[] {
   return parseMT940Full(text).transactions;
 }
 
-function parseMT940Balance(raw: string): number | null {
+const MT940_BALANCE_FULL = /^([CD])\d{6}([A-Z]{3})(\d+),(\d*)\s*$/;
+const MT940_BALANCE_SHORT = /^([CD])(\d+),(\d*)\s*$/;
+
+function parseMT940Balance(raw: string): { value: number; currency: string | null } | null {
   // Full format: C/DYYMMDDCCCAMOUNT (e.g. C240101EUR1234,56)
-  const full = raw.match(/^([CD])\d{6}[A-Z]{3}(\d+,\d{0,2})/);
-  if (full) {
-    const sign = full[1] === "D" ? -1 : 1;
-    return sign * parseFloat(full[2].replace(",", "."));
-  }
+  const full = raw.match(MT940_BALANCE_FULL);
   // Short format without date/currency: C/DAMOUNT (e.g. C1234,56)
-  const short = raw.match(/^([CD])(\d+,\d{0,2})/);
-  if (short) {
-    const sign = short[1] === "D" ? -1 : 1;
-    return sign * parseFloat(short[2].replace(",", "."));
-  }
-  return null;
+  const short = full ? null : raw.match(MT940_BALANCE_SHORT);
+  const m = full ?? short;
+  if (!m) return null;
+  const cents = decimalToCents(full ? full[3] : short![2], full ? full[4] : short![3]);
+  if (cents === null) return null;
+  const sign = m[1] === "D" ? -1 : 1;
+  return { value: (sign * cents) / 100, currency: full ? full[2] : null };
 }
 
-function parseMT940Full(text: string): ParsedStatement {
-  const transactions: ParsedTransaction[] = [];
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  let openingBalance: number | null = null;
-  let closingBalance: number | null = null;
-  let accountIban: string | null = null;
+/**
+ * SWIFT MT940 field 61, first line:
+ *   value date YYMMDD · [entry (booking) date MMDD] · mark C | D | RC | RD ·
+ *   [funds code: one letter, the third letter of the currency] · amount
+ *   (digits, comma, decimals) · transaction type (e.g. N544, NTRF) · the
+ *   account owner's reference [// the bank's reference].
+ * RC is the reversal of a credit: economically a debit, so negative. RD is
+ * the reversal of a debit: a credit, so positive.
+ */
+const MT940_STATEMENT_LINE = /^(\d{2})(\d{2})(\d{2})(\d{4})?(RC|RD|C|D)([A-Z])?(\d+),(\d*)(.*)$/;
 
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
+type Mt940LineResult =
+  | { tx: ParsedTransaction; cents: number; fundsCode: string | null }
+  | { error: string };
 
-    // Extract account IBAN from :25: field
-    if (line.startsWith(":25:") && !accountIban) {
-      const field = line.substring(4).trim();
-      const ibanMatch = field.match(/([A-Z]{2}\d{2}[A-Z]{4}\d{10,})/);
-      if (ibanMatch) accountIban = ibanMatch[1];
-    }
-
-    if (line.startsWith(":60F:") || line.startsWith(":60M:")) {
-      const bal = parseMT940Balance(line.substring(5));
-      if (openingBalance === null) openingBalance = bal;
-    }
-
-    if (line.startsWith(":62F:") || line.startsWith(":62M:")) {
-      closingBalance = parseMT940Balance(line.substring(5));
-    }
-
-    if (line.startsWith(":61:")) {
-      const raw = line.substring(4);
-      const tx = parseMT940Transaction(raw, lines, i);
-      if (tx) transactions.push(tx);
-    }
-    i++;
+function parseMT940Transaction(raw: string, lines: string[], lineIdx: number): Mt940LineResult {
+  const m = raw.match(MT940_STATEMENT_LINE);
+  if (!m) {
+    return {
+      error:
+        "Regel niet herkend: verwacht valutadatum (JJMMDD), optioneel boekdatum (MMDD), D/C/RC/RD, optioneel een fondscode en een bedrag met komma",
+    };
   }
-
-  // Sort by date descending (YYYY-MM-DD strings compare correctly)
-  transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-
-  return { openingBalance, closingBalance, accountIban, transactions };
-}
-
-function parseMT940Transaction(
-  raw: string,
-  lines: string[],
-  lineIdx: number
-): ParsedTransaction | null {
-  // Format: YYMMDD[MMDD]C/DamountNtypeRef
-  const dateStr = raw.substring(0, 6);
-  const year = 2000 + parseInt(dateStr.substring(0, 2));
-  const month = dateStr.substring(2, 4);
-  const day = dateStr.substring(4, 6);
-  const date = `${year}-${month}-${day}`;
-
-  let pos = 6;
-  if (/^\d{4}[CD]/.test(raw.substring(pos))) {
-    pos += 4;
+  const [, yy, mm, dd, entry, mark, fundsCode, intPart, fracPart, rest] = m;
+  const year = 2000 + Number(yy);
+  const date = isoDate(year, Number(mm), Number(dd));
+  if (!date) return { error: `Ongeldige valutadatum ${yy}${mm}${dd}` };
+  if (entry) {
+    const em = Number(entry.slice(0, 2));
+    const ed = Number(entry.slice(2, 4));
+    // The booking date can fall in the next or previous year (31-12 / 2-1).
+    const vm = Number(mm);
+    const entryYear = em < vm - 6 ? year + 1 : em > vm + 6 ? year - 1 : year;
+    if (!isoDate(entryYear, em, ed)) return { error: `Ongeldige boekdatum ${entry}` };
   }
+  const cents = decimalToCents(intPart, fracPart);
+  if (cents === null) return { error: `Bedrag ${intPart},${fracPart} niet leesbaar (meer dan twee decimalen)` };
+  // C and RD are money in; D and RC are money out.
+  const sign = mark === "C" || mark === "RD" ? 1 : -1;
+  const signedCents = sign * cents;
+  const amount = signedCents / 100;
 
-  const cdMatch = raw.substring(pos).match(/^(R?[CD])/);
-  if (!cdMatch) return null;
-  const isCredit = cdMatch[1].endsWith("C");
-  pos += cdMatch[1].length;
-
-  const amountMatch = raw.substring(pos).match(/^(\d+,\d{0,2})/);
-  if (!amountMatch) return null;
-  const amount = parseFloat(amountMatch[1].replace(",", ".")) * (isCredit ? 1 : -1);
-  pos += amountMatch[1].length;
-
-  const typeMatch = raw.substring(pos).match(/^[A-Z]\d{3}/);
+  let pos = 0;
+  const typeMatch = rest.match(/^[A-Z]\d{3}/);
   if (typeMatch) pos += 4;
-
-  const reference = raw.substring(pos).trim() || null;
+  const reference = rest.substring(pos).trim() || null;
 
   let description = "";
   let counterAccount: string | null = null;
@@ -165,7 +229,7 @@ function parseMT940Transaction(
     }
   }
 
-  const ibanMatch = description.match(/([A-Z]{2}\d{2}[A-Z]{4}\d{10,})/);
+  const ibanMatch = description.match(IBAN_IN_TEXT);
   if (ibanMatch) counterAccount = ibanMatch[1];
 
   const cntpMatch = description.match(/\/CNTP\/([^/]+)/);
@@ -174,7 +238,7 @@ function parseMT940Transaction(
   const tail = reference?.indexOf("//") ?? -1;
   const bankReference = reference && tail >= 0 ? reference.slice(tail + 2).trim() || null : null;
 
-  return {
+  const tx: ParsedTransaction = {
     date,
     amount,
     description: description.trim() || "Geen omschrijving",
@@ -184,6 +248,98 @@ function parseMT940Transaction(
     bankReference,
     valueDate: date,
   };
+  if (mark === "RC" || mark === "RD") tx.isReversal = true;
+  return { tx, cents: signedCents, fundsCode: fundsCode ?? null };
+}
+
+function parseMT940Full(text: string): ParsedStatement {
+  const result = emptyStatement();
+  const currencies = new Set<string>();
+  const fundsCodes = new Set<string>();
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  // The account of the current message, and the balance section being read.
+  const state: { account: string | null; open: StatementBalanceSection | null } = { account: null, open: null };
+
+  const openSection = (openingBalance: number | null): StatementBalanceSection => {
+    const section: StatementBalanceSection = {
+      account: state.account,
+      openingBalance,
+      closingBalance: null,
+      totalCents: 0,
+      transactionCount: 0,
+    };
+    state.open = section;
+    return section;
+  };
+  const closeSection = () => {
+    if (state.open) result.sections.push(state.open);
+    state.open = null;
+  };
+  const fail = (index: number, reason: string) =>
+    result.errors.push({ lineNumber: index + 1, raw: lines[index], reason });
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith(":20:")) {
+      // A new message: a section still open there has no closing balance.
+      closeSection();
+      state.account = null;
+      continue;
+    }
+
+    if (line.startsWith(":25:")) {
+      const field = line.substring(4).trim();
+      const ibanMatch = field.match(IBAN_IN_TEXT);
+      // The statement-level IBAN stays the first one found, as before.
+      if (!result.accountIban && ibanMatch) result.accountIban = ibanMatch[1];
+      state.account = normalizeAccount(ibanMatch ? ibanMatch[1] : field);
+      if (state.account && !result.accounts.includes(state.account)) result.accounts.push(state.account);
+      continue;
+    }
+
+    if (line.startsWith(":60F:") || line.startsWith(":60M:")) {
+      const bal = parseMT940Balance(line.substring(5));
+      if (result.openingBalance === null && bal) result.openingBalance = bal.value;
+      if (bal?.currency) currencies.add(bal.currency);
+      if (!bal) fail(i, "Beginsaldo niet leesbaar");
+      // A new opening balance starts a new section; one still open lacks its closing balance.
+      closeSection();
+      openSection(bal ? bal.value : null);
+      continue;
+    }
+
+    if (line.startsWith(":62F:") || line.startsWith(":62M:")) {
+      const bal = parseMT940Balance(line.substring(5));
+      result.closingBalance = bal ? bal.value : null;
+      if (bal?.currency) currencies.add(bal.currency);
+      if (!bal) fail(i, "Eindsaldo niet leesbaar");
+      const section = state.open ?? openSection(null);
+      section.closingBalance = bal ? bal.value : null;
+      closeSection();
+      continue;
+    }
+
+    if (line.startsWith(":61:")) {
+      const parsed = parseMT940Transaction(line.substring(4), lines, i);
+      const section = state.open ?? openSection(null);
+      if ("error" in parsed) {
+        fail(i, parsed.error);
+        continue;
+      }
+      result.transactions.push(parsed.tx);
+      section.totalCents += parsed.cents;
+      section.transactionCount++;
+      if (parsed.fundsCode) fundsCodes.add(parsed.fundsCode);
+    }
+  }
+  closeSection();
+
+  // Sort by date descending (YYYY-MM-DD strings compare correctly)
+  result.transactions.sort(sortNewestFirst);
+  result.currencies = [...currencies];
+  result.fundsCodes = [...fundsCodes];
+  return result;
 }
 
 // ─── CAMT.053 Parser ────────────────────────────────────────────────
@@ -191,50 +347,139 @@ export function parseCAMT053(xmlText: string): ParsedTransaction[] {
   return parseCAMT053Full(xmlText).transactions;
 }
 
-function parseCAMT053Full(xmlText: string): ParsedStatement {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(xmlText, "text/xml");
-  const transactions: ParsedTransaction[] = [];
-  let openingBalance: number | null = null;
-  let closingBalance: number | null = null;
-  let accountIban: string | null = null;
-
-  const ns = doc.documentElement.namespaceURI || "";
-
-  // Extract account IBAN from <Acct><Id><IBAN>
-  const ibanEls = ns ? doc.getElementsByTagNameNS(ns, "IBAN") : doc.getElementsByTagName("IBAN");
-  if (ibanEls.length > 0) accountIban = ibanEls[0].textContent || null;
-
-  // Extract balances from <Bal> elements
-  const balEls = ns ? doc.getElementsByTagNameNS(ns, "Bal") : doc.getElementsByTagName("Bal");
-  for (let i = 0; i < balEls.length; i++) {
-    const bal = balEls[i];
-    const code = getTextNS(bal as Element, ns, "Cd");
-    if (code !== "OPBD" && code !== "CLBD") continue;
-    const amtStr = getTextNS(bal as Element, ns, "Amt");
-    if (!amtStr) continue;
-    const cdtDbt = getTextNS(bal as Element, ns, "CdtDbtInd");
-    const value = parseFloat(amtStr) * (cdtDbt === "DBIT" ? -1 : 1);
-    if (code === "OPBD" && openingBalance === null) openingBalance = value;
-    if (code === "CLBD") closingBalance = value;
-  }
-
-  const entries = ns
-    ? doc.getElementsByTagNameNS(ns, "Ntry")
-    : doc.getElementsByTagName("Ntry");
-
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    const tx = parseCAMTEntry(entry, ns);
-    if (tx) transactions.push(tx);
-  }
-
-  transactions.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-
-  return { openingBalance, closingBalance, accountIban, transactions };
+function directChildren(parent: Element, localName: string): Element[] {
+  return Array.from(parent.children).filter((el) => el.localName === localName);
 }
 
+function directChild(parent: Element | null | undefined, localName: string): Element | null {
+  if (!parent) return null;
+  return directChildren(parent, localName)[0] ?? null;
+}
 
+function directText(parent: Element | null | undefined, ...path: string[]): string {
+  let el: Element | null = parent ?? null;
+  for (const name of path) el = directChild(el, name);
+  return (el?.textContent ?? "").trim();
+}
+
+/** A short, single-line excerpt of an element, to show which entry could not be read. */
+function excerpt(el: Element): string {
+  const xml = typeof XMLSerializer !== "undefined" ? new XMLSerializer().serializeToString(el) : el.textContent ?? "";
+  const flat = xml.replace(/\s+/g, " ").replace(/ xmlns="[^"]*"/g, "").trim();
+  return flat.length > 300 ? `${flat.slice(0, 297)}...` : flat;
+}
+
+const CAMT_AMOUNT = /^(\d+)(?:\.(\d+))?$/;
+
+function camtCents(text: string): number | null {
+  const m = text.trim().match(CAMT_AMOUNT);
+  return m ? decimalToCents(m[1], m[2] ?? "") : null;
+}
+
+function camtDate(el: Element | null): string | null {
+  const dt = directText(el, "Dt") || directText(el, "DtTm").slice(0, 10);
+  const m = dt.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? isoDate(Number(m[1]), Number(m[2]), Number(m[3])) : null;
+}
+
+function parseCAMT053Full(xmlText: string): ParsedStatement {
+  const result = emptyStatement();
+  const currencies = new Set<string>();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, "text/xml");
+  if (doc.getElementsByTagName("parsererror").length > 0) {
+    result.errors.push({ lineNumber: null, raw: xmlText.slice(0, 200), reason: "Het XML-bestand kan niet worden gelezen" });
+    return result;
+  }
+
+  const ns = doc.documentElement.namespaceURI || "";
+  const byTag = (parent: Document | Element, tag: string) =>
+    Array.from(ns ? parent.getElementsByTagNameNS(ns, tag) : parent.getElementsByTagName(tag));
+
+  const statements = byTag(doc, "Stmt");
+  if (statements.length === 0) {
+    result.errors.push({
+      lineNumber: null,
+      raw: excerpt(doc.documentElement),
+      reason: "Geen <Stmt> gevonden: dit is geen CAMT.053-rekeningafschrift",
+    });
+  }
+
+  let entriesInStatements = 0;
+  for (const stmt of statements) {
+    const acct = directChild(stmt, "Acct");
+    const iban = directText(acct, "Id", "IBAN");
+    const account = normalizeAccount(iban || directText(acct, "Id", "Othr", "Id"));
+    if (account && !result.accounts.includes(account)) result.accounts.push(account);
+    // The statement-level IBAN: the account of the first statement, as before.
+    if (result.accountIban === null && iban) result.accountIban = iban;
+    const accountCurrency = directText(acct, "Ccy");
+    if (accountCurrency) currencies.add(accountCurrency);
+
+    const section: StatementBalanceSection = {
+      account,
+      openingBalance: null,
+      closingBalance: null,
+      totalCents: 0,
+      transactionCount: 0,
+    };
+    let openingIsOpbd = false;
+    for (const bal of directChildren(stmt, "Bal")) {
+      const code = directText(bal, "Tp", "CdOrPrtry", "Cd");
+      if (code !== "OPBD" && code !== "PRCD" && code !== "CLBD") continue;
+      const amtEl = directChild(bal, "Amt");
+      const cents = amtEl ? camtCents(amtEl.textContent ?? "") : null;
+      const indicator = directText(bal, "CdtDbtInd");
+      if (cents === null || (indicator !== "CRDT" && indicator !== "DBIT")) {
+        result.errors.push({ lineNumber: null, raw: excerpt(bal), reason: `Saldo ${code} niet leesbaar` });
+        continue;
+      }
+      const currency = amtEl?.getAttribute("Ccy")?.trim();
+      if (currency) currencies.add(currency);
+      const value = (indicator === "DBIT" ? -cents : cents) / 100;
+      if (code === "OPBD") {
+        // As before, the statement-level opening balance is the first OPBD.
+        if (result.openingBalance === null) result.openingBalance = value;
+        if (!openingIsOpbd) section.openingBalance = value;
+        openingIsOpbd = true;
+      } else if (code === "PRCD") {
+        // "Previously closed booked": the opening balance of banks that do not send OPBD.
+        if (section.openingBalance === null) section.openingBalance = value;
+      } else {
+        section.closingBalance = value;
+        result.closingBalance = value;
+      }
+    }
+
+    const entries = byTag(stmt, "Ntry");
+    entriesInStatements += entries.length;
+    for (const entry of entries) {
+      const parsed = parseCAMTEntry(entry, ns);
+      if ("error" in parsed) {
+        result.errors.push({ lineNumber: null, raw: excerpt(entry), reason: parsed.error });
+        continue;
+      }
+      result.transactions.push(parsed.tx);
+      section.totalCents += parsed.cents;
+      section.transactionCount++;
+      if (parsed.currency) currencies.add(parsed.currency);
+    }
+    result.sections.push(section);
+  }
+
+  const strays = byTag(doc, "Ntry").length - entriesInStatements;
+  if (strays > 0) {
+    result.errors.push({
+      lineNumber: null,
+      raw: `${strays} <Ntry>`,
+      reason: `${strays} ${strays === 1 ? "boeking staat" : "boekingen staan"} buiten een <Stmt> en ${strays === 1 ? "kan" : "kunnen"} niet aan een rekening worden toegewezen`,
+    });
+  }
+
+  result.transactions.sort(sortNewestFirst);
+  result.currencies = [...currencies];
+  return result;
+}
 
 function getTextNS(parent: Element, ns: string, tag: string): string {
   const els = ns
@@ -243,13 +488,28 @@ function getTextNS(parent: Element, ns: string, tag: string): string {
   return els.length > 0 ? (els[0].textContent || "") : "";
 }
 
-function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
-  const amountStr = getTextNS(entry, ns, "Amt");
-  if (!amountStr) return null;
-  const amount = parseFloat(amountStr);
+type CamtEntryResult = { tx: ParsedTransaction; cents: number; currency: string | null } | { error: string };
 
-  const cdtDbt = getTextNS(entry, ns, "CdtDbtInd");
-  const signedAmount = cdtDbt === "DBIT" ? -amount : amount;
+function parseCAMTEntry(entry: Element, ns: string): CamtEntryResult {
+  const amtEl = directChild(entry, "Amt");
+  if (!amtEl) return { error: "Bedrag (<Amt>) ontbreekt" };
+  const amountText = (amtEl.textContent ?? "").trim();
+  const cents = camtCents(amountText);
+  if (cents === null) return { error: `Bedrag "${amountText}" niet leesbaar` };
+
+  // ISO 20022: CdtDbtInd is the direction of THIS booking, also for a
+  // reversal (RvslInd): a reversed debit is booked CRDT, a reversed credit DBIT.
+  const indicator = directText(entry, "CdtDbtInd");
+  if (indicator !== "CRDT" && indicator !== "DBIT") {
+    return {
+      error: indicator
+        ? `Onbekende debet/credit-aanduiding "${indicator}"`
+        : "Debet/credit-aanduiding (<CdtDbtInd>) ontbreekt",
+    };
+  }
+  const signedCents = indicator === "DBIT" ? -cents : cents;
+  const reversal = directText(entry, "RvslInd").toLowerCase();
+  const isReversal = reversal === "true" || reversal === "1";
 
   let dateStr = "";
   const bookgDt = ns ? entry.getElementsByTagNameNS(ns, "BookgDt") : entry.getElementsByTagName("BookgDt");
@@ -260,7 +520,12 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
     const valDt = ns ? entry.getElementsByTagNameNS(ns, "ValDt") : entry.getElementsByTagName("ValDt");
     if (valDt.length) dateStr = getTextNS(valDt[0] as Element, ns, "Dt");
   }
-  if (!dateStr) return null;
+  // Booking or value date given as a timestamp only (<DtTm>): read, no longer dropped.
+  if (!dateStr) dateStr = camtDate(directChild(entry, "BookgDt")) ?? camtDate(directChild(entry, "ValDt")) ?? "";
+  dateStr = dateStr.trim();
+  if (!dateStr) return { error: "Boek- en valutadatum ontbreken" };
+  const dm = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!dm || !isoDate(Number(dm[1]), Number(dm[2]), Number(dm[3]))) return { error: `Ongeldige datum "${dateStr}"` };
   const valDtEls = ns ? entry.getElementsByTagNameNS(ns, "ValDt") : entry.getElementsByTagName("ValDt");
   const valueDate = (valDtEls.length ? getTextNS(valDtEls[0] as Element, ns, "Dt") : "") || dateStr;
 
@@ -301,9 +566,9 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
   }
   const bankReference = getTextNS(entry, ns, "AcctSvcrRef").trim() || null;
 
-  return {
+  const tx: ParsedTransaction = {
     date: dateStr,
-    amount: signedAmount,
+    amount: signedCents / 100,
     description,
     counterAccount,
     reference,
@@ -313,6 +578,170 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
     ustrd,
     addtlNtryInf,
     counterpartyName,
+  };
+  if (isReversal) tx.isReversal = true;
+  return { tx, cents: signedCents, currency: amtEl.getAttribute("Ccy")?.trim() || null };
+}
+
+// ─── Import checks ──────────────────────────────────────────────────
+//
+// Pure: they decide whether a parsed statement may be imported at all, and
+// against which administratie. The upload dialog blocks on every blocker and
+// asks an explicit confirmation when the account cannot be tied to the
+// chosen administratie.
+
+/** The only currency BoekAssist books: bank_transactions has no currency column and every writer posts EUR. */
+export const STATEMENT_CURRENCY = "EUR";
+/** The MT940 funds code of EUR (the third letter of the currency code). */
+const EUR_FUNDS_CODE = "R";
+
+export interface StatementImportBlocker {
+  kind: "unreadable" | "balance" | "currency" | "accounts" | "administration";
+  message: string;
+  /** One line per affected statement line or section, shown to the user. */
+  details: string[];
+}
+
+const euro = (cents: number) =>
+  new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(cents / 100);
+const toCents = (value: number) => Math.round(value * 100);
+
+/** Everything that blocks importing this statement. Empty: importable. */
+export function statementImportBlockers(statement: ParsedStatement): StatementImportBlocker[] {
+  const blockers: StatementImportBlocker[] = [];
+
+  if (statement.errors.length > 0) {
+    const n = statement.errors.length;
+    blockers.push({
+      kind: "unreadable",
+      message:
+        `${n} ${n === 1 ? "regel uit het afschrift kon" : "regels uit het afschrift konden"} niet worden gelezen. ` +
+        "Importeren is geblokkeerd: een overgeslagen regel is een ontbrekende of verkeerde bankmutatie. " +
+        "Controleer het bestand of vraag een nieuw afschrift op bij de bank.",
+      details: statement.errors.map(
+        (e) => `${e.lineNumber !== null ? `Regel ${e.lineNumber}: ` : ""}${e.raw} — ${e.reason}`,
+      ),
+    });
+  }
+
+  const balanceDetails: string[] = [];
+  statement.sections.forEach((s, index) => {
+    if (s.transactionCount === 0 && s.openingBalance === null && s.closingBalance === null) return;
+    const label = `Afschrift ${index + 1}${s.account ? ` (${s.account})` : ""}`;
+    if (s.openingBalance === null || s.closingBalance === null) {
+      const missing = s.openingBalance === null && s.closingBalance === null
+        ? "begin- en eindsaldo ontbreken"
+        : s.openingBalance === null ? "het beginsaldo ontbreekt" : "het eindsaldo ontbreekt";
+      balanceDetails.push(`${label}: ${missing}, dus de volledigheid van de ${s.transactionCount} gelezen regel(s) is niet te controleren.`);
+      return;
+    }
+    const opening = toCents(s.openingBalance);
+    const closing = toCents(s.closingBalance);
+    const expected = opening + s.totalCents;
+    if (expected !== closing) {
+      balanceDetails.push(
+        `${label}: beginsaldo ${euro(opening)} + ${s.transactionCount} mutatie(s) ${euro(s.totalCents)} = ${euro(expected)}, ` +
+          `maar het eindsaldo is ${euro(closing)} (verschil ${euro(closing - expected)}).`,
+      );
+    }
+  });
+  if (balanceDetails.length > 0) {
+    blockers.push({
+      kind: "balance",
+      message:
+        "De saldocontrole klopt niet: beginsaldo plus de gelezen mutaties is niet het eindsaldo. " +
+        "Er ontbreken regels of er zijn regels verkeerd gelezen; importeren is geblokkeerd.",
+      details: balanceDetails,
+    });
+  }
+
+  const foreign = statement.currencies.filter((c) => c.toUpperCase() !== STATEMENT_CURRENCY);
+  const foreignFunds = statement.fundsCodes.filter((f) => f !== EUR_FUNDS_CODE);
+  if (foreign.length > 0 || foreignFunds.length > 0) {
+    const found = [...foreign, ...foreignFunds.map((f) => `fondscode ${f}`)].join(", ");
+    blockers.push({
+      kind: "currency",
+      message: `Het afschrift is niet (alleen) in euro (${found}). BoekAssist verwerkt alleen EUR; importeren is geblokkeerd.`,
+      details: [],
+    });
+  } else if (statement.currencies.length === 0 && statement.transactions.length > 0) {
+    blockers.push({
+      kind: "currency",
+      message:
+        "De valuta van het afschrift is onbekend: geen saldo of bedrag noemt een valuta. " +
+        "BoekAssist verwerkt alleen EUR; importeren is geblokkeerd.",
+      details: [],
+    });
+  }
+
+  if (statement.accounts.length > 1) {
+    blockers.push({
+      kind: "accounts",
+      message:
+        `Het bestand bevat afschriften van ${statement.accounts.length} rekeningen (${statement.accounts.join(", ")}). ` +
+        "Importeer per rekening, zodat elke regel in de juiste administratie komt.",
+      details: [],
+    });
+  }
+
+  return blockers;
+}
+
+export interface StatementAccountClient {
+  id: string;
+  name: string;
+  ibans?: string[] | null;
+}
+
+/**
+ *  match:                the account is a registered IBAN of the chosen administratie (and of no other);
+ *  other_administration: the account is registered for another administratie only — blocked;
+ *  confirm:              the account cannot be tied to the chosen administratie — import only
+ *                        after an explicit confirmation by the user.
+ */
+export type StatementAccountCheck =
+  | { status: "match"; iban: string }
+  | { status: "other_administration"; iban: string; administrations: string[] }
+  | {
+      status: "confirm";
+      iban: string | null;
+      reason: "no_statement_iban" | "no_client_iban" | "different_iban" | "shared_iban";
+      administrations: string[];
+    };
+
+export function normalizeIban(value: string | null | undefined): string {
+  return (value ?? "").replace(/\s/g, "").toUpperCase();
+}
+
+export function checkStatementAccount(
+  statement: Pick<ParsedStatement, "accountIban">,
+  importClient: StatementAccountClient,
+  clients: readonly StatementAccountClient[],
+): StatementAccountCheck {
+  const iban = normalizeIban(statement.accountIban);
+  if (!iban) return { status: "confirm", iban: null, reason: "no_statement_iban", administrations: [] };
+  const holds = (c: StatementAccountClient) => (c.ibans ?? []).some((i) => normalizeIban(i) === iban);
+  const others = clients.filter((c) => c.id !== importClient.id && holds(c)).map((c) => c.name);
+  if (holds(importClient)) {
+    return others.length > 0
+      ? { status: "confirm", iban, reason: "shared_iban", administrations: others }
+      : { status: "match", iban };
+  }
+  if (others.length > 0) return { status: "other_administration", iban, administrations: others };
+  const reason = (importClient.ibans ?? []).some((i) => normalizeIban(i)) ? "different_iban" : "no_client_iban";
+  return { status: "confirm", iban, reason, administrations: [] };
+}
+
+/** The account belongs to another administratie of the organisation: never import it here. */
+export function accountCheckBlocker(check: StatementAccountCheck, importClientName: string): StatementImportBlocker | null {
+  if (check.status !== "other_administration") return null;
+  const names = check.administrations.join(", ");
+  return {
+    kind: "administration",
+    message:
+      `Rekening ${check.iban} hoort bij ${names}, niet bij ${importClientName}. ` +
+      `Importeer dit afschrift bij ${check.administrations.length === 1 ? "die administratie" : "de juiste administratie"}.`,
+    details: [],
   };
 }
 

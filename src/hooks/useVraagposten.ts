@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "./useAuth";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
@@ -22,16 +23,20 @@ export function useVraagposten(options: UseVraagpostenOptions = {}) {
   return useQuery({
     queryKey: ["vraagposten", organizationId ?? "all", clientId ?? "all", clientIdsKey],
     queryFn: async () => {
-      let q = supabase.from("vraagposten").select("*").order("created_at", { ascending: false });
-      if (organizationId) q = q.eq("organization_id", organizationId);
-      if (clientId && clientId !== "all") q = q.eq("client_id", clientId);
-      if (clientIds) {
-        if (clientIds.length === 0) return [] as Vraagpost[];
-        q = q.in("client_id", clientIds);
-      }
-      const { data, error } = await q;
-      if (error) throw error;
-      return data as Vraagpost[];
+      if (clientIds && clientIds.length === 0) return [] as Vraagpost[];
+      // Volledig voorbij de rijgrens van PostgREST: pagina voor pagina, in de
+      // vorige volgorde (nieuwste eerst) met id als unieke tiebreaker.
+      return fetchAllRows<Vraagpost>(async (from, to) => {
+        let q = supabase.from("vraagposten").select("*");
+        if (organizationId) q = q.eq("organization_id", organizationId);
+        if (clientId && clientId !== "all") q = q.eq("client_id", clientId);
+        if (clientIds) q = q.in("client_id", clientIds);
+        const { data, error } = await q
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: data as Vraagpost[] | null, error };
+      });
     },
     enabled: !!user && enabled,
   });
