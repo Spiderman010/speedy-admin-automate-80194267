@@ -288,6 +288,28 @@ export default function Bank() {
 
   const { data: clients } = useClients(activeOrganizationId ?? undefined, orgEnabled);
 
+  // B2-10: na een wissel van de actieve organisatie blijft niets van de vorige
+  // actief. De gekozen administratie(s) worden leeggemaakt (de context wordt
+  // "all", en die negeert de sync hierboven bewust), de importdialoog sluit en
+  // alles wat aan een bankregel van de vorige organisatie hangt, ook. Het eerste
+  // vaststellen van de organisatie (null → id) is geen wissel.
+  const previousOrganizationId = useRef(activeOrganizationId);
+  useEffect(() => {
+    const previous = previousOrganizationId.current;
+    previousOrganizationId.current = activeOrganizationId;
+    if (previous === null || previous === activeOrganizationId) return;
+    setClientSelection({ allMode: false, selectedIds: [] });
+    setUploadOpen(false);
+    setVerwerkingOpen(false);
+    setMatchTx(null);
+    setMatchDialogMode("primary");
+    setAdditionalMaxAmount(undefined);
+    setAdditionalExcludedIds([]);
+    setDetailTx(null);
+    setAfletteringTx(null);
+    setLastBatch(null);
+  }, [activeOrganizationId]);
+
   // ─ Afgeleide klantselectie voor data-laden ─
   const hasSelection = clientSelection.allMode || clientSelection.selectedIds.length > 0;
   const singleClientId =
