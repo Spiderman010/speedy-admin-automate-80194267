@@ -30,20 +30,34 @@ Reference document for all code agents working on this repository.
 
 ## Commands to Run Before Completing Work
 
-Run all three and fix any failures before pushing:
+Run these and fix any failures before pushing. CI (`.github/workflows/quality-ci.yml`) runs the same checks.
 
 ```bash
-# Type-check
-npx tsc --noEmit
+# Type-check. `npx tsc --noEmit` alone checks no files (tsconfig.json only holds
+# references); these two cover src/ and vite.config.ts.
+npx tsc -p tsconfig.app.json --noEmit
+npx tsc -p tsconfig.node.json --noEmit
 
-# Lint
-npm run lint
+# Lint. The warning count may not grow (ratchet, same limit as CI).
+npm run lint -- --max-warnings 20
 
-# Unit tests
+# Unit tests (offline and production-safe, see below)
 npm run test
 ```
 
-The test suite uses Vitest (`vitest.config.ts`). Tests live under `src/test/`. All tests must pass.
+The test suite uses Vitest (`vitest.config.ts`). Tests live under `src/test/`. All tests must pass. CI runs them with `--testTimeout=15000`; use the same flag if the slower Bank UI tests time out locally.
+
+**Tests never reach Supabase.** `vitest.config.ts` (`test.env`) makes `VITE_SUPABASE_URL` loopback (`http://127.0.0.1:54321`) and the Supabase keys inert in every test, also when the tracked `.env` with the production values is present. `src/test/setup.ts` installs a network guard: `fetch`, `XMLHttpRequest` and `WebSocket` to a non-loopback host fail with `[network-guard] BLOCKED …` and fail the test. Mock the data layer instead. For a hard guarantee on Linux, run the suite without any network: `unshare -rn ./node_modules/.bin/vitest run`.
+
+The live layer of `src/test/security-backup-and-storage-access.test.ts` is off by default. It runs only with `BOEKASSIST_LIVE_SECURITY_TESTS=1` plus an explicit `BOEKASSIST_LIVE_SECURITY_URL` (`https://<ref>.supabase.co` of a preview/branch project, or a local stack) and `BOEKASSIST_LIVE_SECURITY_ANON_KEY`. Production (`alxlbdhpbwlehbdbfejw`) is refused unless `BOEKASSIST_LIVE_SECURITY_ALLOW_PRODUCTION=alxlbdhpbwlehbdbfejw` is set as well, and even then the upload check never runs against production.
+
+**Database proofs.** When a change touches `supabase/migrations/` or `supabase/tests/`, also run every real-PostgreSQL harness (`supabase/tests/*/run-proof.sh`) against a throwaway PostgreSQL 16 cluster (superuser, contrib extensions `dblink` and `pgcrypto`, full git history):
+
+```bash
+PGHOST=/path/to/socketdir PGPORT=5432 PGUSER=postgres scripts/ci/run-db-proofs.sh
+```
+
+The script picks up every harness by itself (a new harness only needs `supabase/tests/<name>/run-proof.sh`, using `PGHOST`/`PGPORT`/`PGUSER`), refuses any host that is not a socket directory or loopback, prints a summary table, and fails on a non-zero exit code, any `FAIL` or `ONTBREEKT`, or a missing summary line. CI runs it in the job "Database proofs" against a `postgres:16` service container.
 
 ---
 
@@ -80,6 +94,8 @@ The UBL generator is in `src/lib/ubl-generator.ts` and must stay compliant with 
 ## Rules for Supabase Edge Functions
 
 Edge functions live under `supabase/functions/`. Current functions:
+- `ai-chat` — the AI assistant chat (`/ai-chat`), via the Lovable AI gateway
+- `mcp` — MCP server for AI clients (Supabase OAuth); bundled from `src/lib/mcp/` by `@lovable.dev/mcp-js` (see the file header)
 - `process-invoice` — OCR/AI processing for purchase invoices
 - `process-sales-invoice` — OCR/AI processing for sales invoices
 
@@ -135,11 +151,12 @@ List any migration files added (filename + purpose), or state "None".
 
 ### 4. Test Results
 Paste the output (or a summary) of:
-- `npx tsc --noEmit`
-- `npm run lint`
+- `npx tsc -p tsconfig.app.json --noEmit` and `npx tsc -p tsconfig.node.json --noEmit`
+- `npm run lint -- --max-warnings 20`
 - `npm run test`
+- `scripts/ci/run-db-proofs.sh`, when migrations or `supabase/tests/` changed
 
-All three must be green before the task is considered complete.
+All of them must be green before the task is considered complete.
 
 ---
 
