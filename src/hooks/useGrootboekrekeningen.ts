@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "@/hooks/useAuth";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 
@@ -324,19 +325,36 @@ export interface UseGrootboekrEkeningenOptions {
   enabled?: boolean;
 }
 
+/**
+ * Het volledige rekeningschema van de scope, pagina voor pagina: een
+ * afgekapte lijst liet stil de hoogste rekeningnummers weg. Zelfde volgorde
+ * als voorheen (nummer), met id als unieke tiebreaker.
+ */
+async function fetchAllGrootboekrekeningen(opts: {
+  organizationId?: string;
+  activeOnly: boolean;
+}): Promise<Grootboekrekening[]> {
+  return fetchAllRows<Grootboekrekening>(async (from, to) => {
+    let query = supabase.from("grootboekrekeningen").select("*");
+    if (opts.activeOnly) query = query.eq("actief", true);
+    if (opts.organizationId) {
+      query = query.or(`organization_id.is.null,organization_id.eq.${opts.organizationId}`);
+    }
+    const { data, error } = await query
+      .order("nummer", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data: data as Grootboekrekening[] | null, error };
+  });
+}
+
 export function useGrootboekrekeningen(options: UseGrootboekrEkeningenOptions = {}) {
   const { organizationId, enabled = true } = options;
   const { user } = useAuth();
 
   return useQuery({
     queryKey: ["grootboekrekeningen", organizationId ?? "all"],
-    queryFn: async () => {
-      let query = supabase.from("grootboekrekeningen").select("*").order("nummer");
-      if (organizationId) query = query.or(`organization_id.is.null,organization_id.eq.${organizationId}`);
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as Grootboekrekening[];
-    },
+    queryFn: () => fetchAllGrootboekrekeningen({ organizationId, activeOnly: false }),
     enabled: !!user && enabled,
   });
 }
@@ -347,13 +365,7 @@ export function useActiveGrootboekrekeningen(options: UseGrootboekrEkeningenOpti
 
   return useQuery({
     queryKey: ["grootboekrekeningen", "actief", organizationId ?? "all"],
-    queryFn: async () => {
-      let query = supabase.from("grootboekrekeningen").select("*").eq("actief", true).order("nummer");
-      if (organizationId) query = query.or(`organization_id.is.null,organization_id.eq.${organizationId}`);
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as Grootboekrekening[];
-    },
+    queryFn: () => fetchAllGrootboekrekeningen({ organizationId, activeOnly: true }),
     enabled: !!user && enabled,
   });
 }

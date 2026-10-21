@@ -41,14 +41,21 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (table: string) => {
       let pending: unknown = null;
+      // De lijsthook pagineert (volledig voorbij de rijgrens): range() snijdt de tabel zoals PostgREST.
+      let pageWindow: [number, number] | null = null;
+      const rowsFor = () => {
+        const rows = tableData(table) as unknown[];
+        return pageWindow ? rows.slice(pageWindow[0], pageWindow[1] + 1) : rows;
+      };
       const settle = (): Result =>
-        state.error ? { data: null, error: state.error } : { data: pending ?? tableData(table), error: null };
+        state.error ? { data: null, error: state.error } : { data: pending ?? rowsFor(), error: null };
       const record = (op: string, arg?: unknown) => {
         ops.push({ table, op, arg });
       };
       const builder: Record<string, unknown> = {
         select: () => builder,
         order: () => builder,
+        range: (from: number, to: number) => ((pageWindow = [from, to]), builder),
         eq: (col: string, val: unknown) => (record("eq", { [col]: val }), builder),
         in: (col: string, val: unknown) => (record("in", { [col]: val }), builder),
         insert: (payload: unknown) => {
@@ -142,9 +149,13 @@ describe("useManualJournals", () => {
     const { result } = renderHook(() => useManualJournals({ organizationId: "org-1", clientId: "c-1" }), { wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
 
+    // Gebundeld: elke .in() draagt alle drie de boekingen. De hook pagineert
+    // (een vervolgpagina herhaalt dezelfde gebundelde query), maar er is nooit
+    // een query per boeking.
     const inCalls = ops.filter((o) => o.op === "in");
-    expect(inCalls).toHaveLength(2);
-    expect(inCalls.map((o) => o.table).sort()).toEqual(["manual_journal_lines", "manual_journal_postings"]);
+    expect(new Set(inCalls.map((o) => o.table))).toEqual(new Set(["manual_journal_lines", "manual_journal_postings"]));
+    for (const call of inCalls) expect(call.arg).toEqual({ manual_journal_id: ["mj-1", "mj-2", "mj-3"] });
+    expect(ops.filter((o) => o.op === "eq" && "id" in (o.arg as object))).toEqual([]);
   });
 
   it("3. een fout op de claim- of regelquery wordt niet stilgezwegen", async () => {

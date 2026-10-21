@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { chunkValues, fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "./useAuth";
 import type { Json, Tables, TablesInsert } from "@/integrations/supabase/types";
 import type {
@@ -48,41 +49,67 @@ export function useManualJournals(options: UseManualJournalsOptions = {}) {
     queryKey: ["manual_journals", organizationId ?? "all", clientId ?? "all"],
     enabled: !!user && enabled,
     queryFn: async (): Promise<ManualJournalListItem[]> => {
-      let query = supabase
-        .from("manual_journals")
-        .select("*")
-        .order("posting_date", { ascending: false })
-        .order("created_at", { ascending: false });
-      if (organizationId) query = query.eq("organization_id", organizationId);
-      if (clientId && clientId !== "all") query = query.eq("client_id", clientId);
-
-      const { data: journals, error } = await query;
-      if (error) throw error;
-      const ids = (journals ?? []).map((j) => j.id);
+      // Alle drie de lijsten volledig, voorbij de rijgrens van PostgREST: een
+      // afgekapte regellijst liet boekingen eenzijdig lijken (de tweede regel
+      // viel weg). Elke pagina in een vaste, totale volgorde.
+      const journals = await fetchAllRows<ManualJournal>(async (from, to) => {
+        let query = supabase.from("manual_journals").select("*");
+        if (organizationId) query = query.eq("organization_id", organizationId);
+        if (clientId && clientId !== "all") query = query.eq("client_id", clientId);
+        const { data, error } = await query
+          .order("posting_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data, error };
+      });
+      const ids = journals.map((j) => j.id);
       if (ids.length === 0) return [];
 
-      // Twee gebundelde vervolgqueries in plaats van N+1 per boeking.
-      const [markersResult, linesResult] = await Promise.all([
-        supabase.from("manual_journal_postings").select("*").in("manual_journal_id", ids),
-        supabase
-          .from("manual_journal_lines")
-          .select("*")
-          .in("manual_journal_id", ids)
-          .order("sort_order", { ascending: true }),
-      ]);
-      if (markersResult.error) throw markersResult.error;
-      if (linesResult.error) throw linesResult.error;
+      // Twee gebundelde vervolgqueries in plaats van N+1 per boeking, per
+      // blok id's zodat de URL niet te lang wordt.
+      const markers: ManualJournalPosting[] = [];
+      const lines: ManualJournalLine[] = [];
+      for (const chunk of chunkValues(ids)) {
+        const [chunkMarkers, chunkLines] = await Promise.all([
+          fetchAllRows<ManualJournalPosting>(
+            async (from, to) => {
+              const { data, error } = await supabase
+                .from("manual_journal_postings")
+                .select("*")
+                .in("manual_journal_id", chunk)
+                .order("manual_journal_id", { ascending: true })
+                .range(from, to);
+              return { data, error };
+            },
+            // Eén claimrij per boeking: manual_journal_id is de sleutel.
+            { key: (m) => m.manual_journal_id },
+          ),
+          fetchAllRows<ManualJournalLine>(async (from, to) => {
+            const { data, error } = await supabase
+              .from("manual_journal_lines")
+              .select("*")
+              .in("manual_journal_id", chunk)
+              .order("sort_order", { ascending: true })
+              .order("id", { ascending: true })
+              .range(from, to);
+            return { data, error };
+          }),
+        ]);
+        markers.push(...chunkMarkers);
+        lines.push(...chunkLines);
+      }
 
       const markerByJournal = new Map<string, ManualJournalPosting>();
-      for (const m of markersResult.data ?? []) markerByJournal.set(m.manual_journal_id, m);
+      for (const m of markers) markerByJournal.set(m.manual_journal_id, m);
       const linesByJournal = new Map<string, ManualJournalLine[]>();
-      for (const l of linesResult.data ?? []) {
+      for (const l of lines) {
         const bucket = linesByJournal.get(l.manual_journal_id);
         if (bucket) bucket.push(l);
         else linesByJournal.set(l.manual_journal_id, [l]);
       }
 
-      return (journals ?? []).map((journal) => {
+      return journals.map((journal) => {
         const marker = markerByJournal.get(journal.id) ?? null;
         return {
           journal,
