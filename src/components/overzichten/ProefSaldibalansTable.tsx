@@ -4,7 +4,13 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { CATEGORY_LABELS } from "@/lib/grootboek-saldi-utils";
-import { formatAmountNl, type TrialBalanceRow, type TrialBalanceTotals } from "@/lib/proef-saldibalans";
+import {
+  formatAmountNl,
+  SYSTEM_ROW_CATEGORY_LABEL,
+  type TrialBalanceRow,
+  type TrialBalanceSystemRow,
+  type TrialBalanceTotals,
+} from "@/lib/proef-saldibalans";
 
 /**
  * Fase 6C-b7 PR 3 — de proef- en saldibalans als tabel.
@@ -17,6 +23,12 @@ import { formatAmountNl, type TrialBalanceRow, type TrialBalanceTotals } from "@
 
 export interface ProefSaldibalansTableProps {
   rows: TrialBalanceRow[];
+  /**
+   * Berekende regels (het resultaat van vóór de periode, zoals op de balans):
+   * geen rekeningnummer, geen link, geen doorklik — het zijn geen
+   * grootboekrekeningen.
+   */
+  systemRows?: TrialBalanceSystemRow[];
   totals: TrialBalanceTotals;
   accountPath?: (accountId: string) => string;
   /**
@@ -29,6 +41,7 @@ export interface ProefSaldibalansTableProps {
 
 export function ProefSaldibalansTable({
   rows,
+  systemRows = [],
   totals,
   accountPath = (id) => `/grootboek/saldi/${id}`,
   onDrilldown,
@@ -59,7 +72,12 @@ export function ProefSaldibalansTable({
             const a = r.account;
             const label = a.nummer === null ? a.omschrijving : `${a.nummer} - ${a.omschrijving}`;
             return (
-              <TableRow key={a.id} data-testid="psb-row" data-account-id={a.id}>
+              <TableRow
+                key={a.id}
+                data-testid="psb-row"
+                data-account-id={a.id}
+                data-profit-loss={r.profitLoss ? "true" : "false"}
+              >
                 <TableCell className="font-mono text-xs tabular-nums">
                   {onDrilldown ? (
                     <button
@@ -94,6 +112,7 @@ export function ProefSaldibalansTable({
                     {!r.hasPostings && (
                       <Badge variant="outline" className="font-normal">Geen boekingen</Badge>
                     )}
+
                   </div>
                 </TableCell>
                 <TableCell>
@@ -110,11 +129,32 @@ export function ProefSaldibalansTable({
               </TableRow>
             );
           })}
+          {systemRows.map((r) => (
+            <TableRow key={r.kind} data-testid="psb-system-row" data-kind={r.kind} className="bg-muted/30 italic">
+              <TableCell className="font-mono text-xs tabular-nums text-muted-foreground">—</TableCell>
+              <TableCell className="max-w-[280px]">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="font-medium">{r.label}</span>
+                  <Badge variant="outline" className="font-normal not-italic">{SYSTEM_ROW_CATEGORY_LABEL}</Badge>
+                </div>
+              </TableCell>
+              <TableCell>
+                <span className="sr-only">Geen grootboekrekening</span>
+              </TableCell>
+              <Bedrag cents={r.openingDebitCents} />
+              <Bedrag cents={r.openingCreditCents} />
+              <Bedrag cents={r.periodDebitCents} />
+              <Bedrag cents={r.periodCreditCents} />
+              <Bedrag cents={r.closingDebitCents} emphasis />
+              <Bedrag cents={r.closingCreditCents} emphasis />
+            </TableRow>
+          ))}
         </TableBody>
         <tfoot>
           <TableRow className="border-t-2 bg-muted/50 font-medium hover:bg-transparent" data-testid="psb-totals">
             <TableCell colSpan={3}>
-              Totaal ({rows.length} rekening{rows.length === 1 ? "" : "en"})
+              Totaal ({rows.length} rekening{rows.length === 1 ? "" : "en"}
+              {systemRows.length > 0 ? ` en ${systemRows.length} berekende regel` : ""})
             </TableCell>
             <Bedrag cents={totals.openingDebitCents} />
             <Bedrag cents={totals.openingCreditCents} />

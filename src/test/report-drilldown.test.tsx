@@ -725,10 +725,16 @@ describe("het rapportsoort komt niet uit een label", () => {
     for (const [p, kind] of [
       ["src/pages/Balans.tsx", "balance_sheet"],
       ["src/pages/WinstVerlies.tsx", "profit_loss"],
-      ["src/pages/ProefSaldibalans.tsx", "trial_balance"],
     ] as const) {
       expect(readFileSync(p, "utf8"), p).toContain(`reportKind="${kind}"`);
     }
+    // Herstel P7 (A3-12): een W&V-rij in de proef- en saldibalans toont alleen
+    // de mutatie van de periode en wordt dus als W&V uitgelegd. Nog steeds een
+    // expliciete, gesloten keuze van de pagina uit haar eigen rij — niet uit een
+    // label. Het gedrag staat in proef-saldibalans-pnl-reset.test.tsx.
+    expect(readFileSync("src/pages/ProefSaldibalans.tsx", "utf8")).toContain(
+      'reportKind={drilldownIsProfitLoss ? "profit_loss" : "trial_balance"}',
+    );
     const sheetCode = readFileSync("src/components/overzichten/ReportDrilldownSheet.tsx", "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
