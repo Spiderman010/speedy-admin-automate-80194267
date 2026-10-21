@@ -51,7 +51,7 @@ import {
 } from "@/hooks/useBankTransactions";
 import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
 import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
-import { exportBankTransactionsCSV, resolveBankExportGrootboek } from "@/lib/snelstart-export";
+import { exportBankTransactionsCSV, resolveBankExportGrootboek, SNELSTART_BANKDAGBOEK_ONTBREEKT } from "@/lib/snelstart-export";
 import { exportAfletterrapportCSV } from "@/lib/afletterrapport-export";
 import { useClients } from "@/hooks/useClients";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
@@ -258,7 +258,8 @@ export default function Bank() {
     blockedManualInvalid: number;
     blockedMissing1799: number;
     clientName: string | undefined;
-    bankDagboek: number;
+    // C-11: het ingestelde SnelStart-bankdagboek; null = niet ingesteld (geen 1100-fallback).
+    bankDagboek: number | null;
   };
   const [exportPreflightOpen, setExportPreflightOpen] = useState(false);
   const [exportPreflightData, setExportPreflightData] = useState<ExportPreflightData | null>(null);
@@ -2118,7 +2119,7 @@ export default function Bank() {
             const countBlocked = blockedUnconfirmed + blockedUnprocessed + blockedManualInvalid + blockedMissing1799;
             const clientRecord = singleClientId ? clients?.find(c => c.id === singleClientId) : undefined;
             const clientName = clientRecord?.name;
-            const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
+            const bankDagboek = clientRecord?.bank_dagboek ?? null;
             setExportPreflightData({ exportCandidates, countExported, countTo1799, countBlocked, blockedUnconfirmed, blockedUnprocessed, blockedManualInvalid, blockedMissing1799, clientName, bankDagboek });
             setExportPreflightOpen(true);
           }}>
@@ -3288,23 +3289,36 @@ export default function Bank() {
                   </p>
                 </div>
               )}
+
+              {exportPreflightData.bankDagboek == null && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3">
+                  <p className="text-sm font-medium text-destructive">{SNELSTART_BANKDAGBOEK_ONTBREEKT}</p>
+                </div>
+              )}
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setExportPreflightOpen(false)}>Annuleren</Button>
             <Button
-              disabled={!exportPreflightData || exportPreflightData.countBlocked > 0 || !singleClientId}
+              disabled={!exportPreflightData || exportPreflightData.countBlocked > 0 || !singleClientId || exportPreflightData.bankDagboek == null}
               onClick={() => {
                 if (!exportPreflightData || !singleClientId || exportPreflightData.exportCandidates.some(t => t.client_id !== singleClientId)) {
                   toast({ title: "Export geblokkeerd: kies één administratie", variant: "destructive" });
                   return;
                 }
-                const meta = exportBankTransactionsCSV(
-                  exportPreflightData.exportCandidates,
-                  grootboekrekeningen ?? [],
-                  exportPreflightData.clientName,
-                  exportPreflightData.bankDagboek,
-                );
+                let meta: ReturnType<typeof exportBankTransactionsCSV>;
+                try {
+                  // Gooit zonder ingesteld bankdagboek: dan geen bestand.
+                  meta = exportBankTransactionsCSV(
+                    exportPreflightData.exportCandidates,
+                    grootboekrekeningen ?? [],
+                    exportPreflightData.clientName,
+                    exportPreflightData.bankDagboek,
+                  );
+                } catch (e: any) {
+                  toast({ title: "Bankexport niet gemaakt", description: e?.message, variant: "destructive" });
+                  return;
+                }
                 setExportPreflightOpen(false);
                 let description = `${meta.exportedTransactions} bankregel(s) geëxporteerd.`;
                 if (meta.bookedTo1799 > 0) {

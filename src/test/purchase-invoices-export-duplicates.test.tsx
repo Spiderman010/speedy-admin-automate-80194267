@@ -22,11 +22,19 @@ const state = {
 
 function makeQueryMock() {
   const query: Record<string, unknown> = {};
+  let isUpdate = false;
+  let idFilter: string[] = [];
   const chain = (method: string) =>
     vi.fn((...args: unknown[]) => {
       state.calls.push({ method, args });
+      if (method === "update") isUpdate = true;
+      if (method === "in" && args[0] === "id") idFilter = args[1] as string[];
       return query;
     });
+  // Without a queued response, an UPDATE matched every requested id and returns
+  // those rows (RETURNING via .select("id")); a read returns no rows.
+  const defaultResponse = () =>
+    isUpdate ? { data: idFilter.map(id => ({ id })), error: null } : { data: [], error: null };
   query.select = chain("select");
   query.update = chain("update");
   query.eq = chain("eq");
@@ -34,12 +42,12 @@ function makeQueryMock() {
   query.order = chain("order");
   query.range = vi.fn((...args: unknown[]) => {
     state.calls.push({ method: "range", args });
-    return Promise.resolve(state.responses.shift() ?? { data: [], error: null });
+    return Promise.resolve(state.responses.shift() ?? defaultResponse());
   });
-  // duplicate-candidate queries resolve without .range(): make the builder thenable
+  // duplicate-candidate and update queries resolve without .range(): make the builder thenable
   (query as { then?: unknown }).then = (
     onFulfilled: (v: { data: unknown[]; error: unknown }) => unknown,
-  ) => Promise.resolve(state.responses.shift() ?? { data: [], error: null }).then(onFulfilled);
+  ) => Promise.resolve(state.responses.shift() ?? defaultResponse()).then(onFulfilled);
   return query;
 }
 
@@ -166,7 +174,9 @@ describe("markPurchaseInvoicesExported", () => {
   const ids = (n: number) => Array.from({ length: n }, (_, i) => `id-${i}`);
 
   it("updates 2300 invoices in batched requests, not 2300 requests", async () => {
-    await markPurchaseInvoicesExported({ organizationId: "org-1", invoiceIds: ids(2300) });
+    await expect(
+      markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(2300) }),
+    ).resolves.toEqual({ marked: 2300 });
 
     const expectedBatches = Math.ceil(2300 / STATUS_UPDATE_BATCH_SIZE);
     const updateCalls = callsFor("update");
@@ -186,7 +196,7 @@ describe("markPurchaseInvoicesExported", () => {
   });
 
   it("scopes every update batch to the organization", async () => {
-    await markPurchaseInvoicesExported({ organizationId: "org-1", invoiceIds: ids(400) });
+    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(400) });
 
     const expectedBatches = Math.ceil(400 / STATUS_UPDATE_BATCH_SIZE);
     const orgScopes = callsFor("eq").filter(
@@ -195,24 +205,55 @@ describe("markPurchaseInvoicesExported", () => {
     expect(orgScopes).toHaveLength(expectedBatches);
   });
 
+  it("scopes every batch to the administratie and to still-exportable statuses, and writes only the export status (D1)", async () => {
+    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(400) });
+
+    const expectedBatches = Math.ceil(400 / STATUS_UPDATE_BATCH_SIZE);
+    expect(callsFor("eq").filter(c => c.args[0] === "client_id" && c.args[1] === "c-1")).toHaveLength(expectedBatches);
+    expect(callsFor("in").filter(c => c.args[0] === "status").map(c => c.args[1])).toEqual(
+      Array.from({ length: expectedBatches }, () => ["gecontroleerd", "betaald"]),
+    );
+    // Nooit remaining_amount en nooit een betaalstatus in de markering.
+    callsFor("update").forEach(c => expect(c.args[0]).toEqual({ status: "geexporteerd" }));
+    // RETURNING, zodat een stil gereduceerde update opvalt.
+    expect(callsFor("select").map(c => c.args[0])).toEqual(Array.from({ length: expectedBatches }, () => "id"));
+  });
+
   it("refuses to run without an organizationId and performs no requests", async () => {
     await expect(
-      markPurchaseInvoicesExported({ organizationId: "", invoiceIds: ids(3) }),
+      markPurchaseInvoicesExported({ organizationId: "", clientId: "c-1", invoiceIds: ids(3) }),
     ).rejects.toThrow(/organisatie/i);
+    expect(callsFor("update")).toHaveLength(0);
+  });
+
+  it("refuses to run without a single administratie and performs no requests", async () => {
+    for (const clientId of ["", "all"]) {
+      await expect(
+        markPurchaseInvoicesExported({ organizationId: "org-1", clientId, invoiceIds: ids(3) }),
+      ).rejects.toThrow(/administratie/i);
+    }
     expect(callsFor("update")).toHaveLength(0);
   });
 
   it("rejects when a batch fails so callers cannot report success early", async () => {
     state.responses = [
-      { data: [], error: null },
+      { data: ids(STATUS_UPDATE_BATCH_SIZE).map(id => ({ id })), error: null },
       { data: [], error: { message: "rls denied" } },
     ];
     await expect(
       markPurchaseInvoicesExported({
         organizationId: "org-1",
+        clientId: "c-1",
         invoiceIds: ids(STATUS_UPDATE_BATCH_SIZE + 1),
       }),
-    ).rejects.toMatchObject({ message: "rls denied" });
+    ).rejects.toMatchObject({ message: "rls denied", marked: STATUS_UPDATE_BATCH_SIZE, expected: STATUS_UPDATE_BATCH_SIZE + 1 });
+  });
+
+  it("rejects when an update silently touches fewer rows (RLS, changed status) instead of reporting success", async () => {
+    state.responses = [{ data: [{ id: "id-0" }], error: null }];
+    await expect(
+      markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(3) }),
+    ).rejects.toMatchObject({ message: expect.stringMatching(/1 van 3/), marked: 1, expected: 3 });
   });
 });
 
