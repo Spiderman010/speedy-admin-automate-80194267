@@ -119,6 +119,20 @@ describe("Verkoop — SnelStart-export alleen per administratie (A2-05, D-04, B2
     expect(selectsOn("sales_invoices")[0].filters).toEqual(expect.arrayContaining(["organization_id=eq.org-1", "client_id=eq.c1"]));
   });
 
+  it("A2-15: verlegde btw blokkeert nog steeds de hele export, maar de melding noemt welke facturen", async () => {
+    h.selectedClientId = "c1";
+    fakeDb.tables.sales_invoices.push(
+      salesRow("s-verlegd", "c1", { invoice_number: "V-777", btw_verlegd: true, btw_amount: 0, amount_incl: 100, btw_percentage: 0 }),
+    );
+    renderVerkoop();
+    fireEvent.click(exportButton());
+    await waitFor(() => expect(h.toasts.some((t) => t.title === "Export geblokkeerd")).toBe(true));
+    const melding = String(h.toasts.find((t) => t.title === "Export geblokkeerd").description);
+    expect(melding).toMatch(/Btw verlegd bij verkoopfactuur: V-777\./);
+    expect(melding).not.toContain("V-001");
+    expect(downloads).toHaveLength(0);
+  });
+
   it("de verdedigingslaag weigert als de server rijen van een andere administratie teruggeeft", async () => {
     h.selectedClientId = "c1";
     fakeDb.ignoreClientFilter = true;

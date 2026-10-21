@@ -703,10 +703,15 @@ export default function Verkoop() {
               toast({ title: "Geen exporteerbare verkoopfacturen", description: "Alleen gecontroleerde en betaalde facturen worden geëxporteerd.", variant: "destructive" });
               return;
             }
-            if (exportable.some(i => i.btw_verlegd)) {
+            // A2-15: het blokkeren blijft (geen besluit over de exportcode); de
+            // melding noemt nu wélke facturen met verlegde btw het blokkeren.
+            const verlegd = exportable.filter(i => i.btw_verlegd);
+            if (verlegd.length) {
+              const genoemd = verlegd.slice(0, 5).map(i => i.invoice_number || i.customer_name).join(", ");
+              const meer = verlegd.length > 5 ? ` en ${verlegd.length - 5} andere` : "";
               toast({
                 title: "Export geblokkeerd",
-                description: "Deze selectie bevat verkoopfacturen met btw verlegd. De juiste SnelStart-exportcode is nog niet ingesteld. Controleer dit eerst voordat je exporteert.",
+                description: `Btw verlegd bij ${verlegd.length === 1 ? "verkoopfactuur" : `${verlegd.length} verkoopfacturen`}: ${genoemd}${meer}. De juiste SnelStart-exportcode is nog niet ingesteld. Controleer dit eerst voordat je exporteert.`,
                 variant: "destructive",
               });
               return;
