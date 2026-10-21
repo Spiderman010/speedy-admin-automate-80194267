@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Real-PostgreSQL proof for P5 — atomaire betalingen en allocaties:
-#   20261021180000_add_atomic_bank_payment_link (P5a),
+#   20261021180000_add_atomic_bank_payment_link (P5a) en
+#   20261021183000_enforce_bank_payment_writer (P5c),
 # against the REAL writers, the REAL RLS of the five source tables and the real
 # migration chain up to and including 20261020120000.
 #
@@ -32,8 +33,11 @@
 #   concurrency.sql          L: races with two/three real sessions, no deadlock
 #   ROLLBACK P5a (TWICE)     literally from the header + rollback.sql
 #   P5a + final.sql          re-applied; replay survives; global invariants
+#   P5c (TWICE) + p5c.sql    P: enforcement (REVOKE, writer guard, invoice guard)
+#   ROLLBACK P5c (TWICE)     literally from the header + p5c-rollback.sql
+#   P5c                      re-applied
 #
-# Mutation testing: point P5A_MIGRATION at a modified copy; the
+# Mutation testing: point P5A_MIGRATION / P5C_MIGRATION at a modified copy; the
 # proofs that depend on the removed protection must then fail.
 
 set -euo pipefail
@@ -45,6 +49,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 MIG="$REPO/supabase/migrations"
 MA="${P5A_MIGRATION:-$MIG/20261021180000_add_atomic_bank_payment_link.sql}"
+MC="${P5C_MIGRATION:-$MIG/20261021183000_enforce_bank_payment_writer.sql}"
 
 CONN="host=${PGHOST:?set PGHOST} port=${PGPORT:-5432} dbname=$DB user=${PGUSER:-postgres}"
 
@@ -56,6 +61,7 @@ run() { psql -X -q -v ON_ERROR_STOP=1 -d "$DB" "$@" > /dev/null; }
 # tot en met de eerste regel zonder commentaar die op ';' eindigt), uitgevoerd
 # in een ALLEEN-LEZEN transactie. Uitvoer: rijen als a|b|c.
 R5A="$REPO/supabase/rollout/20261021180000_add_atomic_bank_payment_link"
+R5C="$REPO/supabase/rollout/20261021183000_enforce_bank_payment_writer"
 block() {
   local out
   out="$(awk -v h="$2" 'index($0, h) == 1 { f = 1 } f { print } f && !/^--/ && /;[[:space:]]*$/ { exit }' "$1")"
@@ -128,6 +134,44 @@ run -f "$HERE/rollback.sql"
 run -f "$MA"
 run -f "$HERE/final.sql"
 
+# P5c, TWEE keer, na P5a.
+run -c "SELECT proof.put('p5c_data', proof.p5data()), proof.put('p5c_acl', proof.acl('public.bank_transaction_allocations'));"
+
+# U — PRE van P5c. In deze testdata schreef de "oude app" na het eerste gebruik
+# van de schrijver nog twee koppelingen rechtstreeks (H6 en L14): PRE 3 moet ze
+# vinden (in productie: STOP).
+ro "$(cat "$R5C/preflight.sql")" > /dev/null
+expect_eq U9 'P5c PRE 1: P5a aanwezig, P5c nog niet' \
+  "$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 1.')")" 't|t|t|t'
+expect_eq U10 'P5c PRE 3 vindt de directe schrijfacties van na het eerste gebruik (2: H6 en L14)' \
+  "$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 3.')" | cut -d'|' -f2)" '2'
+expect_eq U11 'P5c PRE 4: geen facturen met restant 0 zonder bedrag' \
+  "$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 4.')")" ''
+C6="$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 6.')")"
+
+run -f "$MC"
+run -f "$MC"
+
+ro "$(cat "$R5C/postcheck.sql")" > /dev/null
+expect_eq U12 'P5c POST 1: alleen lezen, guards actief, policies staan, schrijver bereikbaar' \
+  "$(ro "$(block "$R5C/postcheck.sql" '-- ── POST 1.')")" 't|t|t|t|t|t'
+expect_eq U13 'P5c POST 2 = PRE 6: geen rij gewijzigd' \
+  "$(ro "$(block "$R5C/postcheck.sql" '-- ── POST 2.')")" "$C6"
+
+run -f "$HERE/p5c.sql"
+
+# De gedocumenteerde ROLLBACK van P5c, letterlijk uit de kop, TWEE keer; dan weer vooruit.
+run -c "SELECT proof.put('p5c_digest_before_rollback', proof.p5digest());"
+RC="$(rollback_of "$MC")"
+run -c "$RC"
+run -c "$RC"
+run -f "$HERE/p5c-rollback.sql"
+run -f "$MC"
+run -c "SELECT proof.plan(ARRAY['Q3']);
+        SELECT proof.expect_true('Q3', 'P5c opnieuw toegepast: guards terug, alleen SELECT voor authenticated, invarianten gelden',
+          \$\$EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'enforce_bank_allocation_writer_trigger')
+             AND NOT has_table_privilege('authenticated', 'public.bank_transaction_allocations', 'INSERT')
+             AND proof.writer_violations() = 0 AND proof.unbalanced() = 0\$\$);"
 
 psql -X -q -d "$DB" -P pager=off -c "
   SELECT CASE WHEN ok THEN 'PASS' ELSE 'FAIL' END AS uitslag, n, name, left(coalesce(detail, ''), 110) AS detail
