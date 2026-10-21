@@ -25,6 +25,8 @@ SELECT proof.expect_ok('2.5', 'S5 (kop-btw over het totaal) geboekt: de schrijve
   $$SELECT proof.post_as('00000000-0000-0000-0000-0000000000e1', proof.uid(2000, 5))$$);
 SELECT proof.expect_ok('2.6', 'S6 (regel zonder btw-%) geboekt: de schrijver kijkt niet naar het regeltarief',
   $$SELECT proof.post_as('00000000-0000-0000-0000-0000000000e1', proof.uid(2000, 6))$$);
+SELECT proof.expect_ok('2.7', 'S9 (2 × 1,30 @ 21%, kop-btw 0,55 over het totaal) geboekt',
+  $$SELECT proof.post_as('00000000-0000-0000-0000-0000000000e1', proof.uid(2000, 9))$$);
 
 -- ── 3. Weigeringen die de export ook kent (negatief) ────────────────────────
 SELECT proof.expect_error('3.1', 'S7 zonder boekingsregels: geweigerd',
@@ -41,8 +43,8 @@ CREATE VIEW proof.ledger AS
   JOIN public.grootboekrekeningen g ON g.id = lp.grootboekrekening_id
   WHERE lp.source_type = 'purchase_invoice';
 
-SELECT proof.expect_true('4.1', 'precies één marker per geboekte factuur (S1–S6), geen voor S7/S8',
-  $$(SELECT count(*) FROM public.purchase_invoice_postings) = 6
+SELECT proof.expect_true('4.1', 'precies één marker per geboekte factuur (S1–S6, S9), geen voor S7/S8',
+  $$(SELECT count(*) FROM public.purchase_invoice_postings) = 7
     AND NOT EXISTS (SELECT 1 FROM public.purchase_invoice_postings p
                     WHERE p.purchase_invoice_id IN (proof.uid(2000, 7), proof.uid(2000, 8)))$$);
 SELECT proof.expect_true('4.2', 'elke boekingsgroep is in balans (debet = credit)',
@@ -65,3 +67,7 @@ SELECT proof.expect_true('4.7', 'S2 (0%): geen btw-regel, D 7000 50,00 · C 1600
   $$(SELECT array_agg(format('%s:%s:%s', nummer, debit_amount, credit_amount) ORDER BY line_no)
        FROM proof.ledger WHERE source_id = proof.uid(2000, 2))
     = ARRAY['7000:50.00:0.00', '1600:0.00:50.00']$$);
+SELECT proof.expect_true('4.8', 'S9: het grootboek boekt de kop-btw 0,55 (over het totaal)',
+  $$(SELECT array_agg(format('%s:%s:%s', nummer, debit_amount, credit_amount) ORDER BY line_no)
+       FROM proof.ledger WHERE source_id = proof.uid(2000, 9))
+    = ARRAY['4400:1.30:0.00', '4400:1.30:0.00', '1520:0.55:0.00', '1600:0.00:3.15']$$);

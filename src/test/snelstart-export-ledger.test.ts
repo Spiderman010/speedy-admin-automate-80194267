@@ -17,8 +17,10 @@ import { buildPurchaseInvoiceExport, type SnelstartLedgerAccount, type Snelstart
  *   btw               Σ btw(export)    = debet BTW te vorderen (1520)
  *   crediteur         Σ bedrag(export) = credit crediteuren (1600)
  *
- * S5 (B-5) rondt de kop-btw over het totaal af (0,27); sinds H6-01 verdeelt de
- * export die per tarief over de regels (0,14 + 0,13) en sluit hij op het journaal.
+ * S5 (B-5) rondt de kop-btw over het totaal af (0,27); de export verdeelt die
+ * (0,14 + 0,13, H6-01) en dat rekent ook terug, dus hij sluit op het journaal.
+ * S9 (K-9, 2 × 1,30 @ 21%, kop 0,55) is niet terug te rekenen (1,58 → 0,27): de
+ * schrijver boekt hem, de export weigert (H6-01b).
  *
  * waarbij excl en btw per exportregel worden afgeleid zoals SnelStart dat uit
  * "bedrag incl. + btw-code" doet: btw = afronden(incl × p / (100 + p)). Of
@@ -102,6 +104,14 @@ describe("A2-04 — export per boekingsregel tegenover de journaalregels van pos
     expect(rows.reduce((s, r) => s + r.vatCents, 0)).toBe(vat);
     expect(rows.reduce((s, r) => s + r.inclCents, 0)).toBe(creditor);
     expect(rows.every((r) => r.datum === "20-10-2026")).toBe(true);
+  });
+
+  it("VERSCHIL S9 (H6-01b): het journaal boekt de kop-btw 0,55; geen verdeling rekent in SnelStart terug — de export weigert", () => {
+    const { invoice, plan, vat } = compare("K-9");
+    expect(invoice.posted).toBe(true);
+    expect(vat).toBe(55);
+    expect(plan.rows).toEqual([]);
+    expect(plan.refused[0].reason).toMatch(/terugrekent/);
   });
 
   it("VERSCHIL S6: de schrijver negeert het regeltarief en boekt een regel zonder btw-% — de export weigert (onbekende btw)", () => {
