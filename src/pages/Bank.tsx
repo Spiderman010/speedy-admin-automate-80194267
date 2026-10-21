@@ -49,8 +49,8 @@ import {
   BANK_STATUS_MATCH_VALUES,
   bankSanitizeSearchTerm,
 } from "@/hooks/useBankTransactions";
-import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
-import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
+import { fetchAllPurchaseInvoices, usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
+import { fetchAllSalesInvoices, useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
 import { exportBankTransactionsCSV, resolveBankExportGrootboek } from "@/lib/snelstart-export";
 import { exportAfletterrapportCSV } from "@/lib/afletterrapport-export";
 import { useClients } from "@/hooks/useClients";
@@ -1919,6 +1919,18 @@ export default function Bank() {
     }
   }, [recordSuggestionRejection, updateTx, toast]);
 
+  // The invoice suggestions of an import come from the invoices of the import
+  // administratie itself, fresh and complete — not from the purchase and sales
+  // lists of this page, which follow the page's own selection (review P2-5).
+  const loadImportInvoices = useCallback(async (importClientId: string) => {
+    if (!activeOrganizationId) throw new Error("Geen actieve organisatie");
+    const [purchases, sales] = await Promise.all([
+      fetchAllPurchaseInvoices({ organizationId: activeOrganizationId, clientId: importClientId }),
+      fetchAllSalesInvoices({ organizationId: activeOrganizationId, clientId: importClientId }),
+    ]);
+    return { purchases, sales };
+  }, [activeOrganizationId]);
+
   const handleImport = useCallback(async (importClientId: string, txs: MatchedTransaction[]): Promise<void | false> => {
     // Hard refusal (B2-10): only an administratie of the ACTIVE organisation.
     // `clients` holds exactly the active organisation's administraties; a stale
@@ -3175,8 +3187,7 @@ export default function Bank() {
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         clients={clients ?? []}
-        invoices={invoices ?? []}
-        salesInvoices={salesInvs ?? []}
+        loadInvoices={loadImportInvoices}
         onImport={handleImport}
         loadExistingTransactions={(importClientId) =>
           fetchAllBankTransactions({ organizationId: activeOrganizationId ?? undefined, clientId: importClientId })

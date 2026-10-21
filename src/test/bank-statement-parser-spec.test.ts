@@ -195,6 +195,24 @@ describe("CAMT.053 — CdtDbtInd en RvslInd, saldi, valuta, rekeningen", () => {
     expect(statementImportBlockers(st)).toEqual([]);
   });
 
+  it("niet-geboekte regels (PDNG, INFO) tellen niet mee voor import en saldocontrole, maar worden wel gemeld (review P2-4)", () => {
+    const withStatus = (amount: string, ind: string, sts: string) =>
+      ntry(amount, ind).replace("<Sts>BOOK</Sts>", sts);
+    const text = camt(stmt("NL91ABNA0417164300",
+      bal("OPBD", "1000.00") +
+      ntry("50.00", "CRDT", "<RvslInd>true</RvslInd>") + // geboekte storno
+      withStatus("20.00", "DBIT", "<Sts>PDNG</Sts>") + // nog niet geboekt
+      withStatus("7.00", "CRDT", "<Sts><Cd>INFO</Cd></Sts>") + // camt.053.001.08-vorm
+      withStatus("3.00", "DBIT", "<Sts><Cd>BOOK</Cd></Sts>") +
+      bal("CLBD", "1047.00")));
+    const st = parseBankStatementFull(text);
+    expect(st.transactions.map((t) => t.amount).sort((a, b) => a - b)).toEqual([-3, 50]);
+    expect(st.notBooked.map((n) => n.status)).toEqual(["PDNG", "INFO"]);
+    expect(st.notBooked[0].raw).toContain("20.00");
+    expect(st.errors).toEqual([]);
+    expect(statementImportBlockers(st)).toEqual([]); // eerder: saldoverschil van precies € 20,00
+  });
+
   it("zonder CdtDbtInd wordt een bedrag niet stil een bijschrijving, maar een fout die blokkeert", () => {
     const st = parseBankStatementFull(camt(stmt("NL91ABNA0417164300", bal("OPBD", "100.00") + ntry("10.00", null) + bal("CLBD", "90.00"))));
     expect(st.transactions).toEqual([]);

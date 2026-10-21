@@ -86,6 +86,17 @@ export interface ParsedStatement {
   currencies: string[];
   /** MT940 funds codes (the third letter of the currency, "R" for EUR) seen in :61:. */
   fundsCodes: string[];
+  /**
+   * CAMT entries that are not booked (<Sts> PDNG or INFO): no transaction and
+   * not in the balance check, since the booked closing balance (CLBD) does not
+   * contain them. Listed so the preview can say they were left out.
+   */
+  notBooked: StatementNotBookedEntry[];
+}
+
+export interface StatementNotBookedEntry {
+  status: string;
+  raw: string;
 }
 
 export interface DuplicateInfo {
@@ -135,6 +146,7 @@ function emptyStatement(): ParsedStatement {
     accounts: [],
     currencies: [],
     fundsCodes: [],
+    notBooked: [],
   };
 }
 
@@ -454,6 +466,17 @@ function parseCAMT053Full(xmlText: string): ParsedStatement {
     const entries = byTag(stmt, "Ntry");
     entriesInStatements += entries.length;
     for (const entry of entries) {
+      // Only booked entries are bank transactions. A pending (PDNG) or
+      // information-only (INFO) entry is not in the booked balances: counting
+      // it reported a balance difference of exactly its amount, and importing
+      // it would book a movement the bank has not booked (review P2-4).
+      // camt.053.001.02 has <Sts>BOOK</Sts>, later versions <Sts><Cd>BOOK</Cd></Sts>;
+      // without <Sts> the entry counts as booked, as before.
+      const status = directText(entry, "Sts").toUpperCase();
+      if (status && status !== "BOOK") {
+        result.notBooked.push({ status, raw: excerpt(entry) });
+        continue;
+      }
       const parsed = parseCAMTEntry(entry, ns);
       if ("error" in parsed) {
         result.errors.push({ lineNumber: null, raw: excerpt(entry), reason: parsed.error });

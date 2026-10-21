@@ -47,8 +47,8 @@ const ts = (i: number) => new Date(Date.UTC(2025, 0, 1) + i * 60_000).toISOStrin
 const rows = (n: number, make: (i: number) => Row) => Array.from({ length: n }, (_, i) => make(i));
 
 let emu: ReturnType<typeof createPostgrestEmulator>;
-function setup(tables: Record<string, Row[]>, rpc?: Record<string, (a: any) => Row[]>) {
-  emu = createPostgrestEmulator({ maxRows: CAP, tables, rpc });
+function setup(tables: Record<string, Row[]>, rpc?: Record<string, (a: any) => Row[]>, tiesVaryPerRequest = false) {
+  emu = createPostgrestEmulator({ maxRows: CAP, tables, rpc, tiesVaryPerRequest });
   h.client = emu.client;
 }
 
@@ -116,6 +116,22 @@ describe("volledige lijsten voorbij max_rows = 1000", () => {
     await waitFor(() => expect(subset.result.current.isSuccess).toBe(true));
     expect(subset.result.current.data).toHaveLength(867 + 866);
     expect(new Set(subset.result.current.data!.map((r) => r.client_id))).toEqual(new Set(["c0", "c2"]));
+  });
+
+  it("inkoopfacturen met dezelfde factuurdatum: de tiebreaker op id houdt de pagina's sluitend (review Nit-3)", async () => {
+    // 2500 facturen op één dag: zonder unieke tiebreaker mag de database ze per
+    // verzoek anders ordenen, en dan overlappen de pagina's en vallen er facturen weg.
+    setup({
+      purchase_invoices: rows(2500, (i) => ({
+        id: `pi-${pad(i)}`, organization_id: "org-1", client_id: "c1", invoice_date: "2026-01-31",
+        status: "gecontroleerd", amount_incl: 100, remaining_amount: 100, supplier: "Leverancier", invoice_number: `F-${i}`,
+      })),
+    }, undefined, true);
+    const { result } = renderHook(() => usePurchaseInvoices({ organizationId: "org-1", clientId: "c1" }), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.isSuccess || result.current.isError).toBe(true));
+    expect(result.current.isSuccess).toBe(true);
+    expect(new Set(result.current.data!.map((r) => r.id)).size).toBe(2500);
+    expect(result.current.data!.map((r) => r.id)).toEqual(rows(2500, (i) => ({ id: `pi-${pad(i)}` })).map((r) => r.id));
   });
 
   it("rekeningschema (useGrootboekrekeningen en useActiveGrootboekrekeningen): ook de hoogste nummers", async () => {

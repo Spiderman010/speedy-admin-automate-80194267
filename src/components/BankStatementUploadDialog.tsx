@@ -42,10 +42,13 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** The administraties of the active organisation, with their registered IBANs. */
   clients: StatementAccountClient[];
-  /** Purchase invoices the page has loaded; only those of the import client are used. */
-  invoices: PurchaseInvoice[];
-  /** Sales invoices the page has loaded; only those of the import client are used. */
-  salesInvoices?: SalesInvoice[];
+  /**
+   * Loads every purchase and sales invoice of exactly this client, fresh from
+   * the server, for the invoice suggestions. Not what the bank page happens to
+   * have loaded for its own selection: importing into another administratie
+   * would then get no suggestions at all (review P2-5). Without it: no suggestions.
+   */
+  loadInvoices?: (clientId: string) => Promise<{ purchases: PurchaseInvoice[]; sales: SalesInvoice[] }>;
   /** Resolves `false` when the import did not start at all: the preview then stays open. */
   onImport: (clientId: string, transactions: MatchedTransaction[]) => Promise<void | false>;
   /**
@@ -110,7 +113,7 @@ const ACCOUNT_CONFIRM_TEXT: Record<Extract<StatementAccountCheck, { status: "con
 export const DUPLICATE_CHECK_FAILED_MESSAGE =
   "De bestaande banktransacties van deze klant konden niet worden geladen. Importeren is geblokkeerd, zodat er geen dubbele transacties ontstaan. Probeer het opnieuw.";
 
-export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, salesInvoices = [], onImport, loadExistingTransactions, bookingTemplates = [], defaultClientId }: Props) {
+export function BankStatementUploadDialog({ open, onOpenChange, clients, loadInvoices, onImport, loadExistingTransactions, bookingTemplates = [], defaultClientId }: Props) {
   const [clientId, setClientId] = useState(defaultClientId ?? "");
 
   // Sync clientId whenever the dialog (re-)opens with a preselected client
@@ -125,7 +128,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   const [candidatesByRow, setCandidatesByRow] = useState<InvoiceCandidate[][]>([]);
   const [duplicateInfos, setDuplicateInfos] = useState<DuplicateInfo[]>([]);
   const [selected, setSelected] = useState<boolean[]>([]);
-  const [statementSummary, setStatementSummary] = useState<Pick<ParsedStatement, "openingBalance" | "closingBalance" | "sections"> | null>(null);
+  const [statementSummary, setStatementSummary] = useState<Pick<ParsedStatement, "openingBalance" | "closingBalance" | "sections" | "notBooked"> | null>(null);
   const [importing, setImporting] = useState(false);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   // The client the preview was built for (duplicates, invoices, IBAN). The
@@ -137,6 +140,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   const [blockers, setBlockers] = useState<StatementImportBlocker[]>([]);
   const [accountCheck, setAccountCheck] = useState<StatementAccountCheck | null>(null);
   const [accountConfirmed, setAccountConfirmed] = useState(false);
+  const [suggestionsUnavailable, setSuggestionsUnavailable] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   // Ignores a duplicate check that finishes after the user started over.
   const checkToken = useRef(0);
@@ -148,6 +152,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     setDuplicateInfos([]);
     setSelected([]);
     setStatementSummary(null);
+    setSuggestionsUnavailable(false);
     setAccountCheck(null);
     setAccountConfirmed(false);
   };
@@ -175,6 +180,19 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     }
     if (token !== checkToken.current) return;
 
+    // The invoices of the import client itself. A failure costs only the
+    // suggestions, never the import: the rows then come in as "niet gematcht".
+    let loaded: { purchases: PurchaseInvoice[]; sales: SalesInvoice[] } = { purchases: [], sales: [] };
+    let invoicesUnavailable = false;
+    if (loadInvoices) {
+      try {
+        loaded = await loadInvoices(forClientId);
+      } catch {
+        invoicesUnavailable = true;
+      }
+      if (token !== checkToken.current) return;
+    }
+
     // Over the whole statement, before any selection, so a line's position —
     // and with it its fingerprint — never depends on what the user ticks.
     let fingerprints: (string | null)[] = statement.transactions.map(() => null);
@@ -190,6 +208,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
       openingBalance: statement.openingBalance,
       closingBalance: statement.closingBalance,
       sections: statement.sections,
+      notBooked: statement.notBooked,
     });
     setAccountCheck(account);
     setAccountConfirmed(false);
@@ -197,8 +216,8 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     // Invoice suggestions only through the safe-match gate: same direction,
     // same administratie, an open amount, identity evidence, and no
     // preselection on a tied top score. A reversal is never a payment.
-    const clientPurchases = invoices.filter((i) => i.client_id === forClientId);
-    const clientSales = salesInvoices.filter((i) => i.client_id === forClientId);
+    const clientPurchases = loaded.purchases.filter((i) => i.client_id === forClientId);
+    const clientSales = loaded.sales.filter((i) => i.client_id === forClientId);
     const rowCandidates = statement.transactions.map((tx) =>
       tx.isReversal
         ? []
@@ -218,12 +237,13 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         return { ...row, importFingerprint: fingerprints[i] ?? null, importSource: row.source ?? null };
       });
     setCandidatesByRow(rowCandidates);
+    setSuggestionsUnavailable(invoicesUnavailable);
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(statement.transactions, existing);
     setDuplicateInfos(dupInfos);
     setSelected(dupInfos.map(d => !d.isDuplicate));
-  }, [invoices, salesInvoices, loadExistingTransactions, bookingTemplates]);
+  }, [loadInvoices, loadExistingTransactions, bookingTemplates]);
 
   const handleFile = useCallback(async (file: File) => {
     setError(null);
@@ -246,7 +266,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
       const statement = parseBankStatementFull(text);
       if (!statement.transactions.length && !statement.errors.length) {
         setCheckingDuplicates(false);
-        setError("Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
+        setError(statement.notBooked.length > 0
+          ? "Geen geboekte transacties in dit bestand: alle regels zijn nog niet door de bank geboekt (bijv. PDNG)."
+          : "Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
         return;
       }
 
@@ -436,6 +458,20 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
               <span className="text-muted-foreground">Importeren in: </span>
               <span className="font-semibold" data-testid="import-target">{previewClientName}</span>
             </p>
+
+            {statementSummary && statementSummary.notBooked.length > 0 && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="import-not-booked">
+                <AlertCircle className="h-4 w-4" />
+                {statementSummary.notBooked.length === 1 ? "1 regel is" : `${statementSummary.notBooked.length} regels zijn`} nog niet door de bank geboekt
+                ({[...new Set(statementSummary.notBooked.map((n) => n.status))].join(", ")}) en {statementSummary.notBooked.length === 1 ? "wordt" : "worden"} niet geïmporteerd en niet in de saldocontrole meegeteld.
+              </p>
+            )}
+
+            {suggestionsUnavailable && (
+              <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400" data-testid="import-suggestions-unavailable">
+                <AlertCircle className="h-4 w-4" />Facturen konden niet worden geladen: er zijn geen factuursuggesties. De regels komen binnen als niet gematcht.
+              </p>
+            )}
 
             {accountCheck?.status === "match" && (
               <div className="flex items-center gap-2 rounded-md border p-3 text-sm text-green-700 dark:text-green-400">

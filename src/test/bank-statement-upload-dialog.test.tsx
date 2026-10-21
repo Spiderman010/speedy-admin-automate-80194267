@@ -46,7 +46,6 @@ function renderDialog(loadExistingTransactions: (clientId: string) => Promise<Ex
       open
       onOpenChange={() => {}}
       clients={[CLIENT]}
-      invoices={[]}
       onImport={onImport}
       loadExistingTransactions={loadExistingTransactions}
       defaultClientId={CLIENT.id}
@@ -112,7 +111,6 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
         open
         onOpenChange={onOpenChange}
         clients={[CLIENT]}
-        invoices={[]}
         onImport={onImport}
         loadExistingTransactions={vi.fn().mockResolvedValue([])}
         defaultClientId={CLIENT.id}
@@ -144,7 +142,6 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
         open
         onOpenChange={() => {}}
         clients={[CLIENT]}
-        invoices={[]}
         onImport={vi.fn()}
         loadExistingTransactions={load}
         defaultClientId={CLIENT.id}
@@ -164,7 +161,6 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
         open
         onOpenChange={() => {}}
         clients={[CLIENT]}
-        invoices={[]}
         onImport={vi.fn()}
         loadExistingTransactions={vi.fn().mockResolvedValue([])}
         defaultClientId={CLIENT.id}
@@ -186,7 +182,6 @@ describe("BankStatementUploadDialog — duplicaatcontrole", () => {
         open
         onOpenChange={() => {}}
         clients={[CLIENT]}
-        invoices={[]}
         onImport={vi.fn()}
         loadExistingTransactions={load}
         defaultClientId={CLIENT.id}
