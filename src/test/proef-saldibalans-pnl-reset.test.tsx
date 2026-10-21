@@ -65,7 +65,7 @@ const jaar = (y: number): LedgerPeriod => ({ from: `${y}-01-01`, toExclusive: `$
 function tb(rows: LedgerPostingLike[], period: LedgerPeriod, accs = accounts): Extract<TrialBalance, { ok: true }> {
   const report = buildAccountReport({ rows, clientId: "c1", period, accounts: accs });
   const result = buildTrialBalance({ report, accounts: accs, clientId: "c1", period });
-  if (!result.ok) throw new Error(`PSB faalde: ${JSON.stringify(result.failures)}`);
+  if (result.ok === false) throw new Error(`PSB faalde: ${JSON.stringify(result.failures)}`);
   return result;
 }
 
