@@ -491,16 +491,17 @@ describe("branch-scope", () => {
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
   });
 
-  branchIt("42. de rekenlagen zijn byte-voor-byte ongewijzigd", () => {
-    const toon = (p: string) => execFileSync("git", ["show", `origin/main:${p}`], { encoding: "utf8" });
-    for (const p of [
-      "src/lib/ledger-reporting.ts",
-      "src/lib/financial-statements.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/ledger-integrity.ts",
-    ]) {
-      expect(readFileSync(p, "utf8"), p).toBe(toon(p));
-    }
+  branchIt("42. de inhaalslag-voorspelling rekent niets uit en schrijft niets", () => {
+    // Voorheen ook: ledger-reporting.ts, financial-statements.ts,
+    // proef-saldibalans.ts en ledger-integrity.ts byte-voor-byte gelijk aan
+    // origin/main. Dat was een scope-uitspraak van de motor-PR, geen invariant:
+    // elke terechte fix in de rapportagekern liet hem omvallen (nulmeting E-02).
+    // De motor zelf wordt in dit bestand bewezen door de lineagecontroles
+    // ("reversal-integrity — de zes lineagecontroles") en de vertaling naar de
+    // console ("diagnostiek"), en op een echte PostgreSQL door
+    // supabase/tests/ledger-reversal; de rekenlagen door hun eigen gedragstests
+    // (ledger-reporting, financial-statements, proef-saldibalans, ledger-integrity).
+    //
     // Was: ook `ledger-catchup.ts` byte-identiek. Dat is geen rekenlaag maar
     // een voorspelling van boekbaarheid, en die beweegt terecht mee met de
     // schrijvers (PR H). Wat blijft: zij rekent niets uit en schrijft niets.

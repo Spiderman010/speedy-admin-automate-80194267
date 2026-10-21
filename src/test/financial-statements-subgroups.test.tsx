@@ -483,12 +483,9 @@ describe("de grenzen van deze laag", () => {
 });
 
 describe("scope", () => {
-  it("12. geen migratie, en de rekenlagen blijven byte-voor-byte gelijk", (ctx) => {
-    let toon: (p: string) => string;
+  it("12. SQL laat de rapportage ongemoeid; geen type- of afhankelijkheidswijziging", (ctx) => {
     let changed: string[];
     try {
-      execFileSync("git", ["rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] });
-      toon = (p) => execFileSync("git", ["show", `origin/main:${p}`], { encoding: "utf8" });
       changed = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
         encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
       }).split("\n").filter(Boolean);
@@ -496,17 +493,12 @@ describe("scope", () => {
       ctx.skip();
       return;
     }
-    // Dit is een presentatie-PR: geen enkele rekenlaag mag bewegen.
-    for (const p of [
-      "src/lib/financial-statements.ts",
-      "src/lib/ledger-reporting.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/financial-statements-presentation.ts",
-      "src/hooks/useFinancialStatements.ts",
-      "src/lib/reporting-classification.ts",
-    ]) {
-      expect(readFileSync(p, "utf8"), p).toBe(toon(p));
-    }
+    // Voorheen ook: zes rekenlagen byte-voor-byte gelijk aan origin/main ("dit
+    // is een presentatie-PR"). Dat was een scope-uitspraak van die PR, geen
+    // invariant: elke terechte fix in de rapportagekern liet hem omvallen
+    // (nulmeting E-02). Dat de subgroepen geen cent veranderen, bewijzen de
+    // gedragstests hierboven met de échte engine ("er verandert geen cent"
+    // 5–7b, "10b", "13").
     assertBranchSqlLeavesReportingAlone(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
