@@ -10,8 +10,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: quality-ci-${{ github.workflow }}-${{ github.ref }}
-  # Only a superseded PR run is cancelled; every push to main gets its own result.
+  # Pull requests: one group per branch, and a new push cancels the superseded run.
+  # Push to main: one group per commit, so every commit gets its own result (in a
+  # shared group GitHub would still drop all but the newest *pending* run).
+  group: quality-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
