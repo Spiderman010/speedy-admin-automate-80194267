@@ -163,6 +163,7 @@
 --   DROP FUNCTION IF EXISTS public.enforce_bank_allocation_integrity();
 --   DROP FUNCTION IF EXISTS public.guard_bank_allocation_write();
 --   DROP FUNCTION IF EXISTS public.verify_bank_payment_event();
+--   DROP FUNCTION IF EXISTS public.bank_payment_assert_consistent(text, uuid, uuid);
 --   DROP FUNCTION IF EXISTS public.bank_payment_writer_active(text, uuid);
 --   DROP FUNCTION IF EXISTS public.bank_payment_allocation_writer_active(uuid, text);
 --   DROP FUNCTION IF EXISTS public.bank_payment_tx_released(uuid);
@@ -686,10 +687,16 @@ CREATE TRIGGER validate_bank_match_rejection_not_linked_trigger
 AFTER INSERT ON public.bank_match_rejections
 FOR EACH ROW EXECUTE FUNCTION public.enforce_bank_match_rejection_not_linked();
 
--- ── 6. Postconditie van de schrijver, bij COMMIT ────────────────────────────
+-- ── 6. Postconditie van de schrijver ────────────────────────────────────────
+--
+-- Eén controle, op twee momenten: aan het eind van elke RPC (ook als een
+-- aanroeper de uitgestelde controle met SET CONSTRAINTS ALL IMMEDIATE naar
+-- voren haalt, toetst zij dan de eindtoestand) en bij COMMIT (vangt een
+-- latere wijziging in dezelfde transactie).
 
-CREATE OR REPLACE FUNCTION public.verify_bank_payment_event()
-RETURNS trigger
+CREATE OR REPLACE FUNCTION public.bank_payment_assert_consistent(
+  _invoice_type text, _invoice_id uuid, _bank_transaction_id uuid)
+RETURNS void
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
@@ -705,39 +712,52 @@ DECLARE
   v_tx_primary uuid;
   v_primary_ok boolean;
 BEGIN
-  IF NEW.invoice_type = 'inkoop' THEN
+  IF _invoice_type = 'inkoop' THEN
     SELECT pi.amount_incl, pi.remaining_amount, pi.status INTO v_incl, v_rem, v_status
-    FROM public.purchase_invoices pi WHERE pi.id = NEW.invoice_id;
+    FROM public.purchase_invoices pi WHERE pi.id = _invoice_id;
   ELSE
     SELECT si.amount_incl, si.remaining_amount, si.status INTO v_incl, v_rem, v_status
-    FROM public.sales_invoices si WHERE si.id = NEW.invoice_id;
+    FROM public.sales_invoices si WHERE si.id = _invoice_id;
   END IF;
   v_found := FOUND;
 
   SELECT coalesce(sum(a.amount), 0) INTO v_sum
   FROM public.bank_transaction_allocations a
-  WHERE a.invoice_id = NEW.invoice_id AND a.invoice_type = NEW.invoice_type;
+  WHERE a.invoice_id = _invoice_id AND a.invoice_type = _invoice_type;
 
   IF NOT v_found OR v_incl IS NULL OR v_rem IS DISTINCT FROM v_incl - v_sum
      OR (v_status = 'betaald' AND v_rem <> 0) THEN
-    RAISE EXCEPTION 'Betaalschrijver: het openstaande bedrag of de status van de factuur sluit bij COMMIT niet aan op haar koppelingen'
+    RAISE EXCEPTION 'Betaalschrijver: het openstaande bedrag of de status van de factuur sluit niet aan op haar koppelingen'
       USING ERRCODE = '23514';
   END IF;
 
   SELECT bt.match_status, bt.matched_invoice_id INTO v_tx_status, v_tx_primary
-  FROM public.bank_transactions bt WHERE bt.id = NEW.bank_transaction_id;
+  FROM public.bank_transactions bt WHERE bt.id = _bank_transaction_id;
   IF FOUND THEN
     SELECT coalesce(sum(a.amount), 0), coalesce(bool_or(a.invoice_id = v_tx_primary), false)
       INTO v_sum, v_primary_ok
     FROM public.bank_transaction_allocations a
-    WHERE a.bank_transaction_id = NEW.bank_transaction_id;
+    WHERE a.bank_transaction_id = _bank_transaction_id;
     IF (v_sum > 0 AND (v_tx_status IS DISTINCT FROM 'gematcht' OR NOT v_primary_ok))
        OR (v_sum = 0 AND (v_tx_status = 'gematcht' OR v_tx_primary IS NOT NULL)) THEN
-      RAISE EXCEPTION 'Betaalschrijver: de matchstatus van de banktransactie sluit bij COMMIT niet aan op haar koppelingen'
+      RAISE EXCEPTION 'Betaalschrijver: de matchstatus van de banktransactie sluit niet aan op haar koppelingen'
         USING ERRCODE = '23514';
     END IF;
   END IF;
+END;
+$$;
 
+REVOKE ALL ON FUNCTION public.bank_payment_assert_consistent(text, uuid, uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.verify_bank_payment_event()
+RETURNS trigger
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM public.bank_payment_assert_consistent(NEW.invoice_type, NEW.invoice_id, NEW.bank_transaction_id);
   RETURN NULL;
 END;
 $$;
@@ -1125,6 +1145,7 @@ BEGIN
      OR v_check_tx IS DISTINCT FROM 'gematcht' THEN
     RAISE EXCEPTION 'Interne fout: de betaalschrijver kon de afgeleide toestand niet vastleggen' USING ERRCODE = 'XX000';
   END IF;
+  PERFORM public.bank_payment_assert_consistent(_invoice_type, _invoice_id, v_tx.id);
 
   RETURN QUERY SELECT v_alloc_id, 'created'::text, v_new_rem::numeric, v_new_status, 'gematcht'::text, false;
 END;
@@ -1433,6 +1454,9 @@ BEGIN
   IF v_deleted <> v_count OR v_check_tx IS DISTINCT FROM v_new_tx_status THEN
     RAISE EXCEPTION 'Interne fout: de betaalschrijver kon de afgeleide toestand niet vastleggen' USING ERRCODE = 'XX000';
   END IF;
+  FOR v_item IN SELECT value FROM jsonb_array_elements(v_plan) LOOP
+    PERFORM public.bank_payment_assert_consistent(v_item->>'type', (v_item->>'invoice')::uuid, v_tx.id);
+  END LOOP;
 
   RETURN QUERY SELECT 'unlinked'::text, v_count, v_new_tx_status, false;
 END;

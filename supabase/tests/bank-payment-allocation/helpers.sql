@@ -83,6 +83,42 @@ RETURNS text LANGUAGE sql AS $$
     _tx, _req, _alloc));
 $$;
 
+/** Als proof.call, maar met de uitgestelde controles direct aan het eind van de
+    opdracht (SET CONSTRAINTS ALL IMMEDIATE), zodat een weigering bij COMMIT hier
+    als uitkomst zichtbaar wordt in plaats van de hele psql-opdracht af te breken.
+    Alleen voor directe schrijfacties; de echte COMMIT bewijzen faults.sql en
+    concurrency.sql in een tweede sessie. */
+CREATE FUNCTION proof.calli(_user uuid, _sql text, _role text DEFAULT 'authenticated')
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE v text; v_state text; v_msg text; v_out text;
+BEGIN
+  BEGIN
+    SET CONSTRAINTS ALL IMMEDIATE;
+    PERFORM set_config('test.user_id', coalesce(_user::text, ''), true);
+    EXECUTE format('SET LOCAL ROLE %I', _role);
+    EXECUTE _sql INTO v;
+    RESET ROLE;
+    SET CONSTRAINTS ALL DEFERRED;
+    RETURN 'ok: ' || coalesce(v, '');
+  EXCEPTION WHEN others THEN
+    GET STACKED DIAGNOSTICS v_state = RETURNED_SQLSTATE, v_msg = MESSAGE_TEXT;
+  END;
+  SET CONSTRAINTS ALL DEFERRED;
+  v_out := format('fout [%s] %s', v_state, v_msg);
+  INSERT INTO proof.refusal (outcome) VALUES (v_out);
+  RETURN v_out;
+END $$;
+
+/** Een koppeling zoals de oude app haar schrijft (rechtstreeks, als authenticated),
+    met de uitgestelde controles aan het eind van de opdracht. */
+CREATE FUNCTION proof.direct_alloc_i(_user uuid, _tx uuid, _type text, _inv uuid, _amount numeric)
+RETURNS text LANGUAGE sql AS $$
+  SELECT proof.calli(_user, format(
+    'INSERT INTO public.bank_transaction_allocations (bank_transaction_id, invoice_type, invoice_id, client_id, amount, user_id)
+     SELECT bt.id, %L, %L::uuid, bt.client_id, %L::numeric, bt.user_id FROM public.bank_transactions bt WHERE bt.id = %L::uuid
+     RETURNING id::text', _type, _inv, _amount, _tx));
+$$;
+
 /** Een fout met de verwachte SQLSTATE en tekst (uitkomst van proof.call). */
 CREATE FUNCTION proof.refused(_out text, _state text, _needle text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
   SELECT _out LIKE 'fout [' || _state || ']%' AND position(lower(_needle) IN lower(_out)) > 0;
@@ -163,5 +199,11 @@ BEGIN
   $q$ INTO v;
   RETURN v;
 END $$;
+
+/** Tabelrechten als gesorteerde set (de volgorde in relacl telt niet). */
+CREATE FUNCTION proof.acl(_rel regclass) RETURNS text LANGUAGE sql STABLE AS $$
+  SELECT string_agg(format('%s:%s', a.grantee::regrole, a.privilege_type), ',' ORDER BY a.grantee::regrole::text, a.privilege_type)
+  FROM pg_class c, aclexplode(c.relacl) a WHERE c.oid = _rel;
+$$;
 
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA proof TO public;
