@@ -6,6 +6,7 @@ import { useOpeningBalanceOverview } from "./useOpeningBalances";
 import {
   computeLedgerCompleteness,
   computeOpeningBalanceCompleteness,
+  DIRECT_BANK_POSTABLE_STATUS,
   PURCHASE_POSTABLE_STATUSES,
   reportYearForPeriod,
   SALES_POSTABLE_STATUSES,
@@ -48,6 +49,8 @@ async function countRows(
 async function fetchIds<T extends Record<string, unknown>>(
   table:
     | "bank_transaction_allocations"
+    | "bank_transactions"
+    | "bank_transaction_postings"
     | "purchase_invoice_postings"
     | "sales_invoice_postings"
     | "purchase_invoices"
@@ -97,6 +100,8 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     manualTotal,
     manualPosted,
     allocations,
+    directEligibleIds,
+    directMarkers,
   ] = await Promise.all([
     fetchIds<{ id: string }>("purchase_invoices", "id", "id", clientId, (q) =>
       q.in("status", [...PURCHASE_POSTABLE_STATUSES]),
@@ -110,10 +115,23 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     countRows("bank_allocation_postings", clientId),
     countRows("manual_journals", clientId),
     countRows("manual_journal_postings", clientId),
-    fetchIds<{ id: string; invoice_id: string; invoice_type: string }>(
+    fetchIds<{ id: string; bank_transaction_id: string; invoice_id: string; invoice_type: string }>(
       "bank_transaction_allocations",
-      "id, invoice_id, invoice_type",
+      "id, bank_transaction_id, invoice_id, invoice_type",
       "id",
+      clientId,
+    ),
+    // De directe bankschrijver (A3-02): gecodeerd, met rekening en een bedrag
+    // <> 0. Het bedrag is uitsluitend een FILTER in de database; er wordt hier
+    // geen bedragkolom gelezen. Of de regel gekoppeld is, volgt uit de
+    // koppelingen hierboven — exact de regels van post_bank_transaction().
+    fetchIds<{ id: string }>("bank_transactions", "id", "id", clientId, (q) =>
+      q.eq("match_status", DIRECT_BANK_POSTABLE_STATUS).not("grootboekrekening_id", "is", null).neq("amount", 0),
+    ),
+    fetchIds<{ bank_transaction_id: string }>(
+      "bank_transaction_postings",
+      "bank_transaction_id",
+      "bank_transaction_id",
       clientId,
     ),
   ]);
@@ -130,10 +148,17 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     if (invoicePosted) bankEligible++;
   }
 
+  // Een gekoppelde bankregel hoort bij de afletteringstak; zo telt niets dubbel.
+  const gekoppeld = new Set(allocations.map((a) => a.bank_transaction_id));
+  const directeBoekingen = new Set(directMarkers.map((m) => m.bank_transaction_id));
+  const directEligible = directEligibleIds.filter((t) => !gekoppeld.has(t.id));
+  const directPosted = directEligible.filter((t) => directeBoekingen.has(t.id)).length;
+
   return {
     purchase: { eligible: purchaseEligibleIds.length, posted: purchasePostedEligible },
     sales: { eligible: salesEligibleIds.length, posted: salesPostedEligible, refusedVerlegd: salesRefused },
     bank: { eligible: bankEligible, posted: bankPosted, awaitingInvoice: allocations.length - bankEligible },
+    bankDirect: { eligible: directEligible.length, posted: directPosted },
     manual: { total: manualTotal, posted: manualPosted },
   };
 }

@@ -280,6 +280,7 @@ describe("ProefSaldibalans — pagina", () => {
       purchase: { eligible: 10, posted: 7 },
       sales: { eligible: 5, posted: 5, refusedVerlegd: 2 },
       bank: { eligible: 4, posted: 4, awaitingInvoice: 0 },
+      bankDirect: { eligible: 0, posted: 0 },
       manual: { total: 2, posted: 1 },
     });
     renderPage();
@@ -299,6 +300,7 @@ describe("ProefSaldibalans — pagina", () => {
       purchase: { eligible: 1, posted: 1 },
       sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
       bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+      bankDirect: { eligible: 0, posted: 0 },
       manual: { total: 0, posted: 0 },
     });
     state.openingBalance = computeOpeningBalanceCompleteness({ headers: [], marker: null, year: YEAR });

@@ -24,7 +24,24 @@ export const PURCHASE_POSTABLE_STATUSES = ["gecontroleerd", "betaald", "geexport
 /** Statussen die post_sales_invoice() accepteert (6C-b4). */
 export const SALES_POSTABLE_STATUSES = ["gecontroleerd", "betaald"] as const;
 
-export type LedgerSourceKey = "purchase_invoice" | "sales_invoice" | "bank_allocation" | "manual_journal";
+/**
+ * De status die post_bank_transaction() (de directe bankschrijver) accepteert.
+ * Een banktransactie is voor die schrijver postbaar zodra zij handmatig
+ * gecodeerd is, een grootboekrekening en een bedrag <> 0 heeft, en NIET aan een
+ * factuur is gekoppeld (dan hoort zij bij de afletteringstak). Een marker in
+ * bank_transaction_postings betekent "geboekt". Precies dezelfde regel staat in
+ * controle D van close_fiscal_year() (20261021200000, herstel P7 / A3-02).
+ * Net als bij facturen tellen configuratie en boekingsblokkade NIET mee: het
+ * gaat om werk dat nog geboekt moet worden, niet om de vraag of dat vandaag kan.
+ */
+export const DIRECT_BANK_POSTABLE_STATUS = "handmatig_geboekt" as const;
+
+export type LedgerSourceKey =
+  | "purchase_invoice"
+  | "sales_invoice"
+  | "bank_allocation"
+  | "bank_transaction"
+  | "manual_journal";
 
 export interface LedgerCompletenessCounts {
   purchase: { eligible: number; posted: number };
@@ -32,6 +49,13 @@ export interface LedgerCompletenessCounts {
   sales: { eligible: number; posted: number; refusedVerlegd: number };
   /** `awaitingInvoice`: koppelingen waarvan de factuur zelf nog niet geboekt is. */
   bank: { eligible: number; posted: number; awaitingInvoice: number };
+  /**
+   * De directe bankschrijver (post_bank_transaction): gecodeerde bankregels
+   * zonder koppeling, en hoeveel daarvan een marker hebben. Verplicht: wie de
+   * tellingen levert, moet ook deze bron tellen — een weggelaten bron is geen
+   * "niets open".
+   */
+  bankDirect: { eligible: number; posted: number };
   manual: { total: number; posted: number };
 }
 
@@ -83,6 +107,8 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
   const bankPosted = nonNegative(counts.bank.posted);
   const bankEligible = nonNegative(counts.bank.eligible);
   const bankAwaiting = nonNegative(counts.bank.awaitingInvoice);
+  const directPosted = nonNegative(counts.bankDirect.posted);
+  const directEligible = nonNegative(counts.bankDirect.eligible);
   const manualPosted = nonNegative(counts.manual.posted);
   const manualTotal = nonNegative(counts.manual.total);
 
@@ -133,6 +159,23 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
             : null,
     },
     {
+      key: "bank_transaction",
+      label: "Gecodeerde bankregels",
+      posted: directPosted,
+      eligible: directEligible,
+      outstanding: Math.max(0, directEligible - directPosted),
+      status: statusFor(directPosted, directEligible),
+      refused: null,
+      refusedLabel: null,
+      // Een regel die nog niet gecodeerd is (niet_gematcht, suggestie) of op
+      // 'gematcht' staat zonder koppeling, kan geen enkele schrijver boeken; die
+      // telt hier dus niet als postbaar. Dat staat er eerlijk bij.
+      note:
+        directPosted > directEligible
+          ? INCONSISTENT_NOTE
+          : "Telt handmatig gecodeerde bankregels zonder factuurkoppeling; nog niet gecodeerde regels en 'gematcht' zonder koppeling tellen hier niet mee.",
+    },
+    {
       key: "manual_journal",
       label: "Memoriaalboekingen",
       posted: manualPosted,
@@ -168,6 +211,7 @@ export function unknownLedgerCompleteness(): LedgerCompleteness {
       unknown("purchase_invoice", "Inkoopfacturen"),
       unknown("sales_invoice", "Verkoopfacturen"),
       unknown("bank_allocation", "Bankafletteringen"),
+      unknown("bank_transaction", "Gecodeerde bankregels"),
       unknown("manual_journal", "Memoriaalboekingen"),
     ],
     mayBeIncomplete: true,

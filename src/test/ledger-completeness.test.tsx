@@ -18,6 +18,7 @@ const base = () => ({
   purchase: { eligible: 10, posted: 7 },
   sales: { eligible: 5, posted: 5, refusedVerlegd: 2 },
   bank: { eligible: 4, posted: 4, awaitingInvoice: 3 },
+  bankDirect: { eligible: 0, posted: 0 },
   manual: { total: 2, posted: 1 },
 });
 
@@ -86,6 +87,7 @@ describe("computeLedgerCompleteness", () => {
       purchase: { eligible: 0, posted: 0 },
       sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
       bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+      bankDirect: { eligible: 0, posted: 0 },
       manual: { total: 0, posted: 0 },
     });
     expect(c.sources.every((s) => s.status === "empty")).toBe(true);
@@ -126,6 +128,7 @@ describe("LedgerCompletenessNotice", () => {
           purchase: { eligible: 3, posted: 3 },
           sales: { eligible: 1, posted: 1, refusedVerlegd: 0 },
           bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+          bankDirect: { eligible: 0, posted: 0 },
           manual: { total: 0, posted: 0 },
         })}
       />,
@@ -161,6 +164,8 @@ vi.mock("@/integrations/supabase/client", () => ({
           return b;
         },
         eq: (c: string, v: unknown) => (call.filters.push([c, "eq", v]), b),
+        neq: (c: string, v: unknown) => (call.filters.push([c, "neq", v]), b),
+        not: (c: string, op: string, v: unknown) => (call.filters.push([c, `not.${op}`, v]), b),
         in: (c: string, v: unknown) => (call.filters.push([c, "in", v]), b),
         order: (c: string) => (call.filters.push([c, "order", "asc"]), b),
         range: async (from: number, to: number) => ({ data: (lists[table] ?? []).slice(from, to + 1), error: null }),
@@ -204,6 +209,7 @@ describe("fetchLedgerCompletenessCounts", () => {
       purchase: { eligible: 3, posted: 1 },
       sales: { eligible: 2, posted: 1, refusedVerlegd: 2 },
       bank: { eligible: 2, posted: 1, awaitingInvoice: 1 },
+      bankDirect: { eligible: 0, posted: 0 },
       manual: { total: 2, posted: 1 },
     });
     // Elke aanroep draagt het klantpredicaat en de postbare-statusfilters zijn die van de schrijvers.

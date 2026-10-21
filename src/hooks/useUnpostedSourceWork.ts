@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { PURCHASE_POSTABLE_STATUSES, SALES_POSTABLE_STATUSES } from "@/lib/ledger-completeness";
+import {
+  DIRECT_BANK_POSTABLE_STATUS,
+  PURCHASE_POSTABLE_STATUSES,
+  SALES_POSTABLE_STATUSES,
+} from "@/lib/ledger-completeness";
 import type { UnpostedWorkItem } from "@/lib/year-close-readiness";
 
 /**
@@ -22,7 +26,16 @@ import type { UnpostedWorkItem } from "@/lib/year-close-readiness";
  *              geen marker                                       → invoice_date
  *   bank       een aflettering waarvan de factuur geboekt is en
  *              die zelf nog geen marker heeft                     → transaction_date
+ *   bankregel  handmatig gecodeerd, met rekening, bedrag <> 0,
+ *              zonder koppeling en zonder marker (de directe
+ *              bankschrijver post_bank_transaction)               → transaction_date
  *   memoriaal  een memoriaalboeking zonder marker                 → posting_date
+ *
+ * De bankregel is herstel P7 (A3-02): de vijfde schrijver telde nergens mee,
+ * terwijl controle D van close_fiscal_year() zegt dat zij het werk van élke
+ * bestaande schrijver telt. Dezelfde regel staat sinds 20261021200000 in de
+ * database. Een regel op 'gematcht' zonder koppeling (FD-N3) boekt geen enkele
+ * schrijver; die telt hier bewust niet mee (ontwerpvraag D7).
  *
  * NOOIT `created_at`. Wanneer een rij is aangemaakt zegt niets over het jaar
  * waarin zij boekhoudkundig hoort; elke schrijver leidt `boekjaar` af uit de
@@ -42,6 +55,7 @@ type Tabel =
   | "bank_transaction_allocations"
   | "bank_allocation_postings"
   | "bank_transactions"
+  | "bank_transaction_postings"
   | "manual_journals"
   | "manual_journal_postings";
 
@@ -89,6 +103,7 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
     salesEligible, salesMarkers,
     allocations, allocationMarkers, bankTransactions,
     manualJournals, manualMarkers,
+    directCandidates, directMarkers,
   ] = await Promise.all([
     fetchAll<{ id: string; invoice_date: string | null }>(
       "purchase_invoices", "id, invoice_date", "id", clientId,
@@ -118,6 +133,14 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
     ),
     fetchAll<{ manual_journal_id: string }>(
       "manual_journal_postings", "manual_journal_id", "manual_journal_id", clientId,
+    ),
+    // De directe bankschrijver: het bedrag is alleen een filter, geen gelezen kolom.
+    fetchAll<{ id: string; transaction_date: string | null }>(
+      "bank_transactions", "id, transaction_date", "id", clientId,
+      (q) => q.eq("match_status", DIRECT_BANK_POSTABLE_STATUS).not("grootboekrekening_id", "is", null).neq("amount", 0),
+    ),
+    fetchAll<{ bank_transaction_id: string }>(
+      "bank_transaction_postings", "bank_transaction_id", "bank_transaction_id", clientId,
     ),
   ]);
 
@@ -153,6 +176,14 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
       id: allocation.id,
       boekjaar: boekjaarVan(transactieDatum.get(allocation.bank_transaction_id) ?? null),
     });
+  }
+  // Een gekoppelde bankregel hoort bij de afletteringstak hierboven; zo telt
+  // niets dubbel. Een marker betekent: al geboekt door de directe schrijver.
+  const gekoppeld = new Set(allocations.map((a) => a.bank_transaction_id));
+  const directGeboekt = new Set(directMarkers.map((m) => m.bank_transaction_id));
+  for (const tx of directCandidates) {
+    if (gekoppeld.has(tx.id) || directGeboekt.has(tx.id)) continue;
+    items.push({ source: "bank_transaction", id: tx.id, boekjaar: boekjaarVan(tx.transaction_date) });
   }
   for (const journal of manualJournals) {
     if (geboekteMemoriaal.has(journal.id)) continue;
