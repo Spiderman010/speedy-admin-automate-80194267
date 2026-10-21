@@ -336,7 +336,7 @@ function allocateVatCents(planned: readonly { exclCents: number; percentage: num
     return { idx, floor, frac: g - 100 * floor };
   });
   // 1. Tarieven: Σ doel per tarief = kop-btw.
-  let k = headerVat - groups.reduce((s, g) => s + g.floor, 0);
+  const k = headerVat - groups.reduce((s, g) => s + g.floor, 0);
   const groupOrder = groups.map((_, i) => i).filter((i) => groups[i].frac > 0).sort((a, b) => groups[b].frac - groups[a].frac || a - b);
   if (k < 0 || k > groupOrder.length) return null;
   const target = groups.map((g) => g.floor);
