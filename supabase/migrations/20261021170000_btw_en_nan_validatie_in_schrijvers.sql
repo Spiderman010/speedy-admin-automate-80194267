@@ -192,20 +192,27 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- Een constraint met een van onze namen maar een andere definitie: weigeren.
+  -- Een constraint met een van onze namen op een andere tabel, van een ander
+  -- type of met een andere CHECK-expressie: weigeren (gevalideerd of niet).
   IF EXISTS (
     SELECT 1
     FROM pg_constraint c
     JOIN (VALUES
-      ('public.ledger_postings'::regclass,        'ledger_postings_amounts_not_nan'),
-      ('public.purchase_invoices'::regclass,      'purchase_invoices_amounts_not_nan'),
-      ('public.sales_invoices'::regclass,         'sales_invoices_amounts_not_nan'),
-      ('public.purchase_invoice_lines'::regclass, 'purchase_invoice_lines_amount_finite'),
-      ('public.bank_transactions'::regclass,      'bank_transactions_amount_not_nan')
-    ) AS d(rel, naam) ON c.conname = d.naam
+      ('public.ledger_postings'::regclass,        'ledger_postings_amounts_not_nan',
+       'CHECK (((debit_amount <> ''NaN''::numeric) AND (credit_amount <> ''NaN''::numeric)))'),
+      ('public.purchase_invoices'::regclass,      'purchase_invoices_amounts_not_nan',
+       'CHECK (((amount_excl <> ''NaN''::numeric) AND (btw_amount <> ''NaN''::numeric) AND (amount_incl <> ''NaN''::numeric)))'),
+      ('public.sales_invoices'::regclass,         'sales_invoices_amounts_not_nan',
+       'CHECK (((amount_excl <> ''NaN''::numeric) AND (btw_amount <> ''NaN''::numeric) AND (amount_incl <> ''NaN''::numeric)))'),
+      ('public.purchase_invoice_lines'::regclass, 'purchase_invoice_lines_amount_finite',
+       'CHECK (((amount_excl <> ''NaN''::numeric) AND (amount_excl <> ''Infinity''::numeric) AND (amount_excl <> ''-Infinity''::numeric)))'),
+      ('public.bank_transactions'::regclass,      'bank_transactions_amount_not_nan',
+       'CHECK ((amount <> ''NaN''::numeric))')
+    ) AS d(rel, naam, definitie) ON c.conname = d.naam
     WHERE c.conrelid <> d.rel OR c.contype <> 'c'
+       OR regexp_replace(pg_get_constraintdef(c.oid), ' NOT VALID$', '') <> d.definitie
   ) THEN
-    RAISE EXCEPTION 'Geweigerd: een constraint met een naam uit deze migratie bestaat al op een andere tabel of van een ander type' USING ERRCODE = '55000';
+    RAISE EXCEPTION 'Geweigerd: een constraint met een naam uit deze migratie bestaat al op een andere tabel, van een ander type of met een andere definitie' USING ERRCODE = '55000';
   END IF;
 END
 $migratie$;

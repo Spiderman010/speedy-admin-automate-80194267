@@ -9,7 +9,7 @@
 -- pre5 (blok Q7 uit preflight.sql, letterlijk).
 
 SELECT proof.plan(ARRAY[
-  'M1', 'M1b', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7',
+  'M1', 'M1b', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8',
   'K1', 'K2', 'K3', 'K4', 'K5', 'K6', 'K7', 'K8',
   'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12', 'B13', 'B14', 'B15', 'B16',
   'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8',
@@ -71,6 +71,13 @@ SELECT proof.expect_error('M6', 'zonder PR 2 (20261018150000) weigert de voorwaa
          'ALTER FUNCTION public.reclassify_bank_transaction(uuid,uuid,uuid,numeric,uuid,text,text) RENAME TO reclassify_tijdelijk_weg',
          :'prereq'),
   '55000', 'PR 2');
+
+SELECT proof.expect_error('M8', 'een gelijknamige constraint met een andere CHECK-expressie wordt geweigerd (55000), niet stil behouden',
+  format('DO $t$ BEGIN EXECUTE %L; EXECUTE %L; EXECUTE %L; END $t$',
+         'ALTER TABLE public.bank_transactions DROP CONSTRAINT bank_transactions_amount_not_nan',
+         'ALTER TABLE public.bank_transactions ADD CONSTRAINT bank_transactions_amount_not_nan CHECK (amount IS NOT NULL) NOT VALID',
+         :'prereq'),
+  '55000', 'andere definitie');
 
 SELECT proof.record('M7', 'te vroeg toegepast (zonder PR 2): de hele migratie weigert en verandert niets — lichamen en constraints als vóór',
   position('PR 2' IN coalesce(proof.get('te_vroeg_err'), '')) > 0
