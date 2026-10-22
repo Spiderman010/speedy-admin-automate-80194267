@@ -1,5 +1,5 @@
--- P2 — READ-ONLY PREFLIGHT, vóór de vijf P2-migraties (20261021160000 …
--- 20261021164000). Plakken in de Lovable Cloud SQL-editor van project
+-- P2 — READ-ONLY PREFLIGHT, vóór de zes P2-migraties (20261021160000 …
+-- 20261021165000). Plakken in de Lovable Cloud SQL-editor van project
 -- alxlbdhpbwlehbdbfejw, pas na de omgevingscontrole uit PROJECT_MAP.md. Wijzigt
 -- niets. Eén rij:
 --   * elke kolom die op _ok eindigt hoort true te zijn (de verwachte begintoestand);
@@ -57,6 +57,7 @@ SELECT
   (SELECT count(*) FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass
      AND attname IN ('owner', 'owner_id') AND NOT attisdropped) = 2 AS storage_owner_kolommen_ok,
   (has_table_privilege(current_user, 'storage.objects', 'SELECT')
+   AND has_table_privilege(current_user, 'public.clients', 'SELECT')
    AND (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user)) AS migratierol_leest_storage_ok,
   -- Informatief: true = het orakel van B1-05 is (nog) open
   has_function_privilege('anon', 'public.posting_account_ok(uuid,uuid,uuid)', 'EXECUTE') AS predicaat_orakel_open,

@@ -387,20 +387,27 @@ SELECT proof.expect('L09', '… eigen wees-object (owner NULL, OCR) aan A3 hange
 COMMIT;
 
 BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('b0000000-0000-4000-8000-000000000001');
-SELECT proof.expect('L11', 'eigen upload eerst aan een inkoopfactuur, daarna ook aan een verkoopfactuur ⇒ tweede geweigerd (b, inkoopkant)',
+SELECT proof.expect('L11', 'eigen upload eerst aan een inkoopfactuur, daarna ook aan een tweede inkoopfactuur ⇒ tweede geweigerd (b, inkoopkant)',
   proof.reeks(ARRAY[
-    $q$INSERT INTO storage.objects (bucket_id, name, owner) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/cb000000-0000-4000-8000-000000000001/eigen.pdf', auth.uid())$q$,
+    $q$INSERT INTO storage.objects (bucket_id, name, owner, owner_id) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/cb000000-0000-4000-8000-000000000001/eigen.pdf', auth.uid(), auth.uid()::text)$q$,
     $q$UPDATE public.purchase_invoices SET file_path = 'b0000000-0000-4000-8000-000000000001/cb000000-0000-4000-8000-000000000001/eigen.pdf' WHERE id = '2b000000-0000-4000-8000-000000000002'$q$,
-    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
-       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-6', '2026-05-01', 'concept',
+    $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Tweede', 'te_controleren',
                'b0000000-0000-4000-8000-000000000001/cb000000-0000-4000-8000-000000000001/eigen.pdf')$q$], NULL),
+  'ERR 42501: Dit document kan niet%');
+SELECT proof.expect('L13', 'R-03: object met alleen de verouderde kolom owner (geen owner_id) ⇒ niet te claimen',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/alleen-owner.pdf', auth.uid())$q$,
+    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-7', '2026-05-01', 'concept',
+               'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/alleen-owner.pdf')$q$], NULL),
   'ERR 42501: Dit document kan niet%');
 COMMIT;
 
 -- (a) los aangetoond: een object dat de gebruiker "bezit" maar dat in de map
 -- van een ander staat (testdubbel; via de Storage-API kan dat niet ontstaan).
-INSERT INTO storage.objects (bucket_id, name, owner) VALUES
-  ('invoices', 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/a-test.pdf', 'a0000000-0000-4000-8000-000000000006');
+INSERT INTO storage.objects (bucket_id, name, owner, owner_id) VALUES
+  ('invoices', 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/a-test.pdf', 'a0000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000006');
 BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('a0000000-0000-4000-8000-000000000006');
 SELECT proof.expect('L12', 'pad buiten de eigen map, ook al is de gebruiker owner en is het pad ongebruikt ⇒ geweigerd (a)',
   proof.reeks(ARRAY[$q$UPDATE public.purchase_invoices SET file_path = 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/a-test.pdf'
@@ -417,3 +424,9 @@ SELECT proof.expect('L10', 'trigger op beide tabellen, op het padveld; functie D
         OR has_function_privilege('service_role', oid, 'EXECUTE'))::text)
      FROM pg_proc WHERE oid = 'public.guard_invoice_document_pointer()'::regprocedure),
   'purchase_invoices:O,sales_invoices:O|true|search_path=public|false');
+
+-- ═════ R — documentpointer gebonden aan de administratie (R-01, 20261021165000) ═
+\set pre C1
+\set fase 'na'
+\set exp_claim 'ERR 42501: Dit document kan niet aan deze factuur worden gekoppeld.'
+\ir pointer-claim.sql

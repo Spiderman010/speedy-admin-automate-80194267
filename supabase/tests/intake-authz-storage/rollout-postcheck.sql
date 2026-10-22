@@ -1,4 +1,4 @@
--- P2 — READ-ONLY POSTCHECK, ná de vijf P2-migraties. Plakken in de Lovable
+-- P2 — READ-ONLY POSTCHECK, ná de zes P2-migraties. Plakken in de Lovable
 -- Cloud SQL-editor van project alxlbdhpbwlehbdbfejw. Wijzigt niets. Eén rij:
 --   * elke kolom die op _ok eindigt hoort true te zijn (structuur, ACL's, RLS);
 --   * de tellingen (objecten … weesregels) horen GELIJK te zijn aan die van de
@@ -64,7 +64,7 @@ SELECT
   (SELECT count(*) FROM pg_trigger WHERE tgname = 'guard_invoice_document_pointer_trigger' AND tgenabled = 'O'
      AND tgrelid IN ('public.purchase_invoices'::regclass, 'public.sales_invoices'::regclass)) = 2 AS pointertrigger_ok,
   coalesce((SELECT prosecdef AND proconfig = ARRAY['search_path=public']
-              AND md5(prosrc) = 'ae4f13efe9a5fc496ba7e2451d6ae3d7'
+              AND md5(prosrc) = '447c038accd041357fd2059804196b38'
               AND NOT has_function_privilege('anon', oid, 'EXECUTE')
               AND NOT has_function_privilege('authenticated', oid, 'EXECUTE')
               AND NOT has_function_privilege('service_role', oid, 'EXECUTE')
