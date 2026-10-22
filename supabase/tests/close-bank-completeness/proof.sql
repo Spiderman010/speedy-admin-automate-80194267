@@ -100,8 +100,8 @@ SELECT proof.as_user(proof.accountant());
 SELECT proof.expect_error('12d', '... want die regel is niet te boeken: de beginbalanstrigger weigert elke grootboekregel daarvóór (22023)',
   format('SELECT public.post_bank_transaction(%L)', proof.uid(1000, 1401)), '22023', 'beginbalans');
 SELECT proof.as_user(NULL);
-SELECT proof.record('12e', '... terwijl een gecodeerde regel NA de beginbalans (2026) wél telt: de grens is exact de openingsdatum',
-  proof.try_close(proof.client(14), 2026) LIKE '[23514]%postbaar brondocument(en) open met boekjaar t/m 2026%', proof.try_close(proof.client(14), 2026));
+SELECT proof.record('12e', '... terwijl de gecodeerde regels OP (1-1-2026) en NA (1-2-2026) de openingsdatum allebei tellen: precies 2 open, de grens is exact de openingsdatum (review O-1)',
+  proof.try_close(proof.client(14), 2026) LIKE '[23514] Er staan nog 2 postbaar brondocument(en) open met boekjaar t/m 2026%', proof.try_close(proof.client(14), 2026));
 SELECT proof.expect_true('13', 'de rijen van de andere organisatie zijn onaangeroerd en nog steeds ongeboekt',
   format($q$(SELECT count(*) = 2 FROM (
                SELECT id FROM public.purchase_invoices WHERE id = %L AND organization_id = '00000000-0000-0000-0000-00000000a002'

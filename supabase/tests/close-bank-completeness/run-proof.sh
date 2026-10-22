@@ -152,8 +152,8 @@ IMP2_CLIENTS="$(sed -n '2,$p' <<< "$IMP" | grep -E '^[0-9a-f-]{36}\|[0-9a-f-]{36
 IMP3="$(tail -n 1 <<< "$IMP")"
 EXPECT_CLIENTS="$(val "SELECT string_agg(c::text, ',' ORDER BY c::text) FROM unnest(ARRAY[
   proof.client(1), proof.client(7), proof.client(13), proof.client(14), proof.client(99)]) c;")"
-rec P3 'uitrol: impact.sql (alleen lezen) — 5 administraties met 5 ongeboekte gecodeerde bankregels in een open jaar; D8: 1 tellende regel van vóór de schrijver; apart en NIET tellend: 1 regel vóór de beginbalans (N-1) en 1 zonder organisatie (H-1)' \
-    "$([ "$IMP1" = "5|5|0|0|1|1|1" ] && echo true || echo false)" "$IMP1"
+rec P3 'uitrol: impact.sql (alleen lezen) — 5 administraties met 6 ongeboekte gecodeerde bankregels in een open jaar; D8: 1 tellende regel van vóór de schrijver; apart en NIET tellend: 1 regel vóór de beginbalans (N-1) en 1 zonder organisatie (H-1)' \
+    "$([ "$IMP1" = "5|6|0|0|1|1|1" ] && echo true || echo false)" "$IMP1"
 rec P3b 'uitrol: impact.sql noemt exact K1, K7, K13, K14 en KB — niet K2–K6, niet de vrijgegeven regel (K11), niet de andere organisatie (K8), niet de regel zonder organisatie (K10)' \
     "$([ "$IMP2_CLIENTS" = "$EXPECT_CLIENTS" ] && echo true || echo false)" "$IMP2_CLIENTS"
 rec P3c 'uitrol: impact.sql B1-04-telling — 1 inkoop- en 1 bankrij van een andere organisatie, 1 inkoop- en 1 bankrij zonder organisatie' \

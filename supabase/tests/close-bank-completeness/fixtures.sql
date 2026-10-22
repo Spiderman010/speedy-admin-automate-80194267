@@ -342,7 +342,10 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA proof TO public;
 -- K14 N-1/D8: een administratie met een geboekte beginbalans per 1-1-2026
 --     (alleen de marker, nagebootst). 1401: gecodeerd in 2025, vóór de
 --     beginbalans → onboekbaar (22023), telt niet. 1402: gecodeerd in 2026,
---     aangemaakt vóór de directe bankschrijver → telt wel (impact.sql, D8)
+--     aangemaakt vóór de directe bankschrijver → telt wel (impact.sql, D8).
+--     1403: gecodeerd OP de openingsdatum (1-1-2026) → de trigger weigert
+--     alleen `posting_date < opening_date`, dus zij is boekbaar en telt wel
+--     (review O-1: de grens zelf)
 -- KB  een administratie van de andere organisatie
 
 SELECT proof.new_client(1,  'K1 — A3-02');
@@ -413,6 +416,7 @@ SELECT proof.tx(1301, proof.client(13), DATE '2026-06-01', -121);
 --     grootboekregels); geen ander bewijs leest K14.
 SELECT proof.tx(1401, proof.client(14), DATE '2025-11-01', -121);
 SELECT proof.tx(1402, proof.client(14), DATE '2026-02-01', -121);
+SELECT proof.tx(1403, proof.client(14), DATE '2026-01-01', -121);
 SET session_replication_role = replica;
 UPDATE public.bank_transactions SET created_at = TIMESTAMPTZ '2026-05-01 12:00:00+00' WHERE id = proof.uid(1000, 1402);
 INSERT INTO public.opening_balance_postings
