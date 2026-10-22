@@ -57,16 +57,34 @@
 --   Uitsluitend via de Lovable Cloud SQL editor van project
 --   alxlbdhpbwlehbdbfejw, ná review en ná P5b. Deze PR past niets toe.
 --
--- ROLLBACK (handmatig). Raakt geen data. Zet de tabelrechten terug zoals PRE 2
--- ze toonde (standaard in Supabase: alles voor anon, authenticated en
--- service_role).
+-- ROLLBACK (handmatig). Raakt geen data. Zet de tabelrechten LETTERLIJK terug
+-- zoals PRE 2 ze vóór P5c toonde — geen vaste GRANT ALL, die kan rechten
+-- verruimen als productie afweek (review P5-DB §4). Plak de bewaarde uitvoer
+-- van PRE 2 (kolom rechten_koppelingen, vorm rol:recht,rol:recht,…) op de plek
+-- van <<PRE 2-UITVOER>>. Ontbreekt die: STOP, er wordt niets teruggedraaid.
 -- ROLLBACK-BEGIN
---   DROP TRIGGER IF EXISTS enforce_invoice_payment_state_trigger ON public.sales_invoices;
---   DROP TRIGGER IF EXISTS enforce_invoice_payment_state_trigger ON public.purchase_invoices;
---   DROP TRIGGER IF EXISTS enforce_bank_allocation_writer_trigger ON public.bank_transaction_allocations;
---   DROP FUNCTION IF EXISTS public.enforce_invoice_payment_state();
---   DROP FUNCTION IF EXISTS public.enforce_bank_allocation_writer();
---   GRANT ALL ON TABLE public.bank_transaction_allocations TO anon, authenticated, service_role;
+--   DO $rollback$
+--   DECLARE
+--     v_pre2 text := '<<PRE 2-UITVOER>>';
+--     v_item text;
+--     v_role text;
+--   BEGIN
+--     IF v_pre2 IS NULL OR btrim(v_pre2) = '' OR v_pre2 LIKE '<<%' OR v_pre2 !~ '^[^:,]+:[A-Z ]+(,[^:,]+:[A-Z ]+)*$' THEN
+--       RAISE EXCEPTION 'STOP: de uitvoer van PRE 2 ontbreekt of is onleesbaar; er is niets teruggedraaid';
+--     END IF;
+--     DROP TRIGGER IF EXISTS enforce_invoice_payment_state_trigger ON public.sales_invoices;
+--     DROP TRIGGER IF EXISTS enforce_invoice_payment_state_trigger ON public.purchase_invoices;
+--     DROP TRIGGER IF EXISTS enforce_bank_allocation_writer_trigger ON public.bank_transaction_allocations;
+--     DROP FUNCTION IF EXISTS public.enforce_invoice_payment_state();
+--     DROP FUNCTION IF EXISTS public.enforce_bank_allocation_writer();
+--     REVOKE ALL ON TABLE public.bank_transaction_allocations FROM PUBLIC, anon, authenticated, service_role;
+--     FOREACH v_item IN ARRAY string_to_array(v_pre2, ',') LOOP
+--       v_role := split_part(v_item, ':', 1);
+--       EXECUTE format('GRANT %s ON TABLE public.bank_transaction_allocations TO %s',
+--                      split_part(v_item, ':', 2), CASE WHEN v_role = '-' THEN 'PUBLIC' ELSE v_role END);
+--     END LOOP;
+--   END
+--   $rollback$;
 -- ROLLBACK-END
 -- ═════════════════════════════════════════════════════════════════════════════
 
@@ -141,6 +159,8 @@ DECLARE
   v_new_total numeric;
   v_old_open  boolean;
   v_new_open  boolean;
+  v_after_rem    numeric;
+  v_after_status text;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.status = 'betaald' THEN
@@ -155,10 +175,25 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  -- De betaalschrijver zelf.
-  IF public.bank_payment_writer_active(v_type, OLD.id) THEN
-    IF TG_OP = 'DELETE' THEN
-      RETURN OLD;
+  -- De betaalschrijver zelf: alleen restant en status, en precies naar de
+  -- na-toestand van zijn laatste gebeurtenis voor deze factuur in deze
+  -- transactie. Een met de hand gezette sessievlag ná een legitieme aanroep
+  -- kan zo geen bedrag, administratie, restant of status vervalsen (review
+  -- P5-DB §1). De schrijver verwijdert nooit een factuur.
+  IF TG_OP = 'UPDATE' AND public.bank_payment_writer_active(v_type, OLD.id) THEN
+    SELECT e.remaining_after, e.status_after INTO v_after_rem, v_after_status
+    FROM public.bank_payment_events e
+    WHERE e.invoice_id = OLD.id AND e.invoice_type = v_type
+      AND e.created_xact_id = pg_current_xact_id()
+    ORDER BY e.seq DESC
+    LIMIT 1;
+    IF NEW.amount_incl IS DISTINCT FROM OLD.amount_incl
+       OR NEW.amount_excl IS DISTINCT FROM OLD.amount_excl
+       OR NEW.client_id IS DISTINCT FROM OLD.client_id
+       OR NEW.remaining_amount IS DISTINCT FROM v_after_rem
+       OR NEW.status IS DISTINCT FROM v_after_status THEN
+      RAISE EXCEPTION 'Betaalschrijver: alleen het restant en de status uit de betaalgebeurtenis mogen veranderen'
+        USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
   END IF;

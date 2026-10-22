@@ -138,16 +138,18 @@ run -f "$HERE/final.sql"
 run -c "SELECT proof.put('p5c_data', proof.p5data()), proof.put('p5c_acl', proof.acl('public.bank_transaction_allocations'));"
 
 # U — PRE van P5c. In deze testdata schreef de "oude app" na het eerste gebruik
-# van de schrijver nog twee koppelingen rechtstreeks (H6 en L14): PRE 3 moet ze
+# van de schrijver nog drie koppelingen rechtstreeks (H6, L14 en de upsert van L16): PRE 3 moet ze
 # vinden (in productie: STOP).
 ro "$(cat "$R5C/preflight.sql")" > /dev/null
 expect_eq U9 'P5c PRE 1: P5a aanwezig, P5c nog niet' \
   "$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 1.')")" 't|t|t|t'
-expect_eq U10 'P5c PRE 3 vindt de directe schrijfacties van na het eerste gebruik (2: H6 en L14)' \
-  "$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 3.')" | cut -d'|' -f2)" '2'
+expect_eq U10 'P5c PRE 3 vindt de directe schrijfacties van na het eerste gebruik (3: H6, L14 en L16)' \
+  "$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 3.')" | cut -d'|' -f2)" '3'
 expect_eq U11 'P5c PRE 4: geen facturen met restant 0 zonder bedrag' \
   "$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 4.')")" ''
 C6="$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 6.')")"
+# PRE 2 bewaren: de P5c-rollback zet precies deze rechten terug.
+C2="$(ro "$(block "$R5C/preflight.sql" '-- ── PRE 2.')")"
 
 run -f "$MC"
 run -f "$MC"
@@ -158,11 +160,21 @@ expect_eq U12 'P5c POST 1: alleen lezen, guards actief, policies staan, schrijve
 expect_eq U13 'P5c POST 2 = PRE 6: geen rij gewijzigd' \
   "$(ro "$(block "$R5C/postcheck.sql" '-- ── POST 2.')")" "$C6"
 
-run -f "$HERE/p5c.sql"
+run -v conn="$CONN" -f "$HERE/p5c.sql"
 
 # De gedocumenteerde ROLLBACK van P5c, letterlijk uit de kop, TWEE keer; dan weer vooruit.
 run -c "SELECT proof.put('p5c_digest_before_rollback', proof.p5digest());"
 RC="$(rollback_of "$MC")"
+# Letterlijk, zonder geplakte PRE 2-uitvoer: STOP, en er verandert niets.
+Q4OUT="$(psql -X -q -v ON_ERROR_STOP=1 -d "$DB" -c "$RC" 2>&1 || true)"
+Q4DIGEST="$(psql -X -q -At -d "$DB" -c "SELECT proof.p5digest() = proof.get('p5c_digest_before_rollback') AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'enforce_bank_allocation_writer_trigger') AND NOT has_table_privilege('authenticated', 'public.bank_transaction_allocations', 'INSERT');")"
+case "$Q4OUT" in
+  *"STOP: de uitvoer van PRE 2 ontbreekt"*) [ "$Q4DIGEST" = "t" ] && rec Q4 'P5c-rollback zonder PRE 2-uitvoer: STOP, guards en rechten onveranderd' true "$Q4DIGEST" \
+                                              || rec Q4 'P5c-rollback zonder PRE 2-uitvoer: STOP, guards en rechten onveranderd' false "toestand veranderd: $Q4DIGEST" ;;
+  *) rec Q4 'P5c-rollback zonder PRE 2-uitvoer: STOP, guards en rechten onveranderd' false "geen STOP: $Q4OUT" ;;
+esac
+# Met de bewaarde PRE 2-uitvoer geplakt, TWEE keer.
+RC="${RC//<<PRE 2-UITVOER>>/$C2}"
 run -c "$RC"
 run -c "$RC"
 run -f "$HERE/p5c-rollback.sql"

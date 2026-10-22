@@ -8,7 +8,7 @@ SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false)
 
 SELECT proof.plan(ARRAY['Q1','Q2']);
 
-SELECT proof.expect_true('Q1', 'P5c-rollback: guards weg, rechten terug zoals vóór P5c (alles voor anon, authenticated en service_role), geen rij gewijzigd, P5a intact',
+SELECT proof.expect_true('Q1', 'P5c-rollback: guards weg, rechten letterlijk terug zoals PRE 2 ze vóór P5c toonde, geen rij gewijzigd, P5a intact',
   $$NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname IN ('enforce_bank_allocation_writer_trigger', 'enforce_invoice_payment_state_trigger'))
     AND to_regprocedure('public.enforce_invoice_payment_state()') IS NULL
     AND proof.acl('public.bank_transaction_allocations') = proof.get('p5c_acl')

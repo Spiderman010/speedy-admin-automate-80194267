@@ -40,6 +40,11 @@ WHERE c.oid = 'public.bank_transaction_allocations'::regclass;
 
 -- ── PRE 3. Schrijft er nog iets buiten de betaalschrijver om? ───────────────
 -- Verwacht: oude_app_schrijft_nog = 0 (en eerste_gebruik niet leeg: P5b is in gebruik).
+-- Beperking (review P5-DB §5): telt alleen koppelingen die nog bestaan en na het
+-- eerste gebruik zijn gemaakt of gewijzigd. Een directe DELETE van een koppeling
+-- of een directe restant-/statuswrite op een factuur door een oud tabblad ziet
+-- deze query niet. Dat is fail-closed: P5c sluit precies die paden, zo'n oud
+-- tabblad krijgt daarna alleen een weigering.
 WITH t0 AS (SELECT min(created_at) AS eerste FROM public.bank_payment_events)
 SELECT
   (SELECT eerste FROM t0)                                                      AS eerste_gebruik_schrijver,

@@ -57,10 +57,14 @@
 --   unlink: koppelingen van T FOR UPDATE (id-volgorde) → T FOR UPDATE →
 --           facturen FOR UPDATE (soort, id)
 --   post_bank_allocation (ongewijzigd): A FOR UPDATE → T FOR UPDATE → I FOR SHARE
---   vangnet: T FOR NO KEY UPDATE (vóór de rij bestaat) → I FOR NO KEY UPDATE
---   Geen pad grendelt T of A ná een factuur, en geen pad grendelt A ná T
---   (unlink weigert met 55000 als er tussen beide grendels een koppeling
---   bijkwam). Elk paar paden neemt gedeelde rijen dus in dezelfde volgorde.
+--   vangnet: bestaande koppeling van het paar FOR UPDATE → T FOR NO KEY UPDATE
+--            (vóór de nieuwe rij bestaat) → I FOR NO KEY UPDATE
+--   Geen pad grendelt T of A ná een factuur, en geen pad grendelt een
+--   bestaande A ná T: ook een INSERT … ON CONFLICT DO UPDATE van de oude app
+--   (BEFORE INSERT vuurt vóór de conflictcontrole) grendelt in de guard eerst
+--   de bestaande paar-rij en pas dan T (review P5-DB §2). Unlink weigert met
+--   55000 als er tussen beide grendels een koppeling bijkwam. Elk paar paden
+--   neemt gedeelde rijen dus in dezelfde volgorde.
 --   Alleen READ COMMITTED (25000): na het wachten op een grendel leest elke
 --   volgende opdracht een verse snapshot.
 --
@@ -281,6 +285,7 @@ CREATE TABLE IF NOT EXISTS public.bank_payment_events (
   remaining_after     numeric(12,2) NOT NULL,
   status_before       text          NOT NULL,
   status_after        text          NOT NULL,
+  invoice_amount      numeric(12,2),
   tx_status_before    text          NOT NULL,
   tx_status_after     text          NOT NULL,
   formalized          boolean       NOT NULL DEFAULT false,
@@ -512,6 +517,18 @@ BEGIN
     RETURN OLD;
   END IF;
 
+  -- Grendelvolgorde A → T, ook voor INSERT … ON CONFLICT DO UPDATE: deze
+  -- trigger vuurt vóór de conflictcontrole, die daarna de bestaande koppeling
+  -- grendelt. Eerst die bestaande paar-rij grendelen, dan pas T; anders
+  -- T → A tegenover link/unlink/post_bank_allocation (A → T): deadlock.
+  -- (Bij UPDATE is de rij al gegrendeld vóór deze trigger vuurt.)
+  IF TG_OP = 'INSERT' THEN
+    PERFORM 1 FROM public.bank_transaction_allocations a
+    WHERE a.bank_transaction_id = NEW.bank_transaction_id
+      AND a.invoice_id = NEW.invoice_id
+    FOR UPDATE;
+  END IF;
+
   -- De banktransactie grendelen vóórdat de nieuwe of gewijzigde rij bestaat:
   -- zo wacht een directe schrijver op een lopende betaalschrijver (en
   -- andersom) vóór de unieke index (transactie, factuur) wordt geraakt. Zonder
@@ -725,7 +742,10 @@ BEGIN
   FROM public.bank_transaction_allocations a
   WHERE a.invoice_id = _invoice_id AND a.invoice_type = _invoice_type;
 
+  -- Ook: nooit meer gekoppeld dan het factuurbedrag, en het restant blijft
+  -- tussen 0 en het factuurbedrag (review P5-DB §1b).
   IF NOT v_found OR v_incl IS NULL OR v_rem IS DISTINCT FROM v_incl - v_sum
+     OR v_sum > v_incl OR v_rem < 0 OR v_rem > v_incl
      OR (v_status = 'betaald' AND v_rem <> 0) THEN
     RAISE EXCEPTION 'Betaalschrijver: het openstaande bedrag of de status van de factuur sluit niet aan op haar koppelingen'
       USING ERRCODE = '23514';
@@ -756,8 +776,43 @@ VOLATILE
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_last   public.bank_payment_events%ROWTYPE;
+  v_rem    numeric;
+  v_status text;
+  v_incl   numeric;
 BEGIN
   PERFORM public.bank_payment_assert_consistent(NEW.invoice_type, NEW.invoice_id, NEW.bank_transaction_id);
+
+  -- Bij COMMIT staat de factuur exact zoals de LAATSTE betaalgebeurtenis van
+  -- deze transactie haar achterliet: hetzelfde factuurbedrag, en restant plus
+  -- status gelijk aan de na-toestand. Een sessievlag die ná een legitieme
+  -- aanroep met de hand wordt gezet, kan zo niets meer veranderen (review
+  -- P5-DB §1a). De vóór-toestand is ook goed: wie de uitgestelde controles met
+  -- SET CONSTRAINTS ALL IMMEDIATE naar voren haalt, laat deze trigger vuren
+  -- direct na het vastleggen van de gebeurtenis, vóór de factuur is bijgewerkt
+  -- (de RPC toetst zelf de eindtoestand); terugzetten naar de vóór-toestand
+  -- valt daarbuiten altijd op restant = bedrag − Σ.
+  SELECT * INTO v_last
+  FROM public.bank_payment_events e
+  WHERE e.invoice_id = NEW.invoice_id
+    AND e.invoice_type = NEW.invoice_type
+    AND e.created_xact_id = pg_current_xact_id()
+  ORDER BY e.seq DESC
+  LIMIT 1;
+  IF FOUND THEN
+    IF NEW.invoice_type = 'inkoop' THEN
+      SELECT pi.remaining_amount, pi.status, pi.amount_incl INTO v_rem, v_status, v_incl FROM public.purchase_invoices pi WHERE pi.id = NEW.invoice_id;
+    ELSE
+      SELECT si.remaining_amount, si.status, si.amount_incl INTO v_rem, v_status, v_incl FROM public.sales_invoices si WHERE si.id = NEW.invoice_id;
+    END IF;
+    IF v_incl IS DISTINCT FROM v_last.invoice_amount
+       OR NOT ((v_rem IS NOT DISTINCT FROM v_last.remaining_after AND v_status IS NOT DISTINCT FROM v_last.status_after)
+            OR (v_rem IS NOT DISTINCT FROM v_last.remaining_before AND v_status IS NOT DISTINCT FROM v_last.status_before)) THEN
+      RAISE EXCEPTION 'Betaalschrijver: de factuur is na het koppelen of ontkoppelen in dezelfde transactie nog gewijzigd'
+        USING ERRCODE = '23514';
+    END IF;
+  END IF;
   RETURN NULL;
 END;
 $$;
@@ -1113,11 +1168,11 @@ BEGIN
   INSERT INTO public.bank_payment_events
     (actor_id, request_id, event_type, allocation_id, bank_transaction_id, invoice_type, invoice_id,
      organization_id, client_id, amount, remaining_before, remaining_after,
-     status_before, status_after, tx_status_before, tx_status_after, formalized)
+     status_before, status_after, invoice_amount, tx_status_before, tx_status_after, formalized)
   VALUES
     (v_uid, _request_id, 'linked', v_alloc_id, v_tx.id, _invoice_type, _invoice_id,
      v_tx.organization_id, v_tx.client_id, v_amount, v_inv_rem, v_new_rem,
-     v_inv_status, v_new_status, v_tx.match_status, 'gematcht', v_formalize);
+     v_inv_status, v_new_status, v_inv_incl, v_tx.match_status, 'gematcht', v_formalize);
 
   INSERT INTO public.bank_transaction_allocations
     (id, bank_transaction_id, invoice_type, invoice_id, client_id, organization_id, amount, user_id, created_by)
@@ -1381,7 +1436,7 @@ BEGIN
 
     v_plan := v_plan || jsonb_build_array(jsonb_build_object(
       'id', r.id, 'type', r.invoice_type, 'invoice', r.invoice_id, 'amount', r.amount,
-      'rb', v_inv_rem, 'ra', v_new_rem, 'sb', v_inv_status, 'sa', v_new_status));
+      'rb', v_inv_rem, 'ra', v_new_rem, 'sb', v_inv_status, 'sa', v_new_status, 'incl', v_inv_incl));
   END LOOP;
 
   -- De banktransactie na afloop: de primaire factuur blijft als zij gekoppeld
@@ -1419,11 +1474,11 @@ BEGIN
     INSERT INTO public.bank_payment_events
       (actor_id, request_id, event_type, allocation_id, bank_transaction_id, invoice_type, invoice_id,
        organization_id, client_id, amount, remaining_before, remaining_after,
-       status_before, status_after, tx_status_before, tx_status_after)
+       status_before, status_after, invoice_amount, tx_status_before, tx_status_after)
     VALUES
       (v_uid, _request_id, 'unlinked', (v_item->>'id')::uuid, v_tx.id, v_item->>'type', (v_item->>'invoice')::uuid,
        v_tx.organization_id, v_tx.client_id, (v_item->>'amount')::numeric, (v_item->>'rb')::numeric, (v_item->>'ra')::numeric,
-       v_item->>'sb', v_item->>'sa', v_tx.match_status, v_new_tx_status);
+       v_item->>'sb', v_item->>'sa', (v_item->>'incl')::numeric, v_tx.match_status, v_new_tx_status);
   END LOOP;
 
   DELETE FROM public.bank_transaction_allocations a WHERE a.id = ANY (v_ids);

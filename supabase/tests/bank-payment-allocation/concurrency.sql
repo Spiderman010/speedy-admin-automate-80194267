@@ -10,7 +10,7 @@
 SET client_min_messages = warning;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
-SELECT proof.plan(ARRAY['L1','L2','L3','L4','L5','L6','L7','L8','L9','L10','L11','L12','L13','L14','L15']);
+SELECT proof.plan(ARRAY['L1','L2','L3','L4','L5','L6','L7','L8','L9','L10','L11','L12','L13','L14','L15','L16','L17','L18']);
 
 /** Sessie _name werkt voortaan als _user met de rol authenticated. */
 CREATE FUNCTION proof.as_user(_name text, _user uuid) RETURNS void LANGUAGE plpgsql AS $$
@@ -248,6 +248,72 @@ SELECT proof.record('L14', 'twee gelijktijdige directe koppelingen van 80 op 100
   AND (SELECT sum(amount) FROM public.bank_transaction_allocations WHERE invoice_id = proof.uid(3000, 1124)) = 80,
   proof.get('l14c'));
 SELECT proof.remote_exec('a', 'ROLLBACK');
+
+-- ── L16: upsert van de oude app (INSERT … ON CONFLICT DO UPDATE) tegen link op hetzelfde bestaande paar ──
+-- c houdt T vast (FOR SHARE). b (oude app) doet de upsert: de guard grendelt
+-- eerst de bestaande paar-rij, dan T (wacht op c). a (betaalschrijver) wil
+-- dezelfde paar-rij (A → T) en wacht op b. c commit: b en a lopen na elkaar af.
+-- Zonder de A-grendel in de guard: b houdt T en wacht op A, a houdt A en wacht
+-- op T → 40P01 (review P5-DB §2).
+SELECT proof.tx(1126, 50.00), proof.sinv(1126, 100.00);
+SELECT proof.put('l16s', proof.direct_alloc_i(proof.u(1), proof.uid(1000, 1126), 'verkoop', proof.uid(3000, 1126), 50));
+SELECT proof.as_user('a', proof.u(6)), proof.as_user('b', proof.u(1));
+SELECT proof.remote_exec('c', 'RESET ROLE');
+SELECT proof.remote_exec('c', 'BEGIN');
+SELECT proof.put('l16c', proof.remote_run('c', format('SELECT id::text FROM public.bank_transactions WHERE id = %L FOR SHARE', proof.uid(1000, 1126))));
+SELECT proof.send('b', format(
+  'INSERT INTO public.bank_transaction_allocations (bank_transaction_id, invoice_type, invoice_id, client_id, amount, user_id)
+   SELECT id, ''verkoop'', %L, client_id, 50, user_id FROM public.bank_transactions WHERE id = %L
+   ON CONFLICT (bank_transaction_id, invoice_id) DO UPDATE SET amount = EXCLUDED.amount RETURNING id::text',
+  proof.uid(3000, 1126), proof.uid(1000, 1126)));
+SELECT proof.put('l16wb', proof.until_waiting('b'));
+SELECT proof.send('a', proof.lsql(proof.uid(1000, 1126), 'verkoop', proof.uid(3000, 1126), 50, proof.req(1126)));
+SELECT proof.put('l16wa', proof.until_waiting('a'));
+SELECT proof.remote_exec('c', 'COMMIT');
+SELECT proof.put('l16b', proof.remote_outcome('b'));
+SELECT proof.put('l16a', proof.remote_outcome('a'));
+SELECT proof.record('L16', 'upsert (ON CONFLICT DO UPDATE) van de oude app en link op hetzelfde bestaande paar, met T bezet: beide wachten, geen deadlock (40P01); één koppeling',
+  proof.get('l16s') LIKE 'ok:%' AND proof.get('l16c') LIKE 'ok:%' AND proof.get('l16wb') <> 'none' AND proof.get('l16wa') <> 'none'
+  AND proof.get('l16b') NOT LIKE 'fout [40P01]%' AND proof.get('l16a') NOT LIKE 'fout [40P01]%'
+  AND (SELECT count(*) FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 1126)) = 1,
+  proof.get('l16b') || ' / ' || proof.get('l16a'));
+
+-- ── L17/L18: vervalst schrijversbewijs ná een legitieme aanroep, onder alleen
+-- P5a (geen factuurguard): pas de controle bij COMMIT houdt het tegen (review P5-DB §1).
+-- L17 (G1): inkoop 100, koppelingen 40 + 30; ontkoppel 40, vlag met de hand, bedrag onder Σ.
+SELECT proof.pinv(1127, 100.00), proof.tx(1127, -40.00), proof.tx(1128, -30.00);
+SELECT proof.put('l17l1', proof.link(proof.u(6), proof.uid(1000, 1127), 'inkoop', proof.uid(2000, 1127), 40, proof.req(1127)));
+SELECT proof.put('l17l2', proof.link(proof.u(6), proof.uid(1000, 1128), 'inkoop', proof.uid(2000, 1127), 30, proof.req(1128)));
+SELECT proof.as_user('a', proof.u(6));
+SELECT proof.remote_exec('a', 'BEGIN');
+SELECT proof.put('l17u', proof.remote_run('a', proof.usql(proof.uid(1000, 1127), proof.req(11270))));
+SELECT proof.put('l17f', proof.remote_run('a', 'SELECT set_config(''boekassist.betaalschrijver'', pg_current_xact_id()::text, true)'));
+SELECT proof.put('l17x', proof.remote_exec('a', format(
+  'UPDATE public.purchase_invoices SET amount_excl = 20, amount_incl = 20, remaining_amount = -10 WHERE id = %L', proof.uid(2000, 1127))));
+SELECT proof.put('l17c', proof.remote_exec('a', 'COMMIT'));
+SELECT proof.remote_exec('a', 'ROLLBACK');
+SELECT proof.record('L17', 'G1 onder P5a: na een legitieme unlink de vlag met de hand zetten en het factuurbedrag onder Σ brengen — de UPDATE lukt, de COMMIT weigert (23514); factuur en koppelingen onveranderd',
+  proof.get('l17l1') LIKE 'ok:%' AND proof.get('l17l2') LIKE 'ok:%' AND proof.get('l17u') LIKE 'ok: unlinked|%'
+  AND proof.get('l17x') = 'ok' AND proof.get('l17c') LIKE 'fout [23514]%'
+  AND proof.inv('inkoop', proof.uid(2000, 1127)) LIKE '30.00|%'
+  AND (SELECT amount_incl FROM public.purchase_invoices WHERE id = proof.uid(2000, 1127)) = 100
+  AND (SELECT sum(amount) FROM public.bank_transaction_allocations WHERE invoice_id = proof.uid(2000, 1127)) = 70,
+  proof.get('l17x') || ' / ' || proof.get('l17c'));
+
+-- L18 (F2): volledige betaling op een concept-verkoopfactuur; daarna vlag met de hand en status betaald.
+SELECT proof.tx(1129, 100.00), proof.sinv(1129, 100.00, 'concept');
+SELECT proof.remote_exec('a', 'BEGIN');
+SELECT proof.put('l18l', proof.remote_run('a', proof.lsql(proof.uid(1000, 1129), 'verkoop', proof.uid(3000, 1129), 100, proof.req(1129))));
+SELECT proof.put('l18f', proof.remote_run('a', 'SELECT set_config(''boekassist.betaalschrijver'', pg_current_xact_id()::text, true)'));
+SELECT proof.put('l18x', proof.remote_exec('a', format(
+  'UPDATE public.sales_invoices SET status = ''betaald'' WHERE id = %L', proof.uid(3000, 1129))));
+SELECT proof.put('l18c', proof.remote_exec('a', 'COMMIT'));
+SELECT proof.remote_exec('a', 'ROLLBACK');
+SELECT proof.record('L18', 'F2 onder P5a: na een legitieme link (concept, restant 0) de vlag met de hand zetten en status betaald — de UPDATE lukt, de COMMIT weigert (23514); factuur blijft concept/100, geen koppeling',
+  proof.get('l18l') LIKE 'ok: created|0.00|%' AND proof.get('l18x') = 'ok' AND proof.get('l18c') LIKE 'fout [23514]%'
+  AND proof.inv('verkoop', proof.uid(3000, 1129)) = '100.00|concept'
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 1129)),
+  proof.get('l18x') || ' / ' || proof.get('l18c'));
 
 SELECT dblink_disconnect('a'), dblink_disconnect('b'), dblink_disconnect('c');
 

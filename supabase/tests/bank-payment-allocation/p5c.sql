@@ -5,7 +5,7 @@
 SET client_min_messages = warning;
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
-SELECT proof.plan(ARRAY['P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','P11','P12']);
+SELECT proof.plan(ARRAY['P1','P2','P3','P4','P5','P6','P7','P8','P9','P10','P11','P12','P13','P14']);
 
 SELECT proof.expect_true('P1', 'koppelingen: alleen SELECT voor authenticated en service_role, niets voor anon/PUBLIC; RLS-policies ongewijzigd; beide guards aanwezig',
   $$has_table_privilege('authenticated', 'public.bank_transaction_allocations', 'SELECT')
@@ -94,10 +94,20 @@ SELECT proof.put('p8c', proof.call(proof.u(6), format(
   'UPDATE public.sales_invoices SET remaining_amount = 40 WHERE id = %L RETURNING remaining_amount::text', proof.uid(3000, 106))));
 SELECT proof.put('p8d', proof.call(proof.u(6), format(
   'UPDATE public.sales_invoices SET remaining_amount = NULL WHERE id = %L RETURNING coalesce(remaining_amount::text, ''leeg'')', proof.uid(3000, 1206))));
-SELECT proof.record('P8', 'restant: meeschuiven met het totaal (geen koppelingen) en leegmaken mogen; een ander bedrag, of welk restant dan ook bij koppelingen, wordt geweigerd',
+-- Legacy: inkoopfactuur via een oude match op 0 gezet, zonder koppeling. Stil
+-- heropenen (restant 0 → 100) is geen open-sync en wordt geweigerd (review P5-DB §3).
+SELECT proof.pinv(1215, 100.00, 'te_controleren');
+SET session_replication_role = replica;
+UPDATE public.purchase_invoices SET remaining_amount = 0 WHERE id = proof.uid(2000, 1215);
+SET session_replication_role = origin;
+SELECT proof.put('p8e', proof.call(proof.u(6), format(
+  'UPDATE public.purchase_invoices SET remaining_amount = 100 WHERE id = %L RETURNING remaining_amount::text', proof.uid(2000, 1215))));
+SELECT proof.record('P8', 'restant: meeschuiven met het totaal (geen koppelingen) en leegmaken mogen; een ander bedrag, welk restant dan ook bij koppelingen, of een legacy-factuur zonder koppeling stil heropenen (0 → 100) wordt geweigerd',
   proof.get('p8a') = 'ok: 120.00' AND proof.refused(proof.get('p8b'), '23514', 'openstaande bedrag')
-  AND proof.refused(proof.get('p8c'), '23514', 'openstaande bedrag') AND proof.get('p8d') = 'ok: leeg',
-  proof.get('p8b'));
+  AND proof.refused(proof.get('p8c'), '23514', 'openstaande bedrag') AND proof.get('p8d') = 'ok: leeg'
+  AND proof.refused(proof.get('p8e'), '23514', 'openstaande bedrag')
+  AND (SELECT remaining_amount FROM public.purchase_invoices WHERE id = proof.uid(2000, 1215)) = 0,
+  proof.get('p8b') || ' / ' || proof.get('p8e'));
 
 -- P9: bedrag wijzigen zonder restant mee te sturen (inkoopwerkbank, save_purchase_invoice_with_lines).
 SELECT proof.pinv(1207, 80.00, 'te_controleren'), proof.pinv(1208, 80.00, 'te_controleren'), proof.pinv(1209, 80.00, 'te_controleren');
@@ -129,3 +139,46 @@ SELECT proof.record('P11', 'een zelf gezette vlag van de betaalschrijver opent d
 
 SELECT proof.expect_true('P12', 'onder P5c: alle invarianten van de schrijver gelden, grootboek in balans',
   $$proof.writer_violations() = 0 AND proof.unbalanced() = 0$$);
+
+-- ── P13/P14: vervalst schrijversbewijs ná een legitieme aanroep in dezelfde
+-- transactie (review P5-DB §1). Echte COMMIT in een tweede sessie.
+SELECT proof.open_session('g', :'conn');
+
+-- P13 (G1): inkoop 100, koppelingen 40 + 30; ontkoppel 40, zet de vlag met de
+-- hand en verlaag het factuurbedrag tot onder Σ (restant negatief).
+SELECT proof.pinv(1216, 100.00), proof.tx(1216, -40.00), proof.tx(1217, -30.00);
+SELECT proof.put('p13l1', proof.link(proof.u(6), proof.uid(1000, 1216), 'inkoop', proof.uid(2000, 1216), 40, proof.req(1216)));
+SELECT proof.put('p13l2', proof.link(proof.u(6), proof.uid(1000, 1217), 'inkoop', proof.uid(2000, 1216), 30, proof.req(1217)));
+SELECT proof.as_user('g', proof.u(6));
+SELECT proof.remote_exec('g', 'BEGIN');
+SELECT proof.put('p13u', proof.remote_run('g', proof.usql(proof.uid(1000, 1216), proof.req(12160))));
+SELECT proof.put('p13f', proof.remote_run('g', 'SELECT set_config(''boekassist.betaalschrijver'', pg_current_xact_id()::text, true)'));
+SELECT proof.put('p13x', proof.remote_exec('g', format(
+  'UPDATE public.purchase_invoices SET amount_excl = 20, amount_incl = 20, remaining_amount = -10 WHERE id = %L', proof.uid(2000, 1216))));
+SELECT proof.put('p13c', proof.remote_exec('g', 'COMMIT'));
+SELECT proof.remote_exec('g', 'ROLLBACK');
+SELECT proof.record('P13', 'G1 onder P5c: na een legitieme unlink de vlag met de hand zetten en het factuurbedrag onder Σ brengen — de UPDATE zelf wordt geweigerd (23514); factuur en koppelingen onveranderd (onder alleen P5a: L17, bij COMMIT)',
+  proof.get('p13l1') LIKE 'ok:%' AND proof.get('p13l2') LIKE 'ok:%' AND proof.get('p13u') LIKE 'ok: unlinked|%'
+  AND proof.refused(proof.get('p13x'), '23514', 'alleen het restant en de status')
+  AND proof.inv('inkoop', proof.uid(2000, 1216)) LIKE '30.00|%'
+  AND (SELECT amount_incl FROM public.purchase_invoices WHERE id = proof.uid(2000, 1216)) = 100
+  AND (SELECT sum(amount) FROM public.bank_transaction_allocations WHERE invoice_id = proof.uid(2000, 1216)) = 70,
+  proof.get('p13x') || ' / ' || proof.get('p13c'));
+
+-- P14 (F2): volledige betaling op een concept-verkoopfactuur (restant 0, blijft
+-- concept); daarna vlag met de hand en status → betaald.
+SELECT proof.tx(1218, 100.00), proof.sinv(1218, 100.00, 'concept');
+SELECT proof.remote_exec('g', 'BEGIN');
+SELECT proof.put('p14l', proof.remote_run('g', proof.lsql(proof.uid(1000, 1218), 'verkoop', proof.uid(3000, 1218), 100, proof.req(1218))));
+SELECT proof.put('p14f', proof.remote_run('g', 'SELECT set_config(''boekassist.betaalschrijver'', pg_current_xact_id()::text, true)'));
+SELECT proof.put('p14x', proof.remote_exec('g', format(
+  'UPDATE public.sales_invoices SET status = ''betaald'' WHERE id = %L', proof.uid(3000, 1218))));
+SELECT proof.put('p14c', proof.remote_exec('g', 'COMMIT'));
+SELECT proof.remote_exec('g', 'ROLLBACK');
+SELECT proof.record('P14', 'F2 onder P5c: na een legitieme link (concept, restant 0) de vlag met de hand zetten en status betaald — de UPDATE zelf wordt geweigerd (23514); factuur blijft concept/100, geen koppeling (onder alleen P5a: L18, bij COMMIT)',
+  proof.get('p14l') LIKE 'ok: created|0.00|%' AND proof.refused(proof.get('p14x'), '23514', 'alleen het restant en de status')
+  AND proof.inv('verkoop', proof.uid(3000, 1218)) = '100.00|concept'
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 1218)),
+  proof.get('p14x') || ' / ' || proof.get('p14c'));
+
+SELECT dblink_disconnect('g');
