@@ -2,7 +2,7 @@
 -- Rollout: add column before deploying importers/readers that use is_reversal.
 -- Existing rows are NOT automatically classified; false is not proof of a normal payment.
 ALTER TABLE public.bank_transactions
-  ADD COLUMN IF NOT EXISTS is_reversal boolean NOT NULL DEFAULT false;
+  ADD COLUMN IF NOT EXISTS is_reversal boolean;
 
 COMMENT ON COLUMN public.bank_transactions.is_reversal IS
   'True when a source MT940 RC/RD or CAMT RvslInd identifies a reversal; historical false/unknown rows need separate review.';
@@ -16,10 +16,10 @@ CREATE INDEX IF NOT EXISTS idx_bank_transactions_reversal
 -- ALTER TABLE public.bank_transactions DROP COLUMN IF EXISTS is_reversal;
 
 -- Defense in depth without adding a trigger (bank posting trigger contract must stay unchanged).
--- Existing imported reversals default to false and require a separate historical review.
+-- Existing rows retain NULL (unclassified) until source evidence is independently reviewed.
 ALTER TABLE public.bank_transactions
   ADD CONSTRAINT bank_reversal_cannot_be_invoice_match
-  CHECK (NOT is_reversal OR (matched_invoice_id IS NULL AND match_status <> 'gematcht'));
+  CHECK (is_reversal IS DISTINCT FROM TRUE OR (matched_invoice_id IS NULL AND match_status <> 'gematcht'));
 
 -- rollback (manual only, separately authorized):
 -- ALTER TABLE public.bank_transactions DROP CONSTRAINT bank_reversal_cannot_be_invoice_match;
