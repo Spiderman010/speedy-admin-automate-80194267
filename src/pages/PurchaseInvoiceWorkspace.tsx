@@ -30,21 +30,34 @@ import {
   computeLineTotals,
   computeLineDiffs,
   countLinesMissingLedgerAccount,
+  countLinesWithoutVatChoice,
   derivePrefillLine,
   isBlankLine,
+  isLineVatChoice,
   isPartiallyFilledLine,
+  lineVatChoiceFromStored,
+  lineVatInputToStored,
 } from "@/lib/purchase-line-validation";
 import { aggregateInvoiceLines, evaluatePurchaseInvoice } from "@/lib/ledger-catchup";
 import { getUblWorkspaceLines } from "@/lib/ubl-workspace-prefill";
 import { suggestLedgerAccountFromLegacyText } from "@/lib/legacy-ledger-suggestion";
 import { suggestExistingSupplier } from "@/lib/purchase-supplier-suggestion";
 import { suggestSupplierLedger } from "@/lib/supplier-ledger-suggestion";
-import { deriveHeaderFromLines } from "@/lib/purchase-header-derivation";
+import {
+  HEADER_VAT_MIXED,
+  documentVatCents,
+  headerReconciles,
+  headerVatChoiceFromStored,
+  headerVatChoiceProblem,
+  headerVatChoiceToStored,
+  sumLineExclCents,
+} from "@/lib/purchase-header-derivation";
 import { parseAmountInput, formatAmountInput } from "@/lib/amount-input";
-import { round2 } from "@/lib/btw-calc";
+import { fromCents, toCents } from "@/lib/btw-calc";
 import { formatEuro } from "@/lib/format";
 import type { Tables } from "@/integrations/supabase/types";
 import { PurchaseInvoiceWorkspaceHeader } from "@/components/purchase/PurchaseInvoiceWorkspaceHeader";
+import { FinancialActionDialog } from "@/components/platform/FinancialActionDialog";
 import { usePurchaseInvoicePosting, usePostPurchaseInvoice } from "@/hooks/usePurchaseInvoicePosting";
 import { PurchaseInvoiceDocumentPreview } from "@/components/purchase/PurchaseInvoiceDocumentPreview";
 import {
@@ -104,7 +117,9 @@ function emptyHeader(inv: PurchaseInvoice | null): HeaderForm {
     amount_excl: formatAmountInput(inv?.amount_excl ?? null),
     btw_amount: formatAmountInput(inv?.btw_amount ?? null),
     amount_incl: formatAmountInput(inv?.amount_incl ?? null),
-    btw_percentage: inv?.btw_percentage != null ? String(inv.btw_percentage) : "21",
+    // Een ontbrekend (of onbekend) percentage blijft "nog niet gekozen" (""):
+    // nooit meer een stille 21% (A2-02 / D-01). Een opgeslagen 0 blijft 0.
+    btw_percentage: headerVatChoiceFromStored(inv?.btw_percentage),
     ledger_label: inv?.ledger_account_text ?? "",
     ledger_id: inv?.ledger_account_id ?? null,
     notes: inv?.notes ?? "",
@@ -213,8 +228,32 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   const [initializedFor, setInitializedFor] = useState<string | null>(null);
   const initialized = !!invoiceId && initializedFor === invoiceId;
   const [saving, setSaving] = useState(false);
-  const { data: posting } = usePurchaseInvoicePosting(invoiceId);
+  const postingQuery = usePurchaseInvoicePosting(invoiceId);
+  const posting = postingQuery.data;
   const postInvoice = usePostPurchaseInvoice();
+
+  /**
+   * Heeft deze factuur bankkoppelingen? Alleen lezen, voor de administratie-
+   * wissel (D-02 / A2-22): een gekoppelde factuur naar een andere administratie
+   * verplaatsen zou factuur en betaling in twee administraties zetten. Laden of
+   * een leesfout telt als "onbekend", en onbekend houdt de wissel dicht.
+   */
+  const allocationsCheck = useQuery({
+    queryKey: ["purchase_invoice_has_allocations", invoiceId],
+    enabled: !!invoiceId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("bank_transaction_allocations")
+        .select("id")
+        .eq("invoice_id", invoiceId!)
+        .eq("invoice_type", "inkoop")
+        .limit(1);
+      if (error) throw error;
+      return (data ?? []).length > 0;
+    },
+  });
+  /** De administratie waarnaar de gebruiker wil verplaatsen, in afwachting van bevestiging. */
+  const [pendingClientId, setPendingClientId] = useState<string | null>(null);
 
   // Deterministic initialization once invoice + lines are loaded, gebonden aan
   // de factuur-id: wisselt die, dan wordt er opnieuw geïnitialiseerd uit de
@@ -228,17 +267,26 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
     if (invoice.id !== invoiceId) return;
 
     const nextHeader = emptyHeader(invoice);
-    // BTW-vrijgesteld coherence: force pct=0 and incl=excl.
-    if (isBtwVrijgesteld) {
+    // BTW-vrijgesteld (F1c-N1; ontwerpbesluit D4 is nog OPEN). Een vrijgestelde
+    // administratie trekt geen btw af. Staat er géén btw op het document, dan is
+    // 0% haar enige uitkomst en zet de werkbank die vast. Staat er WEL btw op,
+    // dan verandert de werkbank niets: zij toont de btw zoals die op de factuur
+    // staat en blokkeert goedkeuren (`vrijgesteldMetBtw`). Vroeger werden excl
+    // en incl hier gelijkgemaakt aan excl, waardoor € 21 btw stil wegviel en
+    // kosten en crediteur € 21 te laag werden geboekt.
+    if (isBtwVrijgesteld && documentVatCents(invoice) === 0) {
       nextHeader.btw_percentage = "0";
-      nextHeader.btw_amount = formatAmountInput(0);
+      // Alleen incl bekend: het brutobedrag is de kostenpost; er valt geen btw weg.
+      if (invoice.amount_excl == null && invoice.amount_incl != null) {
+        nextHeader.amount_excl = formatAmountInput(invoice.amount_incl);
+      }
       const excl = parseAmountInput(nextHeader.amount_excl);
       const incl = parseAmountInput(nextHeader.amount_incl);
-      const chosen = excl ?? incl;
-      if (chosen != null) {
-        nextHeader.amount_excl = formatAmountInput(chosen);
-        nextHeader.amount_incl = formatAmountInput(chosen);
+      if (invoice.btw_amount == null && excl != null && incl != null && toCents(excl) === toCents(incl)) {
+        nextHeader.btw_amount = formatAmountInput(0);
       }
+      // Alleen excl bekend: incl blijft leeg. incl = excl aannemen zou eventuele
+      // btw op het document laten wegvallen; de gebruiker vult incl zelf in.
     }
 
     let nextLines: LineRow[];
@@ -248,7 +296,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         return {
           omschrijving: l.omschrijving,
           amount_input: formatAmountInput(l.amount_excl),
-          btw_percentage: l.btw_percentage != null ? String(l.btw_percentage) : "0",
+          // NULL is "nog niet gekozen" — nooit 0, nooit 21. Alleen een
+          // vrijgestelde administratie heeft 0% als vaste instelling.
+          btw_percentage: l.btw_percentage == null && isBtwVrijgesteld
+            ? "0"
+            : lineVatChoiceFromStored(l.btw_percentage),
           grootboekrekening_id: l.grootboekrekening_id,
           grootboek_label: ledger ? `${ledger.nummer} - ${ledger.omschrijving}` : "",
         };
@@ -265,12 +317,14 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         nextLines = ublLines.map((line) => ({
           omschrijving: line.omschrijving,
           amount_input: formatAmountInput(line.amount_excl),
-          btw_percentage: String(line.btw_percentage ?? 0),
+          // Een UBL-regel zonder percentage is "nog niet gekozen", niet 0%.
+          btw_percentage: lineVatChoiceFromStored(line.btw_percentage),
           grootboekrekening_id: null,
           grootboek_label: "",
         }));
       } else {
-      // Derive prefill from header totals — one line only, never a hidden default.
+      // Derive prefill from header totals — one line only, never a hidden default:
+      // zonder kop-percentage krijgt ook de regel geen percentage.
       const prefill = derivePrefillLine({
         amount_excl: parseAmountInput(nextHeader.amount_excl),
         amount_incl: parseAmountInput(nextHeader.amount_incl),
@@ -294,7 +348,7 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         nextLines = [{
           omschrijving: invoice.supplier || "Factuurregel",
           amount_input: formatAmountInput(prefill.amount_excl),
-          btw_percentage: String(prefill.btw_percentage),
+          btw_percentage: lineVatChoiceFromStored(prefill.btw_percentage),
           grootboekrekening_id: null,
           grootboek_label: "",
           derived: true,
@@ -308,36 +362,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
       }
     }
 
-    // Header normalisation: when the manually-entered header is incomplete
-    // (btw missing, incl null or equal to excl) but the lines carry VAT,
-    // derive header totals from the lines so there is no artificial gap.
-    if (!isBtwVrijgesteld && nextLines.length > 0) {
-      const parsed = nextLines
-        .filter((l) => !isBlankLine({
-          omschrijving: l.omschrijving,
-          amount_input: l.amount_input,
-          grootboekrekening_id: l.grootboekrekening_id,
-        }))
-        .map((l) => ({
-          omschrijving: l.omschrijving,
-          amount_excl: parseAmountInput(l.amount_input) ?? 0,
-          btw_percentage: parseAmountInput(l.btw_percentage) ?? 0,
-        }));
-      const lineTotalsInit = computeLineTotals(parsed);
-      const derived = deriveHeaderFromLines(
-        {
-          amount_excl: parseAmountInput(nextHeader.amount_excl),
-          btw_amount: parseAmountInput(nextHeader.btw_amount),
-          amount_incl: parseAmountInput(nextHeader.amount_incl),
-        },
-        lineTotalsInit,
-      );
-      if (derived.btw_amount != null) {
-        nextHeader.amount_excl = formatAmountInput(derived.amount_excl);
-        nextHeader.btw_amount = formatAmountInput(derived.btw_amount);
-        nextHeader.amount_incl = formatAmountInput(derived.amount_incl);
-      }
-    }
+    // GEEN kopnormalisatie meer (A2-02 / D-01). De kop is het document en wordt
+    // nooit uit een afgeleide, voorgevulde of opgeslagen regel herleid: zo bleef
+    // € 100 / leeg / € 100 met een stil aangenomen 21%-regel vroeger € 121, en
+    // vergeleek de totaalcontrole twee afgeleide waarden. Ontbreekt er iets in
+    // de kop, dan zegt de totaalcontrole dat en vult de gebruiker het in.
 
     setHeader(nextHeader);
     setLines(nextLines);
@@ -361,8 +390,22 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   };
 
   const addLine = () => {
-    const pct = isBtwVrijgesteld ? "0" : header.btw_percentage || "21";
+    // Een nieuwe regel neemt alleen een EXPLICIETE kopkeuze over (0, 9 of 21);
+    // zonder keuze begint hij zonder percentage — nooit een stille 21%.
+    const pct = isBtwVrijgesteld ? "0" : (isLineVatChoice(header.btw_percentage) ? header.btw_percentage : "");
     setLines((prev) => [...prev, emptyLine(pct)]);
+  };
+
+  /**
+   * Het kop-percentage kiezen. Een expliciete keuze (0, 9 of 21) geldt ook voor
+   * de regels die nog GEEN keuze hebben; een regel met een eigen keuze blijft
+   * ongemoeid. "Gemengd" raakt geen regel en wordt als NULL bewaard.
+   */
+  const chooseHeaderVat = (choice: string) => {
+    patchHeader({ btw_percentage: choice });
+    if (isLineVatChoice(choice)) {
+      setLines((prev) => prev.map((l) => (isLineVatChoice(l.btw_percentage) ? l : { ...l, btw_percentage: choice })));
+    }
   };
 
   const removeLine = (idx: number) => {
@@ -419,7 +462,36 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
     }))),
     [lines],
   );
-  const linesMatch = diffs.allOk;
+  // ── Echte aansluiting (A2-02 / D-01) ──────────────────────────────────────
+  // Dezelfde exacte toetsen als `post_purchase_invoice()` op de opgeslagen kop:
+  // Σ regels excl = kop excl op de cent, en excl + btw (leeg = 0) = incl. De
+  // tolerantie van `computeLineDiffs` blijft alleen voor de btw per regel, die
+  // de schrijver niet narekent. Daarnaast: elke regel heeft een btw-keuze, en
+  // bij een vrijgestelde administratie staat er geen btw op het document.
+  const headerExclCents = headerTotals.amount_excl != null ? toCents(headerTotals.amount_excl) : null;
+  const linesExclCents = sumLineExclCents(parsedLines.map((l) => l.amount_excl));
+  const exclExact = headerExclCents != null && linesExclCents === headerExclCents;
+  const headerSluit = headerReconciles(headerTotals);
+  const linesWithoutVatChoice = countLinesWithoutVatChoice(lines);
+  const vatOnDocumentCents = documentVatCents(headerTotals);
+  /**
+   * F1c-N1 / D4: een btw-vrijgestelde administratie met een factuur waarop btw
+   * staat. Voorbelasting kan zij niet aftrekken, en hoe niet-aftrekbare btw
+   * dan geboekt moet worden is nog niet besloten. Tot dat besluit: tonen,
+   * niets laten wegvallen, en goedkeuren en boeken blokkeren.
+   */
+  const vrijgesteldMetBtw = isBtwVrijgesteld && vatOnDocumentCents > 0;
+  const vrijgesteldMetBtwUitleg =
+    `Deze administratie is btw-vrijgesteld, maar de factuur bevat ${formatEuro(fromCents(vatOnDocumentCents))} btw. ` +
+    "Een vrijgestelde administratie trekt geen btw af, en het boeken van niet-aftrekbare btw als kosten is nog niet beschikbaar. " +
+    "Goedkeuren en boeken zijn daarom geblokkeerd; er valt geen btw weg en er wordt geen voorbelasting geboekt.";
+  /** FD-N2: past het kop-percentage bij de regels? (Bij vrijgesteld staat het vast.) */
+  const headerVatProblem = isBtwVrijgesteld || meaningfulLines.length === 0
+    ? null
+    : headerVatChoiceProblem(header.btw_percentage, meaningfulLines.map((l) => l.btw_percentage));
+
+  const linesMatch = diffs.allOk && exclExact;
+  const totalsReconcile = linesMatch && headerSluit === true && linesWithoutVatChoice === 0 && !vrijgesteldMetBtw;
   const headerComplete =
     !!header.client_id &&
     !!header.supplier.trim() &&
@@ -433,7 +505,36 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   const isPosted = !!posting;
   const canSave = initialized && !hasPartialLine && !saving && !isPosted;
   const canApprove =
-    canSave && headerComplete && linesMatch && meaningfulLines.length > 0 && linesZonderRekening === 0;
+    canSave && headerComplete && totalsReconcile && headerVatProblem === null &&
+    meaningfulLines.length > 0 && linesZonderRekening === 0;
+
+  /**
+   * D-02 / A2-22: wanneer de administratie NIET mag wisselen. Geboekt, of met
+   * bankkoppelingen, of (fail-closed) zolang een van beide nog onbekend is.
+   */
+  const clientMoveBlocker: string | null =
+    isPosted ? "Deze factuur is geboekt; de administratie ligt vast."
+      : postingQuery.isPending || postingQuery.isError
+        ? "De boekingsstatus van deze factuur is nog niet bekend; de administratie kan nu niet worden gewijzigd."
+        : allocationsCheck.isPending || allocationsCheck.isError
+          ? "De bankkoppelingen van deze factuur zijn nog niet gecontroleerd; de administratie kan nu niet worden gewijzigd."
+          : allocationsCheck.data
+            ? "Deze factuur is aan een banktransactie gekoppeld; de administratie kan niet worden gewijzigd zolang de koppeling bestaat."
+            : null;
+  const clientName = (id: string | null | undefined) => clients?.find((c) => c.id === id)?.name ?? "een andere administratie";
+  const clientMovePending = !!invoice && !!header.client_id && header.client_id !== invoice.client_id;
+
+  /**
+   * Radix Select kiest bij typen op een GESLOTEN keuzelijst stil een andere
+   * waarde (typeahead). Voor de administratie mag dat nooit (D-02): typen doet
+   * hier niets; kiezen gaat via de geopende lijst en een bevestiging. Spatie
+   * blijft de lijst openen.
+   */
+  const blockClosedTypeahead = (event: React.KeyboardEvent) => {
+    if (event.key.length === 1 && event.key !== " " && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+    }
+  };
 
   // De database boekt alleen een gecontroleerde factuur; de knop volgt die regel
   // zodat een nog te controleren factuur geen onvermijdelijke foutmelding geeft.
@@ -492,11 +593,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   const readinessBlocked =
     !postingReadiness || postingReadiness.state === "geblokkeerd" || postingReadiness.state === "onbekend";
 
-  // Totals color state
+  // Totals color state. Groen ("sluit aan") alleen bij ECHTE aansluiting op de
+  // kop zoals die op het document staat — nooit op afgeleide waarden.
   const totalsState: "green" | "amber" | "red" =
     (headerTotals.amount_incl == null && meaningfulLines.length > 0) ? "red"
-      : (hasPartialLine || (meaningfulLines.length > 0 && !linesMatch)) ? "amber"
-      : (meaningfulLines.length > 0 && linesMatch) ? "green"
+      : (meaningfulLines.length > 0 && !hasPartialLine && totalsReconcile) ? "green"
       : "amber";
 
   const totalsMessage =
@@ -504,9 +605,17 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
       : totalsState === "red" ? "Factuurtotalen ontbreken."
       : hasPartialLine ? "Een regel is nog niet compleet."
       : meaningfulLines.length === 0 ? "Voeg minstens één boekingsregel toe."
+      : linesWithoutVatChoice > 0 ? "BTW niet herkend — kies 0%, 9% of 21%."
+      : vrijgesteldMetBtw ? `Deze administratie is btw-vrijgesteld, maar de factuur bevat ${formatEuro(fromCents(vatOnDocumentCents))} btw.`
+      : headerTotals.amount_excl == null ? "Het bedrag excl. van de factuur ontbreekt."
+      : headerSluit === false ? "Bedrag excl. plus btw-bedrag van de factuur is niet gelijk aan het bedrag incl."
       : (() => {
           const d = diffs.incl ?? diffs.excl ?? diffs.btw ?? 0;
-          return `Er resteert nog een verschil van ${formatEuro(Math.abs(d))}.`;
+          // Binnen de btw-tolerantie maar niet exact op excl: noem het echte verschil.
+          const verschil = Math.abs(d) >= 0.005 || headerExclCents == null
+            ? Math.abs(d)
+            : fromCents(Math.abs(linesExclCents - headerExclCents));
+          return `Er resteert nog een verschil van ${formatEuro(verschil)}.`;
         })();
 
   // "Waarom kan ik niet goedkeuren?" — read-only explanation derived ONLY from
@@ -517,13 +626,22 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
     if (saving) reasons.push("Er wordt nog opgeslagen.");
     if (hasPartialLine) reasons.push("Een boekingsregel is niet compleet.");
     if (!headerComplete) reasons.push("De factuurgegevens zijn nog niet compleet.");
+    if (vrijgesteldMetBtw) reasons.push(vrijgesteldMetBtwUitleg);
+    if (headerTotals.amount_excl == null) reasons.push("Het bedrag excl. van de factuur ontbreekt.");
+    else if (headerSluit === false) reasons.push("Bedrag excl. plus btw-bedrag van de factuur is niet gelijk aan het bedrag incl.");
     if (meaningfulLines.length === 0) reasons.push("Er is nog geen boekingsregel.");
-    else if (!linesMatch) reasons.push("De boekingsregels sluiten niet aan op de factuur.");
+    else {
+      if (linesWithoutVatChoice > 0) reasons.push("BTW niet herkend — kies 0%, 9% of 21% voor elke boekingsregel.");
+      if (headerVatProblem) reasons.push(headerVatProblem);
+      if (!linesMatch) reasons.push("De boekingsregels sluiten niet aan op de factuur.");
+    }
     if (linesZonderRekening > 0) reasons.push("Kies een grootboekrekening voor elke boekingsregel.");
     return reasons;
   }, [
     initialized, canApprove, saving, hasPartialLine, headerComplete,
     meaningfulLines.length, linesMatch, linesZonderRekening,
+    vrijgesteldMetBtw, vrijgesteldMetBtwUitleg, headerTotals.amount_excl, headerSluit,
+    linesWithoutVatChoice, headerVatProblem,
   ]);
 
   // Previous / next invoice navigation (within same client)
@@ -539,11 +657,23 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
   const goPrev = () => hasPrev && navigate(`/facturen/inkoop/${sortedInvoices[currentIdx - 1].id}`);
   const goNext = () => hasNext && navigate(`/facturen/inkoop/${sortedInvoices[currentIdx + 1].id}`);
 
+  /**
+   * Een bedrag als hele centen, half-up op de decimale waarde — exact wat
+   * PostgreSQL bij opslag in numeric(…,2) doet (A3-16). Vroeger rondde de regel
+   * met een float af (1,005 → 1,00) terwijl de kop via de database 1,01 werd.
+   */
+  const asStoredAmount = (raw: string): number | null => {
+    const n = parseAmountInput(raw);
+    return n == null ? null : fromCents(toCents(n));
+  };
+
   const buildLinesPayload = (): InvoiceLineInput[] =>
     meaningfulLines.map((l) => ({
       omschrijving: l.omschrijving.trim(),
-      amount_excl: round2(parseAmountInput(l.amount_input) ?? 0),
-      btw_percentage: parseAmountInput(l.btw_percentage),
+      amount_excl: asStoredAmount(l.amount_input) ?? 0,
+      // "" (nog niet gekozen) wordt NULL; nooit een aangenomen percentage. Een
+      // ongewijzigd opgeslagen percentage gaat ongewijzigd terug.
+      btw_percentage: lineVatInputToStored(l.btw_percentage),
       grootboekrekening_id: l.grootboekrekening_id,
     }));
 
@@ -553,10 +683,11 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
     supplier: header.supplier.trim(),
     invoice_number: header.invoice_number.trim() || null,
     invoice_date: header.invoice_date || null,
-    amount_excl: parseAmountInput(header.amount_excl),
-    btw_amount: parseAmountInput(header.btw_amount),
-    amount_incl: parseAmountInput(header.amount_incl),
-    btw_percentage: parseAmountInput(header.btw_percentage),
+    amount_excl: asStoredAmount(header.amount_excl),
+    btw_amount: asStoredAmount(header.btw_amount),
+    amount_incl: asStoredAmount(header.amount_incl),
+    // FD-N2: "Gemengd" en "nog niet gekozen" worden NULL, nooit 21.
+    btw_percentage: headerVatChoiceToStored(header.btw_percentage),
     // NOTE: ledger_account_id is intentionally NOT persisted here.
     // purchase_invoices.ledger_account_id has a FK to public.ledger_accounts,
     // but the workspace "Standaard grootboek" combobox picks IDs from
@@ -597,6 +728,27 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
       toast({
         title: "Boekingsregels sluiten nog niet aan",
         description: totalsMessage,
+        variant: "destructive",
+      });
+      return;
+    }
+    // Dubbele bodem: de knop staat al uit, maar goedkeuren zonder btw-keuze,
+    // met een niet-passend kop-percentage of met btw bij een vrijgestelde
+    // administratie wordt hier hoe dan ook geweigerd.
+    if (approve && !canApprove) {
+      toast({
+        title: "Goedkeuren nog niet mogelijk",
+        description: approveBlockers.join(" "),
+        variant: "destructive",
+      });
+      return;
+    }
+    // D-02: een verplaatsing naar een andere administratie alleen als die nog
+    // mag (niet geboekt, geen bankkoppeling, beide bekend).
+    if (header.client_id && header.client_id !== invoice.client_id && clientMoveBlocker) {
+      toast({
+        title: "Administratie kan niet worden gewijzigd",
+        description: clientMoveBlocker,
         variant: "destructive",
       });
       return;
@@ -728,8 +880,17 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                 <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <div className="min-w-0">
                     <Label className="text-xs font-medium text-muted-foreground">Administratie</Label>
-                    <Select value={header.client_id} onValueChange={(v) => patchHeader({ client_id: v })}>
-                      <SelectTrigger className="h-9" aria-label="Administratie">
+                    {/* D-02: nooit wisselen door een toetsaanslag. Een andere
+                        administratie kiezen vraagt een bevestiging en kan niet
+                        bij een geboekte of gekoppelde factuur. */}
+                    <Select
+                      value={header.client_id}
+                      onValueChange={(v) => {
+                        if (v !== header.client_id) setPendingClientId(v);
+                      }}
+                      disabled={!!clientMoveBlocker}
+                    >
+                      <SelectTrigger className="h-9" aria-label="Administratie" onKeyDown={blockClosedTypeahead}>
                         <SelectValue placeholder="Selecteer klant" />
                       </SelectTrigger>
                       <SelectContent>
@@ -738,6 +899,16 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                         ))}
                       </SelectContent>
                     </Select>
+                    {clientMoveBlocker && (
+                      <p className="mt-1 text-[11px] text-muted-foreground" data-testid="client-move-blocked">
+                        {clientMoveBlocker}
+                      </p>
+                    )}
+                    {clientMovePending && (
+                      <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400" data-testid="client-move-pending">
+                        Wordt bij opslaan verplaatst naar {clientName(header.client_id)} (nu: {clientName(invoice.client_id)}).
+                      </p>
+                    )}
                   </div>
 
                   <div className="min-w-0">
@@ -869,23 +1040,34 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                   </div>
                   <div className="min-w-0">
                     <Label className="text-xs font-medium text-muted-foreground">BTW %</Label>
+                    {/* Geen standaardwaarde: leeg = "nog niet gekozen". "Gemengd"
+                        bewaart NULL, zoals de UBL-intake bij gemengde tarieven. */}
                     <Select
                       value={header.btw_percentage}
-                      onValueChange={(v) => patchHeader({ btw_percentage: v })}
+                      onValueChange={chooseHeaderVat}
                       disabled={isBtwVrijgesteld}
                     >
-                      <SelectTrigger className="h-9" aria-label="BTW-percentage"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-9" aria-label="BTW-percentage"><SelectValue placeholder="Kies" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="0">0%</SelectItem>
                         <SelectItem value="9">9%</SelectItem>
                         <SelectItem value="21">21%</SelectItem>
+                        <SelectItem value={HEADER_VAT_MIXED}>Gemengd</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
-                {isBtwVrijgesteld && (
+                {isBtwVrijgesteld && !vrijgesteldMetBtw && (
                   <p className="mt-2 text-[11px] text-muted-foreground">
                     Deze administratie is BTW-vrijgesteld: BTW staat vast op 0% en het bedrag incl. is gelijk aan excl.
+                  </p>
+                )}
+                {vrijgesteldMetBtw && (
+                  <p
+                    className="mt-2 rounded-sm border border-amber-500/50 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                    data-testid="vrijgesteld-btw-blocker"
+                  >
+                    {vrijgesteldMetBtwUitleg}
                   </p>
                 )}
               </FieldGroup>
@@ -951,6 +1133,16 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
                 <p className="border-b bg-muted/20 px-3 py-2 text-xs text-muted-foreground" data-testid="derived-line-notice">
                   Deze boekingsregel is nog niet opgeslagen. Hij is afgeleid uit de factuurtotalen;
                   kies een grootboekrekening en sla op, dan telt hij mee voor het boeken.
+                </p>
+              )}
+
+              {linesWithoutVatChoice > 0 && (
+                <p
+                  className="border-b bg-amber-50/60 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
+                  data-testid="btw-keuze-notice"
+                >
+                  BTW niet herkend — kies 0%, 9% of 21% voor {linesWithoutVatChoice === 1 ? "de boekingsregel" : `${linesWithoutVatChoice} boekingsregels`}.
+                  Er wordt geen percentage aangenomen; zonder keuze kan de factuur niet worden goedgekeurd.
                 </p>
               )}
 
@@ -1056,6 +1248,28 @@ export function PurchaseInvoiceWorkspace({ invoiceId }: { invoiceId: string | un
         onSave={() => handleSave(false)}
         onApprove={() => handleSave(true)}
         onNext={goNext}
+      />
+
+      {/* D-02: een andere administratie is een bewuste, bevestigde keuze. */}
+      <FinancialActionDialog
+        open={pendingClientId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingClientId(null);
+        }}
+        title="Factuur naar een andere administratie verplaatsen?"
+        explanation={`Bij Opslaan verplaatst deze factuur van ${clientName(invoice.client_id)} naar ${clientName(pendingClientId)}.`}
+        consequences={[
+          "De factuur verdwijnt uit de lijst van de huidige administratie.",
+          "Leverancier en grootboekrekeningen van de regels horen mogelijk bij de huidige administratie; controleer ze voordat je goedkeurt.",
+        ]}
+        confirmLabel="Verplaatsen"
+        isPending={false}
+        confirmDisabled={!!clientMoveBlocker}
+        onConfirm={() => {
+          if (pendingClientId && !clientMoveBlocker) patchHeader({ client_id: pendingClientId });
+          setPendingClientId(null);
+        }}
+        data-testid="client-move-dialog"
       />
     </div>
   );
