@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { queryClient } from "@/lib/query-client";
 import { useAuth } from "@/hooks/useAuth";
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
@@ -52,7 +53,13 @@ export function AppSidebar() {
   const selectedClient = clients?.find(c => c.id === selectedClientId);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      // B2-09: pas ná het uitloggen legen (anders kan een actieve query de
+      // cache nog met de oude sessie vullen); niets van deze gebruiker blijft staan.
+      queryClient.clear();
+    }
     navigate("/auth");
   };
 
