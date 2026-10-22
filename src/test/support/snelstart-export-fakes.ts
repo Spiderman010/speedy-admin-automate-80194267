@@ -109,6 +109,20 @@ class FakeQuery implements PromiseLike<{ data: any; error: any; count?: number |
     return this.add(`${col}=lte.${value}`, (r) => r[col] != null && String(r[col]) <= value);
   }
 
+  /**
+   * Alleen de vorm die de exportmarkering gebruikt (Codex #299):
+   * `and(id.eq."<id>",updated_at.eq."<ts>"),…` — een rij matcht als één paar
+   * exact gelijk is. Elke andere vorm is een testfout.
+   */
+  or(filters: string) {
+    const pairs = [...filters.matchAll(/and\(id\.eq\."((?:[^"\\]|\\.)*)",updated_at\.eq\."((?:[^"\\]|\\.)*)"\)/g)];
+    const rebuilt = pairs.map((m) => m[0]).join(",");
+    if (!pairs.length || rebuilt !== filters) throw new Error(`fakeSupabase.or: onbekende vorm ${filters}`);
+    const unq = (v: string) => v.replace(/\\(.)/g, "$1");
+    const want = pairs.map((m) => [unq(m[1]), unq(m[2])] as const);
+    return this.add(`or=(${filters})`, (r) => want.some(([id, ts]) => r.id === id && r.updated_at === ts));
+  }
+
   lt(col: string, value: string) {
     return this.add(`${col}=lt.${value}`, (r) => r[col] != null && String(r[col]) < value);
   }

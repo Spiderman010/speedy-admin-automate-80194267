@@ -240,6 +240,18 @@ export async function fetchExportLedgerAccounts(opts: {
 
 export const STATUS_UPDATE_BATCH_SIZE = 150;
 
+// Pairs (id, read updated_at) per compare-and-set UPDATE (Codex #299). Each pair
+// costs ~155 URL characters once encoded (uuid in `id=in.(…)` plus
+// `and(id.eq."<uuid>",updated_at.eq."<ISO with µs and +00:00>")` in `or=(…)`);
+// 40 pairs keep the whole request URL around 6.6 KB, safely under ~8 KB
+// (measured in src/test/purchase-invoices-export-cas-url.test.ts).
+export const STATUS_UPDATE_CAS_BATCH_SIZE = 40;
+
+// PostgREST logic-tree value, double-quoted so ':' '.' '+' ',' '(' ')' in a
+// timestamp are taken literally; '"' and '\' are backslash-escaped. The value
+// is the exact string read from the database, never reformatted.
+const postgrestQuoted = (v: string) => `"${v.replace(/[\\"]/g, (c) => `\\${c}`)}"`;
+
 /** De markering raakte niet precies de geëxporteerde facturen; `unmarkedIds` noemt welke niet. */
 export class PurchaseExportMarkError extends Error {
   constructor(
@@ -258,11 +270,12 @@ export class PurchaseExportMarkError extends Error {
 // scoped to the organization and the administratie, and only flips an invoice
 // that is still exportable (compare-and-set on status) and — when
 // `fetchedUpdatedAt` is given — whose `updated_at` is still EXACTLY the value
-// read for the file (per-invoice compare-and-set, H6-03 / Codex #299). The ids
-// are grouped per read `updated_at` and each group is updated with
-// `.eq("updated_at", <that value>)`; there is no shared cutoff, so an edit
-// after the read can never hide under a later-read invoice's newer timestamp,
-// and no client clock is involved. An id without a read `updated_at` is not
+// read for the file (per-row compare-and-set, H6-03 / Codex #299). Per batch
+// of STATUS_UPDATE_CAS_BATCH_SIZE invoices ONE request carries every pair as
+// `or=(and(id.eq.<id>,updated_at.eq.<read value>),…)`: no shared cutoff (an
+// edit after the read can never hide under a later-read invoice's newer
+// timestamp), no client clock, and a bounded number of requests however many
+// distinct timestamps there are. An id without a read `updated_at` is not
 // marked (fail-closed). It writes `status` only — never `remaining_amount`,
 // never a payment status (D1). Each update must report back (RETURNING)
 // exactly the rows it was asked to mark. ALL batches are tried (H6-02): every
@@ -286,43 +299,39 @@ export async function markPurchaseInvoicesExported(opts: {
   let marked = 0;
   const unmarked: string[] = [];
   const errors: string[] = [];
-  // Groups of ids that share one CAS value (null = no updated_at CAS).
-  const groups = new Map<string | null, string[]>();
-  for (const id of invoiceIds) {
-    let key: string | null = null;
+  const markable = fetchedUpdatedAt
+    ? invoiceIds.filter((id) => {
+        if (fetchedUpdatedAt.get(id)) return true;
+        unmarked.push(id); // fail-closed: no read value, no compare-and-set possible
+        return false;
+      })
+    : invoiceIds;
+  const size = fetchedUpdatedAt ? STATUS_UPDATE_CAS_BATCH_SIZE : STATUS_UPDATE_BATCH_SIZE;
+  for (let i = 0; i < markable.length; i += size) {
+    const batch = markable.slice(i, i + size);
+    let query = supabase
+      .from("purchase_invoices")
+      .update({ status: "geexporteerd" })
+      .eq("organization_id", organizationId)
+      .eq("client_id", clientId)
+      .in("id", batch)
+      .in("status", [...EXPORTABLE_STATUSES]);
     if (fetchedUpdatedAt) {
-      const ts = fetchedUpdatedAt.get(id);
-      if (!ts) {
-        unmarked.push(id);
-        continue;
-      }
-      key = ts;
+      query = query.or(
+        batch
+          .map((id) => `and(id.eq.${postgrestQuoted(id)},updated_at.eq.${postgrestQuoted(fetchedUpdatedAt.get(id)!)})`)
+          .join(","),
+      );
     }
-    const g = groups.get(key);
-    if (g) g.push(id);
-    else groups.set(key, [id]);
-  }
-  for (const [updatedAt, groupIds] of groups) {
-    for (let i = 0; i < groupIds.length; i += STATUS_UPDATE_BATCH_SIZE) {
-      const batch = groupIds.slice(i, i + STATUS_UPDATE_BATCH_SIZE);
-      let query = supabase
-        .from("purchase_invoices")
-        .update({ status: "geexporteerd" })
-        .eq("organization_id", organizationId)
-        .eq("client_id", clientId)
-        .in("id", batch)
-        .in("status", [...EXPORTABLE_STATUSES]);
-      if (updatedAt !== null) query = query.eq("updated_at", updatedAt);
-      const { data, error } = await query.select("id");
-      if (error) {
-        errors.push(error.message);
-        unmarked.push(...batch);
-        continue;
-      }
-      const hit = new Set((data ?? []).map((r: { id: string }) => r.id));
-      marked += batch.filter((id) => hit.has(id)).length;
-      unmarked.push(...batch.filter((id) => !hit.has(id)));
+    const { data, error } = await query.select("id");
+    if (error) {
+      errors.push(error.message);
+      unmarked.push(...batch);
+      continue;
     }
+    const hit = new Set((data ?? []).map((r: { id: string }) => r.id));
+    marked += batch.filter((id) => hit.has(id)).length;
+    unmarked.push(...batch.filter((id) => !hit.has(id)));
   }
   if (unmarked.length) {
     // Keep the caller's order so the message names invoices predictably.

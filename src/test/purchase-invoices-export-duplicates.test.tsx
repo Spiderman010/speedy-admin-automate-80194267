@@ -9,6 +9,7 @@ import {
   EXPORT_BATCH_SIZE,
   DUPLICATE_LOOKUP_BATCH_SIZE,
   STATUS_UPDATE_BATCH_SIZE,
+  STATUS_UPDATE_CAS_BATCH_SIZE,
   type DuplicateCandidate,
 } from "@/hooks/usePurchaseInvoices";
 
@@ -41,6 +42,7 @@ function makeQueryMock() {
   query.in = chain("in");
   query.order = chain("order");
   query.lte = chain("lte");
+  query.or = chain("or");
   query.range = vi.fn((...args: unknown[]) => {
     state.calls.push({ method: "range", args });
     return Promise.resolve(state.responses.shift() ?? defaultResponse());
@@ -270,7 +272,7 @@ describe("markPurchaseInvoicesExported", () => {
     expect(err.message).toMatch(new RegExp(`${2 * STATUS_UPDATE_BATCH_SIZE - 1} van ${3 * STATUS_UPDATE_BATCH_SIZE}.*timeout`));
   });
 
-  it("H6-03 / Codex #299: per factuur compare-and-set op de exact opgehaalde updated_at, gegroepeerd per waarde; nooit een gedeelde grens", async () => {
+  it("H6-03 / Codex #299: per rij compare-and-set op de exact opgehaalde updated_at, in één verzoek per reeks; nooit een gedeelde grens", async () => {
     const [a, b, c] = ids(3);
     const t1 = "2026-10-20T08:00:00.123456+00:00";
     const t2 = "2026-10-20T09:00:00+00:00";
@@ -279,8 +281,22 @@ describe("markPurchaseInvoicesExported", () => {
       fetchedUpdatedAt: new Map([[a, t1], [b, t2], [c, t1]]),
     });
     expect(callsFor("lte")).toHaveLength(0);
-    expect(callsFor("eq").filter(x => x.args[0] === "updated_at").map(x => x.args[1])).toEqual([t1, t2]);
-    expect(callsFor("in").filter(x => x.args[0] === "id").map(x => x.args[1])).toEqual([[a, c], [b]]);
+    expect(callsFor("eq").filter(x => x.args[0] === "updated_at")).toHaveLength(0);
+    expect(callsFor("update")).toHaveLength(1);
+    expect(callsFor("in").filter(x => x.args[0] === "id").map(x => x.args[1])).toEqual([[a, b, c]]);
+    expect(callsFor("or").map(x => x.args[0])).toEqual([
+      `and(id.eq."${a}",updated_at.eq."${t1}"),and(id.eq."${b}",updated_at.eq."${t2}"),and(id.eq."${c}",updated_at.eq."${t1}")`,
+    ]);
+  });
+
+  it("Codex #299-2: 2300 facturen met elk een eigen updated_at → hooguit ceil(2300/N) verzoeken", async () => {
+    const all = ids(2300);
+    const ts = new Map(all.map((id, i) => [id, `2026-10-20T08:${String(Math.floor(i / 60) % 60).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.${String(i).padStart(6, "0")}+00:00`]));
+    expect(new Set(ts.values()).size).toBe(2300);
+    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: all, fetchedUpdatedAt: ts });
+    // Vaste bovengrens (N ≥ 25), los van de constante: f9e4cad deed hier 2300 verzoeken.
+    expect(callsFor("update").length).toBeLessThanOrEqual(Math.ceil(2300 / 25));
+    expect(callsFor("update").length).toBe(Math.ceil(2300 / STATUS_UPDATE_CAS_BATCH_SIZE));
   });
 
   it("H6-03: een factuur zonder opgehaalde updated_at wordt niet gemarkeerd (fail-closed) en wel gemeld", async () => {
