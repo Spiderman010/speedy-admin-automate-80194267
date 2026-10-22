@@ -5,6 +5,8 @@ import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
 type BankTransaction = Tables<"bank_transactions">;
 type BankTransactionInsert = TablesInsert<"bank_transactions">;
+/** Additive migration field; generated schema types remain untouched. */
+type BankInsertWithReversal = BankTransactionInsert & { is_reversal?: boolean };
 
 export const BANK_TRANSACTIONS_PAGE_SIZE = 50;
 export const BANK_FETCH_BATCH_SIZE = 1000;
@@ -179,11 +181,11 @@ export function useAddBankTransaction() {
   const qc = useQueryClient();
   const { user } = useAuth();
   return useMutation({
-    mutationFn: async (tx: Omit<BankTransactionInsert, "user_id">) => {
+    mutationFn: async (tx: Omit<BankInsertWithReversal, "user_id">) => {
       if (!user) throw new Error("Not authenticated");
       const { data, error } = await supabase
         .from("bank_transactions")
-        .insert({ ...tx, user_id: user.id })
+        .insert({ ...tx, user_id: user.id } as BankTransactionInsert)
         .select()
         .single();
       if (error) throw error;
