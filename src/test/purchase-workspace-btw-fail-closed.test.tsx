@@ -366,6 +366,16 @@ describe("F1c-N1 — bij een btw-vrijgestelde administratie valt de btw nooit st
     expect(screen.getByTestId("purchase-posting-button")).toBeDisabled();
   });
 
+  it("H4-1: met een opgeslagen regel van 21% die op de kop aansluit, blijft goedkeuren dicht (alleen de vrijgesteld-blokkade houdt dit tegen)", async () => {
+    state.invoice = { ...baseInvoice, amount_excl: 100, btw_amount: 21, amount_incl: 121, btw_percentage: 21 };
+    state.storedLines = [{ ...baseLine }];
+    await ready();
+    expect(screen.getByTestId("vrijgesteld-btw-blocker")).toHaveTextContent(/btw-vrijgesteld/i);
+    expect(totals()).not.toHaveAttribute("data-totals-state", "green");
+    expect(approveBtn()).toBeDisabled();
+    expect(actionBar().getByText(/Goedkeuren nog niet mogelijk/).parentElement).toHaveTextContent(/btw-vrijgesteld/i);
+  });
+
   it("Opslaan bewaart de btw die op de factuur staat in plaats van haar weg te gooien", async () => {
     state.invoice = { ...baseInvoice, amount_excl: 100, btw_amount: 21, amount_incl: 121, btw_percentage: 21 };
     await ready();

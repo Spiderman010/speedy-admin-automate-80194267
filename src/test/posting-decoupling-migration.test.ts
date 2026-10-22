@@ -74,6 +74,16 @@ function herdefinieert(tekst: string, naam: string): boolean {
 
 const GUARD = /IF v_client\.afgesloten_boekjaar IS NOT NULL AND [\w.]+ <= v_client\.afgesloten_boekjaar THEN\s*RAISE EXCEPTION 'Boekjaar % is afgesloten voor deze administratie', [\w.]+\s*USING ERRCODE = '22023'; END IF;/;
 
+/**
+ * De enige beoordeelde latere herdefinitie van functies van PR H (zie test 1).
+ * Een volgende migratie die een van de acht functies herdefinieert, laat test 1
+ * omvallen tot zij hier na herbeoordeling bij komt.
+ */
+const HERBEOORDEELD = {
+  bestand: "20261021170000_btw_en_nan_validatie_in_schrijvers.sql",
+  functies: ["post_purchase_invoice", "post_sales_invoice", "post_bank_transaction", "bank_bulk_posting_candidates"],
+};
+
 /** De gezaghebbende datum per schrijver: de argumenten van de blokkadetoets. */
 const ARGUMENTEN: Record<string, string> = {
   post_purchase_invoice: "v_inv.client_id, v_inv.invoice_date",
@@ -136,7 +146,7 @@ const changed = git("diff", "--name-only", "origin/main...HEAD");
 const introducedHere = git("diff", "--name-only", "--diff-filter=A", "origin/main...HEAD").includes(MIGRATION);
 
 describe("De migratie is afgeleid uit PR D", () => {
-  it("1. bestaat, definieert precies acht functies; een latere herdefinitie bouwt aantoonbaar op deze lichamen voort", () => {
+  it("1. bestaat, definieert precies acht functies; alleen de herbeoordeelde 20261021170000 herdefinieert er, aantoonbaar voortbouwend", () => {
     const alle = readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((f) => f.endsWith(".sql")).sort();
     // Voorheen: "ligt na elke andere migratie" — een uitspraak over de stand
     // van de repository op het moment van PR H, geen invariant: elke latere
@@ -153,7 +163,16 @@ describe("De migratie is afgeleid uit PR D", () => {
     const namen = [...code(sql).matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g)].map((m) => m[1]);
     expect(namen).toEqual([...SCHRIJVERS, "bank_bulk_posting_candidates"]);
     for (const later of alle.slice(positie + 1)) {
-      expect(tekortkomingenVanLatereDefinitie(lees(`${MIGRATION_DIR}/${later}`), namen), later).toEqual([]);
+      const ruw = lees(`${MIGRATION_DIR}/${later}`);
+      const herdefinieerd = namen.filter((naam) => herdefinieert(code(ruw), naam));
+      if (later === HERBEOORDEELD.bestand) {
+        // Beoordeeld (P4, btw- en NaN-validatie): uitsluitend deze vier, en aantoonbaar voortbouwend op PR H.
+        expect(herdefinieerd, later).toEqual(HERBEOORDEELD.functies);
+        expect(tekortkomingenVanLatereDefinitie(ruw, namen), later).toEqual([]);
+      } else {
+        // Elke andere latere migratie: geen herdefinitie. Een nieuwe vraagt een eigen herbeoordeling.
+        expect(herdefinieerd, later).toEqual([]);
+      }
     }
   });
 
