@@ -91,7 +91,9 @@ function InvoicePreview({ filePath }: { filePath: string | null }) {
  */
 function deriveFormFromInvoice(invoice: SalesInvoice) {
   const verlegd = !!(invoice as any).btw_verlegd;
-  const pct = invoice.btw_percentage?.toString() || "21";
+  // F1b-N1: een ontbrekend (of niet aangeboden) percentage is "nog niet
+  // gekozen" ("") — nooit meer stil 21%. Een opgeslagen 0 blijft 0.
+  const pct = invoice.btw_percentage == null ? "" : String(Number(invoice.btw_percentage));
   const ledgerValue = (invoice as any).ledger_account_text || "";
 
   return {
@@ -102,7 +104,7 @@ function deriveFormFromInvoice(invoice: SalesInvoice) {
     amount_excl: invoice.amount_excl?.toString() || "",
     amount_incl: invoice.amount_incl?.toString() || "",
     btw_amount: verlegd ? "0" : (invoice.btw_amount?.toString() || ""),
-    btw_percentage: verlegd ? "verlegd" : (["0", "9", "21"].includes(pct) ? pct : "21"),
+    btw_percentage: verlegd ? "verlegd" : (["0", "9", "21"].includes(pct) ? pct : ""),
     btw_verlegd: verlegd,
     ledger_account_text: ledgerValue,
     grootboekrekening_id: invoice.grootboekrekening_id ?? "",
@@ -222,7 +224,7 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
     amount_excl: "",
     amount_incl: "",
     btw_amount: "",
-    btw_percentage: "21",
+    btw_percentage: "",
     btw_verlegd: false,
     ledger_account_text: "",
     grootboekrekening_id: "",
@@ -255,8 +257,10 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
   useEffect(() => {
     if (invoice) {
       const verlegd = !!(invoice as any).btw_verlegd;
-      const pct = invoice.btw_percentage?.toString() || "21";
-      const enabled = !verlegd && (parseFloat(pct) !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0));
+      // Alleen een opgeslagen 0 (zonder btw-bedrag) zet "BTW toepassen" uit.
+      // Een ontbrekend percentage laat de keuze open: niet 0, en niet 21.
+      const pct = invoice.btw_percentage == null ? null : Number(invoice.btw_percentage);
+      const enabled = !verlegd && (pct === null || pct !== 0 || (invoice.btw_amount !== null && invoice.btw_amount !== 0));
       setBtwEnabled(enabled && !verlegd);
 
       setForm(deriveFormFromInvoice(invoice));
@@ -286,6 +290,13 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
 
   const hasFile = !!invoice.pdf_path;
   const set = (key: string, value: string | boolean) => setForm(prev => ({ ...prev, [key]: value }));
+  /**
+   * F1b-N1: met "BTW toepassen" aan en nog geen percentage gekozen mag er niets
+   * worden opgeslagen of goedgekeurd. Er wordt geen percentage aangenomen; de
+   * SnelStart-export zou een stille 21 als btw-code "1" over het hele bedrag
+   * doorgeven.
+   */
+  const btwKeuzeOntbreekt = btwEnabled && form.btw_percentage === "";
 
   const buildUpdates = (): Partial<SalesInvoice> => {
     const isVerlegd = form.btw_percentage === "verlegd";
@@ -313,6 +324,7 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
   };
 
   const handleSave = async () => {
+    if (btwKeuzeOntbreekt) return;
     setSaving(true);
     try {
       await onSave(invoice.id, buildUpdates());
@@ -325,6 +337,7 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
   };
 
   const handleApprove = async () => {
+    if (btwKeuzeOntbreekt) return;
     setSaving(true);
     try {
       await onApprove(invoice.id, { ...buildUpdates(), status: "gecontroleerd" });
@@ -476,7 +489,8 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
                       set("btw_amount", "0");
                       set("btw_verlegd", false);
                     } else {
-                      set("btw_percentage", "21");
+                      // Weer aan: kies het percentage zelf — geen standaard-21%.
+                      set("btw_percentage", "");
                     }
                   }}
                 />
@@ -496,7 +510,7 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
                       }
                     }}
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label="BTW-percentage"><SelectValue placeholder="Kies BTW" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="0">0%</SelectItem>
                       <SelectItem value="9">9%</SelectItem>
@@ -504,6 +518,11 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
                       <SelectItem value="verlegd">Verlegd</SelectItem>
                     </SelectContent>
                   </Select>
+                  {btwKeuzeOntbreekt && (
+                    <p className="mt-1 text-xs text-amber-700 dark:text-amber-400" data-testid="sales-btw-keuze-ontbreekt">
+                      BTW niet herkend — kies 0%, 9%, 21% of Verlegd. Er wordt geen percentage aangenomen; opslaan en goedkeuren vragen een keuze.
+                    </p>
+                  )}
                   {form.btw_percentage === "verlegd" && (
                     <p className="text-xs text-muted-foreground mt-1">BTW verlegd — bedrag is 0, tarief wordt als "verlegd" geëxporteerd</p>
                   )}
@@ -587,10 +606,10 @@ function SalesInvoiceDetail({ invoice, open, onOpenChange, onSave, onApprove, al
               )}
             </>
           )}
-          <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name || isPosted}>
+          <Button variant="outline" onClick={handleSave} disabled={saving || !form.customer_name || isPosted || btwKeuzeOntbreekt}>
             <Save className="mr-2 h-4 w-4" />Opslaan
           </Button>
-          <Button onClick={handleApprove} disabled={saving || !form.customer_name || isPosted}>
+          <Button onClick={handleApprove} disabled={saving || !form.customer_name || isPosted || btwKeuzeOntbreekt}>
             <CheckCircle2 className="mr-2 h-4 w-4" />Goedkeuren
           </Button>
           </>
