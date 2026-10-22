@@ -1,3 +1,4 @@
+import { canAutomaticallyMatchBankTransaction, assertOrdinaryBankPayment } from "@/lib/bank-reversal-policy";
 import { useState, useCallback, useMemo, useEffect, useRef, type ComponentProps } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
@@ -149,6 +150,7 @@ function pickSafeMatchCandidate(
   tx: Tables<"bank_transactions">,
   candidates: InvoiceCandidate[],
 ): InvoiceCandidate | null {
+  if (!canAutomaticallyMatchBankTransaction(tx as { is_reversal?: boolean | null })) return null;
   if (!isSafeMatchEligibleStatus(tx.match_status)) return null;
   const expectedType = expectedInvoiceTypeForTx(tx);
   const best = candidates.find(c => c.score > 0 && c.type === expectedType);
@@ -1028,6 +1030,7 @@ export default function Bank() {
       if (!rejectionIndex) throw new Error("Bankmatch-afwijzingen zijn nog niet beschikbaar");
       const tx = transactions?.find(t => t.id === id);
       if (!tx) return;
+      assertOrdinaryBankPayment(tx as { is_reversal?: boolean | null });
 
       // Re-evaluate safety at confirmation time, including persisted import links.
       // A stale or unsafe link must be reviewed manually, never promoted blindly.
