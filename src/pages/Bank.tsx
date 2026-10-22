@@ -1992,6 +1992,11 @@ export default function Bank() {
           match_status: tx.matchStatus,
           match_confidence: tx.matchConfidence,
           matched_invoice_id: tx.matchedInvoiceId,
+          // Never discard source-proven reversal metadata on import.
+          // Without the migration, the reversal insert fails rather than downgrading it.
+          ...((tx as MatchedTransaction & { isReversal?: boolean }).isReversal === true
+            ? { is_reversal: true, matched_invoice_id: null, match_status: "niet_gematcht", match_confidence: null }
+            : {}),
           grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
           // A recognition rule may carry its VAT; without one the row stays
           // "controle nodig" in the Inhaalslag instead of posting at 0%.
