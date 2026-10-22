@@ -179,33 +179,43 @@ describe("de geïnstalleerde wacht van de suite", () => {
     const scoped = liveSecurityFetch(project, { BOEKASSIST_LIVE_SECURITY_TESTS: "1" });
     expect(typeof scoped).toBe("function");
     // Een ander adres wordt geweigerd vóór er een verzoek is — ook een subdomein-truc.
-    for (const target of [`${PROD}/rest/v1/clients`, "https://abcdefghijklmnopqrst.supabase.co.invalid/x", "http://abcdefghijklmnopqrst.supabase.co/x"]) {
+    for (const target of ["https://boekassist-network-guard.invalid/rest/v1/clients", "https://abcdefghijklmnopqrst.supabase.co.invalid/x", "http://abcdefghijklmnopqrst.supabase.co/x"]) {
       await expect(scoped(target), target).rejects.toThrow(/valt buiten het opgegeven project/);
     }
     // De omzeiling gaat langs de wacht, dus er is ook niets geweigerd of gelogd.
     expect(takeBlockedNetworkAttempts()).toEqual([]);
   });
 
-  it("node:https (en dus http, tls, undici) naar een externe host faalt hard via net.Socket.connect (review H-1)", async () => {
+  // Doelen zijn nooit routeerbaar (.invalid, TEST-NET 192.0.2.0/24): valt de
+  // wacht ooit weg, dan gaat er nog steeds geen verzoek naar een echte host.
+  it("node:https (en dus http, tls, undici) naar een externe host faalt hard via net.Socket.connect, vóór DNS of TCP (review H-1)", async () => {
+    const lookups: string[] = [];
+    const lookup = ((host: string, _opts: unknown, cb: (...a: unknown[]) => void) => {
+      lookups.push(host);
+      cb(new Error("lookup mag niet gebeuren"));
+    }) as unknown as typeof import("node:dns").lookup;
     const error = await new Promise<Error>((resolve) => {
-      const req = https.request("https://alxlbdhpbwlehbdbfejw.supabase.co/rest/v1/", (res) => resolve(new Error(`onverwacht antwoord ${res.statusCode}`)));
+      const req = https.request("https://boekassist-network-guard.invalid/rest/v1/", { lookup }, (res) =>
+        resolve(new Error(`onverwacht antwoord ${res.statusCode}`)),
+      );
       req.on("error", resolve);
       req.end();
     });
-    expect(error.message).toMatch(/\[network-guard\] BLOCKED socket alxlbdhpbwlehbdbfejw\.supabase\.co:443/);
-    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("BLOCKED socket alxlbdhpbwlehbdbfejw.supabase.co:443"));
+    expect(error.message).toMatch(/\[network-guard\] BLOCKED socket boekassist-network-guard\.invalid:443/);
+    expect(lookups).toEqual([]); // geweigerd vóór de DNS-opzoeking
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("BLOCKED socket boekassist-network-guard.invalid:443"));
     expect(takeBlockedNetworkAttempts()).toEqual([
-      expect.objectContaining({ channel: "socket", target: "alxlbdhpbwlehbdbfejw.supabase.co:443" }),
+      expect.objectContaining({ channel: "socket", target: "boekassist-network-guard.invalid:443" }),
     ]);
   });
 
-  it("ook een rechtstreekse net.connect naar een extern IP-adres wordt geweigerd", async () => {
+  it("ook een rechtstreekse net.connect naar een extern IP-adres (TEST-NET) wordt geweigerd, zonder verbinding", async () => {
     const error = await new Promise<Error>((resolve) => {
-      const socket = net.connect({ host: "10.0.0.1", port: 5432 });
+      const socket = net.connect({ host: "192.0.2.1", port: 5432 });
       socket.on("error", resolve);
       socket.on("connect", () => resolve(new Error("onverwacht verbonden")));
     });
-    expect(error.message).toMatch(/BLOCKED socket 10\.0\.0\.1:5432/);
+    expect(error.message).toMatch(/BLOCKED socket 192\.0\.2\.1:5432/);
     expect(takeBlockedNetworkAttempts().map((a) => a.channel)).toEqual(["socket"]);
   });
 });

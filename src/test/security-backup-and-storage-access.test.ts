@@ -354,6 +354,6 @@ describe("live-laag: opt-in, productieweigering en uitslag (offline)", () => {
     const scoped = liveSecurityFetch(PREVIEW, { [E.optIn]: "1" });
     // Elk ander adres wordt geweigerd vóór er een verzoek is (geen netwerkfout, maar deze melding).
     await expect(scoped("https://boekassist-network-guard.invalid/x")).rejects.toThrow(/valt buiten het opgegeven project/);
-    await expect(scoped(`${PROD_URL}/rest/v1/clients`)).rejects.toThrow(/valt buiten het opgegeven project/);
+    await expect(scoped("https://zzzzzzzzzzzzzzzzzzzz.supabase.co.invalid/rest/v1/clients")).rejects.toThrow(/valt buiten het opgegeven project/);
   });
 });
