@@ -1999,8 +1999,8 @@ export default function Bank() {
           matched_invoice_id: tx.matchedInvoiceId,
           // Never discard source-proven reversal metadata on import.
           // Without the migration, the reversal insert fails rather than downgrading it.
-          is_reversal: tx.isReversal === true,
-          ...(tx.isReversal === true
+          is_reversal: (tx as MatchedTransaction & { isReversal?: boolean }).isReversal === true,
+          ...((tx as MatchedTransaction & { isReversal?: boolean }).isReversal === true
             ? { matched_invoice_id: null, match_status: "niet_gematcht", match_confidence: null }
             : {}),
           grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
