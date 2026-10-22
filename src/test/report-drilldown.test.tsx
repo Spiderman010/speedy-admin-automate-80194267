@@ -474,12 +474,9 @@ describe("gedeeld", () => {
 });
 
 describe("scope", () => {
-  it("31/32. geen migratie en geen rekenlaag aangeraakt", (ctx) => {
+  it("31/32. SQL laat de rapportage ongemoeid; geen type- of afhankelijkheidswijziging", (ctx) => {
     let changed: string[];
-    let toon: (p: string) => string;
     try {
-      execFileSync("git", ["rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] });
-      toon = (p) => execFileSync("git", ["show", `origin/main:${p}`], { encoding: "utf8" });
       changed = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
         encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
       }).split("\n").filter(Boolean);
@@ -490,22 +487,17 @@ describe("scope", () => {
     assertBranchSqlLeavesReportingAlone(changed);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
-    for (const p of [
-      "src/lib/ledger-reporting.ts",
-      "src/lib/financial-statements.ts",
-      "src/lib/financial-statements-presentation.ts",
-      "src/lib/financial-statements-subgroups.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/reporting-classification.ts",
-      "src/hooks/useFinancialStatements.ts",
-      "src/hooks/useLedgerReversal.ts",
-    ]) {
-      expect(readFileSync(p, "utf8"), p).toBe(toon(p));
-    }
+    // Voorheen ook: acht rekenlagen byte-voor-byte gelijk aan origin/main. Dat
+    // was een scope-uitspraak van de doorklik-PR, geen invariant: elke terechte
+    // fix in de rapportagekern liet hem omvallen (nulmeting E-02). Wat de
+    // doorklik werkelijk belooft — elk paneel sluit exact aan op het
+    // rapportbedrag van de engine, voor de gekozen administratie en periode —
+    // bewijzen de gedragstests in dit bestand ("1/2", "2b", "3/4", "10b",
+    // "13/14/15", "19/20/21", "26/27", "2b/3b", "4c").
   });
 
   /*
-   * `LedgerPostingGroupSheet.tsx` stond hierboven ook in de byte-vergelijking.
+   * `LedgerPostingGroupSheet.tsx` stond hierboven eerst ook in de byte-vergelijking.
    * Dat was waar over PR #186, maar het is geen INVARIANT: het bestand is een
    * weergavecomponent, en een latere PR die er een presentatieblok uit hergebruikt
    * — zoals de Platform Kit met `AuditTrailBlock` doet — laat zo'n assertie

@@ -271,24 +271,14 @@ describe("statische grenzen", () => {
     assertBranchTouchesNoExistingWriter(changedList);
   });
 
-  it("11. de rapportagekern en de writers zijn niet aangeraakt", () => {
-    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
-    let changed: string;
-    try {
-      changed = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
-        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-      });
-    } catch {
-      return;
-    }
-    for (const f of [
-      "src/lib/ledger-reporting.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/financial-statements.ts",
-      // Purchase posting may change in its own PR; its RPC-only write boundary is verified separately.
-    ]) {
-      expect(changed, f).not.toContain(f);
-    }
+  it("11. de inhaalslag-voorspelling schrijft niets", () => {
+    // Voorheen ook: ledger-reporting.ts, proef-saldibalans.ts en
+    // financial-statements.ts mochten niet in de diff staan. Dat was een
+    // scope-uitspraak van deze PR, geen invariant: elke terechte fix in de
+    // rapportagekern liet hem omvallen (nulmeting E-02). Dat de controle zelf
+    // niets schrijft en alleen met de kern rekent, bewijzen "1"–"6" (gedrag,
+    // met de échte datalaag) en "8"/"9" hierboven.
+    //
     // `ledger-catchup.ts` is een voorspelling, geen rekenkern of schrijver;
     // zij mag mee met de schrijvers (PR H) zolang zij zelf niets schrijft.
     const { readFileSync: lees } = require("node:fs") as typeof import("node:fs");

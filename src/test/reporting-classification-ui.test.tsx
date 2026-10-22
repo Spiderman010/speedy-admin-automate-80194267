@@ -861,11 +861,14 @@ describe("branch-scope", () => {
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
   });
 
-  branchIt("33. de rapportagekern en de boekers zijn niet aangeraakt", () => {
+  branchIt("33. de saldilijsthelpers en de grootboekhook zijn niet aangeraakt; geen eigen nav-item", () => {
+    // Voorheen stonden hier ook ledger-reporting.ts, proef-saldibalans.ts en
+    // ledger-completeness.ts ("de rapportagekern is niet aangeraakt"). Dat was
+    // een scope-uitspraak van deze PR, geen invariant: elke terechte fix in de
+    // rapportagekern liet hem omvallen (nulmeting E-02). Dat de classificatie-UI
+    // geen bedrag verandert, bewijzen de gedragstests in dit bestand; de kern
+    // zelf ledger-reporting.test.ts en proef-saldibalans.test.ts.
     for (const f of [
-      "src/lib/ledger-reporting.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/ledger-completeness.ts",
       "src/lib/grootboek-saldi-utils.ts",
       "src/hooks/useLedgerPostings.ts",
     ]) {

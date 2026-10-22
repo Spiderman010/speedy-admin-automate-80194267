@@ -382,26 +382,12 @@ describe("opmaak en responsiviteit", () => {
 });
 
 describe("scope", () => {
-  it("15. de rekenlagen zijn byte-voor-byte ongewijzigd", (ctx) => {
-    let toon: (p: string) => string;
-    try {
-      execFileSync("git", ["rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] });
-      toon = (p) => execFileSync("git", ["show", `origin/main:${p}`], { encoding: "utf8" });
-    } catch {
-      // Zichtbaar overslaan, niet stilzwijgend groen worden.
-      ctx.skip();
-      return;
-    }
-    for (const p of [
-      "src/lib/financial-statements.ts",
-      "src/lib/ledger-reporting.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/financial-statements-presentation.ts",
-      "src/hooks/useFinancialStatements.ts",
-    ]) {
-      expect(readFileSync(p, "utf8"), p).toBe(toon(p));
-    }
-  });
+  // Voorheen "15": vijf rekenlagen byte-voor-byte gelijk aan origin/main. Dat
+  // was een scope-uitspraak van deze polish-PR, geen invariant: elke terechte
+  // fix in de rapportagekern liet hem omvallen (nulmeting E-02). Dat de polish
+  // geen bedrag verandert, bewijzen de gedragstests hierboven met de échte
+  // engine ("polish verandert geen enkel bedrag" 1, 2 en 10) en de bewaking
+  // dat de UI zelf niet rekent ("14", "14b").
 
   it("16/17. geen dependency-, migratie-, schema- of typewijziging", (ctx) => {
     let changed: string[];
@@ -419,7 +405,7 @@ describe("scope", () => {
     // uitspraak over de SCOPE van deze polish-PR, geen invariant — elke latere
     // fase die terecht een migratie meebrengt (6C-b9) laat hem omvallen. Wat
     // werkelijk beschermd moet worden is de fundering waar de rekenlagen op
-    // lezen; test 15 hierboven bewaakt die rekenlagen zelf byte-voor-byte.
+    // lezen; de rekenlagen zelf worden met gedragstests bewaakt (zie hierboven).
     assertBranchSqlKeepsLedgerFoundation(changed!);
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
 
