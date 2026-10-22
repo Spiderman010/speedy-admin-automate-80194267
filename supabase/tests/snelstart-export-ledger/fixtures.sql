@@ -6,7 +6,13 @@
 -- worden gelegd. Er wordt nergens rechtstreeks in het grootboek geschreven.
 --
 -- Draait na ../opening-balance/bootstrap.sql, ../bank-direct-allocation-guard/
--- bootstrap-sources.sql en de echte migratieketen t/m 20261010120000.
+-- bootstrap-sources.sql en de echte migratieketen t/m de nieuwste migratie.
+--
+-- Geldig voor elke definitie van de schrijver die alleen weigeringen toevoegt,
+-- zoals 20261021170000 (P4): geen enkel geval hieronder raakt die bewust —
+-- geen NaN of oneindig, geen regel met subcenten, en de administratie is niet
+-- btw-vrijgesteld (proof 4.9 toetst dat). Een regel zonder btw-% (S6) blijft
+-- boekbaar: de schrijver kijkt niet naar het regeltarief.
 
 \set ON_ERROR_STOP on
 \set QUIET on

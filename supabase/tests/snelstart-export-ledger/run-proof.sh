@@ -29,9 +29,9 @@
 #                                                    the pre-ledger application
 #                                                    tables (no stubs for markers,
 #                                                    writers or triggers)
-#   the REAL migration chain                         20260904120000 … 20261010120000,
-#                                                    incl. the last definition of
-#                                                    post_purchase_invoice (20261002120000)
+#   the REAL migration chain                         20260904120000 … the NEWEST migration,
+#                                                    incl. the effective (newest)
+#                                                    definition of post_purchase_invoice
 #   fixtures.sql                                     users, roles, accounts, invoices S1–S8
 #   proof.sql                                        numbered proofs: role and tenant
 #                                                    refusals, postings, refusals,
@@ -61,6 +61,12 @@ run() { psql -q -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 run -f "$HERE/../opening-balance/bootstrap.sql"                          > /dev/null
 run -f "$HERE/../bank-direct-allocation-guard/bootstrap-sources.sql"     > /dev/null
 
+# De ECHTE keten tot en met de NIEUWSTE migratie (zelfde opbouw als
+# ../writer-vat-nan-validation/build-chain.sh): de vaste kern t/m 20261017120000,
+# dan de echte lichamen van de twee triggerfuncties die de bootstrap
+# vereenvoudigt (de bankcorrecties pinnen ze), dan ELKE latere migratie in
+# volgorde — ook die van andere pakketten, zodat altijd de effectieve laatste
+# definitie van post_purchase_invoice() wordt bewezen.
 for f in \
   20260904120000_add-accounting-foundation-ledger-links \
   20260914120000_add_ledger_postings_foundation \
@@ -84,17 +90,29 @@ for f in \
   20260929120000_harden_internal_function_acls \
   20261001120000_add_fiscal_year_reopen \
   20261002120000_decouple_year_watermark_from_posting \
-  20261010120000_add_bank_match_rejections
+  20261010120000_add_bank_match_rejections \
+  20261017120000_guard_direct_bank_posting_against_allocations
 do
   run -f "$MIG/$f.sql"                                                   > /dev/null
 done
 
-# Geen latere migratie herdefinieert post_purchase_invoice(); toets dat, zodat
-# deze vergelijking niet stil een oude schrijver bewijst.
-LATER="$(grep -l -i -E 'CREATE[[:space:]]+(OR[[:space:]]+REPLACE[[:space:]]+)?FUNCTION[[:space:]]+(public\.)?post_purchase_invoice[[:space:]]*\(' "$MIG"/*.sql \
+REAL="$(sed -n '/^CREATE OR REPLACE FUNCTION public.update_updated_at_column()/,/^\$\$ LANGUAGE plpgsql SET search_path = public;/p' \
+          "$MIG/20260411182021_ce126469-1948-4a6f-947d-ad6dd95764cb.sql")
+$(sed -n '/^CREATE OR REPLACE FUNCTION public.set_organization_id()/,/^\$function\$;/p' \
+          "$MIG/20260616014119_379a0719-29c0-4ba7-a513-06777db1dbc3.sql")"
+[ -n "$REAL" ] || { echo "triggerfuncties niet gevonden" >&2; exit 1; }
+run -c "$REAL"                                                           > /dev/null
+
+for path in "$MIG"/*.sql; do
+  f="$(basename "$path" .sql)"
+  [[ "$f" > "20261017120000_guard_direct_bank_posting_against_allocations" ]] || continue
+  run -f "$path"                                                         > /dev/null
+done
+
+# De effectieve schrijver: de nieuwste migratie die hem definieert.
+WRITER="$(grep -l -i -E 'CREATE[[:space:]]+(OR[[:space:]]+REPLACE[[:space:]]+)?FUNCTION[[:space:]]+(public\.)?post_purchase_invoice[[:space:]]*\(' "$MIG"/*.sql \
   | xargs -n1 basename | sort | tail -1)"
-[ "$LATER" = "20261002120000_decouple_year_watermark_from_posting.sql" ] || {
-  echo "post_purchase_invoice() is later herdefinieerd in $LATER: werk de keten van dit harnas bij" >&2; exit 1; }
+echo "schrijver: $WRITER"
 
 run -f "$HERE/fixtures.sql"                                              > /dev/null
 run -f "$HERE/proof.sql"                                                 > /dev/null

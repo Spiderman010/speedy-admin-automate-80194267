@@ -13,7 +13,6 @@
 \o :out
 SELECT jsonb_pretty(jsonb_build_object(
   'generated_by', 'supabase/tests/snelstart-export-ledger/run-proof.sh',
-  'writer', 'public.post_purchase_invoice (20261002120000_decouple_year_watermark_from_posting.sql)',
   'crediteuren_nummer', 1600,
   'btw_te_vorderen_nummer', 1520,
   'invoices', (

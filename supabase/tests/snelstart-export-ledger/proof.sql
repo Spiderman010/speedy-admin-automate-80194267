@@ -71,3 +71,9 @@ SELECT proof.expect_true('4.8', 'S9: het grootboek boekt de kop-btw 0,55 (over h
   $$(SELECT array_agg(format('%s:%s:%s', nummer, debit_amount, credit_amount) ORDER BY line_no)
        FROM proof.ledger WHERE source_id = proof.uid(2000, 9))
     = ARRAY['4400:1.30:0.00', '4400:1.30:0.00', '1520:0.55:0.00', '1600:0.00:3.15']$$);
+SELECT proof.expect_true('4.9', 'geen fixture raakt een weigering die een latere schrijver toevoegt (NaN, subcenten, btw-vrijgesteld)',
+  $$NOT EXISTS (SELECT 1 FROM public.clients WHERE btw_vrijgesteld)
+    AND NOT EXISTS (SELECT 1 FROM public.purchase_invoice_lines
+                    WHERE amount_excl <> round(amount_excl, 2) OR amount_excl IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric))
+    AND NOT EXISTS (SELECT 1 FROM public.purchase_invoices
+                    WHERE 'NaN'::numeric IN (amount_excl, btw_amount, amount_incl))$$);
