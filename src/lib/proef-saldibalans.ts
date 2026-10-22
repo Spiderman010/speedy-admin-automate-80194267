@@ -24,9 +24,39 @@
 //      geldt voor een verkeerd overgenomen periodekolom of een rij die bij
 //      het filteren zoekraakt.
 //
+// W&V PER PERIODE VANAF NUL (herstel P7, A3-12)
+//
+// De kern rekent het beginsaldo van ELKE rekening als Σ(debet − credit) vóór
+// de periode. Voor een balansrekening is dat juist; voor een W&V-rekening
+// betekent het dat de proef- en saldibalans van 2027 de omzet van 2026 als
+// beginsaldo meedraagt (nulmeting: omzet 10.000 in 2026 en 2.000 in 2027 gaf
+// een eindsaldo van 12.000 in plaats van 2.000). BoekAssist maakt bij het
+// afsluiten bewust GEEN resultaatboeking (PROJECT_MAP 6C-b10); de balans lost
+// dat in de presentatie op met twee berekende regels uit de statement-engine:
+// "Onverdeeld resultaat voorgaande jaren" (= Σ beginsaldo van de W&V-
+// rekeningen) en "Resultaat lopend boekjaar" (= hun mutatie).
+//
+// Deze module doet nu precies hetzelfde, met dezelfde indeling en hetzelfde
+// bedrag:
+//   • een W&V-rekening is een rekening die de statement-engine als
+//     `winst_verlies` classificeert (`classifyAccount`) — expliciete
+//     classificatie, nooit `categorie` of een rekeningnummer;
+//   • zo'n rekening toont beginsaldo 0 en als eindsaldo alleen haar mutatie
+//     in de periode;
+//   • wat zij vóór de periode droeg, staat op één BEREKENDE regel zonder
+//     rekening ("Onverdeeld resultaat voorgaande jaren" bij een heel
+//     kalenderjaar, anders "Resultaat vóór deze periode" — de labels van de
+//     balans). Die regel is per constructie gelijk aan `prior_years_result` van
+//     de balans over dezelfde periode;
+//   • een rekening zonder (geldige) classificatie blijft cumulatief, zoals de
+//     balans haar onder "Niet geclassificeerd" met haar eindsaldo toont. Dat
+//     wordt geteld en gemeld, niet geraden.
+// Er wordt niets geboekt en niets bijgeteld: de verschuiving tussen de
+// rekeningen en de berekende regel laat elke kolomsom gelijk, dus de
+// verzoening tegen de kern (b) blijft gelden en vangt een fout in deze stap.
+//
 // Wat deze module NIET doet: geen journal_entries, geen factuur- of banktotalen,
-// geen balans/W&V-indeling, geen tekenomklap per categorie, geen filter op
-// reversal_of_posting_id.
+// geen tekenomklap per categorie, geen filter op reversal_of_posting_id.
 
 import {
   centsToAmount,
@@ -35,8 +65,15 @@ import {
   type LedgerAccountReport,
   type LedgerAccountRef,
   type LedgerAccountRollup,
+  type LedgerPeriod,
   type LedgerSelfCheckFailure,
 } from "@/lib/ledger-reporting";
+import {
+  PRIOR_PERIOD_RESULT_LABEL,
+  PRIOR_YEARS_RESULT_LABEL,
+  classifyAccount,
+  isFullCalendarYear,
+} from "@/lib/financial-statements";
 
 /** Rekening uit het schema, zoals `useGrootboekrekeningen` hem levert. */
 export interface ChartAccountLike {
@@ -46,6 +83,11 @@ export interface ChartAccountLike {
   categorie: string | null | undefined;
   actief?: boolean | null;
   client_id?: string | null;
+  /** De expliciete rapportageclassificatie (Balans/W&V PR 1); bepaalt of een rekening een W&V-rekening is. */
+  statement_type?: string | null;
+  report_group?: string | null;
+  normal_side?: string | null;
+  report_sort?: number | null;
 }
 
 export interface TrialBalanceRow {
@@ -60,6 +102,38 @@ export interface TrialBalanceRow {
   isZero: boolean;
   /** De rij heeft boekingen in beeld (kwam uit de kern, niet uit het schema). */
   hasPostings: boolean;
+  /**
+   * Een W&V-rekening (expliciet geclassificeerd): beginsaldo 0, eindsaldo =
+   * alleen de mutatie in de periode. Haar historie staat op de berekende regel.
+   */
+  profitLoss: boolean;
+}
+
+/**
+ * Een BEREKENDE regel: geen grootboekrekening, geen rekeningnummer, geen
+ * doorklik. Draagt het resultaat van vóór de periode, zoals de balans dat doet.
+ */
+export interface TrialBalanceSystemRow {
+  kind: "prior_result";
+  label: string;
+  /** Kern-teken (debet-positief): Σ beginsaldo van de W&V-rekeningen. */
+  rawSignedCents: number;
+  openingDebitCents: number;
+  openingCreditCents: number;
+  periodDebitCents: number;
+  periodCreditCents: number;
+  closingDebitCents: number;
+  closingCreditCents: number;
+}
+
+/** Wat de W&V-stap heeft gedaan, voor de melding op het scherm. */
+export interface TrialBalanceProfitLossSummary {
+  /** Aantal W&V-rekeningen dat vanaf nul wordt getoond. */
+  resetAccounts: number;
+  /** Rekeningen zonder (geldige) classificatie met een beginsaldo ≠ 0: blijven cumulatief. */
+  unclassifiedWithOpening: number;
+  /** Het label van de berekende regel. */
+  priorResultLabel: string;
 }
 
 export interface TrialBalanceTotals {
@@ -79,7 +153,15 @@ export type TrialBalanceFailure =
   | { kind: "closing_unbalanced"; debitCents: number; creditCents: number };
 
 export type TrialBalance =
-  | { ok: true; rows: TrialBalanceRow[]; totals: TrialBalanceTotals }
+  | {
+      ok: true;
+      rows: TrialBalanceRow[];
+      /** Berekende regels (hoogstens één): het resultaat van vóór de periode. */
+      systemRows: TrialBalanceSystemRow[];
+      /** Kolomsommen over `rows` ÉN `systemRows`. */
+      totals: TrialBalanceTotals;
+      profitLoss: TrialBalanceProfitLossSummary;
+    }
   | { ok: false; failures: TrialBalanceFailure[] };
 
 /**
@@ -95,9 +177,16 @@ export function splitBalanceCents(cents: number): { debitCents: number; creditCe
   return { debitCents: 0, creditCents: 0 };
 }
 
-function rowUitRollup(r: LedgerAccountRollup): TrialBalanceRow {
-  const opening = splitBalanceCents(r.openingCents);
-  const closing = splitBalanceCents(r.closingCents);
+/**
+ * Eén rekening uit de kern. Een W&V-rekening krijgt beginsaldo 0 en als
+ * eindsaldo alleen haar mutatie (periodedebet − periodecredit); de kern zelf
+ * wordt niet aangeraakt.
+ */
+function rowUitRollup(r: LedgerAccountRollup, profitLoss: boolean): TrialBalanceRow {
+  const openingCents = profitLoss ? 0 : r.openingCents;
+  const closingCents = profitLoss ? r.periodDebitCents - r.periodCreditCents : r.closingCents;
+  const opening = splitBalanceCents(openingCents);
+  const closing = splitBalanceCents(closingCents);
   const isZero =
     opening.debitCents === 0 && opening.creditCents === 0 &&
     r.periodDebitCents === 0 && r.periodCreditCents === 0 &&
@@ -112,6 +201,7 @@ function rowUitRollup(r: LedgerAccountRollup): TrialBalanceRow {
     closingCreditCents: closing.creditCents,
     isZero,
     hasPostings: true,
+    profitLoss,
   };
 }
 
@@ -133,6 +223,7 @@ function rowUitSchema(a: ChartAccountLike, categorie: LedgerAccountCategory): Tr
     closingCreditCents: 0,
     isZero: true,
     hasPostings: false,
+    profitLoss: false,
   };
 }
 
@@ -160,6 +251,12 @@ export interface BuildTrialBalanceInput {
   includeZeroAccounts?: boolean;
   /** Injecteerbaar voor de test; standaard de classificatie van de kern. */
   classify?: (raw: string | null | undefined) => LedgerAccountCategory;
+  /**
+   * De periode van het rapport; alleen voor het LABEL van de berekende regel
+   * (een heel kalenderjaar heet "voorgaande jaren", elke andere periode
+   * "vóór deze periode" — dezelfde regel als de balans).
+   */
+  period?: LedgerPeriod;
 }
 
 /**
@@ -176,7 +273,25 @@ export function buildTrialBalance(input: BuildTrialBalanceInput): TrialBalance {
     return { ok: false, failures: [{ kind: "kernel", failures: report.failures }] };
   }
 
-  const rijen = report.rollups.map(rowUitRollup);
+  // Dezelfde indeling als de balans: alleen een rekening die de statement-
+  // engine als W&V classificeert, gaat per periode vanaf nul.
+  const classificatie = new Map((accounts ?? []).map((a) => [a.id, a]));
+  let priorResultCents = 0;
+  let resetAccounts = 0;
+  let resetMetBeginsaldo = 0;
+  let unclassifiedWithOpening = 0;
+  const rijen = report.rollups.map((r) => {
+    const c = classifyAccount(classificatie.get(r.account.id), r.account.resolved);
+    const profitLoss = c.kind === "classified" && c.statementType === "winst_verlies";
+    if (profitLoss) {
+      resetAccounts++;
+      priorResultCents += r.openingCents;
+      if (r.openingCents !== 0) resetMetBeginsaldo++;
+    } else if (c.kind === "unclassified" && r.openingCents !== 0) {
+      unclassifiedWithOpening++;
+    }
+    return rowUitRollup(r, profitLoss);
+  });
 
   // Alleen bij "Toon nulrekeningen": rekeningen uit het schema die in deze
   // periode geen enkele boeking hebben. Er wordt niets verzonnen — ze komen
@@ -205,12 +320,33 @@ export function buildTrialBalance(input: BuildTrialBalanceInput): TrialBalance {
 
   zichtbaar.sort(compareTrialBalanceRows);
 
+  // De berekende regel verschijnt zodra een W&V-rekening iets vóór de periode
+  // droeg — ook als dat per saldo nul is, want dan zijn er wel bedragen
+  // verschoven. Zonder historie (het eerste jaar) is er niets te tonen.
+  const priorResultLabel =
+    input.period && isFullCalendarYear(input.period) ? PRIOR_YEARS_RESULT_LABEL : PRIOR_PERIOD_RESULT_LABEL;
+  const systemRows: TrialBalanceSystemRow[] = [];
+  if (resetMetBeginsaldo > 0) {
+    const split = splitBalanceCents(priorResultCents);
+    systemRows.push({
+      kind: "prior_result",
+      label: priorResultLabel,
+      rawSignedCents: priorResultCents,
+      openingDebitCents: split.debitCents,
+      openingCreditCents: split.creditCents,
+      periodDebitCents: 0,
+      periodCreditCents: 0,
+      closingDebitCents: split.debitCents,
+      closingCreditCents: split.creditCents,
+    });
+  }
+
   const totals: TrialBalanceTotals = {
     openingDebitCents: 0, openingCreditCents: 0,
     periodDebitCents: 0, periodCreditCents: 0,
     closingDebitCents: 0, closingCreditCents: 0,
   };
-  for (const r of zichtbaar) {
+  for (const r of [...zichtbaar, ...systemRows]) {
     totals.openingDebitCents += r.openingDebitCents;
     totals.openingCreditCents += r.openingCreditCents;
     totals.periodDebitCents += r.periodDebitCents;
@@ -256,7 +392,13 @@ export function buildTrialBalance(input: BuildTrialBalanceInput): TrialBalance {
   }
   if (failures.length > 0) return { ok: false, failures };
 
-  return { ok: true, rows: zichtbaar, totals };
+  return {
+    ok: true,
+    rows: zichtbaar,
+    systemRows,
+    totals,
+    profitLoss: { resetAccounts, unclassifiedWithOpening, priorResultLabel },
+  };
 }
 
 const defaultClassify = classifyLedgerCategory;
@@ -275,6 +417,9 @@ export function formatAmountNl(cents: number): string {
 // ── CSV ────────────────────────────────────────────────────────────────────
 
 export const CSV_SEPARATOR = ";";
+
+/** De categorie van een berekende regel, gelijk aan de badge op de balans. */
+export const SYSTEM_ROW_CATEGORY_LABEL = "Berekend";
 
 export const CSV_HEADERS = [
   "Rekeningnummer",
@@ -299,6 +444,8 @@ function csvRegel(velden: readonly string[]): string {
 
 export interface TrialBalanceCsvInput {
   rows: readonly TrialBalanceRow[];
+  /** Berekende regels: zonder rekeningnummer, categorie "Berekend". */
+  systemRows?: readonly TrialBalanceSystemRow[];
   totals: TrialBalanceTotals;
   categoryLabel: (c: LedgerAccountCategory) => string;
   /** Label voor de totaalregel, bv. "Totaal". */
@@ -311,7 +458,7 @@ export interface TrialBalanceCsvInput {
  * vergelijkbaar blijft in een test.
  */
 export function trialBalanceToCsv(input: TrialBalanceCsvInput): string {
-  const { rows, totals, categoryLabel, totalLabel = "Totaal" } = input;
+  const { rows, systemRows = [], totals, categoryLabel, totalLabel = "Totaal" } = input;
   const regels = [csvRegel(CSV_HEADERS)];
 
   for (const r of rows) {
@@ -319,6 +466,20 @@ export function trialBalanceToCsv(input: TrialBalanceCsvInput): string {
       r.account.nummer === null ? "" : String(r.account.nummer),
       r.account.omschrijving,
       categoryLabel(r.account.categorie),
+      formatAmountNl(r.openingDebitCents),
+      formatAmountNl(r.openingCreditCents),
+      formatAmountNl(r.periodDebitCents),
+      formatAmountNl(r.periodCreditCents),
+      formatAmountNl(r.closingDebitCents),
+      formatAmountNl(r.closingCreditCents),
+    ]));
+  }
+
+  for (const r of systemRows) {
+    regels.push(csvRegel([
+      "",
+      r.label,
+      SYSTEM_ROW_CATEGORY_LABEL,
       formatAmountNl(r.openingDebitCents),
       formatAmountNl(r.openingCreditCents),
       formatAmountNl(r.periodDebitCents),

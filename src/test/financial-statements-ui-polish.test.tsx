@@ -49,6 +49,20 @@ vi.mock("@/hooks/useLedgerCompleteness", () => ({
     isError: false,
   }),
 }));
+// Herstel P7 (A3-11): de balans en de W&V lezen ook het ongeboekte bronwerk
+// van de periode ("Volledig" vraagt classificatie én documenten).
+// Testinfrastructuur: niets open; het documentdeel staat in
+// statement-volledig-documenten.test.tsx.
+vi.mock("@/hooks/useUnpostedSourceWork", () => ({
+  useReportDocumentCompleteness: () => ({
+    data: {
+      status: "complete", unposted: [], refused: [], totalUnposted: 0, totalRefused: 0, bankWorkOpen: false,
+      scope: { fromYear: null, throughYear: 2026 }, summary: null,
+    },
+    isPending: false,
+    isError: false,
+  }),
+}));
 vi.mock("@/hooks/useLedgerPostings", () => ({
   useLedgerPostings: (opts: any) => ({
     data: opts?.clientId
@@ -241,11 +255,24 @@ describe("polish behoudt de afspraken", () => {
   });
 });
 
-// Kleine probe zodat elke status los te renderen is.
+// Kleine probe zodat elke status los te renderen is. Herstel P7 (A3-11): de
+// badge oordeelt ook over het bronwerk; hier staat er niets open, zodat de
+// vier engine-statussen hun eigen tekst en toon houden.
 import { FinancialCompletenessBadge } from "@/components/overzichten/FinancialCompletenessBadge";
 import type { StatementCompleteness } from "@/lib/financial-statements";
 function StatusProbe({ status }: { status: StatementCompleteness }) {
-  return <FinancialCompletenessBadge completeness={status} />;
+  return (
+    <FinancialCompletenessBadge
+      completeness={status}
+      documents={{
+        state: "ready",
+        value: {
+          status: "complete", unposted: [], refused: [], totalUnposted: 0, totalRefused: 0, bankWorkOpen: false,
+          scope: { fromYear: null, throughYear: 2026 }, summary: null,
+        },
+      }}
+    />
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

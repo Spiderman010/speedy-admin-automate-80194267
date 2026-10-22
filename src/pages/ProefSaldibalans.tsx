@@ -9,7 +9,8 @@ import { Switch } from "@/components/ui/switch";
 import {
   Select, SelectContent, SelectItem, SelectTrigger,
 } from "@/components/ui/select";
-import { AlertTriangle, Download, FileBarChart } from "lucide-react";
+import { AlertTriangle, Download, FileBarChart, Info } from "lucide-react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/PageHeader";
 import { NoClientBanner } from "@/components/NoClientBanner";
 import { EmptyState } from "@/components/EmptyState";
@@ -77,6 +78,39 @@ function ReportSkeleton() {
   );
 }
 
+/**
+ * Herstel P7 (A3-12): zegt in woorden wat de W&V-stap doet, zodat niemand de
+ * berekende regel voor een grootboekrekening aanziet — en wat er NIET kon,
+ * namelijk rekeningen zonder classificatie per periode op nul zetten.
+ */
+function ProfitLossPresentationNotice({ balans }: { balans: Extract<TrialBalance, { ok: true }> }) {
+  const { resetAccounts, unclassifiedWithOpening, priorResultLabel } = balans.profitLoss;
+  if (resetAccounts === 0 && unclassifiedWithOpening === 0) return null;
+  return (
+    <Alert data-testid="psb-pnl-notice" data-unclassified-with-opening={unclassifiedWithOpening}>
+      <Info className="h-4 w-4" />
+      <AlertTitle>Winst-en-verliesrekeningen tellen per periode</AlertTitle>
+      <AlertDescription>
+        {resetAccounts > 0 && (
+          <p>
+            Winst-en-verliesrekeningen tonen alleen de mutaties van deze periode. Wat zij daarvóór droegen, staat op
+            de berekende regel “{priorResultLabel}”, net als op de balans. Er is daarvoor niets geboekt.
+          </p>
+        )}
+        {unclassifiedWithOpening > 0 && (
+          <p className={resetAccounts > 0 ? "mt-1" : undefined}>
+            {unclassifiedWithOpening === 1 ? "Eén rekening" : `${unclassifiedWithOpening} rekeningen`} zonder
+            rapportageclassificatie {unclassifiedWithOpening === 1 ? "toont haar" : "tonen hun"} cumulatieve saldo:
+            of {unclassifiedWithOpening === 1 ? "het een winst-en-verliesrekening is" : "het winst-en-verliesrekeningen zijn"},
+            is niet vastgesteld.{" "}
+            <Link to="/grootboek" className="underline underline-offset-2">Rekeningen classificeren</Link>
+          </p>
+        )}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 export default function ProefSaldibalans() {
   const { selectedClientId, setSelectedClientId } = useClientContext();
   const { activeOrganizationId, isReady } = useActiveOrganization();
@@ -122,8 +156,10 @@ export default function ProefSaldibalans() {
       accounts,
       clientId,
       includeZeroAccounts: toonNul,
+      // Alleen voor het label van de berekende resultaatregel (zoals de balans).
+      period,
     });
-  }, [built, accounts, clientId, toonNul]);
+  }, [built, accounts, clientId, toonNul, period]);
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
 
@@ -182,6 +218,14 @@ export default function ProefSaldibalans() {
   const drilldownTarget: DrilldownTarget | null = drilldownAccountId
     ? { level: "account", groupKey: "kolommenbalans", subgroupKey: "kolommenbalans", accountId: drilldownAccountId }
     : null;
+  // Een W&V-rij toont in deze balans alleen de mutatie van de periode (A3-12).
+  // De doorklik legt haar dan ook zo uit — periode debet, credit en netto,
+  // zonder cumulatief beginsaldo — en niet als een cumulatieve kolomregel,
+  // anders staan er twee verschillende eindsaldi op het scherm.
+  const drilldownIsProfitLoss =
+    drilldownAccountId !== null &&
+    balans?.ok === true &&
+    balans.rows.some((r) => r.account.id === drilldownAccountId && r.profitLoss);
 
   const drilldownAccountsById = useMemo(
     () =>
@@ -217,6 +261,7 @@ export default function ProefSaldibalans() {
     if (!geldig || !balans || balans.ok !== true) return;
     const inhoud = trialBalanceToCsv({
       rows: balans.rows,
+      systemRows: balans.systemRows,
       totals: balans.totals,
       categoryLabel: (c) => CATEGORY_LABELS[c],
     });
@@ -318,11 +363,15 @@ export default function ProefSaldibalans() {
       );
     }
     return (
-      <ProefSaldibalansTable
-        rows={balans.rows}
-        totals={balans.totals}
-        onDrilldown={setDrilldownAccountId}
-      />
+      <div className="space-y-3">
+        <ProfitLossPresentationNotice balans={balans} />
+        <ProefSaldibalansTable
+          rows={balans.rows}
+          systemRows={balans.systemRows}
+          totals={balans.totals}
+          onDrilldown={setDrilldownAccountId}
+        />
+      </div>
     );
   };
 
@@ -414,7 +463,7 @@ export default function ProefSaldibalans() {
           clientName={selectedClient?.name ?? "administratie"}
           accountsById={drilldownAccountsById}
           accounts={accounts ?? []}
-          reportKind="trial_balance"
+          reportKind={drilldownIsProfitLoss ? "profit_loss" : "trial_balance"}
           reportLabel="Proef- en saldibalans"
         />
       )}

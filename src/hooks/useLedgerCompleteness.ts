@@ -6,6 +6,8 @@ import { useOpeningBalanceOverview } from "./useOpeningBalances";
 import {
   computeLedgerCompleteness,
   computeOpeningBalanceCompleteness,
+  DIRECT_BANK_POSTABLE_STATUS,
+  directBankPostableAfterOpening,
   PURCHASE_POSTABLE_STATUSES,
   reportYearForPeriod,
   SALES_POSTABLE_STATUSES,
@@ -48,6 +50,9 @@ async function countRows(
 async function fetchIds<T extends Record<string, unknown>>(
   table:
     | "bank_transaction_allocations"
+    | "bank_transactions"
+    | "bank_transaction_postings"
+    | "opening_balance_postings"
     | "purchase_invoice_postings"
     | "sales_invoice_postings"
     | "purchase_invoices"
@@ -97,6 +102,9 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     manualTotal,
     manualPosted,
     allocations,
+    directEligibleIds,
+    directMarkers,
+    openingMarkers,
   ] = await Promise.all([
     fetchIds<{ id: string }>("purchase_invoices", "id", "id", clientId, (q) =>
       q.in("status", [...PURCHASE_POSTABLE_STATUSES]),
@@ -110,12 +118,34 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     countRows("bank_allocation_postings", clientId),
     countRows("manual_journals", clientId),
     countRows("manual_journal_postings", clientId),
-    fetchIds<{ id: string; invoice_id: string; invoice_type: string }>(
+    fetchIds<{ id: string; bank_transaction_id: string; invoice_id: string; invoice_type: string }>(
       "bank_transaction_allocations",
-      "id, invoice_id, invoice_type",
+      "id, bank_transaction_id, invoice_id, invoice_type",
       "id",
       clientId,
     ),
+    // De directe bankschrijver (A3-02): gecodeerd, met rekening en een bedrag
+    // <> 0. Het bedrag is uitsluitend een FILTER in de database; er wordt hier
+    // geen bedragkolom gelezen. Of de regel gekoppeld is, volgt uit de
+    // koppelingen hierboven — exact de regels van post_bank_transaction().
+    fetchIds<{ id: string; transaction_date: string | null }>("bank_transactions", "id, transaction_date", "id", clientId, (q) =>
+      q
+        .eq("match_status", DIRECT_BANK_POSTABLE_STATUS)
+        .not("grootboekrekening_id", "is", null)
+        .neq("amount", 0)
+        // Review H-1: de schrijver weigert een regel zonder organisatie altijd
+        // (42501), dus die is niet postbaar — gelijk aan close_fiscal_year(),
+        // ook los van RLS.
+        .not("organization_id", "is", null),
+    ),
+    fetchIds<{ bank_transaction_id: string }>(
+      "bank_transaction_postings",
+      "bank_transaction_id",
+      "bank_transaction_id",
+      clientId,
+    ),
+    // Review N-1: de openingsdatum van de geboekte beginbalans (hooguit één).
+    fetchIds<{ opening_date: string }>("opening_balance_postings", "opening_date", "opening_balance_id", clientId),
   ]);
 
   const postedPurchase = new Set(purchaseMarkers.map((m) => m.purchase_invoice_id));
@@ -130,10 +160,20 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     if (invoicePosted) bankEligible++;
   }
 
+  // Een gekoppelde bankregel hoort bij de afletteringstak; zo telt niets dubbel.
+  const gekoppeld = new Set(allocations.map((a) => a.bank_transaction_id));
+  const directeBoekingen = new Set(directMarkers.map((m) => m.bank_transaction_id));
+  const openingDates = openingMarkers.map((m) => m.opening_date);
+  const directEligible = directEligibleIds.filter(
+    (t) => !gekoppeld.has(t.id) && directBankPostableAfterOpening(t.transaction_date, openingDates),
+  );
+  const directPosted = directEligible.filter((t) => directeBoekingen.has(t.id)).length;
+
   return {
     purchase: { eligible: purchaseEligibleIds.length, posted: purchasePostedEligible },
     sales: { eligible: salesEligibleIds.length, posted: salesPostedEligible, refusedVerlegd: salesRefused },
     bank: { eligible: bankEligible, posted: bankPosted, awaitingInvoice: allocations.length - bankEligible },
+    bankDirect: { eligible: directEligible.length, posted: directPosted },
     manual: { total: manualTotal, posted: manualPosted },
   };
 }

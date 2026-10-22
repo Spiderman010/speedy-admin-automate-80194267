@@ -14,6 +14,7 @@ import {
   NothingClassifiedNotice,
   OpeningBalanceContributionNotice,
   StatementCompletenessNotice,
+  StatementDocumentsNotice,
   StatementFailureNotice,
   UnclassifiedSection,
 } from "@/components/overzichten/FinancialReportNotices";
@@ -22,6 +23,7 @@ import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { useFinancialStatements } from "@/hooks/useFinancialStatements";
+import { useReportDocumentCompleteness } from "@/hooks/useUnpostedSourceWork";
 import { useGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
 import { subgroupSectionsForGroups } from "@/lib/financial-statements-subgroups";
 import { ReportDrilldownSheet } from "@/components/overzichten/ReportDrilldownSheet";
@@ -34,6 +36,7 @@ import {
   openingContributionNotice,
   profitLossToCsv,
   statementCsvFilename,
+  type ReportDocumentsState,
 } from "@/lib/financial-statements-presentation";
 
 /**
@@ -80,6 +83,15 @@ export default function WinstVerlies() {
 
   const selectedClient = clients?.find((c) => c.id === selectedClientId);
   const ready = state.kind === "ready" && state.result.ok === true ? state.result : null;
+  // Herstel P7 (A3-11): "Volledig" vraagt ook dat er voor deze periode geen
+  // ongeboekt of geweigerd bronwerk is. Zolang dat niet gelezen is, is er geen
+  // oordeel; een leesfout is "niet vastgesteld", nooit "volledig".
+  const bronwerk = useReportDocumentCompleteness(clientId, period, "winst_verlies", orgEnabled);
+  const bronwerkStatus: ReportDocumentsState = bronwerk.isError
+    ? { state: "unknown" }
+    : bronwerk.data
+      ? { state: "ready", value: bronwerk.data }
+      : { state: "pending" };
   /*
    * De doorklik draagt alleen een AANWIJZING: welke categorie, groep of
    * rekening de gebruiker wil zien. Elk bedrag in het paneel komt uit de
@@ -282,7 +294,7 @@ export default function WinstVerlies() {
           ready ? (
             <span className="flex items-center gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Volledigheid</span>
-              <FinancialCompletenessBadge completeness={ready.completeness} />
+              <FinancialCompletenessBadge completeness={ready.completeness} documents={bronwerkStatus} />
             </span>
           ) : null
         }
@@ -306,6 +318,7 @@ export default function WinstVerlies() {
       ) : (
         <div className="space-y-4">
           {ready && !nothingClassified && <StatementCompletenessNotice completeness={ready.completeness} />}
+          {ready && <StatementDocumentsNotice documents={bronwerkStatus} what="winst_verlies" />}
           {ready && (
             <OpeningBalanceContributionNotice
               notice={openingContributionNotice(

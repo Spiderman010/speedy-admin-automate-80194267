@@ -143,6 +143,7 @@ const COMPLETENESS = computeLedgerCompleteness({
   purchase: { eligible: 5, posted: 3 },
   sales: { eligible: 2, posted: 2, refusedVerlegd: 1 },
   bank: { eligible: 0, posted: 0, awaitingInvoice: 2 },
+  bankDirect: { eligible: 0, posted: 0 },
   manual: { total: 0, posted: 0 },
 });
 
@@ -376,6 +377,7 @@ describe("Gereedheid — een mislukte bron wordt nooit In orde", () => {
       purchase: { eligible: 1, posted: 2 }, // geboekt > postbaar: het model zegt 'unknown'
       sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
       bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+      bankDirect: { eligible: 0, posted: 0 },
       manual: { total: 0, posted: 0 },
     });
     expect(volledigheidRow({ kind: "ok", value: metOnbekend }).status).toBe("niet_te_bepalen");
@@ -383,6 +385,7 @@ describe("Gereedheid — een mislukte bron wordt nooit In orde", () => {
       purchase: { eligible: 0, posted: 0 },
       sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
       bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+      bankDirect: { eligible: 0, posted: 0 },
       manual: { total: 0, posted: 0 },
     });
     expect(volledigheidRow({ kind: "ok", value: leeg }).status).toBe("informatief");

@@ -123,6 +123,7 @@ const ALLES_GEBOEKT = computeLedgerCompleteness({
   purchase: { eligible: 2, posted: 2 },
   sales: { eligible: 1, posted: 1, refusedVerlegd: 0 },
   bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+  bankDirect: { eligible: 0, posted: 0 },
   manual: { total: 0, posted: 0 },
 });
 
@@ -131,6 +132,7 @@ const OPENSTAAND = computeLedgerCompleteness({
   purchase: { eligible: 3, posted: 2 },
   sales: { eligible: 1, posted: 1, refusedVerlegd: 0 },
   bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+  bankDirect: { eligible: 0, posted: 0 },
   manual: { total: 0, posted: 0 },
 });
 

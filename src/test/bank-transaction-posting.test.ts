@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { postingGuardOf } from "@/test/support/effective-sql";
 
 /**
  * Direct geboekte bankregels (post_bank_transaction).
@@ -57,8 +58,13 @@ describe("writer post_bank_transaction", () => {
     expect(writer).toMatch(/FROM public\.bank_transaction_allocations WHERE bank_transaction_id/);
   });
 
-  it("weigert een afgesloten boekjaar", () => {
-    expect(writer).toMatch(/afgesloten_boekjaar/);
+  it("effectief (PR H): geen weigering op het jaarwatermerk, wel de boekingsblokkade op de transactiedatum vóór het grootboek", () => {
+    // E-04 (herstel P7): deze migratie is niet meer de effectieve definitie. Sinds
+  // PR H (20261002120000) weigert geen gedateerde schrijver nog op het
+  // jaarwatermerk; de boekingsblokkade is de enige datumgrendel. Het gedrag
+  // staat in supabase/tests/posting-decoupled (scenario's A–G).
+    const g = postingGuardOf("post_bank_transaction", "PERFORM public.assert_posting_allowed(v_tx.client_id, v_tx.transaction_date);");
+    expect(g).toMatchObject({ watermarkRefusal: false, lockCalled: true, lockBeforeLedger: true });
   });
 
   it("valideert bank- en tegenrekening tegen organisatie en administratie", () => {

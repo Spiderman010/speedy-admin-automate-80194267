@@ -100,6 +100,7 @@ const ALLES_GEBOEKT = computeLedgerCompleteness({
   purchase: { eligible: 1, posted: 1 },
   sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
   bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+  bankDirect: { eligible: 0, posted: 0 },
   manual: { total: 0, posted: 0 },
 });
 
@@ -565,6 +566,7 @@ describe("een later boekjaar besmet dit boekjaar niet", () => {
       purchase: { eligible: 3, posted: 1 },
       sales: { eligible: 0, posted: 0, refusedVerlegd: 0 },
       bank: { eligible: 0, posted: 0, awaitingInvoice: 0 },
+      bankDirect: { eligible: 0, posted: 0 },
       manual: { total: 0, posted: 0 },
     });
     const r = readiness(rows, accounts, {}, { completeness: available(openstaand) });

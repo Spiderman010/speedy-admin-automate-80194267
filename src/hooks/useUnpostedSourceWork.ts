@@ -1,7 +1,18 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { PURCHASE_POSTABLE_STATUSES, SALES_POSTABLE_STATUSES } from "@/lib/ledger-completeness";
+import {
+  DIRECT_BANK_POSTABLE_STATUS,
+  directBankPostableAfterOpening,
+  PURCHASE_POSTABLE_STATUSES,
+  reportDocumentCompleteness,
+  SALES_POSTABLE_STATUSES,
+  type RefusedWorkItem,
+  type ReportDocumentCompleteness,
+  type ReportStatementKind,
+} from "@/lib/ledger-completeness";
+import type { LedgerPeriod } from "@/lib/ledger-reporting";
 import type { UnpostedWorkItem } from "@/lib/year-close-readiness";
 
 /**
@@ -22,7 +33,16 @@ import type { UnpostedWorkItem } from "@/lib/year-close-readiness";
  *              geen marker                                       → invoice_date
  *   bank       een aflettering waarvan de factuur geboekt is en
  *              die zelf nog geen marker heeft                     → transaction_date
+ *   bankregel  handmatig gecodeerd, met rekening, bedrag <> 0,
+ *              zonder koppeling en zonder marker (de directe
+ *              bankschrijver post_bank_transaction)               → transaction_date
  *   memoriaal  een memoriaalboeking zonder marker                 → posting_date
+ *
+ * De bankregel is herstel P7 (A3-02): de vijfde schrijver telde nergens mee,
+ * terwijl controle D van close_fiscal_year() zegt dat zij het werk van élke
+ * bestaande schrijver telt. Dezelfde regel staat sinds 20261021200000 in de
+ * database. Een regel op 'gematcht' zonder koppeling (FD-N3) boekt geen enkele
+ * schrijver; die telt hier bewust niet mee (ontwerpvraag D7).
  *
  * NOOIT `created_at`. Wanneer een rij is aangemaakt zegt niets over het jaar
  * waarin zij boekhoudkundig hoort; elke schrijver leidt `boekjaar` af uit de
@@ -42,6 +62,8 @@ type Tabel =
   | "bank_transaction_allocations"
   | "bank_allocation_postings"
   | "bank_transactions"
+  | "bank_transaction_postings"
+  | "opening_balance_postings"
   | "manual_journals"
   | "manual_journal_postings";
 
@@ -89,6 +111,7 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
     salesEligible, salesMarkers,
     allocations, allocationMarkers, bankTransactions,
     manualJournals, manualMarkers,
+    directCandidates, directMarkers, openingMarkers,
   ] = await Promise.all([
     fetchAll<{ id: string; invoice_date: string | null }>(
       "purchase_invoices", "id, invoice_date", "id", clientId,
@@ -118,6 +141,25 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
     ),
     fetchAll<{ manual_journal_id: string }>(
       "manual_journal_postings", "manual_journal_id", "manual_journal_id", clientId,
+    ),
+    // De directe bankschrijver: het bedrag is alleen een filter, geen gelezen kolom.
+    fetchAll<{ id: string; transaction_date: string | null }>(
+      "bank_transactions", "id, transaction_date", "id", clientId,
+      (q) => q
+        .eq("match_status", DIRECT_BANK_POSTABLE_STATUS)
+        .not("grootboekrekening_id", "is", null)
+        .neq("amount", 0)
+        // Review H-1: de schrijver weigert een regel zonder organisatie altijd
+        // (42501), dus die is niet postbaar — gelijk aan close_fiscal_year(),
+        // ook los van RLS.
+        .not("organization_id", "is", null),
+    ),
+    fetchAll<{ bank_transaction_id: string }>(
+      "bank_transaction_postings", "bank_transaction_id", "bank_transaction_id", clientId,
+    ),
+    // Review N-1: de openingsdatum van de geboekte beginbalans (hooguit één).
+    fetchAll<{ opening_date: string }>(
+      "opening_balance_postings", "opening_date", "opening_balance_id", clientId,
     ),
   ]);
 
@@ -154,6 +196,17 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
       boekjaar: boekjaarVan(transactieDatum.get(allocation.bank_transaction_id) ?? null),
     });
   }
+  // Een gekoppelde bankregel hoort bij de afletteringstak hierboven; zo telt
+  // niets dubbel. Een marker betekent: al geboekt door de directe schrijver.
+  const gekoppeld = new Set(allocations.map((a) => a.bank_transaction_id));
+  const directGeboekt = new Set(directMarkers.map((m) => m.bank_transaction_id));
+  const openingDates = openingMarkers.map((m) => m.opening_date);
+  for (const tx of directCandidates) {
+    if (gekoppeld.has(tx.id) || directGeboekt.has(tx.id)) continue;
+    // Review N-1: vóór de beginbalans kan de schrijver haar nooit boeken.
+    if (!directBankPostableAfterOpening(tx.transaction_date, openingDates)) continue;
+    items.push({ source: "bank_transaction", id: tx.id, boekjaar: boekjaarVan(tx.transaction_date) });
+  }
   for (const journal of manualJournals) {
     if (geboekteMemoriaal.has(journal.id)) continue;
     items.push({ source: "manual_journal", id: journal.id, boekjaar: boekjaarVan(journal.posting_date) });
@@ -169,4 +222,59 @@ export function useUnpostedSourceWork(clientId: string | undefined, enabled = tr
     enabled: enabled && !!user && !!clientId,
     queryFn: () => fetchUnpostedSourceWork(clientId!),
   });
+}
+
+// ── Geweigerd bronwerk en het oordeel per rapport (herstel P7, A3-11) ───────
+
+export const REFUSED_SOURCE_WORK_QUERY_KEY = "refused-source-work" as const;
+
+/**
+ * Bronwerk dat de schrijver ALTIJD weigert en dat dus nooit in het grootboek
+ * komt: een verkoopfactuur met een postbare status en btw_verlegd = true
+ * (post_sales_invoice, 6C-b4). Zelfde telling als `refusedVerlegd` in
+ * `fetchLedgerCompletenessCounts()`, maar mét boekjaar, zodat een rapport over
+ * één periode alleen zijn eigen werk meetelt. Nooit een bedrag.
+ */
+export async function fetchRefusedSourceWork(clientId: string): Promise<RefusedWorkItem[]> {
+  if (!clientId) throw new Error("Geweigerd bronwerk vereist een administratie (client_id)");
+  const rows = await fetchAll<{ id: string; invoice_date: string | null }>(
+    "sales_invoices", "id, invoice_date", "id", clientId,
+    (q) => q.in("status", [...SALES_POSTABLE_STATUSES]).eq("btw_verlegd", true),
+  );
+  return rows.map((r) => ({ source: "sales_invoice", id: r.id, boekjaar: boekjaarVan(r.invoice_date), reason: "btw_verlegd" }));
+}
+
+export function useRefusedSourceWork(clientId: string | undefined, enabled = true) {
+  const { user } = useAuth();
+  return useQuery<RefusedWorkItem[]>({
+    queryKey: [REFUSED_SOURCE_WORK_QUERY_KEY, clientId ?? ""],
+    enabled: enabled && !!user && !!clientId,
+    queryFn: () => fetchRefusedSourceWork(clientId!),
+  });
+}
+
+/**
+ * Het documentdeel van "Volledig" op de balans en de W&V: is er voor deze
+ * periode nog bronwerk dat niet in het grootboek staat? Deelt de cache met de
+ * jaarafsluiting (dezelfde query voor het openstaande werk). `isError` en
+ * `isPending` zijn eerlijk: zolang een van beide bronnen niet gelezen is, is
+ * er geen oordeel — en dus nooit "Volledig".
+ */
+export function useReportDocumentCompleteness(
+  clientId: string | undefined,
+  period: LedgerPeriod,
+  statement: ReportStatementKind,
+  enabled = true,
+) {
+  const unposted = useUnpostedSourceWork(clientId, enabled);
+  const refused = useRefusedSourceWork(clientId, enabled);
+  const data = useMemo<ReportDocumentCompleteness | undefined>(() => {
+    if (!unposted.data || !refused.data) return undefined;
+    return reportDocumentCompleteness({ unposted: unposted.data, refused: refused.data, period, statement });
+  }, [unposted.data, refused.data, period, statement]);
+  return {
+    data,
+    isPending: unposted.isPending || refused.isPending,
+    isError: unposted.isError || refused.isError,
+  };
 }

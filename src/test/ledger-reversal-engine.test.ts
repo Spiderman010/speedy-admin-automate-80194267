@@ -9,6 +9,7 @@ import {
   type ReversalPostingLike,
 } from "@/lib/reversal-integrity";
 import { diagnosticsForReversals } from "@/lib/accounting-diagnostics";
+import { effectiveFunction, postingGuardOf } from "@/test/support/effective-sql";
 import {
   assertBranchSqlKeepsLedgerFoundation,
   assertBranchTouchesNoExistingWriter,
@@ -162,11 +163,20 @@ describe("Migratie — de tegenboekingsmotor", () => {
     expect(flat).toMatch(/NULL, v_row\.id, v_uid/);
   });
 
-  it("16. een afgesloten boekjaar wordt geweigerd en de datum nooit verschoven", () => {
-    expect(flat).toMatch(/v_client\.afgesloten_boekjaar IS NOT NULL AND v_boekjaar <= v_client\.afgesloten_boekjaar/);
-    // Geen enkele terugval op vandaag of op een ander jaar.
-    expect(sql).not.toMatch(/_posting_date\s*:=/);
-    expect(sql).not.toMatch(/CURRENT_DATE|now\(\)::date/);
+  it("16. de boekingsblokkade bewaakt de tegenboekingsdatum, en de datum wordt nooit verschoven", () => {
+    // E-04 (herstel P7, review H-3): de weigering op het jaarwatermerk die hier
+    // werd geëist, bestaat sinds PR H (20261002120000) niet meer in de
+    // effectieve definitie; de boekingsblokkade op _posting_date is de
+    // datumgrendel. Gedrag: supabase/tests/posting-decoupled.
+    const g = postingGuardOf("reverse_posting_group", "PERFORM public.assert_posting_allowed(v_client_id, _posting_date);");
+    expect(g).toMatchObject({ watermarkRefusal: false, lockCalled: true, lockBeforeLedger: true });
+    // Geen enkele terugval op vandaag of op een ander jaar — in de oorspronkelijke
+    // én in de effectieve definitie (review P7b, INFO bij H-3).
+    const effectief = effectiveFunction("reverse_posting_group").body;
+    for (const body of [sql, effectief]) {
+      expect(body).not.toMatch(/_posting_date\s*:=/);
+      expect(body).not.toMatch(/CURRENT_DATE|now\(\)::date/);
+    }
   });
 
   it("17. een kapotte groep wordt geweigerd, niet 'hersteld'", () => {

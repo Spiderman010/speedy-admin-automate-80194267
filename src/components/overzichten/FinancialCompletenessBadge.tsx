@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { COMPLETENESS_PRESENTATION } from "@/lib/financial-statements-presentation";
+import { reportCompletenessView, type ReportDocumentsState } from "@/lib/financial-statements-presentation";
 import type { StatementCompleteness } from "@/lib/financial-statements";
 
 /**
@@ -9,6 +9,10 @@ import type { StatementCompleteness } from "@/lib/financial-statements";
  * De tekst staat altijd in de badge (nooit alleen kleur) en "Controle vereist"
  * krijgt bewust géén groen: een periode die geen volledig boekjaar is, mag er
  * niet uitzien als een afgerond rapport.
+ *
+ * Herstel P7 (A3-11): "Volledig" vraagt ook het bronwerk. Zonder `documents`
+ * bestaat er geen oordeel — daarom is de prop verplicht; een badge die alleen
+ * de classificatie kent, kan nooit meer groen worden.
  */
 
 const TONE_CLASS: Record<"success" | "warning" | "neutral", string> = {
@@ -17,17 +21,23 @@ const TONE_CLASS: Record<"success" | "warning" | "neutral", string> = {
   neutral: "border-border bg-muted text-muted-foreground",
 };
 
-export function FinancialCompletenessBadge({ completeness }: { completeness: StatementCompleteness }) {
-  const presentation = COMPLETENESS_PRESENTATION[completeness];
+export function FinancialCompletenessBadge({
+  completeness,
+  documents,
+}: {
+  completeness: StatementCompleteness;
+  documents: ReportDocumentsState;
+}) {
+  const view = reportCompletenessView(completeness, documents);
   return (
     <Badge
       variant="outline"
       data-testid="statement-completeness"
-      data-completeness={completeness}
-      className={cn("font-normal", TONE_CLASS[presentation.tone])}
-      title={presentation.description}
+      data-completeness={view.verdict}
+      className={cn("font-normal", TONE_CLASS[view.tone])}
+      title={view.description}
     >
-      {presentation.label}
+      {view.label}
     </Badge>
   );
 }

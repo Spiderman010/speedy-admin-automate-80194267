@@ -119,6 +119,8 @@ export type UnpostedWorkSource =
   | "purchase_invoice"
   | "sales_invoice"
   | "bank_allocation"
+  /** De directe bankschrijver: een handmatig gecodeerde bankregel zonder koppeling (A3-02). */
+  | "bank_transaction"
   | "manual_journal";
 
 export interface UnpostedWorkItem {

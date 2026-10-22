@@ -4,6 +4,7 @@ import {
   type OpeningBalanceRow,
 } from "@/lib/opening-balance-utils";
 import type { LedgerPeriod } from "@/lib/ledger-reporting";
+import type { UnpostedWorkItem, UnpostedWorkSource } from "@/lib/year-close-readiness";
 
 // Fase 6C-b7 PR 2 — volledigheid van het grootboek (metadata, geen geld).
 //
@@ -24,7 +25,41 @@ export const PURCHASE_POSTABLE_STATUSES = ["gecontroleerd", "betaald", "geexport
 /** Statussen die post_sales_invoice() accepteert (6C-b4). */
 export const SALES_POSTABLE_STATUSES = ["gecontroleerd", "betaald"] as const;
 
-export type LedgerSourceKey = "purchase_invoice" | "sales_invoice" | "bank_allocation" | "manual_journal";
+/**
+ * De status die post_bank_transaction() (de directe bankschrijver) accepteert.
+ * Een banktransactie is voor die schrijver postbaar zodra zij handmatig
+ * gecodeerd is, een grootboekrekening en een bedrag <> 0 heeft, en NIET aan een
+ * factuur is gekoppeld (dan hoort zij bij de afletteringstak). Een marker in
+ * bank_transaction_postings betekent "geboekt". Precies dezelfde regel staat in
+ * controle D van close_fiscal_year() (20261021200000, herstel P7 / A3-02).
+ * Net als bij facturen tellen configuratie en boekingsblokkade NIET mee: het
+ * gaat om werk dat nog geboekt moet worden, niet om de vraag of dat vandaag kan.
+ */
+export const DIRECT_BANK_POSTABLE_STATUS = "handmatig_geboekt" as const;
+
+/**
+ * Review N-1: een bankregel vóór de openingsdatum van de GEBOEKTE beginbalans
+ * kan de directe bankschrijver nooit boeken —
+ * enforce_no_posting_before_opening_balance() weigert elke grootboekregel
+ * daarvóór (22023). Zij telt dus niet als postbaar, exact zoals de banktak van
+ * close_fiscal_year() (`NOT EXISTS … obp.opening_date > bt.transaction_date`).
+ * Een regel zonder datum telt wel (de database kan haar niet uitsluiten).
+ */
+export function directBankPostableAfterOpening(
+  transactionDate: string | null | undefined,
+  openingDates: readonly (string | null | undefined)[],
+): boolean {
+  if (!transactionDate) return true;
+  const datum = transactionDate.slice(0, 10);
+  return !openingDates.some((d) => !!d && d.slice(0, 10) > datum);
+}
+
+export type LedgerSourceKey =
+  | "purchase_invoice"
+  | "sales_invoice"
+  | "bank_allocation"
+  | "bank_transaction"
+  | "manual_journal";
 
 export interface LedgerCompletenessCounts {
   purchase: { eligible: number; posted: number };
@@ -32,6 +67,13 @@ export interface LedgerCompletenessCounts {
   sales: { eligible: number; posted: number; refusedVerlegd: number };
   /** `awaitingInvoice`: koppelingen waarvan de factuur zelf nog niet geboekt is. */
   bank: { eligible: number; posted: number; awaitingInvoice: number };
+  /**
+   * De directe bankschrijver (post_bank_transaction): gecodeerde bankregels
+   * zonder koppeling, en hoeveel daarvan een marker hebben. Verplicht: wie de
+   * tellingen levert, moet ook deze bron tellen — een weggelaten bron is geen
+   * "niets open".
+   */
+  bankDirect: { eligible: number; posted: number };
   manual: { total: number; posted: number };
 }
 
@@ -83,6 +125,8 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
   const bankPosted = nonNegative(counts.bank.posted);
   const bankEligible = nonNegative(counts.bank.eligible);
   const bankAwaiting = nonNegative(counts.bank.awaitingInvoice);
+  const directPosted = nonNegative(counts.bankDirect.posted);
+  const directEligible = nonNegative(counts.bankDirect.eligible);
   const manualPosted = nonNegative(counts.manual.posted);
   const manualTotal = nonNegative(counts.manual.total);
 
@@ -133,6 +177,23 @@ export function computeLedgerCompleteness(counts: LedgerCompletenessCounts): Led
             : null,
     },
     {
+      key: "bank_transaction",
+      label: "Gecodeerde bankregels",
+      posted: directPosted,
+      eligible: directEligible,
+      outstanding: Math.max(0, directEligible - directPosted),
+      status: statusFor(directPosted, directEligible),
+      refused: null,
+      refusedLabel: null,
+      // Een regel die nog niet gecodeerd is (niet_gematcht, suggestie) of op
+      // 'gematcht' staat zonder koppeling, kan geen enkele schrijver boeken; die
+      // telt hier dus niet als postbaar. Dat staat er eerlijk bij.
+      note:
+        directPosted > directEligible
+          ? INCONSISTENT_NOTE
+          : "Telt handmatig gecodeerde bankregels zonder factuurkoppeling; nog niet gecodeerde regels en 'gematcht' zonder koppeling tellen hier niet mee.",
+    },
+    {
       key: "manual_journal",
       label: "Memoriaalboekingen",
       posted: manualPosted,
@@ -168,6 +229,7 @@ export function unknownLedgerCompleteness(): LedgerCompleteness {
       unknown("purchase_invoice", "Inkoopfacturen"),
       unknown("sales_invoice", "Verkoopfacturen"),
       unknown("bank_allocation", "Bankafletteringen"),
+      unknown("bank_transaction", "Gecodeerde bankregels"),
       unknown("manual_journal", "Memoriaalboekingen"),
     ],
     mayBeIncomplete: true,
@@ -336,5 +398,129 @@ export function unknownOpeningBalanceCompleteness(year: number | null): OpeningB
     label: OPENING_BALANCE_STATE_LABELS.unknown,
     severity: "unknown",
     note: "Kon beginbalansstatus niet controleren.",
+  };
+}
+
+// ── Bronwerk per rapportperiode (herstel P7, A3-11) ─────────────────────────
+//
+// "Volledig" op de balans en de winst-en-verliesrekening betekende alleen
+// "alle grootboekactiviteit is geclassificeerd" (de statement-engine weet niets
+// van documenten). Een rapport mag pas volledig heten als er ook geen
+// ongeboekt bronwerk is dat erin thuishoort. Deze functie telt dat werk per
+// rapportperiode, uitsluitend met de bestaande definities:
+//   • postbaar maar nog niet geboekt — exact `fetchUnpostedSourceWork()`, de
+//     bron van de jaarafsluiting (vijf schrijvers, incl. gecodeerde bankregels);
+//   • door de schrijver GEWEIGERD — een verkoopfactuur met verlegde btw
+//     (post_sales_invoice weigert die altijd). Die staat nooit in het
+//     grootboek, dus een rapport met zo'n factuur is aantoonbaar niet volledig.
+// Welk werk bij welk rapport hoort, volgt uit het boekjaar (de boekhoudkundige
+// datum, nooit created_at):
+//   • balans (stand op de einddatum): boekjaar t/m het laatste jaar van de periode;
+//   • W&V (mutatie in de periode): boekjaar binnen de jaren van de periode.
+// Boekjaar = kalenderjaar, dus een kwartaal telt het werk van het hele jaar
+// mee: strenger, nooit soepeler. Een document zonder datum telt altijd mee.
+
+export interface RefusedWorkItem {
+  source: "sales_invoice";
+  id: string;
+  /** Uit invoice_date; null = onbekend (telt dan altijd mee). */
+  boekjaar: number | null;
+  reason: "btw_verlegd";
+}
+
+export type ReportStatementKind = "balans" | "winst_verlies";
+
+export interface ReportDocumentCompleteness {
+  status: "complete" | "incomplete";
+  /** Postbaar, nog niet geboekt, per bron (alleen bronnen met > 0), in vaste volgorde. */
+  unposted: Array<{ source: UnpostedWorkSource; count: number }>;
+  /** Door de schrijver geweigerd: staat niet in het grootboek. */
+  refused: Array<{ source: "sales_invoice"; reason: "btw_verlegd"; count: number }>;
+  totalUnposted: number;
+  totalRefused: number;
+  /** Er staat bankwerk open (gecodeerde bankregels of bankafletteringen): de bank-inhaalslag helpt. */
+  bankWorkOpen: boolean;
+  /** De meegetelde boekjaren, inclusief; `fromYear` null = alle eerdere jaren. */
+  scope: { fromYear: number | null; throughYear: number };
+  /** Telbare zin, bv. "3 bankregels en 1 inkoopfactuur nog niet geboekt"; null als alles geboekt is. */
+  summary: string | null;
+}
+
+const SOURCE_ORDER: readonly UnpostedWorkSource[] = [
+  "purchase_invoice",
+  "sales_invoice",
+  "bank_transaction",
+  "bank_allocation",
+  "manual_journal",
+];
+
+const SOURCE_NOUN: Readonly<Record<UnpostedWorkSource, [string, string]>> = {
+  purchase_invoice: ["inkoopfactuur", "inkoopfacturen"],
+  sales_invoice: ["verkoopfactuur", "verkoopfacturen"],
+  bank_transaction: ["bankregel", "bankregels"],
+  bank_allocation: ["bankaflettering", "bankafletteringen"],
+  manual_journal: ["memoriaalboeking", "memoriaalboekingen"],
+};
+
+function telling(n: number, [enkel, meervoud]: [string, string]): string {
+  return `${n} ${n === 1 ? enkel : meervoud}`;
+}
+
+function opsomming(delen: readonly string[]): string {
+  if (delen.length <= 1) return delen.join("");
+  return `${delen.slice(0, -1).join(", ")} en ${delen[delen.length - 1]}`;
+}
+
+/** De kalenderjaren van een half-open periode [from, toExclusive). */
+export function periodYears(period: LedgerPeriod): { fromYear: number; throughYear: number } {
+  const fromYear = Number(period.from.slice(0, 4));
+  const end = new Date(`${period.toExclusive}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() - 1);
+  return { fromYear, throughYear: end.getUTCFullYear() };
+}
+
+export function reportDocumentCompleteness(input: {
+  unposted: readonly UnpostedWorkItem[];
+  refused: readonly RefusedWorkItem[];
+  period: LedgerPeriod;
+  statement: ReportStatementKind;
+}): ReportDocumentCompleteness {
+  const { fromYear, throughYear } = periodYears(input.period);
+  const lowerBound = input.statement === "balans" ? null : fromYear;
+  const hoortErbij = (boekjaar: number | null | undefined) =>
+    boekjaar === null || boekjaar === undefined ||
+    (boekjaar <= throughYear && (lowerBound === null || boekjaar >= lowerBound));
+
+  const perBron = new Map<UnpostedWorkSource, number>();
+  for (const item of input.unposted) {
+    if (!hoortErbij(item.boekjaar)) continue;
+    perBron.set(item.source, (perBron.get(item.source) ?? 0) + 1);
+  }
+  const unposted = SOURCE_ORDER.filter((s) => (perBron.get(s) ?? 0) > 0).map((source) => ({
+    source,
+    count: perBron.get(source)!,
+  }));
+  const geweigerd = input.refused.filter((r) => hoortErbij(r.boekjaar)).length;
+  const refused = geweigerd > 0 ? [{ source: "sales_invoice" as const, reason: "btw_verlegd" as const, count: geweigerd }] : [];
+
+  const totalUnposted = unposted.reduce((n, u) => n + u.count, 0);
+  const delen: string[] = [];
+  if (totalUnposted > 0) {
+    delen.push(`${opsomming(unposted.map((u) => telling(u.count, SOURCE_NOUN[u.source])))} nog niet geboekt`);
+  }
+  if (geweigerd > 0) {
+    delen.push(
+      `${telling(geweigerd, ["verkoopfactuur", "verkoopfacturen"])} met verlegde btw ${geweigerd === 1 ? "kan" : "kunnen"} niet worden geboekt`,
+    );
+  }
+  return {
+    status: totalUnposted + geweigerd > 0 ? "incomplete" : "complete",
+    unposted,
+    refused,
+    totalUnposted,
+    totalRefused: geweigerd,
+    bankWorkOpen: unposted.some((u) => u.source === "bank_transaction" || u.source === "bank_allocation"),
+    scope: { fromYear: lowerBound, throughYear },
+    summary: delen.length > 0 ? delen.join("; ") : null,
   };
 }
