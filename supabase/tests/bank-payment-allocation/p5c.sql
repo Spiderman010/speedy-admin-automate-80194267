@@ -157,9 +157,25 @@ SELECT proof.put('p13x', proof.remote_exec('g', format(
   'UPDATE public.purchase_invoices SET amount_excl = 20, amount_incl = 20, remaining_amount = -10 WHERE id = %L', proof.uid(2000, 1216))));
 SELECT proof.put('p13c', proof.remote_exec('g', 'COMMIT'));
 SELECT proof.remote_exec('g', 'ROLLBACK');
-SELECT proof.record('P13', 'G1 onder P5c: na een legitieme unlink de vlag met de hand zetten en het factuurbedrag onder Σ brengen — de UPDATE zelf wordt geweigerd (23514); factuur en koppelingen onveranderd (onder alleen P5a: L17, bij COMMIT)',
+-- Variant (review P5-DB-b, N3): SET CONSTRAINTS ALL IMMEDIATE (de COMMIT-check
+-- is dan al gevuurd), link 40 op 100 (restant 60), vlag met de hand, bedrag
+-- naar 160 terwijl het restant de na-toestand (60) houdt. Alleen de bedragtoets
+-- in de schrijverstak van P5c houdt dit tegen.
+SELECT proof.pinv(1219, 100.00), proof.tx(1219, -40.00);
+SELECT proof.remote_exec('g', 'BEGIN');
+SELECT proof.remote_exec('g', 'SET CONSTRAINTS ALL IMMEDIATE');
+SELECT proof.put('p13il', proof.remote_run('g', proof.lsql(proof.uid(1000, 1219), 'inkoop', proof.uid(2000, 1219), 40, proof.req(1219))));
+SELECT proof.put('p13if', proof.remote_run('g', 'SELECT set_config(''boekassist.betaalschrijver'', pg_current_xact_id()::text, true)'));
+SELECT proof.put('p13ix', proof.remote_exec('g', format(
+  'UPDATE public.purchase_invoices SET amount_excl = 160, amount_incl = 160 WHERE id = %L', proof.uid(2000, 1219))));
+SELECT proof.put('p13ic', proof.remote_exec('g', 'COMMIT'));
+SELECT proof.remote_exec('g', 'ROLLBACK');
+SELECT proof.record('P13', 'G1 onder P5c: na een legitieme unlink de vlag met de hand zetten en het factuurbedrag onder Σ brengen — de UPDATE zelf wordt geweigerd (23514); ook met SET CONSTRAINTS ALL IMMEDIATE en bedrag 160 bij restant = na-toestand; factuur en koppelingen onveranderd (onder alleen P5a: L17, bij COMMIT)',
   proof.get('p13l1') LIKE 'ok:%' AND proof.get('p13l2') LIKE 'ok:%' AND proof.get('p13u') LIKE 'ok: unlinked|%'
   AND proof.refused(proof.get('p13x'), '23514', 'alleen het restant en de status')
+  AND proof.get('p13il') LIKE 'ok: created|60.00|%' AND proof.refused(proof.get('p13ix'), '23514', 'alleen het restant en de status')
+  AND (SELECT amount_incl FROM public.purchase_invoices WHERE id = proof.uid(2000, 1219)) = 100
+  AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 1219))
   AND proof.inv('inkoop', proof.uid(2000, 1216)) LIKE '30.00|%'
   AND (SELECT amount_incl FROM public.purchase_invoices WHERE id = proof.uid(2000, 1216)) = 100
   AND (SELECT sum(amount) FROM public.bank_transaction_allocations WHERE invoice_id = proof.uid(2000, 1216)) = 70,
@@ -175,8 +191,20 @@ SELECT proof.put('p14x', proof.remote_exec('g', format(
   'UPDATE public.sales_invoices SET status = ''betaald'' WHERE id = %L', proof.uid(3000, 1218))));
 SELECT proof.put('p14c', proof.remote_exec('g', 'COMMIT'));
 SELECT proof.remote_exec('g', 'ROLLBACK');
-SELECT proof.record('P14', 'F2 onder P5c: na een legitieme link (concept, restant 0) de vlag met de hand zetten en status betaald — de UPDATE zelf wordt geweigerd (23514); factuur blijft concept/100, geen koppeling (onder alleen P5a: L18, bij COMMIT)',
+-- Variant met SET CONSTRAINTS ALL IMMEDIATE.
+SELECT proof.tx(1220, 100.00), proof.sinv(1220, 100.00, 'concept');
+SELECT proof.remote_exec('g', 'BEGIN');
+SELECT proof.remote_exec('g', 'SET CONSTRAINTS ALL IMMEDIATE');
+SELECT proof.put('p14il', proof.remote_run('g', proof.lsql(proof.uid(1000, 1220), 'verkoop', proof.uid(3000, 1220), 100, proof.req(1220))));
+SELECT proof.put('p14if', proof.remote_run('g', 'SELECT set_config(''boekassist.betaalschrijver'', pg_current_xact_id()::text, true)'));
+SELECT proof.put('p14ix', proof.remote_exec('g', format(
+  'UPDATE public.sales_invoices SET status = ''betaald'' WHERE id = %L', proof.uid(3000, 1220))));
+SELECT proof.put('p14ic', proof.remote_exec('g', 'COMMIT'));
+SELECT proof.remote_exec('g', 'ROLLBACK');
+SELECT proof.record('P14', 'F2 onder P5c: na een legitieme link (concept, restant 0) de vlag met de hand zetten en status betaald — de UPDATE zelf wordt geweigerd (23514), ook met SET CONSTRAINTS ALL IMMEDIATE; factuur blijft concept/100, geen koppeling (onder alleen P5a: L18, bij COMMIT)',
   proof.get('p14l') LIKE 'ok: created|0.00|%' AND proof.refused(proof.get('p14x'), '23514', 'alleen het restant en de status')
+  AND proof.get('p14il') LIKE 'ok: created|0.00|%' AND proof.refused(proof.get('p14ix'), '23514', 'alleen het restant en de status')
+  AND proof.inv('verkoop', proof.uid(3000, 1220)) = '100.00|concept'
   AND proof.inv('verkoop', proof.uid(3000, 1218)) = '100.00|concept'
   AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations WHERE bank_transaction_id = proof.uid(1000, 1218)),
   proof.get('p14x') || ' / ' || proof.get('p14c'));

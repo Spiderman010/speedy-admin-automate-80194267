@@ -125,9 +125,13 @@ vi.mock("@/components/BankMatchDialog", async () => {
   const React = await import("react");
   return {
     BankMatchDialog: (p: any) => (p.open && p.transaction
-      ? React.createElement("button", {
-          onClick: () => p.onConfirm(p.transaction.id, s.dialog.invoiceId, s.dialog.invoiceType, false, false, null, s.dialog.amount),
-        }, "dialoog-koppelen")
+      ? React.createElement(React.Fragment, null,
+          React.createElement("button", {
+            onClick: () => p.onConfirm(p.transaction.id, s.dialog.invoiceId, s.dialog.invoiceType, false, false, null, s.dialog.amount),
+          }, "dialoog-koppelen"),
+          React.createElement("button", {
+            onClick: () => p.onManualBook(p.transaction.id, "4700 Kantoorkosten", "", "acc-4700", 21),
+          }, "dialoog-coderen"))
       : null),
     rankCandidates: (tx: any) => {
       if (tx.__candidate === null || tx.__candidate === undefined) {
@@ -147,14 +151,17 @@ vi.mock("@/components/BankMatchDialog", async () => {
 vi.mock("@/components/VerwerkingsScherm", async () => {
   const React = await import("react");
   return {
-    VerwerkingsScherm: (p: any) => (p.open
-      ? React.createElement("button", {
-          onClick: () => {
-            p.onMatchInvoice(s.verwerk.txId, s.verwerk.invoiceId, s.verwerk.invoiceType)
-              .then(() => { s.verwerk.outcome = "ok"; }, (e: Error) => { s.verwerk.outcome = `fout: ${e.message}`; });
-          },
-        }, "verwerk-koppelen")
-      : null),
+    VerwerkingsScherm: (p: any) => {
+      const done = (pr: Promise<void>) => pr.then(() => { s.verwerk.outcome = "ok"; }, (e: Error) => { s.verwerk.outcome = `fout: ${e.message}`; });
+      return p.open
+        ? React.createElement(React.Fragment, null,
+            React.createElement("button", {
+              onClick: () => done(p.onMatchInvoice(s.verwerk.txId, s.verwerk.invoiceId, s.verwerk.invoiceType)),
+            }, "verwerk-koppelen"),
+            React.createElement("button", { onClick: () => done(p.onBookPrivate(s.verwerk.txId)) }, "verwerk-prive"),
+            React.createElement("button", { onClick: () => done(p.onBookLedger(s.verwerk.txId, "4700 Kantoorkosten", "acc-4700", 21)) }, "verwerk-coderen"))
+        : null;
+    },
   };
 });
 vi.mock("@/components/GrootboekCombobox", async () => {
@@ -169,6 +176,17 @@ vi.mock("@/components/bank/BtwKeuzeSelect", async () => {
   const React = await import("react");
   return { BtwKeuzeSelect: (p: any) => React.createElement("button", { onClick: () => p.onValueChange("21") }, "kies-btw") };
 });
+vi.mock("@/components/bank/BankTransactionDetailSheet", async () => {
+  const React = await import("react");
+  return {
+    BankTransactionDetailSheet: (p: any) => (p.open && p.transaction
+      ? React.createElement(React.Fragment, null,
+          React.createElement("button", { onClick: () => p.onRejectSuggestion(p.transaction) }, "paneel-afwijzen"),
+          React.createElement("button", { onClick: () => p.onUnlink(p.transaction) }, "paneel-ontkoppelen"),
+          React.createElement("button", { onClick: () => p.onMaakVraagpost(p.transaction) }, "paneel-vraagpost"))
+      : null),
+  };
+});
 vi.mock("@/components/BankStatementUploadDialog", () => ({ BankStatementUploadDialog: () => null }));
 vi.mock("@/components/BankAfletteringDrawer", () => ({ BankAfletteringDrawer: () => null }));
 vi.mock("@/components/CreateVraagpostDialog", () => ({ CreateVraagpostDialog: () => null }));
@@ -176,6 +194,8 @@ vi.mock("@/components/ClientMultiSelect", () => ({ ClientMultiSelect: () => null
 
 import Bank from "@/pages/Bank";
 import { BankPaymentError } from "@/lib/bank-payment-link";
+import { BANK_TX_NOT_LINKED_STATUSES } from "@/lib/bank-transaction-cas";
+import { supabase } from "@/integrations/supabase/client";
 
 function renderBank() {
   render((<MemoryRouter initialEntries={["/bank"]}><Bank /></MemoryRouter>) as ReactNode as any);
@@ -480,5 +500,100 @@ describe("Bank — keuzeregels van automatisch voorstellen (review P5 H-4)", () 
     await waitFor(() => expect(lastToast()?.title).toBe("Automatisch voorstellen klaar"));
     expect(s.linkCalls).toHaveLength(1);
     expect(s.linkCalls[0].invoiceId).toBe("inv-gedeeld");
+  });
+});
+
+/**
+ * Review P5-APP-b R-1: per handler die match_status rechtstreeks schrijft, de
+ * meegestuurde verwachting (compare-and-set). In de database staat telkens een
+ * andere toestand dan het scherm denkt (een ander tabblad koppelde al): de
+ * verwachting moet exact kloppen én de database blijft ongemoeid. Wie bij één
+ * handler de controle weghaalt, maakt die rij rood.
+ */
+describe("Bank — elke directe matchwrite stuurt zijn verwachte toestand mee (R-1)", () => {
+  const NOT_LINKED = { match_status: BANK_TX_NOT_LINKED_STATUSES };
+  const SUGGESTIE_S1 = { match_status: ["suggestie"], matched_invoice_id: "S1" };
+  const CODED = { match_status: ["handmatig_geboekt"] };
+  const suggestionTx = () => makeTx({ id: "tx-1", amount: 100, match_status: "suggestie", matched_invoice_id: "S1", __candidate: { id: "S1" } });
+  const openTx = () => makeTx({ id: "tx-1", amount: 100 });
+  const codedTx = () => makeTx({ id: "tx-1", amount: 100, match_status: "handmatig_geboekt", grootboekrekening_id: "acc" });
+  const openRow = async () => {
+    const row = (await screen.findAllByText("Betaling factuur")).map((el) => el.closest("tr")).find(Boolean);
+    expect(row).toBeTruthy();
+    fireEvent.click(row!);
+  };
+  const selectRow = async () => fireEvent.click((await screen.findAllByRole("checkbox")).at(-1)!);
+
+  const cases: Array<[string, () => any, any, () => Promise<void>]> = [
+    ["afwijzen (rij)", suggestionTx, SUGGESTIE_S1, async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Afwijzen" }));
+    }],
+    ["afwijzen (detailpaneel)", suggestionTx, SUGGESTIE_S1, async () => {
+      await openRow();
+      fireEvent.click(await screen.findByRole("button", { name: "paneel-afwijzen" }));
+    }],
+    ["suggesties afwijzen (bulk)", suggestionTx, SUGGESTIE_S1, async () => {
+      await selectRow();
+      fireEvent.click(await screen.findByRole("button", { name: /Suggesties afwijzen \(1\)/ }));
+    }],
+    ["handmatig coderen (dialoog)", openTx, NOT_LINKED, async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Koppel" }));
+      fireEvent.click(await screen.findByRole("button", { name: "dialoog-coderen" }));
+    }],
+    ["Verwerken: privé", openTx, NOT_LINKED, async () => {
+      s.verwerk.txId = "tx-1";
+      fireEvent.click(await screen.findByRole("button", { name: /^Verwerken/ }));
+      fireEvent.click(await screen.findByRole("button", { name: "verwerk-prive" }));
+    }],
+    ["Verwerken: coderen", openTx, NOT_LINKED, async () => {
+      s.verwerk.txId = "tx-1";
+      fireEvent.click(await screen.findByRole("button", { name: /^Verwerken/ }));
+      fireEvent.click(await screen.findByRole("button", { name: "verwerk-coderen" }));
+    }],
+    ["bulk coderen", openTx, NOT_LINKED, async () => {
+      await selectRow();
+      fireEvent.click(await screen.findByRole("button", { name: "kies-rekening" }));
+      fireEvent.click(await screen.findByRole("button", { name: "kies-btw" }));
+      fireEvent.click(await screen.findByTestId("bulk-book-button"));
+    }],
+    ["vraagpost (detailpaneel)", openTx, NOT_LINKED, async () => {
+      await openRow();
+      fireEvent.click(await screen.findByRole("button", { name: "paneel-vraagpost" }));
+    }],
+    ["automatisch voorstellen: suggestie klaarzetten", () => makeTx({ id: "tx-1", amount: -60, __candidate: { id: "P1", score: 80, isPartialPayment: true, amount: 100 } }),
+      { match_status: ["niet_gematcht"], matched_invoice_id: null }, async () => {
+      fireEvent.click(await screen.findByRole("button", { name: /Automatisch voorstellen/ }));
+    }],
+    ["codering ongedaan maken (rij)", codedTx, CODED, async () => {
+      await waitFor(() => expect(unlinkIconButton()).toBeTruthy());
+      fireEvent.click(unlinkIconButton());
+    }],
+    ["codering ongedaan maken (detailpaneel)", codedTx, CODED, async () => {
+      await openRow();
+      fireEvent.click(await screen.findByRole("button", { name: "paneel-ontkoppelen" }));
+    }],
+    ["codering ongedaan maken (bulk ontkoppelen)", codedTx, CODED, async () => {
+      await selectRow();
+      // Eén regel: zonder bevestigingsdialoog.
+      fireEvent.click(await screen.findByRole("button", { name: /Ontkoppel geselecteerde/ }));
+    }],
+  ];
+
+  it.each(cases)("%s", async (_name, makeRow, expected, act) => {
+    const row = makeRow();
+    s.transactions = [row];
+    s.sales = [makeSale("S1")];
+    // Wat de database werkelijk heeft: intussen gekoppeld (een ander tabblad).
+    s.db.set(row.id, { match_status: "gematcht", matched_invoice_id: "X9" });
+    const chain: any = { select: () => chain, eq: () => chain, maybeSingle: async () => ({ data: { id: "vp-1" }, error: null }) };
+    vi.mocked(supabase.from).mockReturnValue(chain);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderBank();
+    await act();
+    await waitFor(() => expect(s.updateTxCalls.length).toBeGreaterThan(0));
+    expect(s.updateTxCalls.at(-1)).toMatchObject({ id: row.id, expected });
+    expect(s.updateTxCalls.at(-1).expected).toEqual(expected);
+    expect(s.db.get(row.id)).toEqual({ match_status: "gematcht", matched_invoice_id: "X9" });
+    confirm.mockRestore();
   });
 });

@@ -65,6 +65,11 @@
 --   de bestaande paar-rij en pas dan T (review P5-DB §2). Unlink weigert met
 --   55000 als er tussen beide grendels een koppeling bijkwam. Elk paar paden
 --   neemt gedeelde rijen dus in dezelfde volgorde.
+--   Beperking (theoretisch, alleen in het venster P5a → P5c): een upsert van
+--   MEERDERE rijen in één opdracht grendelt per rij A → T, maar de rijen na
+--   elkaar; tegen een gelijktijdige schrijver op een latere rij van dezelfde
+--   transactie kan dat nog 40P01 geven (schoon afgebroken, herhaalbaar). De app
+--   doet zulke upserts niet; na P5c kan `authenticated` niet meer invoegen.
 --   Alleen READ COMMITTED (25000): na het wachten op een grendel leest elke
 --   volgende opdracht een verse snapshot.
 --
@@ -103,7 +108,7 @@
 -- de oorspronkelijke functie van 20260915160000 letterlijk, en verwijdert de
 -- RPC's, guards en hulpfuncties. De claim- en gebeurtenistabellen en
 -- created_by blijven staan: dat is geschiedenis (weghalen alleen met akkoord
--- van de eigenaar). Koppelingen, restbedragen en statussen die via de RPC zijn
+-- van de eigenaar); dat geldt ook voor de kolom bank_payment_events.invoice_amount. Koppelingen, restbedragen en statussen die via de RPC zijn
 -- geschreven, blijven geldig: het zijn gewone rijen.
 -- ROLLBACK-BEGIN
 -- CREATE OR REPLACE FUNCTION public.prevent_posted_sales_invoice_mutation()
@@ -300,6 +305,11 @@ CREATE TABLE IF NOT EXISTS public.bank_payment_events (
   CONSTRAINT bank_payment_events_amount_check CHECK (amount > 0),
   CONSTRAINT bank_payment_events_formalized_check CHECK (NOT formalized OR event_type = 'linked')
 );
+
+-- Upgradepad: een database met een eerdere versie van deze tabel krijgt de
+-- kolom alsnog (bestaande rijen blijven leeg; de COMMIT-check kijkt alleen
+-- naar gebeurtenissen van de lopende transactie).
+ALTER TABLE public.bank_payment_events ADD COLUMN IF NOT EXISTS invoice_amount numeric(12,2);
 
 CREATE INDEX IF NOT EXISTS idx_bank_payment_events_tx_seq  ON public.bank_payment_events (bank_transaction_id, seq);
 CREATE INDEX IF NOT EXISTS idx_bank_payment_events_invoice ON public.bank_payment_events (invoice_id, invoice_type);
@@ -793,6 +803,11 @@ BEGIN
   -- direct na het vastleggen van de gebeurtenis, vóór de factuur is bijgewerkt
   -- (de RPC toetst zelf de eindtoestand); terugzetten naar de vóór-toestand
   -- valt daarbuiten altijd op restant = bedrag − Σ.
+  -- Grens: met IMMEDIATE is deze controle al gevuurd vóór een write die ná de
+  -- RPC in dezelfde transactie volgt. Onder alleen P5a omzeilt een vervalste
+  -- vlag + IMMEDIATE dit dus (geen nieuw gat: zonder P5c schrijft de oude app
+  -- facturen toch rechtstreeks). P5c sluit het: de factuurguard laat de
+  -- schrijver alleen restant en status naar de na-toestand zetten.
   SELECT * INTO v_last
   FROM public.bank_payment_events e
   WHERE e.invoice_id = NEW.invoice_id
