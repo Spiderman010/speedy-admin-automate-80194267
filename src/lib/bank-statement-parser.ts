@@ -550,7 +550,11 @@ function parseCAMTEntry(entry: Element, ns: string): CamtEntryResult {
   const dm = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!dm || !isoDate(Number(dm[1]), Number(dm[2]), Number(dm[3]))) return { error: `Ongeldige datum "${dateStr}"` };
   const valDtEls = ns ? entry.getElementsByTagNameNS(ns, "ValDt") : entry.getElementsByTagName("ValDt");
-  const valueDate = (valDtEls.length ? getTextNS(valDtEls[0] as Element, ns, "Dt") : "") || dateStr;
+  // The value date counts in the import fingerprint, so a value date given only
+  // as a timestamp (<ValDt><DtTm>) must be read as well: falling back to the
+  // booking date gave the same payment a different fingerprint than in MT940.
+  const valueDate = camtDate(directChild(entry, "ValDt"))
+    ?? ((valDtEls.length ? getTextNS(valDtEls[0] as Element, ns, "Dt") : "") || dateStr);
 
   const addtlNtryInf = getTextNS(entry, ns, "AddtlNtryInf") || null;
   const ustrd = getTextNS(entry, ns, "Ustrd") || null;
