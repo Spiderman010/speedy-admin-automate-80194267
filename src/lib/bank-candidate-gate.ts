@@ -81,6 +81,31 @@ export function preselectCandidate(candidates: readonly InvoiceCandidate[]): Inv
   return first;
 }
 
+/**
+ * True wanneer het bankbedrag precies het openstaande bedrag van de kandidaat
+ * is (op de cent). Een deelbetaling of een overbetaling is dat niet.
+ */
+export function paysOpenAmountExactly(txAmount: number, candidate: Pick<InvoiceCandidate, "amount">): boolean {
+  if (candidate.amount == null || !Number.isFinite(candidate.amount) || !Number.isFinite(txAmount)) return false;
+  return Math.abs(Math.abs(txAmount) - Math.abs(candidate.amount)) < 0.005;
+}
+
+/**
+ * Voorselectie op het schrijfpad "Verwerken → Factuur koppelen": alleen de
+ * enige beste kandidaat, en alleen als de bankregel precies het openstaande
+ * bedrag betaalt. Bij een deel- of overbetaling kiest de mens: het huidige
+ * schrijfpad (onMatchInvoice) zet het restant op 0 en de verkoopfactuur op
+ * "betaald", ongeacht het bedrag; tot P5 dat in de database afleidt, mag een
+ * voorselectie zo'n klik niet als juist voorstellen (review P2-1).
+ */
+export function preselectFullPaymentCandidate(
+  candidates: readonly InvoiceCandidate[],
+  txAmount: number,
+): InvoiceCandidate | null {
+  const best = preselectCandidate(candidates);
+  return best && paysOpenAmountExactly(txAmount, best) ? best : null;
+}
+
 /** True wanneer meerdere kandidaten de hoogste score delen. */
 export function hasTiedTopCandidates(candidates: readonly InvoiceCandidate[]): boolean {
   const [first, second] = candidates;

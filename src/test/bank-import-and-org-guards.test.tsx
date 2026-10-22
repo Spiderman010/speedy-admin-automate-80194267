@@ -21,6 +21,9 @@ const h = vi.hoisted(() => ({
   updateSales: vi.fn(),
   upsert: vi.fn(),
   toast: vi.fn(),
+  extraClients: [] as any[],
+  fetchPurchases: vi.fn(),
+  fetchSales: vi.fn(),
 }));
 
 const CLIENTS: Record<string, any[]> = {
@@ -44,7 +47,7 @@ vi.mock("@/hooks/useClientContext", () => ({
 vi.mock("@/hooks/useActiveOrganization", () => ({
   useActiveOrganization: () => ({ activeOrganizationId: h.org, isReady: true }),
 }));
-vi.mock("@/hooks/useClients", () => ({ useClients: (orgId?: string) => ({ data: CLIENTS[orgId ?? ""] ?? [] }) }));
+vi.mock("@/hooks/useClients", () => ({ useClients: (orgId?: string) => ({ data: [...(CLIENTS[orgId ?? ""] ?? []), ...h.extraClients] }) }));
 const TX = {
   id: "t1", client_id: "c1", organization_id: "org-1", transaction_date: "2026-10-02", description: "KPN INK-90",
   reference: null, counter_account: null, amount: -50, match_status: "niet_gematcht", matched_invoice_id: null,
@@ -62,6 +65,7 @@ vi.mock("@/hooks/useBankTransactions", () => ({
   useUpdateBankTransaction: () => ({ mutateAsync: (...a: any[]) => h.updateTx(...a) }),
 }));
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
+  fetchAllPurchaseInvoices: (...a: any[]) => h.fetchPurchases(...a),
   usePurchaseInvoices: () => ({
     data: [{ id: "p1", client_id: "c1", supplier: "KPN", invoice_number: "INK-90", status: "gecontroleerd", amount_incl: 50, amount_excl: null, remaining_amount: 50, invoice_date: "2026-09-01" }],
     isLoading: false, isError: false, refetch: vi.fn(),
@@ -69,6 +73,7 @@ vi.mock("@/hooks/usePurchaseInvoices", () => ({
   useUpdatePurchaseInvoice: () => ({ mutateAsync: (...a: any[]) => h.updatePurchase(...a) }),
 }));
 vi.mock("@/hooks/useSalesInvoices", () => ({
+  fetchAllSalesInvoices: (...a: any[]) => h.fetchSales(...a),
   useSalesInvoices: () => ({ data: [], isLoading: false, isError: false, refetch: vi.fn() }),
   useUpdateSalesInvoice: () => ({ mutateAsync: (...a: any[]) => h.updateSales(...a) }),
 }));
@@ -120,6 +125,9 @@ beforeEach(() => {
   h.dialogProps = null;
   h.matchDialogProps = null;
   h.bankTxArgs = [];
+  h.extraClients = [];
+  h.fetchPurchases = vi.fn(async () => []);
+  h.fetchSales = vi.fn(async () => []);
   h.addTx = vi.fn(async (r: any) => ({ id: "new", ...r }));
   for (const k of ["updateTx", "updatePurchase", "updateSales", "upsert", "toast"] as const) h[k] = vi.fn(async () => ({}));
 });
@@ -151,6 +159,31 @@ describe("import (A1-11): alleen voorstellen, nooit een factuur of koppeling sch
     expect(outcome).toBe(false);
     expect(h.addTx).not.toHaveBeenCalled();
     expect(h.toast.mock.calls.at(-1)[0]).toMatchObject({ title: "Importeren is niet gestart", variant: "destructive" });
+  });
+});
+
+describe("import: organisatie van de administratie zelf (review Nit-1)", () => {
+  it("een administratie in de lijst met een ander organization_id wordt geweigerd", async () => {
+    h.extraClients = [{ id: "c-vreemd", name: "Vreemde klant", organization_id: "org-2", ibans: [] }];
+    render(page());
+    let outcome: unknown;
+    await act(async () => { outcome = await h.dialogProps.onImport("c-vreemd", [row({})]); });
+    expect(outcome).toBe(false);
+    expect(h.addTx).not.toHaveBeenCalled();
+    expect(h.toast.mock.calls.at(-1)[0]).toMatchObject({ title: "Importeren is niet gestart", variant: "destructive" });
+  });
+});
+
+describe("importsuggesties: facturen van de importadministratie, niet van de paginaselectie (review P2-5)", () => {
+  it("de dialoog laadt inkoop- en verkoopfacturen van precies de gekozen importadministratie, binnen de actieve organisatie", async () => {
+    h.fetchPurchases = vi.fn(async () => [{ id: "p-c9", client_id: "c9" }]);
+    h.fetchSales = vi.fn(async () => [{ id: "s-c9", client_id: "c9" }]);
+    render(page()); // bankpagina staat op c1
+    let loaded: any;
+    await act(async () => { loaded = await h.dialogProps.loadInvoices("c9"); });
+    expect(h.fetchPurchases).toHaveBeenCalledWith({ organizationId: "org-1", clientId: "c9" });
+    expect(h.fetchSales).toHaveBeenCalledWith({ organizationId: "org-1", clientId: "c9" });
+    expect(loaded).toEqual({ purchases: [{ id: "p-c9", client_id: "c9" }], sales: [{ id: "s-c9", client_id: "c9" }] });
   });
 });
 

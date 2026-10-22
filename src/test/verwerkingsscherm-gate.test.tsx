@@ -84,8 +84,28 @@ describe("VerwerkingsScherm — kandidaten alleen via de veilige-matchpoort", ()
     const { onMatchInvoice } = renderScherm(tx({ description: "VODAFONE LIBERTEL B.V. factuur VF-JAN" }));
     expect(screen.queryByTestId("verwerking-tie")).toBeNull();
     expect(screen.getByRole("button", { name: /VF-JAN/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByTestId("verwerking-amount-differs")).toBeNull();
     fireEvent.click(koppelen());
     expect(onMatchInvoice).toHaveBeenCalledWith("t1", "vf-jan", "inkoop");
+  });
+
+  it("deelbetaling: de enige beste kandidaat wordt niet vooraf geselecteerd, Koppelen pas na een eigen keuze (review P2-1)", () => {
+    const { onMatchInvoice } = renderScherm(tx({ amount: -50, description: "VODAFONE LIBERTEL B.V. factuur VF-JAN" }));
+    expect(screen.getByRole("button", { name: /VF-JAN/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("verwerking-amount-differs")).toBeInTheDocument();
+    expect(koppelen()).toBeDisabled();
+    fireEvent.click(koppelen());
+    expect(onMatchInvoice).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /VF-JAN/ }));
+    fireEvent.click(koppelen());
+    expect(onMatchInvoice).toHaveBeenCalledWith("t1", "vf-jan", "inkoop");
+  });
+
+  it("overbetaling: evenmin een voorselectie", () => {
+    renderScherm(tx({ amount: -150, description: "VODAFONE LIBERTEL B.V. factuur VF-JAN" }));
+    expect(screen.queryAllByRole("button", { pressed: true })).toHaveLength(0);
+    expect(screen.getByTestId("verwerking-amount-differs")).toBeInTheDocument();
+    expect(koppelen()).toBeDisabled();
   });
 
   it("geld in krijgt alleen verkoopfacturen", () => {

@@ -11,7 +11,10 @@
  *     zonder fout — precies zoals PostgREST met db-max-rows;
  *   - een verzoek MET range(a, b) geeft hoogstens min(b - a + 1, maxRows) rijen;
  *   - een set-returning RPC wordt net zo afgekapt, ook met range;
- *   - elk verzoek komt in `log`, zodat een test de rondes kan tellen.
+ *   - elk verzoek komt in `log`, zodat een test de rondes kan tellen;
+ *   - met `tiesVaryPerRequest` geeft elk verzoek rijen die in alle ORDER BY-
+ *     kolommen gelijk zijn in een andere volgorde terug, zoals PostgreSQL zonder
+ *     unieke tiebreaker mag doen: pagina's overlappen dan of slaan rijen over.
  */
 export type Row = Record<string, any>;
 
@@ -50,8 +53,10 @@ export function createPostgrestEmulator(opts: {
   maxRows?: number;
   tables: Record<string, Row[]>;
   rpc?: Record<string, (args: any) => Row[] | { error: { code?: string; message: string } }>;
+  tiesVaryPerRequest?: boolean;
 }) {
   const maxRows = opts.maxRows ?? 1000;
+  let requestSeq = 0;
   const tables = opts.tables;
   const log: RequestLog[] = [];
   let idSeq = 0;
@@ -125,7 +130,9 @@ export function createPostgrestEmulator(opts: {
 
     private sortRows(rows: Row[]): Row[] {
       if (!this.orders.length) return rows;
-      return [...rows].sort((a, b) => {
+      // Array.sort is stabiel: de volgorde van gelijke rijen is die van de invoer.
+      const input = opts.tiesVaryPerRequest && ++requestSeq % 2 === 0 ? [...rows].reverse() : rows;
+      return [...input].sort((a, b) => {
         for (const o of this.orders) {
           const av = a[o.col];
           const bv = b[o.col];

@@ -8,7 +8,7 @@ import { X, ChevronRight, ChevronLeft, Home, Briefcase, FileText, SkipForward, C
 import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
 import { getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { gatedInvoiceCandidates, hasTiedTopCandidates, preselectCandidate } from "@/lib/bank-candidate-gate";
+import { gatedInvoiceCandidates, hasTiedTopCandidates, preselectCandidate, preselectFullPaymentCandidate } from "@/lib/bank-candidate-gate";
 import { BtwKeuzeSelect } from "@/components/bank/BtwKeuzeSelect";
 import { btwKeuzeFromPercentage, btwKeuzeToPercentage } from "@/lib/btw-keuze";
 
@@ -141,7 +141,13 @@ export function VerwerkingsScherm({
   const shownCandidates = candidates.slice(0, 8);
   // Voorselectie alleen bij precies één kandidaat met de hoogste score; bij een
   // gelijke topscore kiest de gebruiker zelf (C-04).
-  const preselected = useMemo(() => preselectCandidate(candidates), [candidates]);
+  // Ook niet bij een deel- of overbetaling: koppelen zet het restant nu nog op 0
+  // (schrijfpad P5), dus dan kiest de gebruiker bewust (review P2-1).
+  const preselected = useMemo(
+    () => (current ? preselectFullPaymentCandidate(candidates, current.amount) : null),
+    [candidates, current],
+  );
+  const amountDiffers = !!current && !preselected && !!preselectCandidate(candidates);
   const tiedTop = hasTiedTopCandidates(candidates);
   const [choice, setChoice] = useState<{ txId: string; invoiceId: string } | null>(null);
   const selectedCandidate = current && choice?.txId === current.id
@@ -299,6 +305,11 @@ export function VerwerkingsScherm({
               {tiedTop && (
                 <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="verwerking-tie">
                   Meerdere facturen passen even goed. Kies zelf de juiste factuur.
+                </p>
+              )}
+              {amountDiffers && (
+                <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="verwerking-amount-differs">
+                  Het bedrag wijkt af van het openstaande bedrag (deel- of overbetaling). Kies zelf of deze factuur klopt.
                 </p>
               )}
               <div className="space-y-2 max-h-48 overflow-y-auto">

@@ -38,23 +38,25 @@ function renderDialog(opts: {
   clientId?: string;
   purchases?: any[];
   sales?: any[];
+  loadInvoices?: (clientId: string) => Promise<{ purchases: any[]; sales: any[] }>;
 }) {
   const onImport = vi.fn<(clientId: string, rows: MatchedTransaction[]) => Promise<void>>().mockResolvedValue(undefined);
   const load = vi.fn().mockResolvedValue([]);
+  // De dialoog laadt zelf de facturen van de importadministratie (review P2-5).
+  const loadInvoices = opts.loadInvoices ?? vi.fn(async () => ({ purchases: opts.purchases ?? [], sales: opts.sales ?? [] }));
   render(
     <BankStatementUploadDialog
       open
       onOpenChange={() => {}}
       clients={opts.clients ?? [A, B]}
-      invoices={opts.purchases ?? []}
-      salesInvoices={opts.sales ?? []}
+      loadInvoices={loadInvoices}
       onImport={onImport}
       loadExistingTransactions={load}
       defaultClientId={opts.clientId ?? A.id}
     />,
   );
   fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file(opts.text)] } });
-  return { onImport, load };
+  return { onImport, load, loadInvoices };
 }
 
 const blockers = () => screen.findByTestId("import-blockers");
@@ -134,7 +136,7 @@ describe("blokkades: niets importeren wat niet klopt", () => {
     const onImport = vi.fn();
     const load = vi.fn().mockResolvedValue([]);
     render(
-      <BankStatementUploadDialog open onOpenChange={() => {}} clients={[B]} invoices={[]} onImport={onImport}
+      <BankStatementUploadDialog open onOpenChange={() => {}} clients={[B]} onImport={onImport}
         loadExistingTransactions={load} defaultClientId="client-van-andere-org" />,
     );
     expect(screen.getByRole("button", { name: /Bestand selecteren/ })).toBeDisabled();
@@ -209,5 +211,36 @@ describe("suggesties bij de import: nooit 'gematcht', alleen via de veilige-matc
   it("een storno krijgt nooit een factuursuggestie", async () => {
     const byAmount = await importAll([":61:2610021002RD250,00NTRFNONREF//S1", ":86:/NAME/Bakkerij Jansen/REMI/V-2026-01 retour"], "1250,00");
     expect(byAmount).toEqual({ 250: ["niet_gematcht", null] });
+  });
+});
+
+describe("suggesties komen van de importadministratie zelf, niet van de selectie op de bankpagina (review P2-5)", () => {
+  const kpn = purchase({ id: "p-kpn-b", client_id: B.id, supplier: "KPN", invoice_number: "INK-90", amount_incl: 50, remaining_amount: 50 });
+  const lines = [":61:2610021002D50,00NTRFNONREF//R4", ":86:/NAME/KPN/REMI/INK-90"];
+
+  it("import in een andere administratie dan op de bankpagina gekozen: de facturen van die administratie worden geladen en voorgesteld", async () => {
+    const loadInvoices = vi.fn(async (clientId: string) => ({ purchases: clientId === B.id ? [kpn] : [], sales: [] }));
+    const { onImport } = renderDialog({
+      text: statement(lines, "950,00", { account: "NL55INGB0007654321" }),
+      clientId: B.id,
+      loadInvoices,
+    });
+    const importButton = await screen.findByRole("button", { name: /1 transacties importeren/ });
+    expect(loadInvoices).toHaveBeenCalledWith(B.id);
+    fireEvent.click(screen.getByRole("checkbox", { name: /Ik heb gecontroleerd dat dit afschrift bij Klant B hoort/ }));
+    fireEvent.click(importButton);
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(onImport.mock.calls[0][1].map((r) => [r.matchStatus, r.matchedInvoiceId])).toEqual([["suggestie", "p-kpn-b"]]);
+  });
+
+  it("laden mislukt: wel importeren, geen suggesties, en dat staat er", async () => {
+    const { onImport } = renderDialog({
+      text: statement(lines, "950,00"),
+      loadInvoices: vi.fn(async () => { throw new Error("netwerk"); }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /1 transacties importeren/ }));
+    expect(screen.getByTestId("import-suggestions-unavailable")).toBeInTheDocument();
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    expect(onImport.mock.calls[0][1].map((r) => [r.matchStatus, r.matchedInvoiceId])).toEqual([["niet_gematcht", null]]);
   });
 });
