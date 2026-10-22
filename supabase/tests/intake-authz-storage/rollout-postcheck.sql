@@ -1,4 +1,4 @@
--- P2 — READ-ONLY POSTCHECK, ná de vier P2-migraties. Plakken in de Lovable
+-- P2 — READ-ONLY POSTCHECK, ná de vijf P2-migraties. Plakken in de Lovable
 -- Cloud SQL-editor van project alxlbdhpbwlehbdbfejw. Wijzigt niets. Eén rij:
 --   * elke kolom die op _ok eindigt hoort true te zijn (structuur, ACL's, RLS);
 --   * de tellingen (objecten … weesregels) horen GELIJK te zijn aan die van de
@@ -60,6 +60,15 @@ SELECT
                                 'public.ledger_link_org_ok(uuid,uuid)']) AS f(sig)
               CROSS JOIN unnest(ARRAY['anon', 'authenticated', 'service_role']) AS r(rol)
               WHERE has_function_privilege(r.rol, f.sig, 'EXECUTE')) AS predicaten_ingetrokken_ok,
+  -- B2-08c: pointertrigger op beide tabellen, functie DEFINER zonder EXECUTE voor app-rollen
+  (SELECT count(*) FROM pg_trigger WHERE tgname = 'guard_invoice_document_pointer_trigger' AND tgenabled = 'O'
+     AND tgrelid IN ('public.purchase_invoices'::regclass, 'public.sales_invoices'::regclass)) = 2 AS pointertrigger_ok,
+  coalesce((SELECT prosecdef AND proconfig = ARRAY['search_path=public']
+              AND md5(prosrc) = 'ae4f13efe9a5fc496ba7e2451d6ae3d7'
+              AND NOT has_function_privilege('anon', oid, 'EXECUTE')
+              AND NOT has_function_privilege('authenticated', oid, 'EXECUTE')
+              AND NOT has_function_privilege('service_role', oid, 'EXECUTE')
+            FROM pg_proc WHERE oid = to_regprocedure('public.guard_invoice_document_pointer()')), false) AS pointertriggerfunctie_ok,
   -- Geen onverwachte backfill: gelijk aan de preflight
   (SELECT count(*) FROM refs) AS objecten,
   (SELECT count(*) FROM refs WHERE cardinality(orgs) = 0) AS wees_objecten,

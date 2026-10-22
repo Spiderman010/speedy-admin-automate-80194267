@@ -1,5 +1,5 @@
--- P2 — READ-ONLY PREFLIGHT, vóór de vier P2-migraties (20261021160000 …
--- 20261021163000). Plakken in de Lovable Cloud SQL-editor van project
+-- P2 — READ-ONLY PREFLIGHT, vóór de vijf P2-migraties (20261021160000 …
+-- 20261021164000). Plakken in de Lovable Cloud SQL-editor van project
 -- alxlbdhpbwlehbdbfejw, pas na de omgevingscontrole uit PROJECT_MAP.md. Wijzigt
 -- niets. Eén rij:
 --   * elke kolom die op _ok eindigt hoort true te zijn (de verwachte begintoestand);
@@ -51,6 +51,13 @@ SELECT
                 AND p.oid NOT IN (SELECT oid FROM preds)
                 AND NOT (p.prosecdef AND p.proowner = (SELECT pr.proowner FROM pg_proc pr
                                                         WHERE pr.oid = to_regprocedure('public.posting_account_ok(uuid,uuid,uuid)')))) AS predicaten_alleen_via_definer_ok,
+  -- B2-08c: nog geen pointertrigger; de Storage-kolommen bestaan; de rol die de
+  -- migraties draait leest storage.objects zonder RLS (anders weigert (c) alles)
+  to_regprocedure('public.guard_invoice_document_pointer()') IS NULL AS geen_pointertrigger_ok,
+  (SELECT count(*) FROM pg_attribute WHERE attrelid = 'storage.objects'::regclass
+     AND attname IN ('owner', 'owner_id') AND NOT attisdropped) = 2 AS storage_owner_kolommen_ok,
+  (has_table_privilege(current_user, 'storage.objects', 'SELECT')
+   AND (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user)) AS migratierol_leest_storage_ok,
   -- Informatief: true = het orakel van B1-05 is (nog) open
   has_function_privilege('anon', 'public.posting_account_ok(uuid,uuid,uuid)', 'EXECUTE') AS predicaat_orakel_open,
   -- Impact en vergelijkingspunt
@@ -62,6 +69,9 @@ SELECT
    WHERE EXISTS (SELECT 1 FROM unnest(r.orgs) AS g(org) WHERE g.org IS NOT NULL)
      AND NOT EXISTS (SELECT 1 FROM unnest(r.orgs) AS g(org)
                      JOIN public.organization_members m ON m.organization_id = g.org AND m.user_id::text = r.map)) AS objecten_uploader_geen_lid,
+  (SELECT count(*) FROM (SELECT p FROM (SELECT file_path AS p FROM public.purchase_invoices WHERE file_path IS NOT NULL
+                                       UNION ALL SELECT pdf_path FROM public.sales_invoices WHERE pdf_path IS NOT NULL) x
+                         GROUP BY p HAVING count(*) > 1) d) AS paden_meervoudig_gebruikt,
   (SELECT count(*) FROM public.purchase_invoice_lines) AS regels,
   (SELECT count(*) FROM public.purchase_invoice_lines l
    JOIN public.purchase_invoices pi ON pi.id = l.purchase_invoice_id

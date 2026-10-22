@@ -10,10 +10,10 @@ SELECT proof.expect('Q01', 'preflight (vóór de migraties): elke _ok-kolom is t
   (SELECT coalesce(string_agg(key, ',' ORDER BY key), 'alle true')
    FROM proof.preflight p, json_each_text(row_to_json(p)) WHERE key LIKE '%\_ok' AND value <> 'true'),
   'alle true');
-SELECT proof.expect('Q02', 'preflight meet de impact: 6 objecten, 2 wees, 1 van een ex-lid, 1 vreemde regel, 2 weesregels',
+SELECT proof.expect('Q02', 'preflight meet de impact: 8 objecten, 2 wees, 3 van ex-leden, 1 vreemde regel, 2 weesregels, 0 meervoudig gebruikte paden',
   (SELECT format('%s|%s|%s|%s|%s|%s', objecten, wees_objecten, objecten_alleen_null_org, objecten_uploader_geen_lid,
-                 regels_andere_organisatie, weesregels) FROM proof.preflight),
-  '6|2|0|1|1|2');
+                 regels_andere_organisatie, weesregels) || '|' || paden_meervoudig_gebruikt FROM proof.preflight),
+  '8|2|0|3|1|2|0');
 SELECT proof.expect('Q03', 'preflight: het orakel van B1-05 was open',
   (SELECT predicaat_orakel_open::text FROM proof.preflight), 'true');
 SELECT proof.expect('Q04', 'postcheck (na de migraties): elke _ok-kolom is true',
@@ -104,8 +104,8 @@ COMMIT;
 
 -- service_role (edge functions, beheer): ongewijzigd
 BEGIN; SET LOCAL ROLE service_role; SELECT proof.als(NULL);
-SELECT proof.expect('O31', 'service_role ziet alle zes objecten (RLS omzeild, ongewijzigd)',
-  proof.val($q$SELECT count(*) FROM storage.objects WHERE bucket_id = 'invoices'$q$), '6');
+SELECT proof.expect('O31', 'service_role ziet alle acht objecten (RLS omzeild, ongewijzigd)',
+  proof.val($q$SELECT count(*) FROM storage.objects WHERE bucket_id = 'invoices'$q$), '8');
 SELECT proof.expect('O32', 'service_role kan een wees-object opruimen', proof.verwijder('wees'), 'OK rows=1');
 COMMIT;
 
@@ -320,3 +320,100 @@ SELECT proof.expect('P11', '… als één sluitende groep van drie regels (debet
   (SELECT count(*) || '|' || sum(debit_amount) || '|' || sum(credit_amount) FROM public.ledger_postings
    WHERE source_type = 'purchase_invoice' AND source_id = '2a000000-0000-4000-8000-0000000000f1'),
   '3|121.00|121.00');
+
+-- ═════ X/L — documentpointer (B2-08c, 20261021164000) ═══════════════════════
+\set pre X1
+\set fase 'na'
+\set exp_ins 'ERR 42501: Dit document kan niet aan deze factuur worden gekoppeld.'
+\set exp_upd 'ERR 42501: Dit document kan niet aan deze factuur worden gekoppeld.'
+\set exp_vreemd 'ERR 42501: Dit document kan niet aan deze factuur worden gekoppeld.'
+\ir pointer-attack.sql
+
+-- Legitieme stromen blijven werken.
+BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('b0000000-0000-4000-8000-000000000001');
+SELECT proof.expect('L01', 'handmatige verkoopfactuur (Verkoop.tsx): eigen upload (owner) + pdf_path ⇒ toegestaan, leesbaar en verwijderbaar',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner, owner_id) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw.pdf', auth.uid(), auth.uid()::text)$q$,
+    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-1', '2026-05-01', 'concept',
+               'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw.pdf')$q$],
+    'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw.pdf'), 'OK leest 1|verwijdert 1');
+SELECT proof.expect('L02', '… alleen owner_id gezet (huidige Storage-API) ⇒ ook toegestaan',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner_id) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw2.pdf', auth.uid()::text)$q$,
+    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-2', '2026-05-01', 'concept',
+               'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw2.pdf')$q$], NULL), 'OK');
+SELECT proof.expect('L03', '… hetzelfde eigen document aan een tweede factuur hangen ⇒ geweigerd (b)',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw3.pdf', auth.uid())$q$,
+    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-3', '2026-05-01', 'concept',
+               'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw3.pdf')$q$,
+    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-4', '2026-05-01', 'concept',
+               'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/nieuw3.pdf')$q$], NULL),
+  'ERR 42501: Dit document kan niet%');
+SELECT proof.expect('L04', '… een pad in de eigen map zonder object ⇒ geweigerd (c)',
+  proof.reeks(ARRAY[$q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-5', '2026-05-01', 'concept',
+               'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/bestaat-niet.pdf')$q$], NULL),
+  'ERR 42501: Dit document kan niet%');
+COMMIT;
+
+BEGIN; SET LOCAL ROLE service_role; SELECT proof.als(NULL);
+SELECT proof.expect('L05', 'edge function (service role, geen auth.uid()): OCR-upload met owner NULL + factuur ⇒ toegestaan',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner) VALUES ('invoices', 'a0000000-0000-4000-8000-000000000003/ca000000-0000-4000-8000-000000000001/ocr.pdf', NULL)$q$,
+    $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path)
+       VALUES ('a0000000-0000-4000-8000-000000000003', 'ca000000-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-00000000000a', 'OCR', 'te_controleren',
+               'a0000000-0000-4000-8000-000000000003/ca000000-0000-4000-8000-000000000001/ocr.pdf')$q$,
+    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES ('a0000000-0000-4000-8000-000000000001', 'ca000000-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-00000000000a', 'OCR', 'VO-1', '2026-05-01', 'concept',
+               'a0000000-0000-4000-8000-000000000001/sales/ca000000-0000-4000-8000-000000000001/ocr.pdf')$q$], NULL), 'OK');
+COMMIT;
+
+BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('a0000000-0000-4000-8000-000000000003');
+SELECT proof.expect('L06', 'werkbank: assistent wijzigt de kop van A1 (pad ongewijzigd, object van de service role) ⇒ toegestaan',
+  proof.try_rollback($q$UPDATE public.purchase_invoices SET notes = 'werkbank', file_path = file_path WHERE id = '2a000000-0000-4000-8000-000000000001'$q$), 'OK rows=1');
+SELECT proof.expect('L07', '… een pad leegmaken mag (geeft geen toegang)',
+  proof.try_rollback($q$UPDATE public.purchase_invoices SET file_path = NULL WHERE id = '2a000000-0000-4000-8000-000000000001'$q$), 'OK rows=1');
+SELECT proof.expect('L08', '… eigen verkoopupload s1 (in gebruik door V-1) aan inkoopfactuur A3 hangen ⇒ geweigerd (b)',
+  proof.try_rollback($q$UPDATE public.purchase_invoices SET file_path = 'a0000000-0000-4000-8000-000000000003/sales/ca000000-0000-4000-8000-000000000001/s1.pdf' WHERE id = '2a000000-0000-4000-8000-000000000003'$q$),
+  'ERR 42501: Dit document kan niet%');
+SELECT proof.expect('L09', '… eigen wees-object (owner NULL, OCR) aan A3 hangen ⇒ geweigerd (c)',
+  proof.try_rollback($q$UPDATE public.purchase_invoices SET file_path = 'a0000000-0000-4000-8000-000000000003/ca000000-0000-4000-8000-000000000001/wees.pdf' WHERE id = '2a000000-0000-4000-8000-000000000003'$q$),
+  'ERR 42501: Dit document kan niet%');
+COMMIT;
+
+BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('b0000000-0000-4000-8000-000000000001');
+SELECT proof.expect('L11', 'eigen upload eerst aan een inkoopfactuur, daarna ook aan een verkoopfactuur ⇒ tweede geweigerd (b, inkoopkant)',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/cb000000-0000-4000-8000-000000000001/eigen.pdf', auth.uid())$q$,
+    $q$UPDATE public.purchase_invoices SET file_path = 'b0000000-0000-4000-8000-000000000001/cb000000-0000-4000-8000-000000000001/eigen.pdf' WHERE id = '2b000000-0000-4000-8000-000000000002'$q$,
+    $q$INSERT INTO public.sales_invoices (user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, status, pdf_path)
+       VALUES (auth.uid(), 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Afnemer', 'VB-6', '2026-05-01', 'concept',
+               'b0000000-0000-4000-8000-000000000001/cb000000-0000-4000-8000-000000000001/eigen.pdf')$q$], NULL),
+  'ERR 42501: Dit document kan niet%');
+COMMIT;
+
+-- (a) los aangetoond: een object dat de gebruiker "bezit" maar dat in de map
+-- van een ander staat (testdubbel; via de Storage-API kan dat niet ontstaan).
+INSERT INTO storage.objects (bucket_id, name, owner) VALUES
+  ('invoices', 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/a-test.pdf', 'a0000000-0000-4000-8000-000000000006');
+BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('a0000000-0000-4000-8000-000000000006');
+SELECT proof.expect('L12', 'pad buiten de eigen map, ook al is de gebruiker owner en is het pad ongebruikt ⇒ geweigerd (a)',
+  proof.reeks(ARRAY[$q$UPDATE public.purchase_invoices SET file_path = 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/a-test.pdf'
+    WHERE id = '2b000000-0000-4000-8000-000000000002'$q$], NULL),
+  'ERR 42501: Dit document kan niet%');
+COMMIT;
+DELETE FROM storage.objects WHERE name = 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/a-test.pdf';
+
+SELECT proof.expect('L10', 'trigger op beide tabellen, op het padveld; functie DEFINER, search_path=public, geen EXECUTE voor app-rollen',
+  (SELECT string_agg(c.relname || ':' || t.tgenabled::text, ',' ORDER BY c.relname) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+   WHERE t.tgname = 'guard_invoice_document_pointer_trigger')
+  || '|' || (SELECT format('%s|%s|%s', prosecdef::text, array_to_string(proconfig, ','),
+       (has_function_privilege('anon', oid, 'EXECUTE') OR has_function_privilege('authenticated', oid, 'EXECUTE')
+        OR has_function_privilege('service_role', oid, 'EXECUTE'))::text)
+     FROM pg_proc WHERE oid = 'public.guard_invoice_document_pointer()'::regprocedure),
+  'purchase_invoices:O,sales_invoices:O|true|search_path=public|false');

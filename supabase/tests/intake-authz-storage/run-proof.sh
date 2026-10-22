@@ -4,6 +4,7 @@
 #   20261021161000_enforce_purchase_invoice_line_parent.sql         A2-17 = B1-02
 #   20261021162000_guard_purchase_line_replacement.sql              A2-07 (D5 open)
 #   20261021163000_revoke_predicate_function_execute.sql            B1-05
+#   20261021164000_guard_invoice_document_pointer.sql               B2-08c
 #
 # ALLEEN TEGEN EEN WEGWERPCLUSTER. Dit script maakt en verwijdert een database.
 # Richt het nooit op een BoekAssist-database: niet productie
@@ -24,7 +25,8 @@
 #                            daarna verlaat de ex-medewerker organisatie A
 #   proof-before.sql         V01–V11: de bekende lekken op de oude policies
 #   rollout-preflight.sql    de plakbare read-only preflight uit het rapport
-#   de P2-migraties, ELK TWEE KEER
+#   de P2-migraties, ELK TWEE KEER; vóór 20261021164000 eerst
+#   proof-pointer-before.sql (X00–X03: de pointer-aanval werkt)
 #   rollout-postcheck.sql    de plakbare read-only postcheck uit het rapport
 #   alle echte migraties na het P2-venster (na een merge van andere pakketten)
 #   proof-after.sql          Q, S, O, R, W, P: genummerde bewijzen
@@ -65,7 +67,9 @@ for f in "${ALL[@]}"; do
   elif [[ "$stamp" > "$WINDOW_LAST" ]]; then AFTER+=("$f")
   else OWN+=("$f"); fi
 done
-[ "${#OWN[@]}" -eq 4 ] || { echo "run-proof: verwacht 4 P2-migraties in het venster, gevonden ${#OWN[@]}." >&2; exit 2; }
+[ "${#OWN[@]}" -eq 5 ] || { echo "run-proof: verwacht 5 P2-migraties in het venster, gevonden ${#OWN[@]}." >&2; exit 2; }
+POINTER="20261021164000_guard_invoice_document_pointer.sql"
+[ "${OWN[4]}" = "$POINTER" ] || { echo "run-proof: de laatste P2-migratie moet $POINTER zijn." >&2; exit 2; }
 
 for f in "${BEFORE[@]}"; do run -1 -f "$MIG/$f" >/dev/null; done
 
@@ -80,7 +84,10 @@ run -f "$HERE/proof-before.sql" >/dev/null
 capture preflight "$HERE/rollout-preflight.sql"
 
 # De migraties onder test, elk TWEE keer: ze moeten een tweede toepassing overleven.
+# B2-08c: de pointer-aanval wordt eerst aangetoond op de eerste vier P2-migraties
+# (het lek in de P0-fix), daarna volgt de pointer-migratie.
 for f in "${OWN[@]}"; do
+  [ "$f" = "$POINTER" ] && run -f "$HERE/proof-pointer-before.sql" >/dev/null
   run -1 -f "$MIG/$f" >/dev/null
   run -1 -f "$MIG/$f" >/dev/null
 done

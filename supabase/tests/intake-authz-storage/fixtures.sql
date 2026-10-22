@@ -49,6 +49,31 @@ BEGIN
   END;
 END $$;
 
+-- B2-08c: voert de stappen uit als de HUIDIGE rol en meet daarna of het
+-- object _path leesbaar en verwijderbaar is; alles wordt teruggedraaid.
+-- Uitkomst 'OK leest n|verwijdert m' of 'ERR <sqlstate>: <melding>'.
+CREATE OR REPLACE FUNCTION proof.reeks(_sqls text[], _path text) RETURNS text
+LANGUAGE plpgsql AS $$
+DECLARE q text; n bigint := -1; m bigint := -1; st text; msg text;
+BEGIN
+  BEGIN
+    FOREACH q IN ARRAY _sqls LOOP EXECUTE q; END LOOP;
+    IF _path IS NOT NULL THEN
+      SELECT count(*) INTO n FROM storage.objects WHERE bucket_id = 'invoices' AND name = _path;
+      DELETE FROM storage.objects WHERE bucket_id = 'invoices' AND name = _path;
+      GET DIAGNOSTICS m = ROW_COUNT;
+    END IF;
+    RAISE EXCEPTION USING ERRCODE = 'P0099', MESSAGE = CASE WHEN _path IS NULL THEN 'OK' ELSE format('OK leest %s|verwijdert %s', n, m) END;
+  EXCEPTION
+    WHEN SQLSTATE 'P0099' THEN
+      GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT;
+      RETURN msg;
+    WHEN OTHERS THEN
+      GET STACKED DIAGNOSTICS st = RETURNED_SQLSTATE, msg = MESSAGE_TEXT;
+      RETURN 'ERR ' || st || ': ' || msg;
+  END;
+END $$;
+
 -- Idem, maar het effect blijft staan.
 CREATE OR REPLACE FUNCTION proof.try_keep(_sql text) RETURNS text
 LANGUAGE plpgsql AS $$
@@ -164,6 +189,7 @@ INSERT INTO auth.users (id, email) VALUES
   ('a0000000-0000-4000-8000-000000000003', 'assistent@a.test'),
   ('a0000000-0000-4000-8000-000000000004', 'lezer@a.test'),
   ('a0000000-0000-4000-8000-000000000005', 'ex-medewerker@a.test'),
+  ('a0000000-0000-4000-8000-000000000006', 'ex-medewerker-nu-b@a.test'),
   ('b0000000-0000-4000-8000-000000000001', 'eigenaar@b.test'),
   ('b0000000-0000-4000-8000-000000000002', 'assistent@b.test'),
   ('c0000000-0000-4000-8000-000000000001', 'vreemde@extern.test');
@@ -178,6 +204,8 @@ INSERT INTO public.organization_members (organization_id, user_id) VALUES
   ('aaaaaaaa-0000-4000-8000-00000000000a', 'a0000000-0000-4000-8000-000000000003'),
   ('aaaaaaaa-0000-4000-8000-00000000000a', 'a0000000-0000-4000-8000-000000000004'),
   ('aaaaaaaa-0000-4000-8000-00000000000a', 'a0000000-0000-4000-8000-000000000005'),
+  ('aaaaaaaa-0000-4000-8000-00000000000a', 'a0000000-0000-4000-8000-000000000006'),
+  ('bbbbbbbb-0000-4000-8000-00000000000b', 'a0000000-0000-4000-8000-000000000006'),
   ('bbbbbbbb-0000-4000-8000-00000000000b', 'b0000000-0000-4000-8000-000000000001'),
   ('bbbbbbbb-0000-4000-8000-00000000000b', 'b0000000-0000-4000-8000-000000000002');
 
@@ -187,6 +215,9 @@ INSERT INTO public.user_roles (user_id, organization_id, role) VALUES
   ('a0000000-0000-4000-8000-000000000003', 'aaaaaaaa-0000-4000-8000-00000000000a', 'assistant'),
   ('a0000000-0000-4000-8000-000000000004', 'aaaaaaaa-0000-4000-8000-00000000000a', 'read_only'),
   ('a0000000-0000-4000-8000-000000000005', 'aaaaaaaa-0000-4000-8000-00000000000a', 'assistant'),
+  -- B2-08c: ex-medewerker van A die assistent blijft in B (pointer-aanval)
+  ('a0000000-0000-4000-8000-000000000006', 'aaaaaaaa-0000-4000-8000-00000000000a', 'owner'),
+  ('a0000000-0000-4000-8000-000000000006', 'bbbbbbbb-0000-4000-8000-00000000000b', 'assistant'),
   ('b0000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'owner'),
   ('b0000000-0000-4000-8000-000000000002', 'bbbbbbbb-0000-4000-8000-00000000000b', 'assistant');
 
@@ -240,7 +271,13 @@ VALUES
    'Leverancier P', 'F-P', '2026-05-01', 100, 21, 121, 21, 'gecontroleerd', NULL, NULL),
   -- B1: document van organisatie B
   ('2b000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-000000000002', 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b',
-   'Leverancier B', 'B-1', '2026-03-01', 100, 21, 121, 21, 'te_controleren', 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/doc3.pdf', NULL);
+   'Leverancier B', 'B-1', '2026-03-01', 100, 21, 121, 21, 'te_controleren', 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/doc3.pdf', NULL),
+  -- A6: OCR-document (service role, owner NULL) van de ex-medewerker die nu in B zit (B2-08c)
+  ('2a000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000006', 'ca000000-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-00000000000a',
+   'Leverancier 6', 'F-6', '2026-03-07', 100, 21, 121, 21, 'te_controleren', 'a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/doc-ex.pdf', NULL),
+  -- B2: een tweede factuur in B, voor de UPDATE-variant van de aanval
+  ('2b000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000002', 'cb000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b',
+   'Leverancier B2', 'B-2', '2026-03-02', 100, 21, 121, 21, 'te_controleren', NULL, NULL);
 
 -- ── regels (vóór de migratie: geen trigger, geen FK) ─────────────────────────
 INSERT INTO public.purchase_invoice_lines
@@ -264,7 +301,10 @@ INSERT INTO public.sales_invoices
   (id, user_id, client_id, organization_id, customer_name, invoice_number, invoice_date, amount_excl, btw_amount, amount_incl, btw_percentage, status, pdf_path)
 VALUES
   ('3a000000-0000-4000-8000-000000000001', 'a0000000-0000-4000-8000-000000000003', 'ca000000-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-00000000000a',
-   'Afnemer A', 'V-1', '2026-03-01', 1000, 210, 1210, 21, 'concept', 'a0000000-0000-4000-8000-000000000003/sales/ca000000-0000-4000-8000-000000000001/s1.pdf');
+   'Afnemer A', 'V-1', '2026-03-01', 1000, 210, 1210, 21, 'concept', 'a0000000-0000-4000-8000-000000000003/sales/ca000000-0000-4000-8000-000000000001/s1.pdf'),
+  -- handmatige verkoopupload van de latere ex-medewerker (owner = uid) (B2-08c)
+  ('3a000000-0000-4000-8000-000000000006', 'a0000000-0000-4000-8000-000000000006', 'ca000000-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-00000000000a',
+   'Afnemer A6', 'V-6', '2026-03-07', 1000, 210, 1210, 21, 'concept', 'a0000000-0000-4000-8000-000000000006/sales/ca000000-0000-4000-8000-000000000001/s-ex.pdf');
 
 -- ── opslagobjecten zoals de app ze schrijft ──────────────────────────────────
 INSERT INTO storage.objects (bucket_id, name, owner) VALUES
@@ -274,8 +314,14 @@ INSERT INTO storage.objects (bucket_id, name, owner) VALUES
   ('invoices', 'b0000000-0000-4000-8000-000000000002/cb000000-0000-4000-8000-000000000001/doc3.pdf', NULL),
   -- wees-objecten: geen factuur verwijst ernaar
   ('invoices', 'a0000000-0000-4000-8000-000000000003/ca000000-0000-4000-8000-000000000001/wees.pdf', NULL),
-  ('invoices', 'a0000000-0000-4000-8000-000000000005/ca000000-0000-4000-8000-000000000001/wees-ex.pdf', NULL);
+  ('invoices', 'a0000000-0000-4000-8000-000000000005/ca000000-0000-4000-8000-000000000001/wees-ex.pdf', NULL),
+  -- B2-08c: documenten van kantoor A van de ex-medewerker die nu in B zit
+  ('invoices', 'a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/doc-ex.pdf', NULL),
+  ('invoices', 'a0000000-0000-4000-8000-000000000006/sales/ca000000-0000-4000-8000-000000000001/s-ex.pdf', 'a0000000-0000-4000-8000-000000000006');
 
 -- ── offboarding: de ex-medewerker verlaat kantoor A ─────────────────────────
 DELETE FROM public.user_roles           WHERE user_id = 'a0000000-0000-4000-8000-000000000005';
 DELETE FROM public.organization_members WHERE user_id = 'a0000000-0000-4000-8000-000000000005';
+-- … en de tweede ex-medewerker verlaat alleen kantoor A (blijft assistent in B)
+DELETE FROM public.user_roles           WHERE user_id = 'a0000000-0000-4000-8000-000000000006' AND organization_id = 'aaaaaaaa-0000-4000-8000-00000000000a';
+DELETE FROM public.organization_members WHERE user_id = 'a0000000-0000-4000-8000-000000000006' AND organization_id = 'aaaaaaaa-0000-4000-8000-00000000000a';
