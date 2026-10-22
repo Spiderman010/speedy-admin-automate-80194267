@@ -398,12 +398,9 @@ describe("de UI schrijft niet en rekent niet", () => {
 });
 
 describe("scope", () => {
-  it("19/20. geen migratie, en geen rekenlaag aangeraakt", (ctx) => {
+  it("19/20. SQL laat de rapportage en het bewijsspoor van de tegenboeking intact; geen type- of afhankelijkheidswijziging", (ctx) => {
     let changed: string[];
-    let toon: (p: string) => string;
     try {
-      execFileSync("git", ["rev-parse", "origin/main"], { stdio: ["ignore", "pipe", "ignore"] });
-      toon = (p) => execFileSync("git", ["show", `origin/main:${p}`], { encoding: "utf8" });
       changed = execFileSync("git", ["diff", "--name-only", "origin/main...HEAD"], {
         encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
       }).split("\n").filter(Boolean);
@@ -429,14 +426,11 @@ describe("scope", () => {
     }
     expect(changed).not.toContain("src/integrations/supabase/types.ts");
     expect(changed).not.toContain("package.json");
-    // Elke rekenlaag blijft byte-voor-byte gelijk; deze PR is presentatie.
-    for (const p of [
-      "src/lib/ledger-reporting.ts",
-      "src/lib/financial-statements.ts",
-      "src/lib/financial-statements-presentation.ts",
-      "src/hooks/useLedgerReversal.ts",
-    ]) {
-      expect(readFileSync(p, "utf8"), p).toBe(toon(p));
-    }
+    // Voorheen ook: vier rekenlagen byte-voor-byte gelijk aan origin/main ("deze
+    // PR is presentatie"). Dat was een scope-uitspraak, geen invariant: elke
+    // terechte fix in de rapportagekern liet hem omvallen (nulmeting E-02). Wat
+    // deze weergave werkelijk belooft, bewijzen de gedragstests hierboven: één
+    // RPC-aanroep met exact het bestaande contract ("14/15", "16"), geen
+    // schrijfactie op ledger_postings ("17") en de bronbeperkingen ("18", "18b").
   });
 });

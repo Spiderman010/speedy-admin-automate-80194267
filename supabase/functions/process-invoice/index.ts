@@ -1,4 +1,10 @@
 import { parseUblXml, UBL_MIME_TYPES, UBL_MAX_BYTES } from "./ubl-parse.ts";
+import {
+  authorizeIntakeWrite,
+  buildPurchaseInvoiceInsert,
+  INTAKE_FORBIDDEN_MESSAGE,
+  PURCHASE_WRITE_MIN_ROLE,
+} from "./intake-guards.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
@@ -78,7 +84,7 @@ serve(async (req) => {
       .eq("id", clientId)
       .maybeSingle();
     if (clientErr || !clientRow) {
-      return new Response(JSON.stringify({ error: "Forbidden: no access to this client" }), {
+      return new Response(JSON.stringify({ error: INTAKE_FORBIDDEN_MESSAGE }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -87,6 +93,23 @@ serve(async (req) => {
       console.error("process-invoice: client has null organization_id", clientId);
       return new Response(JSON.stringify({ error: "Client heeft geen organization_id; neem contact op met de beheerder." }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Autorisatie (A2-06/B2-01): de upload en de INSERT hieronder lopen via de
+    // service role en omzeilen dus de RLS op purchase_invoices. Daarom eerst
+    // dezelfde rolvloer als role_purchase_invoices_insert, in de organisatie
+    // van de opgeslagen klantrij — vóór elke schrijfactie, ook in de opslag.
+    const decision = await authorizeIntakeWrite(
+      userClient,
+      user.id,
+      clientRow.organization_id,
+      PURCHASE_WRITE_MIN_ROLE,
+    );
+    if (!decision.allowed) {
+      return new Response(JSON.stringify({ error: decision.error }), {
+        status: decision.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -386,26 +409,43 @@ Extra instructies:
       extracted.supplier_iban = iban;
     }
 
+    // A2-01/B2-04/B2-05: deterministische validatie vóór de INSERT. 0 blijft 0
+    // (geen `||`), een ongeldige datum wordt NULL, en remaining_amount is het
+    // bedrag incl. btw alleen als de bedragen kloppen — anders NULL, nooit 0.
+    // De bevindingen staan in ocr_data.validation; de status blijft
+    // te_controleren.
+    const invoiceRow = buildPurchaseInvoiceInsert(extracted, {
+      userId: user.id,
+      clientId,
+      organizationId: clientRow.organization_id,
+      filePath,
+      supplierBtwNumber: supplierBtw,
+      now: new Date(),
+    });
+
+    // H-03: de AI-aanroep hierboven kan tientallen seconden duren. Wie in dat
+    // venster zijn rol of lidmaatschap verliest, mag niets meer opslaan: de
+    // rolcheck wordt vlak vóór de INSERT met de service role herhaald.
+    const recheck = await authorizeIntakeWrite(
+      userClient,
+      user.id,
+      clientRow.organization_id,
+      PURCHASE_WRITE_MIN_ROLE,
+    );
+    if (!recheck.allowed) {
+      // Het bestand staat al in de opslag (upload vóór de AI-aanroep). Eerst
+      // opruimen met de service role, dan pas de weigering: geen weesbestand.
+      const { error: removeError } = await supabase.storage.from("invoices").remove([filePath]);
+      if (removeError) console.error("Cleanup after refused recheck failed:", removeError);
+      return new Response(JSON.stringify({ error: recheck.error }), {
+        status: recheck.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { data: invoice, error: insertError } = await supabase
       .from("purchase_invoices")
-      .insert({
-        user_id: user.id,
-        client_id: clientId,
-        organization_id: clientRow.organization_id,
-        supplier: extracted.supplier || "Onbekend",
-        invoice_number: extracted.invoice_number || null,
-        invoice_date: extracted.invoice_date || null,
-        amount_excl: extracted.amount_excl || null,
-        btw_amount: extracted.btw_amount || null,
-        amount_incl: extracted.amount_incl || null,
-        btw_percentage: extracted.btw_percentage || null,
-        supplier_btw_number: supplierBtw,
-        // Fall back to 0 so allocation logic always has a numeric starting point
-        remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? 0,
-        file_path: filePath,
-        ocr_data: extracted,
-        status: "te_controleren",
-      })
+      .insert(invoiceRow)
       .select()
       .single();
 

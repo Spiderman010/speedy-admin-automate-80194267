@@ -636,21 +636,14 @@ describe("statische grenzen", () => {
     }
   });
 
-  it("43/44. de kern en de engine zijn byte-voor-byte ongewijzigd", () => {
-    let base: string;
-    try {
-      base = execFileSync("git", ["show", "origin/main:src/lib/ledger-reporting.ts"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    } catch {
-      return; // origin/main niet beschikbaar: overslaan, niet vals slagen
-    }
-    expect(readFileSync("src/lib/ledger-reporting.ts", "utf8")).toBe(base);
-    expect(readFileSync("src/lib/financial-statements.ts", "utf8")).toBe(
-      execFileSync("git", ["show", "origin/main:src/lib/financial-statements.ts"], { encoding: "utf8" }),
-    );
-    expect(readFileSync("src/lib/proef-saldibalans.ts", "utf8")).toBe(
-      execFileSync("git", ["show", "origin/main:src/lib/proef-saldibalans.ts"], { encoding: "utf8" }),
-    );
-  });
+  // Voorheen "43/44": ledger-reporting.ts, financial-statements.ts en
+  // proef-saldibalans.ts moesten byte-voor-byte gelijk zijn aan origin/main.
+  // Dat was een scope-uitspraak van PR 4 (presentatie), geen invariant: elke
+  // terechte fix in de rapportagekern liet hem omvallen (nulmeting E-02).
+  // Wat hij beschermde — het scherm toont exact wat de engine berekent — is
+  // gedrag en wordt hierboven met de échte engine bewezen ("3/8/9", "12/13",
+  // "3. opbrengsten en kosten", "10/11", "19/21"), en de engine zelf in
+  // financial-statements.test.ts.
 
   it("de routes hangen onder Grootboek en er komt geen nav-item bij", () => {
     const app = readFileSync("src/App.tsx", "utf8");
@@ -695,9 +688,7 @@ describe("branch-scope", () => {
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
   });
 
-  branchIt("43/44b. kern, engine en proef- en saldibalans staan niet in de diff", () => {
-    for (const f of ["src/lib/ledger-reporting.ts", "src/lib/financial-statements.ts", "src/lib/proef-saldibalans.ts"]) {
-      expect(changed, f).not.toContain(f);
-    }
-  });
+  // Voorheen "43/44b": kern, engine en proef- en saldibalans mochten niet in de
+  // diff staan — dezelfde scope-uitspraak als de byte-vergelijking "43/44",
+  // alleen via git diff. Zie de toelichting in "statische grenzen" hierboven.
 });

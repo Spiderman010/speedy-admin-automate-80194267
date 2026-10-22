@@ -10,8 +10,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: quality-ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull requests: one group per branch, and a new push cancels the superseded run.
+  # Push to main: one group per commit, so every commit gets its own result (in a
+  # shared group GitHub would still drop all but the newest *pending* run).
+  group: quality-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
@@ -33,14 +36,20 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      # tsconfig.json only holds references ("files": []), so this checks no files
+      # itself; the two typechecks below cover src/ and vite.config.ts.
       - name: Typecheck (root references)
         run: npx tsc --noEmit
 
       - name: Application typecheck
         run: npx tsc -p tsconfig.app.json --noEmit
 
+      - name: Node config typecheck (vite.config.ts)
+        run: npx tsc -p tsconfig.node.json --noEmit
+
+      # Ratchet: the warning count may not grow beyond today's 20 (lower it as warnings are fixed).
       - name: Lint
-        run: npm run lint
+        run: npm run lint -- --max-warnings 20
 
       - name: Unit and contract tests (offline, no production credentials)
         env:
@@ -59,10 +68,61 @@ jobs:
           for envfile in .env .env.local .env.test .env.test.local; do
             if [ -f "$envfile" ]; then mv "$envfile" "${envfile}.ci-quarantined"; fi
           done
+          # vitest.config.ts makes the Supabase env inert for every test and
+          # src/test/setup.ts blocks non-loopback network; the live security layer
+          # only runs with BOEKASSIST_LIVE_SECURITY_TESTS=1, which CI never sets.
           # CI runners can be slower: allow 15s for existing async UI tests without changing their assertions.
-          npm run test -- --exclude src/test/security-backup-and-storage-access.test.ts --testTimeout=15000
-          # Keep the static security assertions but disable its five live HTTP tests.
-          VITE_SUPABASE_PUBLISHABLE_KEY= VITE_SUPABASE_ANON_KEY= npx vitest run src/test/security-backup-and-storage-access.test.ts
+          npm run test -- --testTimeout=15000
 
       - name: Production build
         run: npm run build
+
+  db-proofs:
+    name: Database proofs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        # Throwaway server for supabase/tests/*/run-proof.sh only. The C.UTF-8
+        # locale matches the local proof clusters the harnesses were written on.
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_INITDB_ARGS: '--locale=C.UTF-8 --encoding=UTF8'
+        # The harnesses' dblink sessions connect from inside the container to
+        # 127.0.0.1:$PGPORT (loopback is "trust" in this image), so the
+        # container port must equal the published port.
+        ports:
+          - '5432:5432'
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --shm-size 256m
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - name: Checkout full history (bank-release-hold-history reads git show 3669a94:…)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: PostgreSQL client
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+          psql --version
+
+      - name: Run every supabase/tests/*/run-proof.sh
+        env:
+          DB_PROOFS_LOG_DIR: ${{ runner.temp }}/db-proofs
+        run: bash scripts/ci/run-db-proofs.sh

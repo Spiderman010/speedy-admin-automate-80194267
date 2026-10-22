@@ -1,3 +1,9 @@
+import {
+  authorizeIntakeWrite,
+  buildSalesInvoiceInsert,
+  INTAKE_FORBIDDEN_MESSAGE,
+  SALES_WRITE_MIN_ROLE,
+} from "./intake-guards.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
@@ -18,7 +24,7 @@ serve(async (req) => {
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+    const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
 
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY) {
       console.error("Missing env vars:", { hasUrl: !!SUPABASE_URL, hasSRK: !!SUPABASE_SERVICE_ROLE_KEY, hasAnon: !!SUPABASE_ANON_KEY });
@@ -78,7 +84,7 @@ serve(async (req) => {
       .eq("id", clientId)
       .maybeSingle();
     if (clientErr || !clientRow) {
-      return new Response(JSON.stringify({ error: "Forbidden: no access to this client" }), {
+      return new Response(JSON.stringify({ error: INTAKE_FORBIDDEN_MESSAGE }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -87,6 +93,24 @@ serve(async (req) => {
       console.error("process-sales-invoice: client has null organization_id", clientId);
       return new Response(JSON.stringify({ error: "Client heeft geen organization_id; neem contact op met de beheerder." }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Autorisatie (A2-06/B2-01): de upload en de INSERT hieronder lopen via de
+    // service role en omzeilen dus de RLS op sales_invoices. Daarom eerst de
+    // rolvloer SALES_WRITE_MIN_ROLE (ontwerpbesluit D2 open; fail-closed gelijk
+    // aan role_sales_invoices_insert), in de organisatie van de opgeslagen
+    // klantrij — vóór elke schrijfactie, ook in de opslag.
+    const decision = await authorizeIntakeWrite(
+      userClient,
+      user.id,
+      clientRow.organization_id,
+      SALES_WRITE_MIN_ROLE,
+    );
+    if (!decision.allowed) {
+      return new Response(JSON.stringify({ error: decision.error }), {
+        status: decision.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -102,22 +126,11 @@ serve(async (req) => {
       );
     }
 
-    // Upload file to storage
+    // Het bestand gaat pas naar de opslag nadat de extractie is gevalideerd:
+    // een weigering (A2-11) mag niets achterlaten, ook geen weesbestand.
     const fileExt = file.name.split(".").pop();
     const filePath = `${user.id}/sales/${clientId}/${crypto.randomUUID()}.${fileExt}`;
     const fileBuffer = await file.arrayBuffer();
-
-    const { error: uploadError } = await supabase.storage
-      .from("invoices")
-      .upload(filePath, fileBuffer, { contentType: file.type });
-
-    if (uploadError) {
-      console.error("Upload error:", uploadError);
-      return new Response(JSON.stringify({ error: "File upload failed" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // Convert file to base64 for AI vision
     const base64 = btoa(
@@ -233,26 +246,57 @@ Extra instructies:
       console.error("Failed to parse AI response:", e);
     }
 
+    // A2-01/A2-11/B2-04/B2-05: deterministische validatie vóór elke
+    // schrijfactie. Geen verzonnen factuurnummer of -datum: ontbreekt een van
+    // beide (NOT NULL-kolommen), dan wordt niets opgeslagen. 0 blijft 0, en
+    // remaining_amount is het bedrag incl. btw alleen als de bedragen kloppen —
+    // anders NULL, nooit 0. Overige bevindingen staan in `notes`.
+    const decisionRow = buildSalesInvoiceInsert(extracted, {
+      userId: user.id,
+      clientId,
+      organizationId: clientRow.organization_id,
+      filePath,
+      now: new Date(),
+    });
+    if (!decisionRow.ok) {
+      return new Response(
+        JSON.stringify({ error: decisionRow.error, missing: decisionRow.missing }),
+        { status: decisionRow.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // H-03: de AI-aanroep hierboven kan tientallen seconden duren. Wie in dat
+    // venster zijn rol of lidmaatschap verliest, mag niets meer opslaan: de
+    // rolcheck wordt vlak vóór de upload en de INSERT met de service role herhaald.
+    const recheck = await authorizeIntakeWrite(
+      userClient,
+      user.id,
+      clientRow.organization_id,
+      SALES_WRITE_MIN_ROLE,
+    );
+    if (!recheck.allowed) {
+      return new Response(JSON.stringify({ error: recheck.error }), {
+        status: recheck.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { error: uploadError } = await supabase.storage
+      .from("invoices")
+      .upload(filePath, fileBuffer, { contentType: file.type });
+
+    if (uploadError) {
+      console.error("Upload error:", uploadError);
+      return new Response(JSON.stringify({ error: "File upload failed" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Save to sales_invoices
     const { data: invoice, error: insertError } = await supabase
       .from("sales_invoices")
-      .insert({
-        user_id: user.id,
-        client_id: clientId,
-        organization_id: clientRow.organization_id,
-        customer_name: extracted.customer_name || "Onbekend",
-        invoice_number: extracted.invoice_number || `VF-${Date.now()}`,
-        invoice_date: extracted.invoice_date || new Date().toISOString().split("T")[0],
-        due_date: extracted.due_date || null,
-        amount_excl: extracted.amount_excl || null,
-        btw_amount: extracted.btw_amount || null,
-        amount_incl: extracted.amount_incl || null,
-        btw_percentage: extracted.btw_percentage || null,
-        // Fall back to 0 so allocation logic always has a numeric starting point
-        remaining_amount: extracted.amount_incl ?? extracted.amount_excl ?? 0,
-        pdf_path: filePath,
-        status: "concept",
-      })
+      .insert(decisionRow.row)
       .select()
       .single();
 
