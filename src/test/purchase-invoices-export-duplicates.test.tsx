@@ -9,6 +9,7 @@ import {
   EXPORT_BATCH_SIZE,
   DUPLICATE_LOOKUP_BATCH_SIZE,
   STATUS_UPDATE_BATCH_SIZE,
+  STATUS_UPDATE_CAS_BATCH_SIZE,
   type DuplicateCandidate,
 } from "@/hooks/usePurchaseInvoices";
 
@@ -22,24 +23,34 @@ const state = {
 
 function makeQueryMock() {
   const query: Record<string, unknown> = {};
+  let isUpdate = false;
+  let idFilter: string[] = [];
   const chain = (method: string) =>
     vi.fn((...args: unknown[]) => {
       state.calls.push({ method, args });
+      if (method === "update") isUpdate = true;
+      if (method === "in" && args[0] === "id") idFilter = args[1] as string[];
       return query;
     });
+  // Without a queued response, an UPDATE matched every requested id and returns
+  // those rows (RETURNING via .select("id")); a read returns no rows.
+  const defaultResponse = () =>
+    isUpdate ? { data: idFilter.map(id => ({ id })), error: null } : { data: [], error: null };
   query.select = chain("select");
   query.update = chain("update");
   query.eq = chain("eq");
   query.in = chain("in");
   query.order = chain("order");
+  query.lte = chain("lte");
+  query.or = chain("or");
   query.range = vi.fn((...args: unknown[]) => {
     state.calls.push({ method: "range", args });
-    return Promise.resolve(state.responses.shift() ?? { data: [], error: null });
+    return Promise.resolve(state.responses.shift() ?? defaultResponse());
   });
-  // duplicate-candidate queries resolve without .range(): make the builder thenable
+  // duplicate-candidate and update queries resolve without .range(): make the builder thenable
   (query as { then?: unknown }).then = (
     onFulfilled: (v: { data: unknown[]; error: unknown }) => unknown,
-  ) => Promise.resolve(state.responses.shift() ?? { data: [], error: null }).then(onFulfilled);
+  ) => Promise.resolve(state.responses.shift() ?? defaultResponse()).then(onFulfilled);
   return query;
 }
 
@@ -166,7 +177,9 @@ describe("markPurchaseInvoicesExported", () => {
   const ids = (n: number) => Array.from({ length: n }, (_, i) => `id-${i}`);
 
   it("updates 2300 invoices in batched requests, not 2300 requests", async () => {
-    await markPurchaseInvoicesExported({ organizationId: "org-1", invoiceIds: ids(2300) });
+    await expect(
+      markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(2300) }),
+    ).resolves.toEqual({ marked: 2300 });
 
     const expectedBatches = Math.ceil(2300 / STATUS_UPDATE_BATCH_SIZE);
     const updateCalls = callsFor("update");
@@ -186,7 +199,7 @@ describe("markPurchaseInvoicesExported", () => {
   });
 
   it("scopes every update batch to the organization", async () => {
-    await markPurchaseInvoicesExported({ organizationId: "org-1", invoiceIds: ids(400) });
+    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(400) });
 
     const expectedBatches = Math.ceil(400 / STATUS_UPDATE_BATCH_SIZE);
     const orgScopes = callsFor("eq").filter(
@@ -195,24 +208,112 @@ describe("markPurchaseInvoicesExported", () => {
     expect(orgScopes).toHaveLength(expectedBatches);
   });
 
+  it("scopes every batch to the administratie and to still-exportable statuses, and writes only the export status (D1)", async () => {
+    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(400) });
+
+    const expectedBatches = Math.ceil(400 / STATUS_UPDATE_BATCH_SIZE);
+    expect(callsFor("eq").filter(c => c.args[0] === "client_id" && c.args[1] === "c-1")).toHaveLength(expectedBatches);
+    expect(callsFor("in").filter(c => c.args[0] === "status").map(c => c.args[1])).toEqual(
+      Array.from({ length: expectedBatches }, () => ["gecontroleerd", "betaald"]),
+    );
+    // Nooit remaining_amount en nooit een betaalstatus in de markering.
+    callsFor("update").forEach(c => expect(c.args[0]).toEqual({ status: "geexporteerd" }));
+    // RETURNING, zodat een stil gereduceerde update opvalt.
+    expect(callsFor("select").map(c => c.args[0])).toEqual(Array.from({ length: expectedBatches }, () => "id"));
+  });
+
   it("refuses to run without an organizationId and performs no requests", async () => {
     await expect(
-      markPurchaseInvoicesExported({ organizationId: "", invoiceIds: ids(3) }),
+      markPurchaseInvoicesExported({ organizationId: "", clientId: "c-1", invoiceIds: ids(3) }),
     ).rejects.toThrow(/organisatie/i);
+    expect(callsFor("update")).toHaveLength(0);
+  });
+
+  it("refuses to run without a single administratie and performs no requests", async () => {
+    for (const clientId of ["", "all"]) {
+      await expect(
+        markPurchaseInvoicesExported({ organizationId: "org-1", clientId, invoiceIds: ids(3) }),
+      ).rejects.toThrow(/administratie/i);
+    }
     expect(callsFor("update")).toHaveLength(0);
   });
 
   it("rejects when a batch fails so callers cannot report success early", async () => {
     state.responses = [
-      { data: [], error: null },
+      { data: ids(STATUS_UPDATE_BATCH_SIZE).map(id => ({ id })), error: null },
       { data: [], error: { message: "rls denied" } },
     ];
     await expect(
       markPurchaseInvoicesExported({
         organizationId: "org-1",
+        clientId: "c-1",
         invoiceIds: ids(STATUS_UPDATE_BATCH_SIZE + 1),
       }),
-    ).rejects.toMatchObject({ message: "rls denied" });
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("rls denied"),
+      marked: STATUS_UPDATE_BATCH_SIZE,
+      expected: STATUS_UPDATE_BATCH_SIZE + 1,
+      unmarkedIds: [`id-${STATUS_UPDATE_BATCH_SIZE}`],
+    });
+  });
+
+  it("H6-02: probeert na een mislukte reeks ook de volgende reeksen, en noemt precies de niet-gemarkeerde id's", async () => {
+    const all = ids(3 * STATUS_UPDATE_BATCH_SIZE);
+    const second = all.slice(STATUS_UPDATE_BATCH_SIZE, 2 * STATUS_UPDATE_BATCH_SIZE);
+    state.responses = [
+      { data: all.slice(0, STATUS_UPDATE_BATCH_SIZE).map(id => ({ id })), error: null },
+      { data: second.slice(1).map(id => ({ id })), error: null }, // één factuur uit reeks 2 niet geraakt
+      { data: [], error: { message: "timeout" } },                  // reeks 3 faalt
+    ];
+    const err: any = await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: all }).catch(e => e);
+    expect(callsFor("update")).toHaveLength(3); // alle reeksen geprobeerd
+    expect(err.marked).toBe(2 * STATUS_UPDATE_BATCH_SIZE - 1);
+    expect(err.unmarkedIds).toEqual([second[0], ...all.slice(2 * STATUS_UPDATE_BATCH_SIZE)]);
+    expect(err.message).toMatch(new RegExp(`${2 * STATUS_UPDATE_BATCH_SIZE - 1} van ${3 * STATUS_UPDATE_BATCH_SIZE}.*timeout`));
+  });
+
+  it("H6-03 / Codex #299: per rij compare-and-set op de exact opgehaalde updated_at, in één verzoek per reeks; nooit een gedeelde grens", async () => {
+    const [a, b, c] = ids(3);
+    const t1 = "2026-10-20T08:00:00.123456+00:00";
+    const t2 = "2026-10-20T09:00:00+00:00";
+    await markPurchaseInvoicesExported({
+      organizationId: "org-1", clientId: "c-1", invoiceIds: [a, b, c],
+      fetchedUpdatedAt: new Map([[a, t1], [b, t2], [c, t1]]),
+    });
+    expect(callsFor("lte")).toHaveLength(0);
+    expect(callsFor("eq").filter(x => x.args[0] === "updated_at")).toHaveLength(0);
+    expect(callsFor("update")).toHaveLength(1);
+    expect(callsFor("in").filter(x => x.args[0] === "id").map(x => x.args[1])).toEqual([[a, b, c]]);
+    expect(callsFor("or").map(x => x.args[0])).toEqual([
+      `and(id.eq."${a}",updated_at.eq."${t1}"),and(id.eq."${b}",updated_at.eq."${t2}"),and(id.eq."${c}",updated_at.eq."${t1}")`,
+    ]);
+  });
+
+  it("Codex #299-2: 2300 facturen met elk een eigen updated_at → hooguit ceil(2300/N) verzoeken", async () => {
+    const all = ids(2300);
+    const ts = new Map(all.map((id, i) => [id, `2026-10-20T08:${String(Math.floor(i / 60) % 60).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}.${String(i).padStart(6, "0")}+00:00`]));
+    expect(new Set(ts.values()).size).toBe(2300);
+    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: all, fetchedUpdatedAt: ts });
+    // Vaste bovengrens (N ≥ 25), los van de constante: f9e4cad deed hier 2300 verzoeken.
+    expect(callsFor("update").length).toBeLessThanOrEqual(Math.ceil(2300 / 25));
+    expect(callsFor("update").length).toBe(Math.ceil(2300 / STATUS_UPDATE_CAS_BATCH_SIZE));
+  });
+
+  it("H6-03: een factuur zonder opgehaalde updated_at wordt niet gemarkeerd (fail-closed) en wel gemeld", async () => {
+    const [a, b] = ids(2);
+    const err: any = await markPurchaseInvoicesExported({
+      organizationId: "org-1", clientId: "c-1", invoiceIds: [a, b],
+      fetchedUpdatedAt: new Map([[b, "2026-10-20T09:00:00+00:00"]]),
+    }).catch(e => e);
+    expect(callsFor("in").filter(x => x.args[0] === "id").map(x => x.args[1])).toEqual([[b]]);
+    expect(err).toMatchObject({ marked: 1, expected: 2, unmarkedIds: [a] });
+  });
+
+  it("rejects when an update silently touches fewer rows (RLS, changed status) instead of reporting success", async () => {
+    state.responses = [{ data: [{ id: "id-0" }], error: null }];
+    await expect(
+      markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(3) }),
+    ).rejects.toMatchObject({ message: expect.stringMatching(/1 van 3/), marked: 1, expected: 3 });
   });
 });
 

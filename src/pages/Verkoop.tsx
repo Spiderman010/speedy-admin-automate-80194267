@@ -649,6 +649,13 @@ export default function Verkoop() {
     },
   };
 
+  // SnelStart-export alleen bij precies één administratie (A2-05); de
+  // exportfunctie toetst dat nogmaals op de opgehaalde rijen.
+  const exportClient = scopedClientId ? clients?.find(c => c.id === scopedClientId) : undefined;
+  const exportBlockReason = !scopedClientId
+    ? "Kies één administratie om naar SnelStart te exporteren. Een export over meerdere administraties wordt niet gemaakt."
+    : !exportClient ? "De gekozen administratie is niet gevonden of nog niet geladen." : null;
+
   return (
     <>
       <h1 className="sr-only">Verkoopfacturen</h1>
@@ -672,33 +679,45 @@ export default function Verkoop() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button size="sm" variant="outline" disabled={exporting} onClick={async () => {
+        {exportBlockReason && (
+          <span id="verkoop-snelstart-export-uitleg" className="text-xs text-muted-foreground">{exportBlockReason}</span>
+        )}
+        <Button size="sm" variant="outline" disabled={exporting || !exportClient} aria-describedby={exportBlockReason ? "verkoop-snelstart-export-uitleg" : undefined} onClick={async () => {
           if (exporting) return;
           if (!activeOrganizationId) {
             toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
+            return;
+          }
+          if (!exportClient) {
+            toast({ title: "Export niet gestart", description: exportBlockReason ?? undefined, variant: "destructive" });
             return;
           }
           setExporting(true);
           try {
             const exportable = await fetchAllSalesInvoices({
               organizationId: activeOrganizationId,
-              clientId: scopedClientId,
+              clientId: exportClient.id,
               statuses: ["gecontroleerd", "betaald"],
             });
             if (!exportable.length) {
               toast({ title: "Geen exporteerbare verkoopfacturen", description: "Alleen gecontroleerde en betaalde facturen worden geëxporteerd.", variant: "destructive" });
               return;
             }
-            if (exportable.some(i => i.btw_verlegd)) {
+            // A2-15: het blokkeren blijft (geen besluit over de exportcode); de
+            // melding noemt nu wélke facturen met verlegde btw het blokkeren.
+            const verlegd = exportable.filter(i => i.btw_verlegd);
+            if (verlegd.length) {
+              const genoemd = verlegd.slice(0, 5).map(i => i.invoice_number || i.customer_name).join(", ");
+              const meer = verlegd.length > 5 ? ` en ${verlegd.length - 5} andere` : "";
               toast({
                 title: "Export geblokkeerd",
-                description: "Deze selectie bevat verkoopfacturen met btw verlegd. De juiste SnelStart-exportcode is nog niet ingesteld. Controleer dit eerst voordat je exporteert.",
+                description: `Btw verlegd bij ${verlegd.length === 1 ? "verkoopfactuur" : `${verlegd.length} verkoopfacturen`}: ${genoemd}${meer}. De juiste SnelStart-exportcode is nog niet ingesteld. Controleer dit eerst voordat je exporteert.`,
                 variant: "destructive",
               });
               return;
             }
-            const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-            exportSalesInvoicesCSV(exportable, clientName);
+            // Gooit bij rijen van een andere of meer dan één administratie: dan geen bestand.
+            exportSalesInvoicesCSV(exportable, { clientId: exportClient.id, organizationId: activeOrganizationId, clientName: exportClient.name });
             toast({ title: `${exportable.length} verkoopfacturen geëxporteerd voor Snelstart` });
           } catch (e: any) {
             toast({ title: "Export mislukt", description: e?.message, variant: "destructive" });
