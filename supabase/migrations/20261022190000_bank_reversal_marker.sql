@@ -23,3 +23,29 @@ ALTER TABLE public.bank_transactions
 
 -- rollback (manual only, separately authorized):
 -- ALTER TABLE public.bank_transactions DROP CONSTRAINT bank_reversal_cannot_be_invoice_match;
+
+-- P5 compatibility: enforce evidence at the allocation writer boundary.
+-- This also covers link_bank_payment() and direct writes through older clients.
+-- Do not alter the protected bank_transactions trigger set.
+CREATE OR REPLACE FUNCTION public.reject_unverified_bank_payment_allocation()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.bank_transactions bt
+    WHERE bt.id = NEW.bank_transaction_id AND bt.is_reversal IS FALSE
+  ) THEN
+    RAISE EXCEPTION 'Storno-status ontbreekt of transactie is een storno; factuurallocatie geweigerd'
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS reject_unverified_bank_payment_allocation ON public.bank_transaction_allocations;
+CREATE TRIGGER reject_unverified_bank_payment_allocation
+  BEFORE INSERT OR UPDATE ON public.bank_transaction_allocations
+  FOR EACH ROW EXECUTE FUNCTION public.reject_unverified_bank_payment_allocation();
+
+-- rollback (manual only, separately authorized):
+-- DROP TRIGGER IF EXISTS reject_unverified_bank_payment_allocation ON public.bank_transaction_allocations;
+-- DROP FUNCTION IF EXISTS public.reject_unverified_bank_payment_allocation();
