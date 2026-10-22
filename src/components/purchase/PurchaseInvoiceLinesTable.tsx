@@ -208,7 +208,8 @@ export function PurchaseInvoiceLinesTable({
                     disabled={isBtwVrijgesteld}
                   >
                     <SelectTrigger className="h-9" aria-label="BTW-percentage regel">
-                      <SelectValue />
+                      {/* Leeg = nog niet gekozen; er wordt geen percentage aangenomen. */}
+                      <SelectValue placeholder="Kies" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="0">0%</SelectItem>

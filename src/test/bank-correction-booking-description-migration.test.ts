@@ -34,6 +34,13 @@ const PR1_FILE = "20261018120000_add_bank_transaction_corrections.sql";
  * moet de PR 1-hold blijven eisen.
  */
 const HOLD_FIX_FILE = "20261018180000_refine_release_hold_for_settled_history.sql";
+/**
+ * De btw- en NaN-validatie (P4). Zij herdefinieert post_bank_transaction —
+ * precies wat test 20 bewaakt. Herbeoordeeld in test 20c: de nieuwe schrijver
+ * is de oude plus uitsluitend weigeringen; hij schrijft niets nieuws weg.
+ */
+const P4_FILE = "20261021170000_btw_en_nan_validatie_in_schrijvers.sql";
+const P4_WRITER_MD5 = "28ac97ed4e030759bbb31082da50c118";
 const HOLD_FIX_BODY_MD5 = "43347fb9f48ed4c161e291fa769577c2";
 const HOLD_FIX_HELPER_MD5 = "697f9413067e9c5b73323b792c51cda9";
 /** SHA-256 van de migratie zoals beoordeeld. */
@@ -417,6 +424,8 @@ describe("na deze migratie", () => {
       for (const fn of pinned) {
         // Herbeoordeeld: de hold-fix mag (alleen) de hold herdefiniëren — zie hieronder.
         if (f === HOLD_FIX_FILE && fn === "enforce_bank_transaction_release_hold") continue;
+        // Herbeoordeeld: de btw- en NaN-validatie mag (alleen) de schrijver herdefiniëren — zie 20c.
+        if (f === P4_FILE && fn === "post_bank_transaction") continue;
         expect(code, `${f}: ${fn}`).not.toMatch(new RegExp(`FUNCTION\\s+(?:public\\.)?${fn}\\s*\\(`, "i"));
       }
     }
@@ -443,6 +452,50 @@ describe("na deze migratie", () => {
     // Geen nieuwe trigger, RULE of publicatie: de fix voegt alleen een voorwaarde toe aan een bestaande triggerfunctie.
     const top = fix.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n").replace(/AS \$\$[\s\S]*?\$\$;/g, "");
     expect(top).not.toMatch(/CREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER|RULE|PUBLICATION|ALTER\s+TABLE/i);
+  });
+
+  it("20c. herbeoordeling van 20261021170000: de schrijver weigert alleen meer (btw-keuze, NaN); hij schrijft niets nieuws en leest de omschrijving ongewijzigd", () => {
+    // Het veiligheidsargument van deze migratie hangt aan wat post_bank_transaction
+    // met bank_transactions.description doet: hij leest haar één keer voor zijn
+    // grootboekregels en schrijft haar nergens anders weg. De nieuwe schrijver is
+    // de oude plus drie blokken die alleen weigeren, en één regel die NULL niet
+    // meer tot 0 maakt. Dat wordt hier afgeleid en geëist; daarmee blijft het
+    // argument staan. (De voorwaarde van deze migratie pint de oude schrijver nog:
+    // zij kan na 20261021170000 niet opnieuw worden toegepast, en dat hoeft ook
+    // niet — 20261021170000 eist juist dat zij al is toegepast.)
+    const lichaam = (t: string) => {
+      const start = t.indexOf("CREATE OR REPLACE FUNCTION public.post_bank_transaction(_transaction_id uuid)");
+      expect(start).toBeGreaterThanOrEqual(0);
+      const from = t.indexOf("AS $$", start) + "AS $$".length;
+      return t.slice(from, t.indexOf("$$;", from));
+    };
+    const oud = lichaam(read(`${MIGRATION_DIR}/20261002120000_decouple_year_watermark_from_posting.sql`));
+    const nieuw = lichaam(read(`${MIGRATION_DIR}/${P4_FILE}`));
+    expect(md5(oud)).toBe(WRITER_MD5);
+    expect(md5(nieuw)).toBe(P4_WRITER_MD5);
+    const code = (b: string) => b.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n").replace(/\s+/g, " ").trim();
+    const TOEGEVOEGD = [
+      /IF v_tx\.amount = 'NaN'::numeric THEN RAISE EXCEPTION '[^']*' USING ERRCODE = '22023'; END IF; /,
+      /IF v_tx\.btw_percentage IS NULL THEN RAISE EXCEPTION '[^']*' USING ERRCODE = '22004'; END IF; /,
+      /IF v_tx\.btw_percentage IN \('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric\) THEN RAISE EXCEPTION '[^']*', v_tx\.btw_percentage USING ERRCODE = '22023'; END IF; /,
+    ];
+    let afgeleid = code(nieuw);
+    for (const blok of TOEGEVOEGD) {
+      expect(afgeleid.split(blok).length - 1, String(blok)).toBe(1);
+      afgeleid = afgeleid.replace(blok, "");
+    }
+    afgeleid = afgeleid.replace(
+      "v_pct := CASE WHEN v_client.btw_vrijgesteld THEN 0 ELSE v_tx.btw_percentage END;",
+      "v_pct := CASE WHEN v_client.btw_vrijgesteld THEN 0 ELSE COALESCE(v_tx.btw_percentage, 0) END;",
+    );
+    expect(afgeleid).toBe(code(oud));
+    // Dus dezelfde schrijfhandelingen, dezelfde omschrijvingsregel, niets dat uitzendt.
+    const handelingen = (b: string) =>
+      code(b)
+        .replace(/'(?:[^']|'')*'/g, "''")
+        .match(/\b(INSERT INTO [\w.]+|UPDATE [\w.]+|DELETE FROM [\w.]+|MERGE|TRUNCATE|COPY|NOTIFY|pg_notify|dblink\w*|EXECUTE)\b/gi) ?? [];
+    expect(handelingen(nieuw)).toEqual(handelingen(oud));
+    expect(code(nieuw)).toContain("v_desc := COALESCE(NULLIF(btrim(v_tx.description), ''), 'Bankboeking');");
   });
 });
 
