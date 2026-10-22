@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { BankTransactionChangedError, type BankTransactionExpectation } from "@/lib/bank-transaction-cas";
 import { useAuth } from "./useAuth";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
@@ -196,7 +197,20 @@ export function useAddBankTransaction() {
 export function useUpdateBankTransaction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, ...updates }: Partial<BankTransaction> & { id: string }) => {
+    mutationFn: async ({ id, expected, ...updates }: Partial<BankTransaction> & { id: string; expected?: BankTransactionExpectation }) => {
+      if (expected) {
+        let query = supabase
+          .from("bank_transactions")
+          .update(updates)
+          .eq("id", id)
+          .in("match_status", [...expected.match_status]);
+        if (expected.matched_invoice_id === null) query = query.is("matched_invoice_id", null);
+        else if (expected.matched_invoice_id !== undefined) query = query.eq("matched_invoice_id", expected.matched_invoice_id);
+        const { data, error } = await query.select();
+        if (error) throw error;
+        if (!data || data.length === 0) throw new BankTransactionChangedError();
+        return data[0];
+      }
       const { data, error } = await supabase
         .from("bank_transactions")
         .update(updates)
@@ -207,5 +221,9 @@ export function useUpdateBankTransaction() {
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["bank_transactions"] }),
+    // Verouderde cache: opnieuw ophalen, zodat het scherm de echte toestand toont.
+    onError: (error) => {
+      if (error instanceof BankTransactionChangedError) void qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+    },
   });
 }

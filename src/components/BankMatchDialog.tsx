@@ -285,6 +285,11 @@ useEffect(() => {
   const invoiceOpenAmount = selected?.amount != null ? Math.abs(selected.amount) : null;
   const parsedAllocationAmount = parseFloat(allocationAmountStr.replace(",", "."));
   const allocIsNaN = isNaN(parsedAllocationAmount) || parsedAllocationAmount <= 0;
+  // "& Betaald" alleen als dit bedrag het openstaande bedrag exact (op de cent)
+  // afdekt; bij "≈ gelijk" laat de database het verschil open (A1-12c, P5).
+  // `selected.amount` is het openstaande bedrag van de factuur (getInvoiceRemainingAmount).
+  const settlesInFull = !!selected && !allocIsNaN && selected.amount != null
+    && Math.round(parsedAllocationAmount * 100) === Math.round(Math.abs(selected.amount) * 100);
   const allocExceedsCap = !allocIsNaN && parsedAllocationAmount > effectiveCap + 0.001;
   const allocExceedsInvoice = !allocIsNaN && invoiceOpenAmount != null && parsedAllocationAmount > invoiceOpenAmount + 0.001;
   const allocError: string | null = allocIsNaN
@@ -597,7 +602,7 @@ useEffect(() => {
                     selected && !allocIsNaN && parsedAllocationAmount < txAbsAmount - 0.001
                       ? " (deelallocatie)"
                       : selected?.isPartialPayment ? " (deelbetaling)"
-                      : exactMatch ? " & Betaald"
+                      : exactMatch && settlesInFull ? " & Betaald"
                       : ""
                   }`}
             </Button>

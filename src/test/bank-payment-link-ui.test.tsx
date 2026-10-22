@@ -21,6 +21,8 @@ const s = vi.hoisted(() => ({
   allocations: [] as any[],
   updateTxCalls: [] as any[],
   updateTxError: null as Error | null,
+  /** De database-toestand van de matchvelden, voor de compare-and-set (H-1/H-2). */
+  db: new Map<string, { match_status: string; matched_invoice_id: string | null }>(),
   linkCalls: [] as any[],
   unlinkCalls: [] as any[],
   linkError: null as Error | null,
@@ -85,7 +87,24 @@ vi.mock("@/hooks/useBankTransactions", () => ({
   }),
   useAddBankTransaction: () => ({ mutateAsync: vi.fn() }),
   useUpdateBankTransaction: () => ({
-    mutateAsync: async (args: any) => { s.updateTxCalls.push(args); if (s.updateTxError) throw s.updateTxError; return {}; },
+    mutateAsync: async (args: any) => {
+      s.updateTxCalls.push(args);
+      if (s.updateTxError) throw s.updateTxError;
+      // Zoals de echte hook: met `expected` alleen schrijven als de database nog
+      // die toestand heeft; anders BankTransactionChangedError en niets gewijzigd.
+      const row = s.db.get(args.id);
+      if (row) {
+        const { expected } = args;
+        if (expected && (!expected.match_status.includes(row.match_status)
+          || (expected.matched_invoice_id !== undefined && expected.matched_invoice_id !== row.matched_invoice_id))) {
+          const { BankTransactionChangedError } = await import("@/lib/bank-transaction-cas");
+          throw new BankTransactionChangedError();
+        }
+        if (args.match_status !== undefined) row.match_status = args.match_status;
+        if (args.matched_invoice_id !== undefined) row.matched_invoice_id = args.matched_invoice_id;
+      }
+      return {};
+    },
   }),
 }));
 vi.mock("@/hooks/usePurchaseInvoices", () => ({
@@ -171,6 +190,7 @@ beforeEach(() => {
   s.allocations = [];
   s.updateTxCalls = [];
   s.updateTxError = null;
+  s.db = new Map();
   s.linkCalls = [];
   s.unlinkCalls = [];
   s.linkError = null;
@@ -382,5 +402,83 @@ describe("Bank — ontkoppelen via de betaalschrijver", () => {
     expect(lastToast()).toMatchObject({ title: "Coderen is niet gelukt", description: "herstel nodig" });
     expect(s.updateTxCalls).toEqual([]);
     confirm.mockRestore();
+  });
+});
+
+describe("Bank — compare-and-set op de matchvelden (review P5 H-1, H-2)", () => {
+  it("H-1: undo van een suggestie die intussen is bevestigd (gekoppeld), laat de regel staan en meldt dat", async () => {
+    // Een onzekere kandidaat (deelbetaling): automatisch voorstellen zet een suggestie klaar.
+    s.transactions = [makeTx({ id: "tx-1", amount: -60, __candidate: { id: "P1", score: 80, isPartialPayment: true, amount: 100 } })];
+    s.db.set("tx-1", { match_status: "niet_gematcht", matched_invoice_id: null });
+    renderBank();
+    fireEvent.click(await screen.findByRole("button", { name: /Automatisch voorstellen/ }));
+    await waitFor(() => expect(s.db.get("tx-1")).toEqual({ match_status: "suggestie", matched_invoice_id: "P1" }));
+    expect(s.linkCalls).toEqual([]);
+    // Intussen: ✓ Bevestig (of een ander tabblad) koppelt via de betaalschrijver.
+    s.db.set("tx-1", { match_status: "gematcht", matched_invoice_id: "P1" });
+    fireEvent.click(await screen.findByRole("button", { name: /Undo laatste batch \(1\)/ }));
+    await waitFor(() => expect(lastToast()?.title).toBe("Laatste batch teruggedraaid"));
+    expect(s.updateTxCalls.at(-1)).toMatchObject({ id: "tx-1", expected: { match_status: ["suggestie"], matched_invoice_id: "P1" } });
+    expect(s.db.get("tx-1")).toEqual({ match_status: "gematcht", matched_invoice_id: "P1" });
+    expect(lastToast()?.description).toMatch(/0 transactie\(s\) hersteld · 1 overgeslagen: intussen gewijzigd/);
+  });
+
+  it("H-1: undo van een ongewijzigde suggestie draait haar gewoon terug", async () => {
+    s.transactions = [makeTx({ id: "tx-1", amount: -60, __candidate: { id: "P1", score: 80, isPartialPayment: true, amount: 100 } })];
+    s.db.set("tx-1", { match_status: "niet_gematcht", matched_invoice_id: null });
+    renderBank();
+    fireEvent.click(await screen.findByRole("button", { name: /Automatisch voorstellen/ }));
+    await waitFor(() => expect(s.db.get("tx-1")?.match_status).toBe("suggestie"));
+    fireEvent.click(await screen.findByRole("button", { name: /Undo laatste batch \(1\)/ }));
+    await waitFor(() => expect(s.db.get("tx-1")).toEqual({ match_status: "niet_gematcht", matched_invoice_id: null }));
+    expect(lastToast()?.description).toBe("1 transactie(s) hersteld");
+  });
+
+  it("H-2: coderen met een verouderde cache (regel is intussen gekoppeld) schrijft niets en meldt het", async () => {
+    // Het scherm denkt "open"; in de database heeft een ander tabblad al gekoppeld.
+    s.transactions = [makeTx({ id: "tx-1", amount: 100 })];
+    s.db.set("tx-1", { match_status: "gematcht", matched_invoice_id: "S1" });
+    renderBank();
+    fireEvent.click((await screen.findAllByRole("checkbox")).at(-1)!);
+    fireEvent.click(await screen.findByRole("button", { name: "kies-rekening" }));
+    fireEvent.click(await screen.findByRole("button", { name: "kies-btw" }));
+    fireEvent.click(await screen.findByTestId("bulk-book-button"));
+    await waitFor(() => expect(lastToast()?.variant).toBe("destructive"));
+    expect(s.updateTxCalls[0].expected.match_status).not.toContain("gematcht");
+    expect(s.db.get("tx-1")).toEqual({ match_status: "gematcht", matched_invoice_id: "S1" });
+    expect(lastToast()?.description).toMatch(/intussen gewijzigd.*niets gewijzigd/);
+  });
+
+  it("H-2: codering ongedaan maken alleen vanuit handmatig_geboekt; afwijzen alleen van precies deze suggestie", async () => {
+    s.transactions = [makeTx({ id: "tx-1", amount: 100, match_status: "handmatig_geboekt", grootboekrekening_id: "acc" })];
+    s.db.set("tx-1", { match_status: "gematcht", matched_invoice_id: "S1" });
+    renderBank();
+    await waitFor(() => expect(unlinkIconButton()).toBeTruthy());
+    fireEvent.click(unlinkIconButton());
+    await waitFor(() => expect(lastToast()?.variant).toBe("destructive"));
+    expect(s.updateTxCalls[0]).toMatchObject({ expected: { match_status: ["handmatig_geboekt"] } });
+    expect(s.db.get("tx-1")?.match_status).toBe("gematcht");
+  });
+});
+
+describe("Bank — keuzeregels van automatisch voorstellen (review P5 H-4)", () => {
+  it("gelijke topscore (C-04): automatisch voorstellen koppelt niet", async () => {
+    s.transactions = [makeTx({ id: "tx-1", amount: -100, __candidates: [{ id: "P1", score: 100 }, { id: "P2", score: 100 }] })];
+    renderBank();
+    fireEvent.click(await screen.findByRole("button", { name: /Automatisch voorstellen/ }));
+    await waitFor(() => expect(lastToast()?.title).toBe("Automatisch voorstellen klaar"));
+    expect(s.linkCalls).toEqual([]);
+  });
+
+  it("twee regels op één factuur: automatisch voorstellen koppelt er maar één", async () => {
+    s.transactions = [
+      makeTx({ id: "tx-a", amount: -100, __candidate: { id: "inv-gedeeld" } }),
+      makeTx({ id: "tx-b", amount: -100, transaction_date: "2026-01-11", __candidate: { id: "inv-gedeeld" } }),
+    ];
+    renderBank();
+    fireEvent.click(await screen.findByRole("button", { name: /Automatisch voorstellen/ }));
+    await waitFor(() => expect(lastToast()?.title).toBe("Automatisch voorstellen klaar"));
+    expect(s.linkCalls).toHaveLength(1);
+    expect(s.linkCalls[0].invoiceId).toBe("inv-gedeeld");
   });
 });

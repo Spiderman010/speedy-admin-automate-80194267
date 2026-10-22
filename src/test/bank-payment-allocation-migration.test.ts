@@ -164,9 +164,14 @@ describe("P5c 20261021183000 — vorm", () => {
     }
   });
 
-  it("4. de rollback zet de rechten terug en haalt alleen de eigen guards weg", () => {
+  it("4. de rollback zet de rechten letterlijk terug volgens PRE 2 (STOP zonder die uitvoer) en haalt alleen de eigen guards weg", () => {
     const rb = rollbackOf(P5C);
-    expect(rb).toContain("GRANT ALL ON TABLE public.bank_transaction_allocations TO anon, authenticated, service_role;");
+    expect(rb).not.toMatch(/GRANT ALL/i);
+    expect(rb).toContain("v_pre2 text := '<<PRE 2-UITVOER>>';");
+    expect(rb).toMatch(/RAISE EXCEPTION 'STOP: de uitvoer van PRE 2 ontbreekt/);
+    // Eerst de STOP-toets, dan pas iets weghalen of intrekken.
+    expect(rb.indexOf("STOP:")).toBeLessThan(rb.indexOf("DROP TRIGGER"));
+    expect(rb.indexOf("STOP:")).toBeLessThan(rb.indexOf("REVOKE ALL"));
     expect(rb).not.toMatch(/link_bank_payment|bank_payment_events|DROP TABLE/i);
   });
 });

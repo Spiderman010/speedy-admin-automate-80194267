@@ -49,7 +49,11 @@ export function isBankPaymentDeployWindowError(error: unknown): boolean {
 }
 
 /** Zet een RPC-fout om in een BankPaymentError met een melding die je de gebruiker kunt tonen. */
-export function toBankPaymentError(error: BankPaymentRpcError | null | undefined): BankPaymentError {
+export function toBankPaymentError(
+  error: BankPaymentRpcError | null | undefined,
+  action: "link" | "unlink" = "link",
+): BankPaymentError {
+  const verb = action === "unlink" ? "Ontkoppelen" : "Koppelen";
   if (isBankPaymentDeployWindowError(error)) {
     return new BankPaymentError(BANK_PAYMENT_NOT_AVAILABLE, error?.code, true);
   }
@@ -59,7 +63,7 @@ export function toBankPaymentError(error: BankPaymentRpcError | null | undefined
     return new BankPaymentError(message, code);
   }
   return new BankPaymentError(
-    message ? `Koppelen is niet gelukt: ${message}` : "Koppelen is niet gelukt. Er is niets gewijzigd; probeer het opnieuw.",
+    message ? `${verb} is niet gelukt: ${message}` : `${verb} is niet gelukt. Er is niets gewijzigd; probeer het opnieuw.`,
     code,
   );
 }

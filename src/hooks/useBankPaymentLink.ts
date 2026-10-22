@@ -68,16 +68,24 @@ export async function unlinkBankPayment(input: UnlinkBankPaymentInput): Promise<
     _allocation_id: input.allocationId ?? null,
   };
   const { data, error } = await paymentApi().rpc("unlink_bank_payment", args);
-  if (error) throw toBankPaymentError(error);
+  if (error) throw toBankPaymentError(error, "unlink");
   return parseUnlinkResult(data);
 }
 
-/** Alles wat een koppeling of ontkoppeling kan veranderen. */
+/**
+ * Alles wat een koppeling of ontkoppeling kan veranderen: de lijsten, de
+ * werkruimte van één inkoopfactuur (restant, "heeft koppelingen") en de
+ * grootboekoverzichten die op koppelingen rekenen (prefix-match).
+ */
 export const BANK_PAYMENT_QUERY_KEYS = [
   ["bank_transactions"],
   ["bank_transaction_allocations"],
   ["purchase_invoices"],
   ["sales_invoices"],
+  ["purchase_invoice"],
+  ["purchase_invoice_has_allocations"],
+  ["ledger-completeness"],
+  ["unposted-source-work"], // = UNPOSTED_SOURCE_WORK_QUERY_KEY (useUnpostedSourceWork)
 ] as const;
 
 /**

@@ -74,6 +74,7 @@ import { useBankTransactionAllocations } from "@/hooks/useBankTransactionAllocat
 import { useBankPaymentLink } from "@/hooks/useBankPaymentLink";
 import { bankPaymentErrorMessage, batchResultMessage, linkResultMessage, minAmount } from "@/lib/bank-payment-link";
 import { hasTiedTopCandidates } from "@/lib/bank-candidate-gate";
+import { BANK_TX_NOT_LINKED_STATUSES, BankTransactionChangedError } from "@/lib/bank-transaction-cas";
 import { BankTransactionDetailSheet } from "@/components/bank/BankTransactionDetailSheet";
 
 const formatCurrency = (amount: number) =>
@@ -1034,6 +1035,8 @@ export default function Bank() {
         // A manual coding replaces any open invoice suggestion.
         matched_invoice_id: null,
         match_confidence: null,
+        // CAS (H-2): never code a row that got a payment in the meantime.
+        expected: { match_status: BANK_TX_NOT_LINKED_STATUSES },
       });
       toast(codedNotPostedMessage(ledgerAccount));
       closeMatchDialog();
@@ -1076,6 +1079,7 @@ export default function Bank() {
         id: tx.id,
         match_status: "handmatig_geboekt",
         grootboekrekening_id: account1605?.id ?? undefined,
+        expected: { match_status: BANK_TX_NOT_LINKED_STATUSES },
       });
 
       toast({ title: existing ? "Vraagpost bestaat al" : "Vraagpost aangemaakt" });
@@ -1117,6 +1121,7 @@ export default function Bank() {
           btw_percentage: btwPercentage,
           matched_invoice_id: null,
           match_confidence: null,
+          expected: { match_status: BANK_TX_NOT_LINKED_STATUSES },
         });
         success++;
       } catch (e) {
@@ -1159,7 +1164,7 @@ export default function Bank() {
       try {
         if (tx.match_status === "handmatig_geboekt" && (allocationsByTxId.get(id)?.length ?? 0) === 0) {
           // Een codering is geen betaling: alleen de codering weghalen.
-          await updateTx.mutateAsync({ id, match_status: "niet_gematcht", grootboekrekening_id: null, matched_invoice_id: null, match_confidence: null });
+          await updateTx.mutateAsync({ id, match_status: "niet_gematcht", grootboekrekening_id: null, matched_invoice_id: null, match_confidence: null, expected: { match_status: ["handmatig_geboekt"] } });
           success++;
         } else {
           const result = await unlinkPayment({ bankTransactionId: id });
@@ -1313,6 +1318,7 @@ export default function Bank() {
           match_status: "niet_gematcht",
           matched_invoice_id: null,
           match_confidence: null,
+          expected: { match_status: ["suggestie"], matched_invoice_id: tx.matched_invoice_id },
         });
         processed++;
       } catch (e: any) {
@@ -1415,6 +1421,8 @@ export default function Bank() {
     | {
         kind: "suggested";
         txBefore: { id: string; match_status: string; matched_invoice_id: string | null; match_confidence: number | null };
+        /** De factuur die deze batch als suggestie zette: alleen die toestand wordt teruggedraaid. */
+        suggestedInvoiceId: string;
       };
   const [lastBatch, setLastBatch] = useState<UndoEntry[] | null>(null);
 
@@ -1467,6 +1475,7 @@ export default function Bank() {
               matched_invoice_id: t.matched_invoice_id,
               match_confidence: t.match_confidence,
             },
+            suggestedInvoiceId: best.id,
           };
           await assertBankMatchNotRejected(t.id, best.type, best.id, t.client_id, activeOrganizationId!);
           await updateTx.mutateAsync({
@@ -1474,6 +1483,7 @@ export default function Bank() {
             match_status: "suggestie",
             matched_invoice_id: best.id,
             match_confidence: conf,
+            expected: { match_status: ["niet_gematcht"], matched_invoice_id: t.matched_invoice_id },
           });
           undoLog.push(entry);
           proposed++;
@@ -1502,6 +1512,7 @@ export default function Bank() {
     if (!lastBatch || lastBatch.length === 0 || undoingBatch) return;
     setUndoingBatch(true);
     let reverted = 0;
+    let changed = 0;
     const errors: string[] = [];
     // In omgekeerde volgorde terugdraaien.
     for (let i = lastBatch.length - 1; i >= 0; i--) {
@@ -1511,16 +1522,21 @@ export default function Bank() {
           // Precies de koppeling van deze batch; restant en status zet de database terug.
           await unlinkPayment({ bankTransactionId: entry.txId, allocationId: entry.allocationId });
         } else {
+          // CAS (H-1): alleen terugdraaien als de regel nog precies de suggestie
+          // van deze batch is. Is ze intussen bevestigd (gekoppeld), gecodeerd of
+          // afgewezen, dan blijft ze staan: anders ontstaat "open" mét koppeling.
           await updateTx.mutateAsync({
             id: entry.txBefore.id,
             match_status: entry.txBefore.match_status,
             matched_invoice_id: entry.txBefore.matched_invoice_id,
             match_confidence: entry.txBefore.match_confidence,
+            expected: { match_status: ["suggestie"], matched_invoice_id: entry.suggestedInvoiceId },
           });
         }
         reverted++;
       } catch (e) {
-        errors.push(bankPaymentErrorMessage(e));
+        if (e instanceof BankTransactionChangedError) changed++;
+        else errors.push(bankPaymentErrorMessage(e));
       }
     }
     setUndoingBatch(false);
@@ -1529,7 +1545,9 @@ export default function Bank() {
     await refetch();
     toast({
       title: "Laatste batch teruggedraaid",
-      description: `${reverted} transactie(s) hersteld` + (errors.length ? ` · ${errors.length} fout(en): ${errors[0]}` : ""),
+      description: `${reverted} transactie(s) hersteld`
+        + (changed ? ` · ${changed} overgeslagen: intussen gewijzigd (bijv. bevestigd of gecodeerd)` : "")
+        + (errors.length ? ` · ${errors.length} fout(en): ${errors[0]}` : ""),
       variant: errors.length ? "destructive" : undefined,
     });
   }, [lastBatch, undoingBatch, unlinkPayment, updateTx, refreshPayments, refetch, toast]);
@@ -1564,6 +1582,7 @@ export default function Bank() {
         match_status: "niet_gematcht",
         matched_invoice_id: null,
         match_confidence: null,
+        expected: { match_status: ["suggestie"], matched_invoice_id: t.matched_invoice_id },
       });
       toast({ title: "Afwijzing opgeslagen", description: "Deze factuur wordt niet opnieuw voorgesteld. Een andere factuur kan nog wel als suggestie verschijnen." });
     } catch (e: any) {
@@ -1744,7 +1763,7 @@ export default function Bank() {
     onUnlink: (tx) => {
       setDetailTx(null);
       if (tx.match_status === "handmatig_geboekt") {
-        updateTx.mutateAsync({ id: tx.id, match_status: "niet_gematcht", grootboekrekening_id: null })
+        updateTx.mutateAsync({ id: tx.id, match_status: "niet_gematcht", grootboekrekening_id: null, expected: { match_status: ["handmatig_geboekt"] } })
           .then(() => toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." }))
           .catch((e) => toast({ title: "Fout bij ontkoppelen", description: bankPaymentErrorMessage(e), variant: "destructive" }));
       } else {
@@ -2574,6 +2593,7 @@ export default function Bank() {
                                         id: t.id,
                                         match_status: "niet_gematcht",
                                         grootboekrekening_id: null,
+                                        expected: { match_status: ["handmatig_geboekt"] },
                                       }).then(() => {
                                         toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." });
                                       }).catch((e) => {
@@ -2789,7 +2809,7 @@ export default function Bank() {
         onBookPrivate={async (id) => {
           try {
             // A private withdrawal carries no deductible VAT: explicit 0, never NULL.
-            await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: undefined, btw_percentage: 0, matched_invoice_id: null, match_confidence: null });
+            await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: undefined, btw_percentage: 0, matched_invoice_id: null, match_confidence: null, expected: { match_status: BANK_TX_NOT_LINKED_STATUSES } });
           } catch (e: any) {
             toast({ title: "Markeren als privé is niet gelukt", description: e?.message, variant: "destructive" });
             throw e;
@@ -2802,7 +2822,7 @@ export default function Bank() {
         }}
         onBookLedger={async (id, ledgerText, ledgerId, btwPercentage) => {
           try {
-            await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: ledgerId || undefined, btw_percentage: btwPercentage, matched_invoice_id: null, match_confidence: null });
+            await updateTx.mutateAsync({ id, match_status: "handmatig_geboekt", grootboekrekening_id: ledgerId || undefined, btw_percentage: btwPercentage, matched_invoice_id: null, match_confidence: null, expected: { match_status: BANK_TX_NOT_LINKED_STATUSES } });
           } catch (e: any) {
             toast({ title: "Coderen is niet gelukt", description: e?.message, variant: "destructive" });
             throw e;

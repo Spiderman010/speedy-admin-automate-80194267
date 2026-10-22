@@ -151,6 +151,24 @@ describe("linkBankPayment / unlinkBankPayment — het RPC-contract", () => {
     expect(all).toEqual({ outcome: "unlinked", removedCount: 2, txMatchStatus: "niet_gematcht", replayed: false });
   });
 
+  it("ontkoppelen met een fout (uitrolvenster of weigering) gooit een BankPaymentError — nooit een stil 'niets te ontkoppelen' (H-3)", async () => {
+    h.rpc.mockResolvedValueOnce({ data: null, error: { code: "PGRST202", message: "not found" } });
+    const missing = await unlinkBankPayment({ bankTransactionId: "tx-1" }).catch((e) => e);
+    expect(missing).toBeInstanceOf(BankPaymentError);
+    expect(missing.deployWindow).toBe(true);
+    expect(missing.message).toBe(BANK_PAYMENT_NOT_AVAILABLE);
+
+    h.rpc.mockResolvedValueOnce({ data: [{ outcome: "unchanged", removed_count: 0, tx_match_status: "gematcht", replayed: false }],
+                                  error: { code: "23514", message: "Openstaand bedrag wijkt af van de koppelingen; herstel nodig" } });
+    const refused = await unlinkBankPayment({ bankTransactionId: "tx-1" }).catch((e) => e);
+    expect(refused).toBeInstanceOf(BankPaymentError);
+    expect(refused.message).toBe("Openstaand bedrag wijkt af van de koppelingen; herstel nodig");
+
+    h.rpc.mockResolvedValueOnce({ data: null, error: { code: "08006", message: "connection lost" } });
+    const network = await unlinkBankPayment({ bankTransactionId: "tx-1" }).catch((e) => e);
+    expect(network.message).toBe("Ontkoppelen is niet gelukt: connection lost");
+  });
+
   it("een onbruikbaar antwoord is een fout, geen stil succes", () => {
     expect(() => parseLinkResult([])).toThrow(BankPaymentError);
     expect(() => parseLinkResult([{ outcome: "weird" }])).toThrow(BankPaymentError);
@@ -170,9 +188,13 @@ describe("useBankPaymentLink", () => {
     expect(spy.mock.calls.map(([arg]) => (arg as { queryKey: readonly string[] }).queryKey)).toEqual(
       BANK_PAYMENT_QUERY_KEYS.map((k) => [...k]),
     );
-    expect(BANK_PAYMENT_QUERY_KEYS.map((k) => k[0]).sort()).toEqual(
-      ["bank_transaction_allocations", "bank_transactions", "purchase_invoices", "sales_invoices"],
-    );
+    expect(BANK_PAYMENT_QUERY_KEYS.map((k) => k[0]).sort()).toEqual([
+      "bank_transaction_allocations", "bank_transactions", "ledger-completeness", "purchase_invoice",
+      "purchase_invoice_has_allocations", "purchase_invoices", "sales_invoices", "unposted-source-work",
+    ]);
+    // Dezelfde sleutel als de hook die het overzicht ophaalt (H-8).
+    const { UNPOSTED_SOURCE_WORK_QUERY_KEY } = await import("@/hooks/useUnpostedSourceWork");
+    expect(BANK_PAYMENT_QUERY_KEYS.some((k) => k[0] === UNPOSTED_SOURCE_WORK_QUERY_KEY)).toBe(true);
   });
 });
 

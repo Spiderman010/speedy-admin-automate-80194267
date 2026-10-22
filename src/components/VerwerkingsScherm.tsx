@@ -141,8 +141,9 @@ export function VerwerkingsScherm({
   const shownCandidates = candidates.slice(0, 8);
   // Voorselectie alleen bij precies één kandidaat met de hoogste score; bij een
   // gelijke topscore kiest de gebruiker zelf (C-04).
-  // Ook niet bij een deel- of overbetaling: koppelen zet het restant nu nog op 0
-  // (schrijfpad P5), dus dan kiest de gebruiker bewust (review P2-1).
+  // Ook niet bij een deel- of overbetaling: de betaalschrijver legt dan maar een
+  // deel vast (min(|bedrag|, open)) en de rest blijft open of ongealloceerd, dus
+  // dan kiest de gebruiker bewust (review P2-1).
   const preselected = useMemo(
     () => (current ? preselectFullPaymentCandidate(candidates, current.amount) : null),
     [candidates, current],
