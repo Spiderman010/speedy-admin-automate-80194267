@@ -471,6 +471,28 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
     });
   });
 
+  it("biedt geen automatische match aan voor een bekende storno", async () => {
+    state.transactions = [makeTx({ id: "tx-storno", is_reversal: true, match_status: "niet_gematcht" })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(safeButton()).toBeNull();
+    expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
+  });
+
+  it("biedt geen automatische match aan zolang storno-status onbekend is", async () => {
+    state.transactions = [makeTx({ id: "tx-legacy", is_reversal: undefined, match_status: "niet_gematcht" })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(safeButton()).toBeNull();
+    expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
+  });
+
   it("heeft op mobiel een interactieve hoogte van minimaal 44px", async () => {
     state.transactions = [makeTx({ id: "tx-1" })];
     state.pagedTransactions = state.transactions;
