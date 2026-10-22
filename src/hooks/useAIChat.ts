@@ -20,6 +20,31 @@ type ChatMessage = {
  */
 const AI_CHAT_HISTORY_WINDOW = 20;
 
+/** Gelijk aan CHAT_MAX_MESSAGE_CHARS in supabase/functions/ai-chat/chat-guards.ts. */
+export const AI_CHAT_MAX_MESSAGE_CHARS = 4_000;
+export const AI_CHAT_TOO_LONG_MESSAGE =
+  `Je bericht is te lang (maximaal ${AI_CHAT_MAX_MESSAGE_CHARS} tekens). Maak het korter en probeer het opnieuw.`;
+export const AI_CHAT_REFUSED_MESSAGE = "De AI-assistent kon dit bericht niet verwerken.";
+
+/**
+ * Een weigering van ai-chat (400/413) is een echte fout van dit verzoek: die
+ * hoort als foutmelding in beeld, niet verstopt achter het prototype-antwoord.
+ * Geeft de melding terug, of null als het geen weigering was.
+ */
+async function refusalMessage(err: unknown): Promise<string | null> {
+  const ctx = (err as { context?: unknown } | null)?.context;
+  if (!ctx || typeof ctx !== "object" || !("status" in ctx)) return null;
+  const status = (ctx as { status: unknown }).status;
+  if (status !== 400 && status !== 413) return null;
+  try {
+    const body = await (ctx as Response).clone().json();
+    if (body && typeof body.error === "string" && body.error) return body.error;
+  } catch {
+    // geen JSON: de algemene melding volstaat
+  }
+  return AI_CHAT_REFUSED_MESSAGE;
+}
+
 function newId() {
   return `msg-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -71,6 +96,11 @@ export function useAIChat() {
   const sendMessage = async (content?: string) => {
     const text = (content ?? input).trim();
     if (!text || isLoading) return;
+    if (text.length > AI_CHAT_MAX_MESSAGE_CHARS) {
+      // Niet versturen en de invoer laten staan, zodat de gebruiker kan inkorten.
+      setError(AI_CHAT_TOO_LONG_MESSAGE);
+      return;
+    }
 
     const nextMessages: ChatMessage[] = [
       ...messages,
@@ -111,11 +141,16 @@ export function useAIChat() {
         ...prev,
         { id: newId(), role: "assistant", content: data.text },
       ]);
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        { id: newId(), role: "assistant", content: turn.reply },
-      ]);
+    } catch (err) {
+      const refused = await refusalMessage(err);
+      if (refused) {
+        setError(refused);
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { id: newId(), role: "assistant", content: turn.reply },
+        ]);
+      }
     } finally {
       setIsLoading(false);
     }
