@@ -316,6 +316,11 @@ export default function Bank() {
     setAfletteringTx(null);
     setLastBatch(null);
   }, [activeOrganizationId]);
+  // Dialogen met eigen state (een geparst afschrift, een keuze, een concept)
+  // worden bij een organisatiewissel opnieuw opgebouwd: alleen `open` sluiten
+  // laat hun state staan, en een heropende importdialoog toonde dan het
+  // afschrift van de vorige organisatie (review #295).
+  const organizationKey = `org-${activeOrganizationId ?? "none"}`;
 
   // ─ Afgeleide klantselectie voor data-laden ─
   const hasSelection = clientSelection.allMode || clientSelection.selectedIds.length > 0;
@@ -2774,6 +2779,7 @@ export default function Bank() {
       </AlertDialog>
 
       <VerwerkingsScherm
+        key={`verwerking-${organizationKey}`}
         open={verwerkingOpen}
         onOpenChange={setVerwerkingOpen}
         transactions={transactions ?? []}
@@ -2830,6 +2836,7 @@ export default function Bank() {
       />
 
       <BankStatementUploadDialog
+        key={`upload-${organizationKey}`}
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         clients={clients ?? []}
@@ -2843,6 +2850,7 @@ export default function Bank() {
       />
 
       <BankAfletteringDrawer
+        key={`aflettering-${organizationKey}`}
         open={!!afletteringTx}
         onOpenChange={(v) => { if (!v) setAfletteringTx(null); }}
         transaction={afletteringTx}
@@ -2864,6 +2872,7 @@ export default function Bank() {
       <BankTransactionDetailSheet open={!!detailTx} {...detailProps} />
 
       <BankMatchDialog
+        key={`match-${organizationKey}`}
         open={!!matchTx}
         onOpenChange={(v) => { if (!v) closeMatchDialog(); }}
         transaction={matchTx}

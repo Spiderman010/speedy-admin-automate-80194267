@@ -144,6 +144,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, loadInv
   const fileRef = useRef<HTMLInputElement>(null);
   // Ignores a duplicate check that finishes after the user started over.
   const checkToken = useRef(0);
+  // Unmounted (e.g. remounted after an organisation switch): a file still being
+  // read or checked must not fill any preview any more.
+  useEffect(() => () => { checkToken.current++; }, []);
 
   const resetPreview = () => {
     setParsed(null);
