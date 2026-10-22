@@ -12,6 +12,9 @@ describe("bank reversal policy", () => {
       expect(() => assertOrdinaryBankPayment(row)).toThrow(/onbekend/);
     }
   });
+  it("treats a historical NULL classification as unknown, never as false", () => {
+    expect(canAutomaticallyMatchBankTransaction({ is_reversal: null })).toBe(false);
+  });
   it("permits confirmed ordinary transactions", () => {
     expect(canAutomaticallyMatchBankTransaction({ is_reversal: false })).toBe(true);
     expect(() => assertOrdinaryBankPayment({ is_reversal: false })).not.toThrow();
