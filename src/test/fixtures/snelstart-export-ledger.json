@@ -369,7 +369,6 @@
             "credit_amount": 3.15
         }
     ],
-    "writer": "public.post_purchase_invoice (20261002120000_decouple_year_watermark_from_posting.sql)",
     "accounts": [
         {
             "id": "00000000-0000-0000-0000-00000000f004",

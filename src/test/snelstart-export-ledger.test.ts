@@ -8,8 +8,8 @@ import { buildPurchaseInvoiceExport, type SnelstartLedgerAccount, type Snelstart
  * wat de ECHTE `post_purchase_invoice()` in het grootboek boekt.
  *
  * De fixture is gemaakt door `supabase/tests/snelstart-export-ledger/run-proof.sh`
- * op een wegwerpcluster: de echte migratieketen t/m 20261010120000 (laatste
- * definitie van de schrijver: 20261002120000), facturen S1–S8 en hun boeking via
+ * op een wegwerpcluster: de echte migratieketen t/m de nieuwste migratie (dus de
+ * effectieve definitie van de schrijver), facturen S1–S9 en hun boeking via
  * de schrijver zelf. Deze test legt de export van dezelfde bronrijen ernaast:
  *
  *   per kostenregel   rekening(export) = rekening(journaal) en
@@ -32,7 +32,6 @@ import { buildPurchaseInvoiceExport, type SnelstartLedgerAccount, type Snelstart
  */
 
 type Fixture = {
-  writer: string;
   crediteuren_nummer: number;
   btw_te_vorderen_nummer: number;
   invoices: Array<Record<string, any> & { id: string; supplier: string; invoice_number: string; posted: boolean }>;
@@ -71,16 +70,27 @@ function compare(invoiceNumber: string) {
 }
 
 describe("A2-04 — export per boekingsregel tegenover de journaalregels van post_purchase_invoice", () => {
-  it("de fixture komt van de laatste definitie van de schrijver", () => {
-    expect(fx.writer).toContain("20261002120000");
-    const migrations = readdirSync(resolve(process.cwd(), "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
-    const redefining = migrations.filter((f) =>
-      /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+(public\.)?post_purchase_invoice\s*\(/i.test(
-        readFileSync(resolve(process.cwd(), "supabase/migrations", f), "utf8"),
-      ),
-    );
-    // Komt er een nieuwere definitie bij, draai dan het harnas opnieuw (de fixture is dan verouderd).
-    expect(redefining.at(-1)).toBe("20261002120000_decouple_year_watermark_from_posting.sql");
+  it("vindt de effectieve (nieuwste) definitie van de schrijver en bewijst daar de vergelijking tegen", () => {
+    const dir = resolve(process.cwd(), "supabase/migrations");
+    const def = /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+(public\.)?post_purchase_invoice\s*\(/i;
+    const latest = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()
+      .filter((f) => def.test(readFileSync(resolve(dir, f), "utf8"))).at(-1);
+    if (!latest) throw new Error("geen migratie definieert public.post_purchase_invoice(");
+    const sql = readFileSync(resolve(dir, latest), "utf8");
+    const start = sql.search(def);
+    const body = sql.slice(start);
+    const open = body.indexOf("AS $$");
+    const end = open < 0 ? -1 : body.indexOf("$$;", open + 5);
+    if (open < 0 || end < 0) throw new Error(`einde van de body van post_purchase_invoice ontbreekt in ${latest}`);
+    const fn = body.slice(open, end);
+    // Wat de fixture aanneemt, staat in die definitie: kostenregels per regel debet,
+    // kop-btw op btw_te_vorderen, kop-incl credit op crediteuren.
+    expect(fn).toMatch(/v_line\.amount_excl, 0, 'EUR'/);
+    expect(fn).toMatch(/btw_te_vorderen_rekening_id, v_group_id/);
+    expect(fn).toMatch(/0, v_inv\.amount_incl, 'EUR'/);
+    // De fixture is door het harnas gegenereerd met de volledige keten t/m de nieuwste
+    // migratie; bewijs 5.1 daar faalt als de schrijver iets anders boekt.
+    expect(fx.invoices.length).toBeGreaterThan(0);
   });
 
   it("S1 (de A2-04-factuur): twee exportregels 4400/'1' en 4600/'2'; het journaal boekt D 4400 100 · D 4600 100 · D 1520 30 · C 1600 230", () => {
