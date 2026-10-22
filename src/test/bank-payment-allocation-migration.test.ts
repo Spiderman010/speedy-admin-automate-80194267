@@ -55,7 +55,7 @@ describe("P5a 20261021180000 — vorm", () => {
     const files = readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((f) => f.endsWith(".sql")).sort();
     const pos = files.indexOf("20261021180000_add_atomic_bank_payment_link.sql");
     expect(pos).toBeGreaterThanOrEqual(0);
-    for (const prefix of ["20261010120000_", "20261017120000_", "20261018180000_", "20261020120000_"]) {
+    for (const prefix of ["20261010120000_", "20261017120000_", "20261018180000_", "20261020120000_", "20261021170000_"]) {
       expect(files.findIndex((f) => f.startsWith(prefix)), prefix).toBeLessThan(pos);
     }
     expect(files.indexOf("20261021183000_enforce_bank_payment_writer.sql")).toBe(pos + 1);

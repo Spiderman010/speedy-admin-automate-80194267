@@ -76,7 +76,8 @@ for f in \
   20261018120000_add_bank_transaction_corrections \
   20261018150000_keep_bank_description_on_correction \
   20261018180000_refine_release_hold_for_settled_history \
-  20261020120000_add_bank_transaction_import_fingerprint
+  20261020120000_add_bank_transaction_import_fingerprint \
+  20261021170000_btw_en_nan_validatie_in_schrijvers
 do
   q -f "$MIG/$f.sql"
 done
