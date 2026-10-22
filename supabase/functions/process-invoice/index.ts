@@ -433,6 +433,10 @@ Extra instructies:
       PURCHASE_WRITE_MIN_ROLE,
     );
     if (!recheck.allowed) {
+      // Het bestand staat al in de opslag (upload vóór de AI-aanroep). Eerst
+      // opruimen met de service role, dan pas de weigering: geen weesbestand.
+      const { error: removeError } = await supabase.storage.from("invoices").remove([filePath]);
+      if (removeError) console.error("Cleanup after refused recheck failed:", removeError);
       return new Response(JSON.stringify({ error: recheck.error }), {
         status: recheck.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

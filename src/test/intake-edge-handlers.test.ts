@@ -69,6 +69,19 @@ describe("process-invoice: rolcheck vóór elke schrijfactie (A2-06/B2-01)", () 
     expect(rec.inserts).toEqual([]);
   });
 
+  it("Codex-2: het al geüploade bestand wordt met de service role verwijderd vóór de weigering (geen weesbestand)", async () => {
+    const { status, rec } = await call("process-invoice", world("assistant", { roleLostAfterChecks: 1 }));
+    expect(status).toBe(403);
+    expect(rec.uploads).toHaveLength(1);
+    expect(rec.removes).toEqual([{ service: true, bucket: "invoices", paths: [rec.uploads[0].path] }]);
+  });
+
+  it("bij een geslaagde intake wordt niets verwijderd", async () => {
+    const { status, rec } = await call("process-invoice", world("assistant"));
+    expect(status).toBe(200);
+    expect(rec.removes).toEqual([]);
+  });
+
   it("assistant in een ándere organisatie dan die van de klant telt niet", async () => {
     const { status, rec } = await call("process-invoice", world(null, { roles: { [ORG_B]: "owner" }, memberships: [ORG_A, ORG_B] }));
     expect(status).toBe(403);
