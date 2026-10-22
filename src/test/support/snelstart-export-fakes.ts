@@ -99,6 +99,10 @@ class FakeQuery implements PromiseLike<{ data: any; error: any; count?: number |
     return this.add(`${col}=gte.${value}`, (r) => r[col] != null && String(r[col]) >= value);
   }
 
+  lte(col: string, value: string) {
+    return this.add(`${col}=lte.${value}`, (r) => r[col] != null && String(r[col]) <= value);
+  }
+
   lt(col: string, value: string) {
     return this.add(`${col}=lt.${value}`, (r) => r[col] != null && String(r[col]) < value);
   }
@@ -264,6 +268,7 @@ export const purchaseRow = (id: string, clientId: string, over: Row = {}): Row =
   status: "gecontroleerd",
   remaining_amount: 121,
   document_route: "pdf_route",
+  updated_at: "2026-10-20T08:00:00+00:00",
   ...over,
 });
 

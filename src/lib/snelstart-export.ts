@@ -280,7 +280,10 @@ export function assertSnelstartExportScope(
 // drie exacte gelijkheden in centen, dezelfde als `post_purchase_invoice`
 // (20261002120000, r. 255-281) plus de btw:
 //   Σ regel.excl = kop.excl,  kop.excl + kop.btw = kop.incl,  Σ regel.btw = kop.btw.
-// Bij een verschil wordt de factuur geweigerd, nooit gerepareerd.
+// Rondt de kop de btw over het totaal af (zoals de werkbank), en is het verschil
+// met de afronding per regel binnen de werkbanktolerantie ±max(0,02; 0,01·n), dan
+// wordt de kop-btw per tarief met de grootste-restmethode over de regels verdeeld
+// (allocateVatCents, H6-01). Bij een groter verschil wordt de factuur geweigerd.
 //
 // Grootboekrekening = `grootboekrekeningen.nummer` van de regel (dezelfde rekening
 // waarop `post_purchase_invoice` de regel debiteert), btw-code per regel volgens
@@ -311,6 +314,82 @@ function toPercentage(value: unknown): number | null {
 function lineVatCents(exclCents: number, percentage: number): number {
   const vat = Math.floor((Math.abs(exclCents) * percentage + 50) / 100);
   return exclCents < 0 ? -vat : vat;
+}
+
+/**
+ * De btw die SnelStart uit "bedrag incl. + btw-code" terugrekent (aanname, zoals
+ * het grootboekharnas: round(incl × p / (100 + p)), half van nul af), in centen.
+ */
+export function snelstartDerivedVatCents(inclCents: number, percentage: number): number {
+  if (percentage === 0) return 0;
+  const v = Math.floor((2 * Math.abs(inclCents) * percentage + 100 + percentage) / (2 * (100 + percentage)));
+  return inclCents < 0 ? -v : v;
+}
+
+/** Komt de toegewezen regel-btw ook teruggerekend uit het incl-bedrag terug? */
+function vatSurvivesBackCalculation(exclCents: number, vatCents: number, percentage: number): boolean {
+  return snelstartDerivedVatCents(exclCents + vatCents, percentage) === vatCents;
+}
+
+function subsets(order: readonly number[], k: number): number[][] {
+  // Deelverzamelingen van grootte k, in de voorkeursvolgorde van `order` (lexicografisch).
+  if (k === 0) return [[]];
+  const out: number[][] = [];
+  for (let i = 0; i <= order.length - k; i++) {
+    for (const rest of subsets(order.slice(i + 1), k - 1)) out.push([order[i], ...rest]);
+  }
+  return out;
+}
+
+/**
+ * H6-01/H6-01b — verdeelt de kop-btw (centen) met de grootste-restmethode, eerst
+ * over de tarieven en dan binnen elk tarief over de regels; bij gelijke rest telt
+ * de volgorde (tarief oplopend; regels in `sort_order, id`, de volgorde van
+ * `planned`). Elke regel krijgt de naar beneden afgeronde exacte btw of één cent
+ * meer (nooit meer dan één cent van exact), en Σ = `headerVat` exact.
+ *
+ * Fail-closed (H6-01b): elke regel moet ook TERUGGEREKEND uit zijn incl-bedrag
+ * dezelfde btw opleveren (`snelstartDerivedVatCents`), anders zou de cent in
+ * SnelStart stil wegvallen. Van de toewijzingen die dat halen wordt de eerste in
+ * de grootste-restvolgorde gekozen; bestaat er geen, dan null (weigeren).
+ */
+function allocateVatCents(planned: readonly { exclCents: number; percentage: number }[], headerVat: number): number[] | null {
+  const num = planned.map((p) => p.exclCents * p.percentage); // exacte btw × 100 (geheel getal)
+  const base = num.map((n) => Math.floor(n / 100));
+  const frac = num.map((n, i) => n - 100 * base[i]); // 0..99
+  const ok = (i: number, v: number) => vatSurvivesBackCalculation(planned[i].exclCents, v, planned[i].percentage);
+  const rates = [...new Set(planned.map((p) => p.percentage))].sort((a, b) => a - b);
+  const groups = rates.map((rate) => {
+    const idx = planned.map((p, i) => (p.percentage === rate ? i : -1)).filter((i) => i >= 0);
+    const g = idx.reduce((s, i) => s + num[i], 0);
+    const floor = Math.floor(g / 100);
+    return { idx, floor, frac: g - 100 * floor };
+  });
+  // Binnen één tarief: kies welke regels de extra cent krijgen.
+  const fillGroup = (gi: number, target: number, out: number[]): boolean => {
+    const { idx } = groups[gi];
+    const kr = target - idx.reduce((s, i) => s + base[i], 0);
+    const order = idx.filter((i) => frac[i] > 0).sort((a, b) => frac[b] - frac[a] || a - b);
+    if (kr < 0 || kr > order.length) return false;
+    // Regels die alleen met +1 terugrekenen, moeten +1 krijgen; regels die alleen
+    // zonder +1 terugrekenen, mogen het niet krijgen; de rest in restvolgorde.
+    const must = order.filter((i) => ok(i, base[i] + 1) && !ok(i, base[i]));
+    const can = order.filter((i) => ok(i, base[i] + 1) && ok(i, base[i]));
+    if (idx.some((i) => !ok(i, base[i]) && !(order.includes(i) && ok(i, base[i] + 1)))) return false;
+    if (must.length > kr || must.length + can.length < kr) return false;
+    for (const i of idx) out[i] = base[i];
+    for (const i of [...must, ...can.slice(0, kr - must.length)]) out[i] = base[i] + 1;
+    return true;
+  };
+  // Over de tarieven: Σ doel per tarief = kop-btw; doelen in grootste-restvolgorde geprobeerd.
+  const k = headerVat - groups.reduce((s, g) => s + g.floor, 0);
+  const groupOrder = groups.map((_, i) => i).filter((i) => groups[i].frac > 0).sort((a, b) => groups[b].frac - groups[a].frac || a - b);
+  if (k < 0 || k > groupOrder.length) return null;
+  for (const plus of subsets(groupOrder, k)) {
+    const out = [...base];
+    if (groups.every((g, gi) => fillGroup(gi, g.floor + (plus.includes(gi) ? 1 : 0), out))) return out;
+  }
+  return null;
 }
 
 function euro(cents: number): string {
@@ -402,7 +481,24 @@ function planPurchaseInvoice(
   }
   const sumVat = planned.reduce((s, p) => s + p.vatCents, 0);
   if (sumVat !== headerVat) {
-    return { reason: `de btw per boekingsregel (${euro(sumVat)}) wijkt af van de btw op de factuur (${euro(headerVat)})` };
+    // H6-01: de werkbank rondt de btw over het totaal af en accepteert een
+    // verschil van ±max(0,02; 0,01·n) (lineTolerance). Binnen precies die
+    // tolerantie wordt de kop-btw per tarief over de regels verdeeld; daarbuiten
+    // blijft het een weigering.
+    const toleranceCents = Math.max(2, Math.max(1, lines.length));
+    if (Math.abs(headerVat - sumVat) > toleranceCents) {
+      return { reason: `de btw per boekingsregel (${euro(sumVat)}) wijkt af van de btw op de factuur (${euro(headerVat)})` };
+    }
+    const allocated = allocateVatCents(planned, headerVat);
+    if (!allocated) {
+      return { reason: `de btw op de factuur (${euro(headerVat)}) is niet zo over de regels te verdelen dat SnelStart uit elk bedrag incl. btw dezelfde btw terugrekent (per regel afgerond: ${euro(sumVat)})` };
+    }
+    allocated.forEach((v, i) => { planned[i].vatCents = v; });
+  }
+  // H6-01b: elke rij moet ook teruggerekend (SnelStart: btw uit incl + code) zijn
+  // eigen regel-btw opleveren; anders weigeren in plaats van een stille cent.
+  if (planned.some((p) => !vatSurvivesBackCalculation(p.exclCents, p.vatCents, p.percentage))) {
+    return { reason: `de btw op de factuur (${euro(headerVat)}) is niet zo over de regels te verdelen dat SnelStart uit elk bedrag incl. btw dezelfde btw terugrekent` };
   }
 
   const label = purchaseInvoiceLabel(inv);

@@ -158,9 +158,10 @@ SELECT proof.line(proof.uid(2000, 4), 41, 0, 'Flyers',     10.00, 21, 4400);
 SELECT proof.line(proof.uid(2000, 4), 42, 1, 'Posters',    20.50, 21, 4400);
 SELECT proof.line(proof.uid(2000, 4), 43, 2, 'Visitekaart', 33.33, 21, 4400);
 
--- S5  VERSCHIL: de kop rondt de btw over het totaal af (2 × 1,50 @ 9% = 0,27),
---     per regel is het 0,14 + 0,14 = 0,28. Het grootboek boekt de kop-btw 0,27;
---     de export per regel kan dat niet weergeven en weigert de factuur.
+-- S5  de kop rondt de btw over het totaal af (2 × 1,50 @ 9% = 0,27), zoals de
+--     werkbank; per regel afgerond zou het 0,28 zijn. De export verdeelt de kop-btw
+--     (0,14 + 0,13, H6-01) en dat rekent SnelStart toevallig ook terug
+--     (1,64 → 0,14; 1,63 → 0,13). Dat geldt NIET algemeen: zie S9.
 SELECT proof.invoice(5, 'Boekhandel VOF', 'B-5', 3.00, 0.27, 3.27, 9);
 SELECT proof.line(proof.uid(2000, 5), 51, 0, 'Tijdschrift A', 1.50, 9, 4600);
 SELECT proof.line(proof.uid(2000, 5), 52, 1, 'Tijdschrift B', 1.50, 9, 4600);
@@ -176,3 +177,10 @@ SELECT proof.invoice(7, 'Zonder Regels BV', 'Z-1', 100.00, 21.00, 121.00, 21);
 -- S8  een regel zonder grootboekrekening: de schrijver weigert, de export ook.
 SELECT proof.invoice(8, 'Geen Rekening BV', 'R-1', 100.00, 21.00, 121.00, 21);
 SELECT proof.line(proof.uid(2000, 8), 81, 0, 'Diversen', 100.00, 21, NULL);
+
+-- S9  VERSCHIL (H6-01b): 2 × 1,30 @ 21%, kop-btw over het totaal 0,55. Elke
+--     verdeling geeft een regel 1,58, en daaruit rekent SnelStart 0,27 terug, niet
+--     0,28. Het grootboek boekt 0,55; de export weigert de factuur.
+SELECT proof.invoice(9, 'Kantoorshop BV', 'K-9', 2.60, 0.55, 3.15, 21);
+SELECT proof.line(proof.uid(2000, 9), 91, 0, 'Pennen',  1.30, 21, 4400);
+SELECT proof.line(proof.uid(2000, 9), 92, 1, 'Mappen',  1.30, 21, 4400);

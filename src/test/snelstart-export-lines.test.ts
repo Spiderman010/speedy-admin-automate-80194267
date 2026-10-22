@@ -144,7 +144,7 @@ describe("A2-04 — inkoop per boekingsregel", () => {
       ["een regelbedrag met subcenten (A3-16)", inv("p", { amount_excl: 100, btw_amount: 21, amount_incl: 121 }), [line("l", "p", { amount_excl: 100.005 })], /geen geldig bedrag in hele centen/],
       ["regels die excl. niet op de kop sluiten", inv("p"), [line("l", "p", { amount_excl: 100, btw_percentage: 21 })], /sluiten niet aan op de factuur \(excl\. btw €200,00\)/],
       ["een kop die zelf niet sluit", inv("p", { amount_excl: 100, btw_amount: 20, amount_incl: 121 }), [line("l", "p")], /de factuur sluit niet/],
-      ["btw per regel die door afronding afwijkt van de kop-btw", inv("p", { amount_excl: 3, btw_amount: 0.27, amount_incl: 3.27 }), [line("a", "p", { amount_excl: 1.5, btw_percentage: 9 }), line("b", "p", { amount_excl: 1.5, btw_percentage: 9, sort_order: 1 })], /btw per boekingsregel \(€0,28\) wijkt af van de btw op de factuur \(€0,27\)/],
+      ["kop-btw buiten de werkbanktolerantie (H6-01)", inv("p", { amount_excl: 100, btw_amount: 21.05, amount_incl: 121.05 }), [line("a", "p", { amount_excl: 100, btw_percentage: 21 })], /btw per boekingsregel \(€21,00\) wijkt af van de btw op de factuur \(€21,05\)/],
       ["een kop zonder bedrag incl.", inv("p", { amount_incl: null }), [line("l", "p")], /mist een geldig bedrag/],
       ["een factuur zonder datum", inv("p", { invoice_date: null }), [line("l", "p")], /geen factuurdatum/],
     ];
@@ -180,6 +180,99 @@ describe("A2-04 — inkoop per boekingsregel", () => {
       expect(build([inv("p-1", { status: "betaald", remaining_amount: 0 })], A204_LINES, ACCOUNTS, true).exportedInvoiceIds).toEqual(["p-1"]);
       expect(build([inv("p-1", { status: "betaald", remaining_amount: 230 })], A204_LINES, ACCOUNTS, false).exportedInvoiceIds).toEqual(["p-1"]);
     });
+  });
+});
+
+describe("H6-01 — kop-btw over het totaal afgerond (zoals de werkbank): verdeeld per tarief, grootste rest, teruggerekend getoetst", () => {
+  const parse = (r: string) => r.split(";").map((f) => f.replace(/^"|"$/g, ""));
+  const incl = (r: string) => Math.round(Number(parse(r)[3].replace(",", ".")) * 100);
+  const pct = (r: string) => ({ "1": 21, "2": 9, "0": 0 })[parse(r)[4]] as number;
+  // SnelStart rekent de btw terug uit incl + code (aanname uit het grootboekharnas).
+  const derived = (r: string) => {
+    const p = pct(r), i = incl(r);
+    return p === 0 ? 0 : Math.sign(i) * Math.round((Math.abs(i) * p) / (100 + p));
+  };
+
+  it("H6-01b: 2 × 1,30 @ 21% met kop 0,55 is niet terug te rekenen (1,58 → 0,27) — geweigerd met reden", () => {
+    const plan = build(
+      [inv("p", { amount_excl: 2.6, btw_amount: 0.55, amount_incl: 3.15 })],
+      [line("b", "p", { amount_excl: 1.3, sort_order: 1 }), line("a", "p", { amount_excl: 1.3, sort_order: 0 })],
+    );
+    expect(plan.rows).toEqual([]);
+    expect(reasonOf(plan, "p")).toMatch(/SnelStart uit elk bedrag incl\. btw dezelfde btw terugrekent/);
+  });
+
+  it("kiest een alternatieve toewijzing die wél terugrekent: 2 × 1,30 @ 21% + 3 × 1,50 @ 9%, kop 0,95", () => {
+    // Grootste rest zou 21% → 0,55 geven (niet terug te rekenen); het alternatief 21% → 0,54, 9% → 0,41 sluit wel.
+    const plan = build(
+      [inv("p", { amount_excl: 7.1, btw_amount: 0.95, amount_incl: 8.05 })],
+      [
+        line("a", "p", { amount_excl: 1.3, sort_order: 0 }),
+        line("b", "p", { amount_excl: 1.3, sort_order: 1 }),
+        line("c", "p", { amount_excl: 1.5, btw_percentage: 9, grootboekrekening_id: "gb-4600", sort_order: 2 }),
+        line("d", "p", { amount_excl: 1.5, btw_percentage: 9, grootboekrekening_id: "gb-4600", sort_order: 3 }),
+        line("e", "p", { amount_excl: 1.5, btw_percentage: 9, grootboekrekening_id: "gb-4600", sort_order: 4 }),
+      ],
+    );
+    expect(plan.refused).toEqual([]);
+    expect(plan.rows.map((r) => parse(r)[3])).toEqual(["1,57", "1,57", "1,64", "1,64", "1,63"]);
+    expect(plan.rows.reduce((s, r) => s + derived(r), 0)).toBe(95);
+  });
+
+  it("H6-01c: grens van de tolerantie — 2,50 @ 21% + 1,50 @ 9%: kop 0,65 (verschil 2) geëxporteerd, kop 0,64 geweigerd", () => {
+    const lines = [
+      line("a", "p", { amount_excl: 2.5, sort_order: 0 }),
+      line("b", "p", { amount_excl: 1.5, btw_percentage: 9, grootboekrekening_id: "gb-4600", sort_order: 1 }),
+    ];
+    const ok = build([inv("p", { amount_excl: 4, btw_amount: 0.65, amount_incl: 4.65 })], lines);
+    expect(ok.rows.map((r) => parse(r)[3])).toEqual(["3,02", "1,63"]);
+    const nee = build([inv("p", { amount_excl: 4, btw_amount: 0.64, amount_incl: 4.64 })], lines);
+    expect(nee.rows).toEqual([]);
+    expect(reasonOf(nee, "p")).toMatch(/btw per boekingsregel \(€0,67\) wijkt af van de btw op de factuur \(€0,64\)/);
+  });
+
+  it("H6-01d: gelijke rest tussen tarieven — het lagere tarief krijgt de extra cent eerst", () => {
+    // 21%: 2,50 → 0,525; 9%: 1,50 → 0,135; beide rest 50. Kop 0,66 = 0,65 + 1 cent → naar 9%.
+    const plan = build(
+      [inv("p", { amount_excl: 4, btw_amount: 0.66, amount_incl: 4.66 })],
+      [
+        line("a", "p", { amount_excl: 2.5, sort_order: 0 }),
+        line("b", "p", { amount_excl: 1.5, btw_percentage: 9, grootboekrekening_id: "gb-4600", sort_order: 1 }),
+      ],
+    );
+    expect(plan.rows.map((r) => parse(r)[3])).toEqual(["3,02", "1,64"]);
+  });
+
+  it("property: elke geëxporteerde factuur sluit exact op de kop én teruggerekend per rij; elke regel < 1 cent van exact", () => {
+    let seed = 20261021;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+    let exported = 0;
+    for (let t = 0; t < 3000; t++) {
+      const n = 1 + Math.floor(rnd() * 6);
+      const sign = rnd() < 0.2 ? -1 : 1;
+      const lines = Array.from({ length: n }, (_, i) =>
+        line(`l${i}`, "p", { amount_excl: (sign * Math.floor(rnd() * 50000 + 1)) / 100, btw_percentage: [21, 9, 0][Math.floor(rnd() * 3)], sort_order: i }),
+      );
+      const exclC = lines.map((l) => Math.round(l.amount_excl * 100));
+      const exact = lines.map((l, i) => (exclC[i] * (l.btw_percentage as number)) / 100);
+      const sumExcl = exclC.reduce((a, b) => a + b, 0);
+      // zoals computeLineTotals + deriveHeaderFromLines: btw over het totaal afgerond
+      const tot = exact.reduce((a, b) => a + b, 0);
+      const vat = Math.sign(tot) * Math.round(Math.abs(tot));
+      const plan = build([inv("p", { amount_excl: sumExcl / 100, btw_amount: vat / 100, amount_incl: (sumExcl + vat) / 100 })], lines);
+      if (!plan.rows.length) {
+        expect(reasonOf(plan, "p")).toMatch(/terugrekent/);
+        continue;
+      }
+      exported++;
+      expect(plan.rows.reduce((s, r) => s + incl(r), 0)).toBe(sumExcl + vat);
+      expect(plan.rows.reduce((s, r) => s + derived(r), 0)).toBe(vat);
+      plan.rows.forEach((r, i) => {
+        expect(derived(r)).toBe(incl(r) - exclC[i]);
+        expect(Math.abs(incl(r) - exclC[i] - exact[i])).toBeLessThan(1);
+      });
+    }
+    expect(exported).toBeGreaterThan(2000);
   });
 });
 
