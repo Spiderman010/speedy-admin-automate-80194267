@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "./useAuth";
 import type { Tables, TablesInsert } from "@/integrations/supabase/types";
 
@@ -10,13 +11,18 @@ export function useClients(organizationId?: string, enabled = true) {
   const { user } = useAuth();
   return useQuery({
     queryKey: ["clients", user?.id ?? "", organizationId ?? "all"],
-    queryFn: async () => {
-      let query = supabase.from("clients").select("*").order("name");
-      if (organizationId) query = query.eq("organization_id", organizationId);
-      const { data, error } = await query;
-      if (error) throw error;
-      return data as Client[];
-    },
+    // Volledig voorbij de rijgrens van PostgREST, in de vorige volgorde (naam)
+    // met id als unieke tiebreaker.
+    queryFn: () =>
+      fetchAllRows<Client>(async (from, to) => {
+        let query = supabase.from("clients").select("*");
+        if (organizationId) query = query.eq("organization_id", organizationId);
+        const { data, error } = await query
+          .order("name", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to);
+        return { data: data as Client[] | null, error };
+      }),
     enabled: !!user && enabled,
   });
 }

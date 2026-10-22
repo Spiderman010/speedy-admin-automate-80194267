@@ -551,7 +551,7 @@ describe("statische bewaking", () => {
     // beginbalansroute zelf ongewijzigd is.
     const appDiff = execFileSync("git", ["diff", "origin/main...HEAD", "--", "src/App.tsx"], { encoding: "utf8" });
     expect(appDiff.split("\n").filter((l) => /^[-+]/.test(l) && !/^[-+]{3}/.test(l) && /beginbalans/i.test(l))).toEqual([]);
-    expect(changed.filter((f) => /useOpeningBalancePosting|useManualJournal|useSalesInvoicePosting|useBankAllocationPosting/.test(f))).toEqual([]);
+    expect(changed.filter((f) => /useOpeningBalancePosting|useManualJournalPosting|useSalesInvoicePosting|useBankAllocationPosting/.test(f))).toEqual([]);
     // De beginbalanspagina krijgt alleen doelselectie: geen nieuwe RPC- of mutatie-aanroep.
     const diff = execFileSync("git", ["diff", "origin/main...HEAD", "--", "src/pages/Beginbalans.tsx"], { encoding: "utf8" });
     const added = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"));

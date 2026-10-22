@@ -21,6 +21,8 @@ import { useClients } from "@/hooks/useClients";
 import { useAuth } from "@/hooks/useAuth";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { queryClient } from "@/lib/query-client";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -336,6 +338,26 @@ function matchTransactionToTemplate(tx: any, activeRules: any[]) {
   return null;
 }
 
+/**
+ * Alle open bankregels (niet_gematcht) van de organisatie, volledig: zonder
+ * paginering verwerkte "Regels toepassen" stil een willekeurige 1000 (geen
+ * volgorde) en meldde dat als totaal. Vaste volgorde op id. De hele lijst is
+ * binnen vóórdat er iets wordt geschreven, zodat het bijwerken van regels de
+ * paginavensters niet kan verschuiven.
+ */
+async function fetchAllUnmatchedBankTransactions(organizationId: string) {
+  return fetchAllRows<Tables<"bank_transactions">>(async (from, to) => {
+    const { data, error } = await supabase
+      .from("bank_transactions")
+      .select("*")
+      .eq("match_status", "niet_gematcht")
+      .eq("organization_id", organizationId)
+      .order("id", { ascending: true })
+      .range(from, to);
+    return { data, error };
+  });
+}
+
 function HerkenningsregelsTab() {
   const { activeOrganizationId, isReady } = useActiveOrganization();
   const orgEnabled = isReady && activeOrganizationId !== null;
@@ -422,14 +444,7 @@ function HerkenningsregelsTab() {
         .filter(t => t.actief && t.zoekterm)
         .sort((a, b) => (b.prioriteit ?? 0) - (a.prioriteit ?? 0));
 
-      const { data: transactions, error } = await supabase
-        .from("bank_transactions")
-        .select("*")
-        .eq("match_status", "niet_gematcht")
-        .eq("organization_id", activeOrganizationId);
-      if (error) throw error;
-
-      const txList = transactions || [];
+      const txList = await fetchAllUnmatchedBankTransactions(activeOrganizationId);
       let skippedNoTemplate = 0;
       let skippedNoLedger = 0;
       let skippedInkoopfactuur = 0;
@@ -514,19 +529,14 @@ function HerkenningsregelsTab() {
         .filter(t => t.actief && t.zoekterm)
         .sort((a, b) => (b.prioriteit ?? 0) - (a.prioriteit ?? 0));
 
-      const { data: transactions, error } = await supabase
-        .from("bank_transactions")
-        .select("*")
-        .eq("match_status", "niet_gematcht")
-        .eq("organization_id", activeOrganizationId);
-      if (error) throw error;
+      const transactions = await fetchAllUnmatchedBankTransactions(activeOrganizationId);
 
       let countGrootboek = 0;
       let countVraagpost = 0;
       let skippedVraagpostExists = 0;
       let skipped = 0;
 
-      for (const tx of transactions || []) {
+      for (const tx of transactions) {
         const rule = matchTransactionToTemplate(tx, activeRules);
         if (!rule) { skipped++; continue; }
 

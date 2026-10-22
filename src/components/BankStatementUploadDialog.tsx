@@ -12,26 +12,43 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, AlertTriangle, Copy } from "lucide-react";
+import { Upload, FileText, Loader2, CheckCircle2, AlertCircle, X, AlertTriangle, Copy, Ban } from "lucide-react";
 import {
   parseBankStatementFull,
   detectDuplicates,
   importFingerprints,
+  statementImportBlockers,
+  checkStatementAccount,
+  accountCheckBlocker,
+  type ParsedStatement,
   type ParsedTransaction,
   type DuplicateInfo,
   type ExistingBankTransactionForDuplicates,
+  type StatementAccountCheck,
+  type StatementAccountClient,
+  type StatementImportBlocker,
 } from "@/lib/bank-statement-parser";
+import { gatedInvoiceCandidates, NO_REJECTIONS, preselectCandidate } from "@/lib/bank-candidate-gate";
 import { applyBookingTemplatesToTransactions } from "@/lib/booking-template-utils";
+import type { InvoiceCandidate } from "@/components/BankMatchDialog";
 import type { Tables } from "@/integrations/supabase/types";
 import type { BookingTemplate } from "@/hooks/useBookingTemplates";
 
 type PurchaseInvoice = Tables<"purchase_invoices">;
+type SalesInvoice = Tables<"sales_invoices">;
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  clients: { id: string; name: string; ibans?: string[] | null }[];
-  invoices: PurchaseInvoice[];
+  /** The administraties of the active organisation, with their registered IBANs. */
+  clients: StatementAccountClient[];
+  /**
+   * Loads every purchase and sales invoice of exactly this client, fresh from
+   * the server, for the invoice suggestions. Not what the bank page happens to
+   * have loaded for its own selection: importing into another administratie
+   * would then get no suggestions at all (review P2-5). Without it: no suggestions.
+   */
+  loadInvoices?: (clientId: string) => Promise<{ purchases: PurchaseInvoice[]; sales: SalesInvoice[] }>;
   /** Resolves `false` when the import did not start at all: the preview then stays open. */
   onImport: (clientId: string, transactions: MatchedTransaction[]) => Promise<void | false>;
   /**
@@ -47,7 +64,12 @@ interface Props {
 export interface MatchedTransaction extends ParsedTransaction {
   matchedInvoiceId: string | null;
   matchConfidence: number | null;
-  matchStatus: "gematcht" | "suggestie" | "niet_gematcht" | "handmatig_geboekt";
+  /**
+   * Never "gematcht": the import only proposes an invoice. Linking a payment,
+   * and with it the payment status and the open amount of the invoice, is a
+   * separate, confirmed step that the database derives (D1).
+   */
+  matchStatus: "suggestie" | "niet_gematcht" | "handmatig_geboekt";
   matchedInvoiceLabel: string | null;
   grootboekrekeningId?: string | null;
   btwPercentage?: number | null;
@@ -59,110 +81,92 @@ export interface MatchedTransaction extends ParsedTransaction {
   templateName?: string | null;
 }
 
-function autoMatch(
-  transactions: ParsedTransaction[],
-  invoices: PurchaseInvoice[]
-): MatchedTransaction[] {
-  return transactions.map((tx) => {
-    let bestMatch: PurchaseInvoice | null = null;
-    let bestScore = 0;
-
-    for (const inv of invoices) {
-      let score = 0;
-      if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 0.02) {
-        score += 60;
-      } else if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 1) {
-        score += 30;
-      }
-      if (inv.invoice_number && tx.description) {
-        const invNum = inv.invoice_number.toLowerCase().replace(/\s/g, "");
-        const desc = tx.description.toLowerCase().replace(/\s/g, "");
-        if (desc.includes(invNum)) score += 30;
-      }
-      if (inv.invoice_number && tx.reference) {
-        const invNum = inv.invoice_number.toLowerCase().replace(/\s/g, "");
-        const ref = tx.reference.toLowerCase().replace(/\s/g, "");
-        if (ref.includes(invNum)) score += 25;
-      }
-      if (inv.supplier && tx.description) {
-        const supplier = inv.supplier.toLowerCase();
-        const desc = tx.description.toLowerCase();
-        if (desc.includes(supplier)) score += 20;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = inv;
-      }
-    }
-
-    const isMatch = bestScore >= 70;
-    const isSuggestion = bestScore >= 40 && bestScore < 70;
-
-    return {
-      ...tx,
-      matchedInvoiceId: isMatch || isSuggestion ? bestMatch!.id : null,
-      matchConfidence: bestScore > 0 ? Math.min(bestScore, 100) : null,
-      matchStatus: isMatch ? "gematcht" : isSuggestion ? "suggestie" : "niet_gematcht",
-      matchedInvoiceLabel: isMatch || isSuggestion
-        ? `${bestMatch!.supplier} - ${bestMatch!.invoice_number || "?"}`
-        : null,
-    };
-  });
-}
-
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(amount);
 
-function invoiceLabel(inv: PurchaseInvoice) {
-  const amt = inv.amount_incl != null ? ` (€${inv.amount_incl.toFixed(2)})` : "";
-  return `${inv.supplier} - ${inv.invoice_number || "?"}${amt}`;
+function candidateLabel(c: InvoiceCandidate) {
+  const amt = c.amount != null ? ` (${formatCurrency(c.amount)} open)` : "";
+  return `${c.name} - ${c.invoiceNumber || "?"}${amt}`;
 }
+
+function withSuggestion(tx: ParsedTransaction, candidate: InvoiceCandidate | null): MatchedTransaction {
+  return {
+    ...tx,
+    matchedInvoiceId: candidate?.id ?? null,
+    matchConfidence: candidate ? Math.min(candidate.score, 100) : null,
+    matchStatus: candidate ? "suggestie" : "niet_gematcht",
+    matchedInvoiceLabel: candidate ? candidateLabel(candidate) : null,
+  };
+}
+
+const ACCOUNT_CONFIRM_TEXT: Record<Extract<StatementAccountCheck, { status: "confirm" }>["reason"], (client: string, iban: string | null, others: string[]) => string> = {
+  no_statement_iban: (client) =>
+    `Het afschrift noemt geen herkenbaar IBAN. Er kan dus niet worden gecontroleerd of het bij ${client} hoort.`,
+  no_client_iban: (client, iban) =>
+    `${client} heeft geen IBAN vastgelegd, en rekening ${iban} is bij geen enkele administratie bekend.`,
+  different_iban: (client, iban) =>
+    `Rekening ${iban} is niet het vastgelegde IBAN van ${client}, en hoort ook niet bij een andere administratie.`,
+  shared_iban: (client, iban, others) =>
+    `Rekening ${iban} is vastgelegd bij ${client}, maar ook bij ${others.join(", ")}.`,
+};
 
 export const DUPLICATE_CHECK_FAILED_MESSAGE =
   "De bestaande banktransacties van deze klant konden niet worden geladen. Importeren is geblokkeerd, zodat er geen dubbele transacties ontstaan. Probeer het opnieuw.";
 
-export function BankStatementUploadDialog({ open, onOpenChange, clients, invoices, onImport, loadExistingTransactions, bookingTemplates = [], defaultClientId }: Props) {
+export function BankStatementUploadDialog({ open, onOpenChange, clients, loadInvoices, onImport, loadExistingTransactions, bookingTemplates = [], defaultClientId }: Props) {
   const [clientId, setClientId] = useState(defaultClientId ?? "");
 
   // Sync clientId whenever the dialog (re-)opens with a preselected client
   useEffect(() => {
     if (open) setClientId(defaultClientId ?? "");
   }, [open, defaultClientId]);
+  // Only an administratie that is actually offered counts as chosen: a
+  // preselection from a previous organisation (or a removed client) leaves the
+  // choice empty and the drop zone closed (B2-10).
+  const selectedClientId = clients.some((c) => c.id === clientId) ? clientId : "";
   const [parsed, setParsed] = useState<MatchedTransaction[] | null>(null);
+  const [candidatesByRow, setCandidatesByRow] = useState<InvoiceCandidate[][]>([]);
   const [duplicateInfos, setDuplicateInfos] = useState<DuplicateInfo[]>([]);
   const [selected, setSelected] = useState<boolean[]>([]);
-  const [openingBalance, setOpeningBalance] = useState<number | null>(null);
-  const [closingBalance, setClosingBalance] = useState<number | null>(null);
+  const [statementSummary, setStatementSummary] = useState<Pick<ParsedStatement, "openingBalance" | "closingBalance" | "sections" | "notBooked"> | null>(null);
   const [importing, setImporting] = useState(false);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   // The client the preview was built for (duplicates, invoices, IBAN). The
   // import always writes to this client, never to a later dropdown change.
   const [previewClientId, setPreviewClientId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Everything that blocks this file: unreadable lines, a balance difference,
+  // another currency, several accounts, an account of another administratie.
+  const [blockers, setBlockers] = useState<StatementImportBlocker[]>([]);
+  const [accountCheck, setAccountCheck] = useState<StatementAccountCheck | null>(null);
+  const [accountConfirmed, setAccountConfirmed] = useState(false);
+  const [suggestionsUnavailable, setSuggestionsUnavailable] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   // Ignores a duplicate check that finishes after the user started over.
   const checkToken = useRef(0);
+  // Unmounted (e.g. remounted after an organisation switch): a file still being
+  // read or checked must not fill any preview any more.
+  useEffect(() => () => { checkToken.current++; }, []);
 
-  // IBAN mismatch warning state
-  const [ibanWarning, setIbanWarning] = useState<{ fileIban: string; clientName: string } | null>(null);
-  const [pendingFileText, setPendingFileText] = useState<string | null>(null);
-  const [pendingClientId, setPendingClientId] = useState<string | null>(null);
+  const resetPreview = () => {
+    setParsed(null);
+    setCandidatesByRow([]);
+    setPreviewClientId(null);
+    setDuplicateInfos([]);
+    setSelected([]);
+    setStatementSummary(null);
+    setSuggestionsUnavailable(false);
+    setAccountCheck(null);
+    setAccountConfirmed(false);
+  };
 
-  const processFile = useCallback(async (text: string, forClientId: string, startedToken?: number) => {
-    // One token per user action, taken before anything is awaited; closing the
-    // dialog or choosing another file invalidates it.
-    const token = startedToken ?? ++checkToken.current;
+  const processFile = useCallback(async (
+    statement: ParsedStatement,
+    forClientId: string,
+    account: StatementAccountCheck,
+    token: number,
+  ) => {
     if (token !== checkToken.current) return;
-    const statement = parseBankStatementFull(text);
-    if (!statement.transactions.length) {
-      setCheckingDuplicates(false);
-      setError("Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
-      return;
-    }
-    if (!forClientId) {
-      setCheckingDuplicates(false);
-      return;
-    }
 
     // Fail closed: without the client's stored transactions there is no
     // duplicate check, so nothing may be offered for import.
@@ -179,6 +183,19 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     }
     if (token !== checkToken.current) return;
 
+    // The invoices of the import client itself. A failure costs only the
+    // suggestions, never the import: the rows then come in as "niet gematcht".
+    let loaded: { purchases: PurchaseInvoice[]; sales: SalesInvoice[] } = { purchases: [], sales: [] };
+    let invoicesUnavailable = false;
+    if (loadInvoices) {
+      try {
+        loaded = await loadInvoices(forClientId);
+      } catch {
+        invoicesUnavailable = true;
+      }
+      if (token !== checkToken.current) return;
+    }
+
     // Over the whole statement, before any selection, so a line's position —
     // and with it its fingerprint — never depends on what the user ticks.
     let fingerprints: (string | null)[] = statement.transactions.map(() => null);
@@ -190,80 +207,109 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     if (token !== checkToken.current) return;
     setCheckingDuplicates(false);
     setPreviewClientId(forClientId);
+    setStatementSummary({
+      openingBalance: statement.openingBalance,
+      closingBalance: statement.closingBalance,
+      sections: statement.sections,
+      notBooked: statement.notBooked,
+    });
+    setAccountCheck(account);
+    setAccountConfirmed(false);
 
-    setOpeningBalance(statement.openingBalance);
-    setClosingBalance(statement.closingBalance);
-
-    // Only match against invoices for the selected client
-    const clientInvoices = invoices.filter(i => i.client_id === forClientId);
-    const matched = autoMatch(statement.transactions, clientInvoices);
-    const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, forClientId)
-      .map((t, i) => ({ ...t, importFingerprint: fingerprints[i] ?? null, importSource: t.source ?? null }));
+    // Invoice suggestions only through the safe-match gate: same direction,
+    // same administratie, an open amount, identity evidence, and no
+    // preselection on a tied top score. A reversal is never a payment.
+    const clientPurchases = loaded.purchases.filter((i) => i.client_id === forClientId);
+    const clientSales = loaded.sales.filter((i) => i.client_id === forClientId);
+    const rowCandidates = statement.transactions.map((tx) =>
+      tx.isReversal
+        ? []
+        : gatedInvoiceCandidates(
+            { id: "", client_id: forClientId, amount: tx.amount, description: tx.description, reference: tx.reference },
+            clientPurchases,
+            clientSales,
+            NO_REJECTIONS,
+          ),
+    );
+    const suggested = statement.transactions.map((tx, i) => withSuggestion(tx, preselectCandidate(rowCandidates[i])));
+    const withTemplates = applyBookingTemplatesToTransactions(suggested, bookingTemplates, forClientId)
+      .map((t, i) => {
+        // An invoice suggestion wins over a recognition rule: coding a payment
+        // of an open invoice directly on an expense account books the cost twice.
+        const row = suggested[i].matchStatus === "suggestie" ? suggested[i] : t;
+        return { ...row, importFingerprint: fingerprints[i] ?? null, importSource: row.source ?? null };
+      });
+    setCandidatesByRow(rowCandidates);
+    setSuggestionsUnavailable(invoicesUnavailable);
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(statement.transactions, existing);
     setDuplicateInfos(dupInfos);
     setSelected(dupInfos.map(d => !d.isDuplicate));
-  }, [invoices, loadExistingTransactions, bookingTemplates]);
+  }, [loadInvoices, loadExistingTransactions, bookingTemplates]);
 
   const handleFile = useCallback(async (file: File) => {
     setError(null);
+    setBlockers([]);
     // The client is fixed the moment a file is chosen: the dropdown closes
     // before the file is even read, and everything below uses this value.
-    const forClientId = clientId;
+    const forClientId = selectedClientId;
     if (!forClientId) return;
     const token = ++checkToken.current;
     setCheckingDuplicates(true);
     try {
       const text = await file.text();
       if (token !== checkToken.current) return; // dialog closed or another file chosen
+      const client = clients.find((c) => c.id === forClientId);
+      if (!client) {
+        setCheckingDuplicates(false);
+        setError("Kies een administratie uit de lijst.");
+        return;
+      }
       const statement = parseBankStatementFull(text);
-
-      // Check IBAN match
-      if (statement.accountIban) {
-        const client = clients.find(c => c.id === forClientId);
-        const clientIbans = (client?.ibans || []).map(i => i.replace(/\s/g, "").toUpperCase());
-        const fileIban = statement.accountIban.replace(/\s/g, "").toUpperCase();
-
-        if (clientIbans.length > 0 && !clientIbans.includes(fileIban)) {
-          setCheckingDuplicates(false);
-          setIbanWarning({ fileIban: statement.accountIban, clientName: client?.name || "" });
-          setPendingFileText(text);
-          setPendingClientId(forClientId);
-          return;
-        }
+      if (!statement.transactions.length && !statement.errors.length) {
+        setCheckingDuplicates(false);
+        setError(statement.notBooked.length > 0
+          ? "Geen geboekte transacties in dit bestand: alle regels zijn nog niet door de bank geboekt (bijv. PDNG)."
+          : "Geen transacties gevonden in dit bestand. Controleer of het een geldig MT940 of CAMT.053 bestand is.");
+        return;
       }
 
-      await processFile(text, forClientId, token);
+      // Nothing is offered for import while anything in the file is unreadable,
+      // out of balance, not in euro, of several accounts, or of another
+      // administratie.
+      const account = checkStatementAccount(statement, client, clients);
+      const found = statementImportBlockers(statement);
+      const administration = accountCheckBlocker(account, client.name);
+      if (administration) found.push(administration);
+      if (found.length > 0) {
+        setCheckingDuplicates(false);
+        setBlockers(found);
+        return;
+      }
+
+      await processFile(statement, forClientId, account, token);
     } catch (e: any) {
       if (token !== checkToken.current) return;
       setCheckingDuplicates(false);
       setError(`Fout bij verwerken: ${e.message}`);
     }
-  }, [clientId, clients, processFile]);
+  }, [selectedClientId, clients, processFile]);
 
   const updateMatch = (index: number, invoiceId: string | null) => {
     if (!parsed) return;
+    const row = parsed[index];
+    // Only a candidate that passed the gate can become a suggestion.
+    const candidate = invoiceId ? candidatesByRow[index]?.find((c) => c.id === invoiceId) ?? null : null;
+    if (invoiceId && !candidate) return;
+    // "No suggestion" leaves a row coded by a recognition rule as it is.
+    if (!candidate && row.matchStatus !== "suggestie") return;
     const updated = [...parsed];
-    if (!invoiceId) {
-      updated[index] = {
-        ...updated[index],
-        matchedInvoiceId: null,
-        matchConfidence: null,
-        matchStatus: "niet_gematcht",
-        matchedInvoiceLabel: null,
-      };
-    } else {
-      const inv = invoices.find(i => i.id === invoiceId && i.client_id === previewClientId);
-      if (!inv) return;
-      updated[index] = {
-        ...updated[index],
-        matchedInvoiceId: invoiceId,
-        matchConfidence: 100,
-        matchStatus: "gematcht",
-        matchedInvoiceLabel: inv ? invoiceLabel(inv) : null,
-      };
-    }
+    updated[index] = {
+      ...withSuggestion(row, candidate),
+      importFingerprint: row.importFingerprint,
+      importSource: row.importSource,
+    };
     setParsed(updated);
   };
 
@@ -275,10 +321,15 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     });
   };
 
+  const accountNeedsConfirmation = accountCheck?.status === "confirm";
+
   const handleImport = async () => {
     const importClientId = previewClientId;
     if (!importClientId || !parsed) return;
     if (!parsed.some((_, i) => selected[i])) return;
+    // Fail closed: an account that is not tied to this administratie is only
+    // imported after the explicit confirmation.
+    if (accountCheck?.status !== "match" && !(accountCheck?.status === "confirm" && accountConfirmed)) return;
     setImporting(true);
     setError(null);
     try {
@@ -310,12 +361,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
       // Nothing was attempted (e.g. the pre-import check failed): keep the
       // reviewed preview, so the user can simply try again.
       if ((await onImport(importClientId, toImport)) === false) return;
-      setParsed(null);
-      setPreviewClientId(null);
-      setDuplicateInfos([]);
-      setSelected([]);
-      setOpeningBalance(null);
-      setClosingBalance(null);
+      resetPreview();
       onOpenChange(false);
     } finally {
       setImporting(false);
@@ -323,32 +369,19 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
   };
 
   const selectedCount = selected.filter(Boolean).length;
-  const matchedCount = parsed?.filter((t, i) => selected[i] && t.matchStatus === "gematcht").length ?? 0;
   const suggestedCount = parsed?.filter((t, i) => selected[i] && t.matchStatus === "suggestie").length ?? 0;
   const templateCount = parsed?.filter((t, i) => selected[i] && t.matchStatus === "handmatig_geboekt").length ?? 0;
   const duplicateCount = duplicateInfos.filter(d => d.isDuplicate).length;
-
-  // Balance check
-  const balanceCheck = (() => {
-    if (openingBalance === null || closingBalance === null || !parsed) return null;
-    const sum = parsed.reduce((acc, tx) => acc + tx.amount, 0);
-    const diff = Math.abs(openingBalance + sum - closingBalance);
-    return diff <= 0.01;
-  })();
+  const previewClientName = clients.find((c) => c.id === previewClientId)?.name ?? "";
 
   return (
-    <>
     <Dialog open={open} onOpenChange={(o) => {
       if (!o) {
         checkToken.current++;
         setCheckingDuplicates(false);
         setError(null);
-        setParsed(null);
-        setPreviewClientId(null);
-        setDuplicateInfos([]);
-        setSelected([]);
-        setOpeningBalance(null);
-        setClosingBalance(null);
+        setBlockers([]);
+        resetPreview();
       }
       onOpenChange(o);
     }}>
@@ -361,7 +394,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium mb-2 block">Klant selecteren *</label>
-              <Select value={clientId} onValueChange={setClientId} disabled={checkingDuplicates}>
+              <Select value={selectedClientId} onValueChange={(v) => { setClientId(v); setBlockers([]); setError(null); }} disabled={checkingDuplicates}>
                 <SelectTrigger className="w-64"><SelectValue placeholder="Kies klant" /></SelectTrigger>
                 <SelectContent>
                   {clients.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
@@ -371,7 +404,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
 
             <div
               className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 transition-colors border-border"
-              style={{ opacity: clientId && !checkingDuplicates ? 1 : 0.5, pointerEvents: clientId && !checkingDuplicates ? "auto" : "none" }}
+              style={{ opacity: selectedClientId && !checkingDuplicates ? 1 : 0.5, pointerEvents: selectedClientId && !checkingDuplicates ? "auto" : "none" }}
               onDragOver={e => e.preventDefault()}
               onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) handleFile(file); }}
             >
@@ -379,8 +412,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
               <h3 className="font-display text-lg font-semibold">Sleep een MT940 of CAMT.053 bestand hierheen</h3>
               <p className="mt-1 text-sm text-muted-foreground">Of klik om een bestand te selecteren</p>
               <input ref={fileRef} type="file" accept=".sta,.mt940,.940,.txt,.xml,.csv" className="hidden"
+                disabled={!selectedClientId || checkingDuplicates}
                 onChange={e => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = ""; }} />
-              <Button className="mt-4" onClick={() => fileRef.current?.click()} disabled={!clientId || checkingDuplicates}>
+              <Button className="mt-4" onClick={() => fileRef.current?.click()} disabled={!selectedClientId || checkingDuplicates}>
                 <FileText className="mr-2 h-4 w-4" />Bestand selecteren
               </Button>
             </div>
@@ -396,6 +430,24 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                 <AlertCircle className="h-4 w-4" />{error}
               </div>
             )}
+
+            {blockers.length > 0 && (
+              <div className="space-y-3 rounded-md border border-destructive/50 bg-destructive/5 p-3" role="alert" data-testid="import-blockers">
+                <p className="flex items-center gap-2 text-sm font-semibold text-destructive">
+                  <Ban className="h-4 w-4" />Importeren geblokkeerd
+                </p>
+                {blockers.map((b, i) => (
+                  <div key={`${b.kind}-${i}`} className="space-y-1" data-blocker={b.kind}>
+                    <p className="text-sm text-destructive">{b.message}</p>
+                    {b.details.length > 0 && (
+                      <ul className="max-h-40 space-y-0.5 overflow-y-auto rounded bg-background/60 p-2 font-mono text-xs">
+                        {b.details.map((d, j) => <li key={j} className="break-all">{d}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
@@ -404,48 +456,87 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                 <AlertCircle className="h-4 w-4" />{error}
               </div>
             )}
-            {/* Balance display */}
-            {(openingBalance !== null || closingBalance !== null) && (
+
+            <p className="text-sm">
+              <span className="text-muted-foreground">Importeren in: </span>
+              <span className="font-semibold" data-testid="import-target">{previewClientName}</span>
+            </p>
+
+            {statementSummary && statementSummary.notBooked.length > 0 && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="import-not-booked">
+                <AlertCircle className="h-4 w-4" />
+                {statementSummary.notBooked.length === 1 ? "1 regel is" : `${statementSummary.notBooked.length} regels zijn`} nog niet door de bank geboekt
+                ({[...new Set(statementSummary.notBooked.map((n) => n.status))].join(", ")}) en {statementSummary.notBooked.length === 1 ? "wordt" : "worden"} niet geïmporteerd en niet in de saldocontrole meegeteld.
+              </p>
+            )}
+
+            {suggestionsUnavailable && (
+              <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400" data-testid="import-suggestions-unavailable">
+                <AlertCircle className="h-4 w-4" />Facturen konden niet worden geladen: er zijn geen factuursuggesties. De regels komen binnen als niet gematcht.
+              </p>
+            )}
+
+            {accountCheck?.status === "match" && (
+              <div className="flex items-center gap-2 rounded-md border p-3 text-sm text-green-700 dark:text-green-400">
+                <CheckCircle2 className="h-4 w-4" />Rekening {accountCheck.iban} hoort bij {previewClientName}.
+              </div>
+            )}
+            {accountCheck?.status === "confirm" && (
+              <div className="space-y-2 rounded-md border border-amber-500/60 bg-amber-50 p-3 text-sm dark:bg-amber-950/20" data-testid="account-confirm">
+                <p className="flex items-start gap-2">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  {ACCOUNT_CONFIRM_TEXT[accountCheck.reason](previewClientName, accountCheck.iban, accountCheck.administrations)}
+                </p>
+                <label className="flex items-center gap-2 font-medium">
+                  <Checkbox
+                    checked={accountConfirmed}
+                    onCheckedChange={(v) => setAccountConfirmed(v === true)}
+                    aria-label={`Ik heb gecontroleerd dat dit afschrift bij ${previewClientName} hoort`}
+                  />
+                  Ik heb gecontroleerd dat dit afschrift bij {previewClientName} hoort
+                </label>
+              </div>
+            )}
+
+            {/* Balance display: only a statement whose balances add up gets here. */}
+            {statementSummary && (statementSummary.openingBalance !== null || statementSummary.closingBalance !== null) && (
               <div className="flex flex-wrap items-center gap-4 rounded-lg border p-3 bg-muted/30">
-                {openingBalance !== null && (
+                {statementSummary.openingBalance !== null && (
                   <div className="text-sm">
                     <span className="text-muted-foreground">Beginsaldo: </span>
-                    <span className="font-mono font-semibold">{formatCurrency(openingBalance)}</span>
+                    <span className="font-mono font-semibold">{formatCurrency(statementSummary.openingBalance)}</span>
                   </div>
                 )}
-                {closingBalance !== null && (
+                {statementSummary.closingBalance !== null && (
                   <div className="text-sm">
                     <span className="text-muted-foreground">Eindsaldo: </span>
-                    <span className="font-mono font-semibold">{formatCurrency(closingBalance)}</span>
+                    <span className="font-mono font-semibold">{formatCurrency(statementSummary.closingBalance)}</span>
                   </div>
                 )}
-                {balanceCheck !== null && (
-                  <div className={`flex items-center gap-1.5 text-sm font-medium ml-auto ${balanceCheck ? "text-green-600" : "text-destructive"}`}>
-                    {balanceCheck ? (
-                      <><CheckCircle2 className="h-4 w-4" />Saldo-controle OK</>
-                    ) : (
-                      <><AlertTriangle className="h-4 w-4" />Saldo-controle verschil!</>
-                    )}
-                  </div>
-                )}
+                <div className="flex items-center gap-1.5 text-sm font-medium ml-auto text-green-600">
+                  <CheckCircle2 className="h-4 w-4" />Saldo-controle OK
+                  {statementSummary.sections.length > 1 && ` (${statementSummary.sections.length} afschriften)`}
+                </div>
               </div>
             )}
 
             {/* Summary badges */}
             <div className="flex gap-3 flex-wrap">
-              <Badge variant="default" className="gap-1"><CheckCircle2 className="h-3 w-3" />{matchedCount} gematcht</Badge>
-              <Badge variant="secondary">{suggestedCount} suggesties</Badge>
+              <Badge variant="secondary">{suggestedCount} factuursuggesties</Badge>
               {templateCount > 0 && (
                 <Badge variant="secondary" className="gap-1 bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
                   ⚡ {templateCount} via herkenningsregel
                 </Badge>
               )}
-              <Badge variant="outline">{(parsed?.length ?? 0) - matchedCount - suggestedCount - templateCount} onbekend</Badge>
+              <Badge variant="outline">{selectedCount - suggestedCount - templateCount} onbekend</Badge>
               {duplicateCount > 0 && (
                 <Badge variant="destructive" className="gap-1"><Copy className="h-3 w-3" />{duplicateCount} duplicaten</Badge>
               )}
               <span className="text-sm text-muted-foreground ml-auto">{selectedCount} van {parsed.length} geselecteerd</span>
             </div>
+            <p className="text-xs text-muted-foreground">
+              Een factuursuggestie koppelt nog niets: bevestig haar daarna op de bankpagina.
+            </p>
 
             <Card>
               <CardContent className="p-0">
@@ -456,13 +547,14 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                       <TableHead>Datum</TableHead>
                       <TableHead>Omschrijving</TableHead>
                       <TableHead className="text-right">Bedrag</TableHead>
-                      <TableHead>Factuur koppelen</TableHead>
+                      <TableHead>Factuursuggestie</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {parsed.map((tx, i) => {
                       const dup = duplicateInfos[i];
+                      const options = candidatesByRow[i] ?? [];
                       return (
                         <TableRow key={i} className={dup?.isDuplicate ? "opacity-60" : ""}>
                           <TableCell>
@@ -481,24 +573,22 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                               <Select
                                 value={tx.matchedInvoiceId || "none"}
                                 onValueChange={(val) => updateMatch(i, val === "none" ? null : val)}
+                                disabled={options.length === 0}
                               >
                                 <SelectTrigger className={`w-[220px] h-8 text-xs ${
-                                  tx.matchStatus === "gematcht" ? "border-green-500 bg-green-50 dark:bg-green-950/20" :
                                   tx.matchStatus === "suggestie" ? "border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20" : ""
-                                }`}>
-                                  <SelectValue placeholder="— Geen match —" />
+                                }`} aria-label={`Factuursuggestie voor ${tx.description}`}>
+                                  <SelectValue placeholder="— Geen suggestie —" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="none">— Geen match —</SelectItem>
-                                  {invoices.filter(i => i.client_id === previewClientId).map(inv => (
-                                    <SelectItem key={inv.id} value={inv.id}>
-                                      {invoiceLabel(inv)}
-                                    </SelectItem>
+                                  <SelectItem value="none">{options.length === 0 ? "— Geen passende factuur —" : "— Geen suggestie —"}</SelectItem>
+                                  {options.map(c => (
+                                    <SelectItem key={c.id} value={c.id}>{candidateLabel(c)}</SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
-                              {tx.matchedInvoiceId && (
-                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => updateMatch(i, null)}>
+                              {tx.matchStatus === "suggestie" && (
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => updateMatch(i, null)} aria-label="Suggestie weghalen">
                                   <X className="h-3 w-3" />
                                 </Button>
                               )}
@@ -514,6 +604,9 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
                                     ? "Mogelijk duplicaat (datum/bedrag/tegenrekening) — controleer"
                                     : "Duplicaat (datum/bedrag/omschrijving)"}
                               </Badge>
+                            )}
+                            {!dup?.isDuplicate && tx.isReversal && (
+                              <Badge variant="outline" className="text-[10px]">Storno</Badge>
                             )}
                             {!dup?.isDuplicate && tx.matchStatus === "handmatig_geboekt" && tx.templateName && (
                               <Badge variant="secondary" className="text-[10px] bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300">
@@ -535,14 +628,12 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
           <DialogFooter>
             <Button variant="outline" disabled={importing} onClick={() => {
               setError(null);
-              setParsed(null);
-              setPreviewClientId(null);
-              setDuplicateInfos([]);
-              setSelected([]);
-              setOpeningBalance(null);
-              setClosingBalance(null);
+              resetPreview();
             }}>Terug</Button>
-            <Button onClick={handleImport} disabled={importing || selectedCount === 0}>
+            <Button
+              onClick={handleImport}
+              disabled={importing || selectedCount === 0 || (accountNeedsConfirmation && !accountConfirmed)}
+            >
               {importing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
               {selectedCount} transacties importeren
             </Button>
@@ -550,35 +641,5 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         )}
       </DialogContent>
     </Dialog>
-
-    {/* IBAN mismatch warning dialog */}
-    <Dialog open={!!ibanWarning} onOpenChange={(o) => { if (!o) { setIbanWarning(null); setPendingFileText(null); } }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertTriangle className="h-5 w-5 text-destructive" />
-            IBAN komt niet overeen
-          </DialogTitle>
-        </DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          Let op: dit bankafschrift lijkt niet bij {ibanWarning?.clientName} te horen.
-          Het IBAN in het bestand ({ibanWarning?.fileIban}) komt niet overeen met het bekende
-          zakelijke IBAN van deze klant. Wil je toch importeren?
-        </p>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => { setIbanWarning(null); setPendingFileText(null); }}>
-            Annuleren
-          </Button>
-          <Button onClick={() => {
-            if (pendingFileText && pendingClientId) void processFile(pendingFileText, pendingClientId);
-            setIbanWarning(null);
-            setPendingFileText(null);
-          }}>
-            Toch importeren
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-    </>
   );
 }

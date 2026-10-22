@@ -7,8 +7,8 @@ import { GrootboekCombobox } from "@/components/GrootboekCombobox";
 import { X, ChevronRight, ChevronLeft, Home, Briefcase, FileText, SkipForward, CheckCircle2 } from "lucide-react";
 import type { Tables } from "@/integrations/supabase/types";
 import { parseMT940Description } from "@/lib/mt940-description-parser";
-import { getInvoiceRemainingAmount, getInvoiceTotalAmount, isClosedInvoiceStatus } from "@/lib/invoice-balances";
-import { isRejectedCandidate } from "@/lib/bank-match-rejections";
+import { getInvoiceTotalAmount } from "@/lib/invoice-balances";
+import { gatedInvoiceCandidates, hasTiedTopCandidates, preselectCandidate, preselectFullPaymentCandidate } from "@/lib/bank-candidate-gate";
 import { BtwKeuzeSelect } from "@/components/bank/BtwKeuzeSelect";
 import { btwKeuzeFromPercentage, btwKeuzeToPercentage } from "@/lib/btw-keuze";
 
@@ -130,22 +130,51 @@ export function VerwerkingsScherm({
     if (currentIndex >= total - 1) setCurrentIndex(Math.max(0, total - 2));
   };
 
-  const candidateInvoices = useMemo(() => {
+  // De veilige-matchpoort op het levende pad (nulmeting A1-04, C-14): alleen
+  // facturen in de juiste richting, van deze administratie, met een openstaand
+  // bedrag, niet afgewezen en met identiteit (factuurnummer of naam in de
+  // omschrijving). Fail-closed zolang de afwijzingen niet geladen zijn.
+  const candidates = useMemo(() => {
     if (!current || !rejectionIndex) return [];
-    const txAmount = Math.abs(current.amount);
-    const allInvoices = [
-      ...purchaseInvoices.filter(i => i.client_id === current.client_id).map(i => ({ ...i, type: "inkoop" as const })),
-      ...salesInvoices.filter(i => i.client_id === current.client_id).map(i => ({ ...i, type: "verkoop" as const })),
-    ];
-    return allInvoices
-      .filter(i => !isClosedInvoiceStatus(i.status) && !isRejectedCandidate(rejectionIndex, current.id, { id: i.id, type: i.type }))
-      .sort((a, b) => {
-        const diffA = Math.abs(Math.abs(getInvoiceRemainingAmount(a) ?? 0) - txAmount);
-        const diffB = Math.abs(Math.abs(getInvoiceRemainingAmount(b) ?? 0) - txAmount);
-        return diffA - diffB;
-      })
-      .slice(0, 8);
+    return gatedInvoiceCandidates(current, purchaseInvoices, salesInvoices, rejectionIndex);
   }, [current, purchaseInvoices, salesInvoices, rejectionIndex]);
+  const shownCandidates = candidates.slice(0, 8);
+  // Voorselectie alleen bij precies één kandidaat met de hoogste score; bij een
+  // gelijke topscore kiest de gebruiker zelf (C-04).
+  // Ook niet bij een deel- of overbetaling: koppelen zet het restant nu nog op 0
+  // (schrijfpad P5), dus dan kiest de gebruiker bewust (review P2-1).
+  const preselected = useMemo(
+    () => (current ? preselectFullPaymentCandidate(candidates, current.amount) : null),
+    [candidates, current],
+  );
+  const amountDiffers = !!current && !preselected && !!preselectCandidate(candidates);
+  const tiedTop = hasTiedTopCandidates(candidates);
+  const [choice, setChoice] = useState<{ txId: string; invoiceId: string } | null>(null);
+  const selectedCandidate = current && choice?.txId === current.id
+    ? shownCandidates.find((c) => c.id === choice.invoiceId) ?? null
+    : preselected;
+  const invoiceTotals = useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const i of purchaseInvoices) m.set(`inkoop|${i.id}`, getInvoiceTotalAmount(i));
+    for (const i of salesInvoices) m.set(`verkoop|${i.id}`, getInvoiceTotalAmount(i));
+    return m;
+  }, [purchaseInvoices, salesInvoices]);
+
+  // Koppelen gebeurt pas na een bewuste keuze (of de enige beste kandidaat) en
+  // een klik op "Koppelen". Wat er bij het koppelen met de factuur gebeurt, is
+  // aan de aanroeper (het schrijfpad).
+  const handleMatchSelected = async () => {
+    if (!current || !selectedCandidate) return;
+    setLoading(true);
+    try {
+      await onMatchInvoice(current.id, selectedCandidate.id, selectedCandidate.type);
+      goNext();
+    } catch (error) {
+      toast({ title: "Factuurkoppeling mislukt", description: error instanceof Error ? error.message : "Probeer opnieuw", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (total === 0) {
     return (
@@ -270,41 +299,49 @@ export function VerwerkingsScherm({
             </div>
           )}
 
-          {mode === "factuur" && (
+          {mode === "factuur" && current && (
             <div className="space-y-3">
               <p className="text-sm font-medium">Koppel aan factuur:</p>
+              {tiedTop && (
+                <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="verwerking-tie">
+                  Meerdere facturen passen even goed. Kies zelf de juiste factuur.
+                </p>
+              )}
+              {amountDiffers && (
+                <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="verwerking-amount-differs">
+                  Het bedrag wijkt af van het openstaande bedrag (deel- of overbetaling). Kies zelf of deze factuur klopt.
+                </p>
+              )}
               <div className="space-y-2 max-h-48 overflow-y-auto">
-                {candidateInvoices.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Geen openstaande facturen gevonden.</p>
+                {shownCandidates.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Geen passende openstaande factuur gevonden: alleen facturen van deze administratie, in de juiste
+                    richting, met een openstaand bedrag en met het factuurnummer of de naam in de omschrijving worden
+                    voorgesteld. Koppel zo nodig via de bankregel zelf.
+                  </p>
                 ) : (
-                  candidateInvoices.map(inv => {
-                    const remainingAmount = getInvoiceRemainingAmount(inv);
-                    const totalAmount = getInvoiceTotalAmount(inv);
+                  shownCandidates.map(inv => {
+                    const remainingAmount = inv.amount;
+                    const totalAmount = invoiceTotals.get(`${inv.type}|${inv.id}`) ?? null;
+                    const isSelected = selectedCandidate?.id === inv.id;
 
                     return (
                       <button
                         key={inv.id}
-                        className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
-                        onClick={async () => {
-                          setLoading(true);
-                          try {
-                            await onMatchInvoice(current.id, inv.id, inv.type);
-                            goNext();
-                          } catch (error) {
-                            toast({ title: "Factuurkoppeling mislukt", description: error instanceof Error ? error.message : "Probeer opnieuw", variant: "destructive" });
-                          } finally {
-                            setLoading(false);
-                          }
-                        }}
+                        type="button"
+                        aria-pressed={isSelected}
+                        className={`w-full text-left p-3 rounded-lg border transition-colors ${isSelected ? "border-primary bg-primary/5" : "hover:bg-muted/50"}`}
+                        onClick={() => setChoice({ txId: current.id, invoiceId: inv.id })}
                         disabled={loading}
                       >
                         <div className="flex justify-between items-center">
                           <div>
-                            <p className="text-sm font-medium">{inv.type === "inkoop" ? (inv as any).supplier : (inv as any).customer_name}</p>
-                            <p className="text-xs text-muted-foreground">{(inv as any).invoice_number || "Geen nummer"}</p>
+                            <p className="text-sm font-medium">{inv.name}</p>
+                            <p className="text-xs text-muted-foreground">{inv.invoiceNumber || "Geen nummer"}</p>
                             {remainingAmount != null && totalAmount != null && remainingAmount !== totalAmount && (
                               <p className="text-xs text-muted-foreground">Openstaand: {formatCurrency(remainingAmount)} van {formatCurrency(totalAmount)}</p>
                             )}
+                            <p className="text-[11px] text-muted-foreground">{inv.reasons.join(" · ")}</p>
                           </div>
                           <div className="text-right">
                             <p className="text-sm font-mono font-medium">{formatCurrency(remainingAmount ?? totalAmount ?? 0)}</p>
@@ -316,9 +353,19 @@ export function VerwerkingsScherm({
                   })
                 )}
               </div>
-              <Button variant="outline" onClick={() => setMode("main")} className="w-full">
-                Terug
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setMode("main")} className="flex-1">
+                  Terug
+                </Button>
+                <Button
+                  onClick={handleMatchSelected}
+                  disabled={!selectedCandidate || loading}
+                  className="flex-1"
+                  data-testid="verwerking-match-submit"
+                >
+                  Koppelen
+                </Button>
+              </div>
             </div>
           )}
         </div>
