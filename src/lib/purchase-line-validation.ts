@@ -110,10 +110,15 @@ export function validatePurchaseLines(
 }
 
 // -----------------------------------------------------------------------------
-// Prefill helper — derives one default purchase line from header totals.
+// Prefill helper — derives one draft purchase line from header totals.
 // Mirrors the "Maak deelregel voor totaalbedrag" button, with one extension:
-// when amount_excl is missing but amount_incl is present, excl is derived from
-// incl using the header VAT percentage (or equals incl when pct is 0).
+// when amount_excl is missing but amount_incl is present AND the header VAT
+// percentage is known, excl is derived from incl (or equals incl at 0%).
+//
+// GEEN AANGENOMEN PERCENTAGE (A2-02 / D-01). Een ontbrekend kop-percentage is
+// "nog niet gekozen" en blijft dat op de regel: `btw_percentage: null`. Vroeger
+// werd het hier stil 0% (en in de werkbank stil 21%). 0 en NULL zijn strikt
+// verschillend: 0 is een bewuste "geen btw", NULL is onbekend.
 // -----------------------------------------------------------------------------
 
 export interface PrefillHeader {
@@ -125,7 +130,8 @@ export interface PrefillHeader {
 
 export interface PrefillLine {
   amount_excl: number;
-  btw_percentage: number;
+  /** null = nog niet gekozen; de gebruiker kiest 0, 9 of 21. */
+  btw_percentage: number | null;
 }
 
 /**
@@ -133,18 +139,24 @@ export interface PrefillLine {
  * excl amount can be determined. Rounds excl to 2 decimals.
  *
  * Rules (in order):
- *  - btw_percentage = 0 when BTW-vrijgesteld, otherwise header pct (0 when missing).
+ *  - btw_percentage = 0 when BTW-vrijgesteld (de administratie kan geen btw
+ *    aftrekken; dat is haar instelling, geen aanname); otherwise the header pct
+ *    when it is a finite number (0 stays 0), else null ("nog niet gekozen").
  *  - excl = header.amount_excl when finite.
- *  - else, if amount_incl is finite: excl = incl / (1 + pct/100). With pct=0 this
- *    equals incl, which also covers BTW-vrijgesteld facturen met alleen incl.
- *  - else: null (no prefill possible).
+ *  - else, if amount_incl is finite and the pct is known: excl = incl / (1 + pct/100).
+ *    With pct = 0 this equals incl, which also covers BTW-vrijgesteld facturen
+ *    met alleen incl (bruto als kosten, er valt geen btw weg).
+ *  - else: null. Zonder percentage is excl niet uit incl af te leiden zonder te
+ *    gokken, dus er komt geen voorstelregel.
  */
 export function derivePrefillLine(header: PrefillHeader): PrefillLine | null {
-  const pct = header.isBtwVrijgesteld ? 0 : (Number.isFinite(header.btw_percentage as number) ? Number(header.btw_percentage) : 0);
+  const pct: number | null = header.isBtwVrijgesteld
+    ? 0
+    : (header.btw_percentage != null && Number.isFinite(header.btw_percentage) ? Number(header.btw_percentage) : null);
   const headerExcl = header.amount_excl;
   const headerIncl = header.amount_incl;
   let excl: number | null = headerExcl != null && Number.isFinite(headerExcl) ? headerExcl : null;
-  if (excl == null && headerIncl != null && Number.isFinite(headerIncl)) {
+  if (excl == null && headerIncl != null && Number.isFinite(headerIncl) && pct != null) {
     excl = pct ? headerIncl / (1 + pct / 100) : headerIncl;
   }
   if (excl == null) return null;
@@ -152,11 +164,56 @@ export function derivePrefillLine(header: PrefillHeader): PrefillLine | null {
 }
 
 // -----------------------------------------------------------------------------
+// De btw-keuze per regel — expliciet, nooit aangenomen.
+//
+// In de werkbank is een regelpercentage een tekst: "0", "9" of "21" is een
+// keuze, "" betekent "nog niet gekozen". Een regel zonder keuze mag worden
+// opgeslagen (concept) maar niet goedgekeurd: dan is niet bekend of er btw op
+// zit, en een groene "sluit aan" zou dat verzwijgen.
+// -----------------------------------------------------------------------------
+
+/** De drie percentages die de werkbank aanbiedt. */
+export const PURCHASE_LINE_VAT_CHOICES = ["0", "9", "21"] as const;
+
+/** Is dit een expliciete keuze (0, 9 of 21)? "" en elk ander getal: nee. */
+export function isLineVatChoice(value: string | null | undefined): boolean {
+  return (PURCHASE_LINE_VAT_CHOICES as readonly string[]).includes(value ?? "");
+}
+
+/**
+ * Opgeslagen percentage → invoerwaarde. NULL wordt "" ("nog niet gekozen"),
+ * nooit 0 of 21. Een ander opgeslagen getal (bv. 6) blijft letterlijk staan,
+ * zodat een gewone Opslaan het niet stil verandert; het is alleen geen keuze
+ * (`isLineVatChoice`), dus goedkeuren vraagt alsnog 0, 9 of 21.
+ */
+export function lineVatChoiceFromStored(p: number | null | undefined): string {
+  if (p == null || !Number.isFinite(p)) return "";
+  const match = PURCHASE_LINE_VAT_CHOICES.find((o) => Number(o) === Number(p));
+  return match ?? String(Number(p));
+}
+
+/** Invoerwaarde → op te slaan percentage: "" wordt NULL, elk getal blijft dat getal. */
+export function lineVatInputToStored(value: string): number | null {
+  if (value.trim() === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Hoeveel betekenisvolle regels hebben nog geen btw-keuze? */
+export function countLinesWithoutVatChoice(
+  lines: readonly (BlankLineCandidate & { btw_percentage: string })[],
+): number {
+  let n = 0;
+  for (const l of lines) if (!isBlankLine(l) && !isLineVatChoice(l.btw_percentage)) n++;
+  return n;
+}
+
+// -----------------------------------------------------------------------------
 // Blank-line predicate — a line is "completely empty" when it has no meaningful
 // user input: no description, no amount input, no ledger account. The VAT
-// percentage is a select with a default value (21% or 0% bij BTW-vrijgesteld)
-// and therefore never counts as user-entered by itself; without an amount the
-// derived VAT is €0 regardless of percentage.
+// percentage alone never counts as user input: without an amount the VAT is €0
+// regardless of the percentage, and a new line starts either with the header's
+// explicit choice or with no choice at all ("" — nooit een stille 21%).
 // -----------------------------------------------------------------------------
 
 export interface BlankLineCandidate {

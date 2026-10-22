@@ -59,7 +59,7 @@ END $$;
 -- Twee verse bankregels: één voor de race op dezelfde regel, één om te tonen
 -- dat verschillende regels elkaar niet in de weg zitten.
 SELECT proof.seed_tx('00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-0000000000c1', -121.00, 21);
-SELECT proof.seed_tx('00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-0000000000c1',  -30.00, NULL);
+SELECT proof.seed_tx('00000000-0000-0000-0000-000000000202', '00000000-0000-0000-0000-0000000000c1',  -30.00, 0);   -- geen BTW: een expliciete keuze
 
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
 
