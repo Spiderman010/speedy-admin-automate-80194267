@@ -558,6 +558,7 @@ export default function Bank() {
     invoiceId: string,
     explicitAllocationAmount?: number,
   ) => {
+    assertOrdinaryBankPayment(tx as { is_reversal?: boolean | null });
     const purchaseInv = invoices?.find(i => i.id === invoiceId);
     const salesInv = salesInvs?.find(i => i.id === invoiceId);
     const inv = purchaseInv ?? salesInv;
@@ -1132,6 +1133,7 @@ export default function Bank() {
         throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
       }
 
+      assertOrdinaryBankPayment(tx as { is_reversal?: boolean | null });
       await assertBankMatchNotRejected(tx.id, invoiceType, invoiceId, tx.client_id, activeOrganizationId!);
 
       // Additional mode: only write the new allocation row and update the invoice's remaining_amount.
