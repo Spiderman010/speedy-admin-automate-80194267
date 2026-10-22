@@ -20,6 +20,9 @@
 #   PGHOST=/path/to/socketdir PGPORT=5432 PGUSER=postgres \
 #     supabase/tests/snelstart-export-ledger/run-proof.sh
 #   LEDGER_FIXTURE_UPDATE=1 PGHOST=… supabase/tests/snelstart-export-ledger/run-proof.sh
+#   LEDGER_PROOF_MIGRATIONS=/pad/naar/integratieboom/supabase/migrations PGHOST=… \
+#     supabase/tests/snelstart-export-ledger/run-proof.sh   (deze harnas tegen de
+#                                                    migraties van een andere boom)
 #
 # Order:
 #   ../opening-balance/bootstrap.sql                 shared test double: roles,
@@ -29,6 +32,10 @@
 #                                                    the pre-ledger application
 #                                                    tables (no stubs for markers,
 #                                                    writers or triggers)
+#   tail-prereqs.sql                                 vereisten van latere migraties
+#                                                    van andere pakketten: minimale
+#                                                    Supabase Storage en de kolommen
+#                                                    file_path/pdf_path
 #   the REAL migration chain                         20260904120000 … the NEWEST migration,
 #                                                    incl. the effective (newest)
 #                                                    definition of post_purchase_invoice
@@ -49,7 +56,7 @@ export PGOPTIONS="${PGOPTIONS:-} -c client_min_messages=warning"
 DB="${LEDGER_PROOF_DB:-snelstartledgerproof}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-MIG="$REPO/supabase/migrations"
+MIG="${LEDGER_PROOF_MIGRATIONS:-$REPO/supabase/migrations}"
 FIXTURE="$REPO/src/test/fixtures/snelstart-export-ledger.json"
 
 : "${PGHOST:?set PGHOST}"
@@ -60,14 +67,18 @@ run() { psql -q -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 
 run -f "$HERE/../opening-balance/bootstrap.sql"                          > /dev/null
 run -f "$HERE/../bank-direct-allocation-guard/bootstrap-sources.sql"     > /dev/null
+run -f "$HERE/tail-prereqs.sql"                                          > /dev/null
 
 # De ECHTE keten tot en met de NIEUWSTE migratie (zelfde opbouw als
-# ../writer-vat-nan-validation/build-chain.sh): de vaste kern t/m 20261017120000,
+# ../writer-vat-nan-validation/build-chain.sh): de vaste kern t/m 20261017120000
+# (plus 20260718202037, replace_purchase_invoice_lines, die A2-07 eist),
 # dan de echte lichamen van de twee triggerfuncties die de bootstrap
-# vereenvoudigt (de bankcorrecties pinnen ze), dan ELKE latere migratie in
+# vereenvoudigt (de bankcorrecties pinnen ze) en van is_organization_member()
+# (B2-08 eist hem), dan ELKE latere migratie in
 # volgorde — ook die van andere pakketten, zodat altijd de effectieve laatste
 # definitie van post_purchase_invoice() wordt bewezen.
 for f in \
+  20260718202037_55fc7fd7-92b8-4ee7-b00b-4a14b47375c3 \
   20260904120000_add-accounting-foundation-ledger-links \
   20260914120000_add_ledger_postings_foundation \
   20260915120000_add_client_vat_ledger_config \
@@ -99,8 +110,12 @@ done
 REAL="$(sed -n '/^CREATE OR REPLACE FUNCTION public.update_updated_at_column()/,/^\$\$ LANGUAGE plpgsql SET search_path = public;/p' \
           "$MIG/20260411182021_ce126469-1948-4a6f-947d-ad6dd95764cb.sql")
 $(sed -n '/^CREATE OR REPLACE FUNCTION public.set_organization_id()/,/^\$function\$;/p' \
-          "$MIG/20260616014119_379a0719-29c0-4ba7-a513-06777db1dbc3.sql")"
-[ -n "$REAL" ] || { echo "triggerfuncties niet gevonden" >&2; exit 1; }
+          "$MIG/20260616014119_379a0719-29c0-4ba7-a513-06777db1dbc3.sql")
+$(sed -n '/^CREATE OR REPLACE FUNCTION public.is_organization_member(/,/^\$\$;/p' \
+          "$MIG/20260530211249_"*.sql)"
+for fn in update_updated_at_column set_organization_id is_organization_member; do
+  grep -q "FUNCTION public.$fn(" <<<"$REAL" || { echo "echte functie $fn niet gevonden" >&2; exit 1; }
+done
 run -c "$REAL"                                                           > /dev/null
 
 for path in "$MIG"/*.sql; do
