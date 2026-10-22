@@ -257,21 +257,25 @@ export class PurchaseExportMarkError extends Error {
 // file was built and its download started (the caller's job). Every update is
 // scoped to the organization and the administratie, and only flips an invoice
 // that is still exportable (compare-and-set on status) and — when
-// `notUpdatedAfter` is given — that was not edited after it was read for the
-// file (compare-and-set on updated_at, H6-03). It writes `status` only — never
-// `remaining_amount`, never a payment status (D1). Each batch must report back
-// (RETURNING) exactly the rows it was asked to mark. ALL batches are tried
-// (H6-02): every invoice in the downloaded file gets its chance to be marked;
-// afterwards the unmarked ids are reported in one PurchaseExportMarkError,
-// never as success. The caller must invalidate ["purchase_invoices"] once
-// after this settles.
+// `fetchedUpdatedAt` is given — whose `updated_at` is still EXACTLY the value
+// read for the file (per-invoice compare-and-set, H6-03 / Codex #299). The ids
+// are grouped per read `updated_at` and each group is updated with
+// `.eq("updated_at", <that value>)`; there is no shared cutoff, so an edit
+// after the read can never hide under a later-read invoice's newer timestamp,
+// and no client clock is involved. An id without a read `updated_at` is not
+// marked (fail-closed). It writes `status` only — never `remaining_amount`,
+// never a payment status (D1). Each update must report back (RETURNING)
+// exactly the rows it was asked to mark. ALL batches are tried (H6-02): every
+// invoice in the downloaded file gets its chance to be marked; afterwards the
+// unmarked ids are reported in one PurchaseExportMarkError, never as success.
+// The caller must invalidate ["purchase_invoices"] once after this settles.
 export async function markPurchaseInvoicesExported(opts: {
   organizationId: string;
   clientId: string;
   invoiceIds: readonly string[];
-  notUpdatedAfter?: string | null;
+  fetchedUpdatedAt?: ReadonlyMap<string, string | null | undefined>;
 }): Promise<{ marked: number }> {
-  const { organizationId, clientId, notUpdatedAfter } = opts;
+  const { organizationId, clientId, fetchedUpdatedAt } = opts;
   if (!organizationId) {
     throw new Error("Geen actieve organisatie: export-status kan niet worden bijgewerkt");
   }
@@ -282,25 +286,48 @@ export async function markPurchaseInvoicesExported(opts: {
   let marked = 0;
   const unmarked: string[] = [];
   const errors: string[] = [];
-  for (let i = 0; i < invoiceIds.length; i += STATUS_UPDATE_BATCH_SIZE) {
-    const batch = invoiceIds.slice(i, i + STATUS_UPDATE_BATCH_SIZE);
-    let query = supabase
-      .from("purchase_invoices")
-      .update({ status: "geexporteerd" })
-      .eq("organization_id", organizationId)
-      .eq("client_id", clientId)
-      .in("id", batch)
-      .in("status", [...EXPORTABLE_STATUSES]);
-    if (notUpdatedAfter) query = query.lte("updated_at", notUpdatedAfter);
-    const { data, error } = await query.select("id");
-    if (error) {
-      errors.push(error.message);
-      unmarked.push(...batch);
-      continue;
+  // Groups of ids that share one CAS value (null = no updated_at CAS).
+  const groups = new Map<string | null, string[]>();
+  for (const id of invoiceIds) {
+    let key: string | null = null;
+    if (fetchedUpdatedAt) {
+      const ts = fetchedUpdatedAt.get(id);
+      if (!ts) {
+        unmarked.push(id);
+        continue;
+      }
+      key = ts;
     }
-    const hit = new Set((data ?? []).map((r: { id: string }) => r.id));
-    marked += batch.filter((id) => hit.has(id)).length;
-    unmarked.push(...batch.filter((id) => !hit.has(id)));
+    const g = groups.get(key);
+    if (g) g.push(id);
+    else groups.set(key, [id]);
+  }
+  for (const [updatedAt, groupIds] of groups) {
+    for (let i = 0; i < groupIds.length; i += STATUS_UPDATE_BATCH_SIZE) {
+      const batch = groupIds.slice(i, i + STATUS_UPDATE_BATCH_SIZE);
+      let query = supabase
+        .from("purchase_invoices")
+        .update({ status: "geexporteerd" })
+        .eq("organization_id", organizationId)
+        .eq("client_id", clientId)
+        .in("id", batch)
+        .in("status", [...EXPORTABLE_STATUSES]);
+      if (updatedAt !== null) query = query.eq("updated_at", updatedAt);
+      const { data, error } = await query.select("id");
+      if (error) {
+        errors.push(error.message);
+        unmarked.push(...batch);
+        continue;
+      }
+      const hit = new Set((data ?? []).map((r: { id: string }) => r.id));
+      marked += batch.filter((id) => hit.has(id)).length;
+      unmarked.push(...batch.filter((id) => !hit.has(id)));
+    }
+  }
+  if (unmarked.length) {
+    // Keep the caller's order so the message names invoices predictably.
+    const order = new Map(invoiceIds.map((id, i) => [id, i]));
+    unmarked.sort((a, b) => order.get(a)! - order.get(b)!);
   }
   if (unmarked.length) {
     throw new PurchaseExportMarkError(

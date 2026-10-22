@@ -270,9 +270,27 @@ describe("markPurchaseInvoicesExported", () => {
     expect(err.message).toMatch(new RegExp(`${2 * STATUS_UPDATE_BATCH_SIZE - 1} van ${3 * STATUS_UPDATE_BATCH_SIZE}.*timeout`));
   });
 
-  it("H6-03: met notUpdatedAfter toetst elke reeks ook updated_at (compare-and-set)", async () => {
-    await markPurchaseInvoicesExported({ organizationId: "org-1", clientId: "c-1", invoiceIds: ids(3), notUpdatedAfter: "2026-10-20T08:00:00+00:00" });
-    expect(callsFor("lte").map(c => c.args)).toEqual([["updated_at", "2026-10-20T08:00:00+00:00"]]);
+  it("H6-03 / Codex #299: per factuur compare-and-set op de exact opgehaalde updated_at, gegroepeerd per waarde; nooit een gedeelde grens", async () => {
+    const [a, b, c] = ids(3);
+    const t1 = "2026-10-20T08:00:00.123456+00:00";
+    const t2 = "2026-10-20T09:00:00+00:00";
+    await markPurchaseInvoicesExported({
+      organizationId: "org-1", clientId: "c-1", invoiceIds: [a, b, c],
+      fetchedUpdatedAt: new Map([[a, t1], [b, t2], [c, t1]]),
+    });
+    expect(callsFor("lte")).toHaveLength(0);
+    expect(callsFor("eq").filter(x => x.args[0] === "updated_at").map(x => x.args[1])).toEqual([t1, t2]);
+    expect(callsFor("in").filter(x => x.args[0] === "id").map(x => x.args[1])).toEqual([[a, c], [b]]);
+  });
+
+  it("H6-03: een factuur zonder opgehaalde updated_at wordt niet gemarkeerd (fail-closed) en wel gemeld", async () => {
+    const [a, b] = ids(2);
+    const err: any = await markPurchaseInvoicesExported({
+      organizationId: "org-1", clientId: "c-1", invoiceIds: [a, b],
+      fetchedUpdatedAt: new Map([[b, "2026-10-20T09:00:00+00:00"]]),
+    }).catch(e => e);
+    expect(callsFor("in").filter(x => x.args[0] === "id").map(x => x.args[1])).toEqual([[b]]);
+    expect(err).toMatchObject({ marked: 1, expected: 2, unmarkedIds: [a] });
   });
 
   it("rejects when an update silently touches fewer rows (RLS, changed status) instead of reporting success", async () => {
