@@ -23,6 +23,7 @@ import { useActiveOrganization } from "@/hooks/useActiveOrganization";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { queryClient } from "@/lib/query-client";
 import { toast } from "@/hooks/use-toast";
 import {
   bookingTemplateLedgerUpdate,
@@ -89,7 +90,12 @@ function ProfielTab() {
   };
 
   const handleUitloggen = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } finally {
+      // B2-09: na uitloggen blijft niets van deze gebruiker in de querycache.
+      queryClient.clear();
+    }
   };
 
   if (isLoading) return (

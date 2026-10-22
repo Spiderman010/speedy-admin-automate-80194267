@@ -1,3 +1,9 @@
+import {
+  authorizeChatMember,
+  buildChatCompletionBody,
+  parseChatBody,
+  validateChatMessages,
+} from "./chat-guards.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
@@ -50,29 +56,45 @@ serve(async (req) => {
       });
     }
 
-    let body: { messages?: { role: string; content: string }[] };
+    // B2-07: de ruwe body wordt begrensd vóór JSON.parse.
+    let raw: string;
     try {
-      body = await req.json();
+      raw = await req.text();
     } catch {
       return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const messages = body.messages ?? [];
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return new Response(JSON.stringify({ error: "messages is required and must be a non-empty array" }), {
-        status: 400,
+    const parsed = parseChatBody(raw);
+    if (!parsed.ok) {
+      return new Response(JSON.stringify({ error: parsed.error }), {
+        status: parsed.status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const systemMessage = {
-      role: "system",
-      content:
-        "Je bent BoekAssist AI, een behulpzame assistent voor een Nederlandse boekhoudkantoor. Geef beknopte, praktische antwoorden over boekhouden, Snelstart, BTW, inkoopfacturen, bankafschriften en gerelateerde werkzaamheden.",
-    };
+    // B2-07: alleen leden van een organisatie (of van de gevraagde context)
+    // gebruiken het gedeelde AI-budget.
+    const access = await authorizeChatMember(userClient, user.id, parsed.organizationId);
+    if (!access.allowed) {
+      return new Response(JSON.stringify({ error: access.error }), {
+        status: access.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // B2-07: alleen user/assistant-tekst, begrensd, en geen eigen system-bericht.
+    const checked = validateChatMessages(parsed.body);
+    if (!checked.ok) {
+      return new Response(JSON.stringify({ error: checked.error }), {
+        status: checked.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const systemPrompt =
+      "Je bent BoekAssist AI, een behulpzame assistent voor een Nederlandse boekhoudkantoor. Geef beknopte, praktische antwoorden over boekhouden, Snelstart, BTW, inkoopfacturen, bankafschriften en gerelateerde werkzaamheden.";
 
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -81,10 +103,9 @@ serve(async (req) => {
         "Content-Type": "application/json",
         "X-Lovable-AIG-SDK": "vercel-ai-sdk",
       },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [systemMessage, ...messages],
-      }),
+      body: JSON.stringify(
+        buildChatCompletionBody("google/gemini-3-flash-preview", systemPrompt, checked.messages),
+      ),
     });
 
     if (!aiResponse.ok) {
