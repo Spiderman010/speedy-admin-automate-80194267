@@ -20,6 +20,8 @@ import {
   useUpdatePurchaseInvoice,
   useDeletePurchaseInvoice,
   fetchAllExportablePurchaseInvoices,
+  fetchPurchaseInvoiceExportLines,
+  fetchExportLedgerAccounts,
   markPurchaseInvoicesExported,
   buildYearOptions,
   PURCHASE_INVOICES_PAGE_SIZE,
@@ -35,7 +37,8 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { exportPurchaseInvoicesCSV } from "@/lib/snelstart-export";
+import { exportPurchaseInvoicesCSV, type SnelstartRefusal } from "@/lib/snelstart-export";
+import { SnelstartExportRefusals } from "@/components/SnelstartExportRefusals";
 import { useClients } from "@/hooks/useClients";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
@@ -44,8 +47,10 @@ import { InvoiceNumberCopyButton } from "@/components/InvoiceNumberCopyButton";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
-import { useBankTransactions, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
+import { useBankTransactionAllocations, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
+import { useBankPaymentLink } from "@/hooks/useBankPaymentLink";
+import { bankPaymentErrorMessage, linkResultMessage } from "@/lib/bank-payment-link";
+import { useBankTransactions } from "@/hooks/useBankTransactions";
 import { getDisplayDescription } from "@/lib/mt940-description-parser";
 import { useNavigate } from "react-router-dom";
 import { FilterChip } from "@/components/FilterChip";
@@ -267,8 +272,9 @@ export default function Facturen() {
   const [linkAmount, setLinkAmount] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
 
-  const upsertAllocation = useUpsertBankTransactionAllocation();
-  const updateBankTx = useUpdateBankTransaction();
+  // De enige schrijver van koppelingen, restant, betaald en matchvelden (P5, D1).
+  const { link: linkPayment, refresh: refreshPayments } = useBankPaymentLink();
+  const [linkPending, setLinkPending] = useState(false);
 
   const { data: allAllocations } = useBankTransactionAllocations({
     organizationId: activeOrganizationId ?? undefined,
@@ -312,46 +318,32 @@ export default function Facturen() {
     setUploadClientId(selectedClientId !== "all" ? selectedClientId : "");
   }, [selectedClientId]);
 
+  // Koppelen via de betaalschrijver: één aanroep, die koppeling, restant,
+  // en de matchvelden van de banktransactie atomair
+  // vastlegt — of niets, met een melding. De app rekent hier niets meer uit.
   const handlePurchaseLink = async () => {
     if (!afletteringInvoice || !linkTarget) return;
     const amount = parseFloat(linkAmount);
     const inv = afletteringInvoice;
     const { tx } = linkTarget;
-
-    // 1. Duplicate check — abort if this (tx, invoice) pair is already allocated
-    const alreadyLinked = (allAllocations ?? []).some(
-      a => a.bank_transaction_id === tx.id && a.invoice_id === inv.id && a.invoice_type === "inkoop"
-    );
-    if (alreadyLinked) { toast({ title: "Deze banktransactie is al gekoppeld aan deze factuur", variant: "destructive" }); return; }
-
-    // 2. Fresh bank-unallocated from latest local allAllocations
-    const bankAllocatedNow = (allAllocations ?? [])
-      .filter(a => a.bank_transaction_id === tx.id)
-      .reduce((sum, a) => sum + a.amount, 0);
-    const bankUnallocatedNow = Math.abs(tx.amount) - bankAllocatedNow;
-    if (bankUnallocatedNow < 0.01) { toast({ title: "Deze banktransactie is al volledig gealloceerd", variant: "destructive" }); return; }
-
-    // 3. Fresh invoice-open from current state
-    const invoiceOpen = getInvoiceRemainingAmount(inv) ?? 0;
-    if (invoiceOpen < 0.01) { toast({ title: "Deze factuur staat niet meer open", variant: "destructive" }); return; }
-
     if (isNaN(amount) || amount <= 0) { toast({ title: "Ongeldig bedrag", variant: "destructive" }); return; }
-    if (amount > invoiceOpen + 0.005) { toast({ title: "Bedrag groter dan openstaand factuurbedrag", variant: "destructive" }); return; }
-    if (amount > bankUnallocatedNow + 0.005) { toast({ title: "Bedrag groter dan beschikbaar banksaldo", variant: "destructive" }); return; }
 
+    setLinkPending(true);
     try {
-      await upsertAllocation.mutateAsync({ bank_transaction_id: tx.id, invoice_type: "inkoop", invoice_id: inv.id, client_id: inv.client_id, amount });
-      const newRemaining = Math.max(0, invoiceOpen - amount);
-      await updateInvoice.mutateAsync({ id: inv.id, remaining_amount: newRemaining });
-      const bankUpdates: { id: string; match_status: string; matched_invoice_id?: string } = { id: tx.id, match_status: "gematcht" };
-      if (!tx.matched_invoice_id) bankUpdates.matched_invoice_id = inv.id;
-      await updateBankTx.mutateAsync(bankUpdates);
-      setAfletteringInvoice({ ...inv, remaining_amount: newRemaining });
+      const result = await linkPayment({ bankTransactionId: tx.id, invoiceType: "inkoop", invoiceId: inv.id, amount });
+      setAfletteringInvoice({
+        ...inv,
+        ...(result.invoiceRemaining != null ? { remaining_amount: result.invoiceRemaining } : {}),
+        ...(result.invoiceStatus ? { status: result.invoiceStatus } : {}),
+      });
       setLinkTarget(null);
       setLinkAmount("");
-      toast({ title: "Koppeling aangemaakt" });
-    } catch (e: any) {
-      toast({ title: "Koppelen mislukt", description: e.message, variant: "destructive" });
+      toast(linkResultMessage(result, "inkoop"));
+    } catch (e) {
+      toast({ title: "Koppelen mislukt", description: bankPaymentErrorMessage(e), variant: "destructive" });
+    } finally {
+      setLinkPending(false);
+      await refreshPayments();
     }
   };
 
@@ -480,32 +472,59 @@ export default function Facturen() {
 
   const getClientName = (clientId: string) => clients?.find((c) => c.id === clientId)?.name ?? "—";
 
+  // SnelStart-export alleen bij precies één administratie (A2-05); de
+  // exportfunctie toetst dat nogmaals op de opgehaalde rijen.
+  const exportClient = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter) : undefined;
+  const exportBlockReason = clientFilter === "all"
+    ? "Kies één administratie om naar SnelStart te exporteren. Een export over meerdere administraties wordt niet gemaakt."
+    : !exportClient ? "De gekozen administratie hoort niet bij de actieve organisatie of is nog niet geladen." : null;
+  const [exportRefusals, setExportRefusals] = useState<SnelstartRefusal[]>([]);
+
   const handleExportSnelstart = async () => {
     if (exporting) return;
     if (!activeOrganizationId) {
       toast({ title: "Geen actieve organisatie", description: "Selecteer eerst een organisatie voordat je exporteert.", variant: "destructive" });
       return;
     }
+    if (!exportClient) {
+      toast({ title: "Export niet gestart", description: exportBlockReason ?? undefined, variant: "destructive" });
+      return;
+    }
     setExporting(true);
+    setExportRefusals([]);
     try {
       const exportable = await fetchAllExportablePurchaseInvoices({
         organizationId: activeOrganizationId,
-        clientId: clientFilter !== "all" ? clientFilter : undefined,
+        clientId: exportClient.id,
         year: yearFilter,
       });
       if (!exportable.length) { toast({ title: "Geen gecontroleerde of betaalde facturen om te exporteren", variant: "destructive" }); return; }
-      const clientName = clientFilter !== "all" ? clients?.find(c => c.id === clientFilter)?.name : undefined;
-      const ids = exportPurchaseInvoicesCSV(exportable, clientName, yearFilter === "all" ? undefined : yearFilter);
+      const lines = await fetchPurchaseInvoiceExportLines({ invoiceIds: exportable.map(i => i.id) });
+      const accounts = await fetchExportLedgerAccounts({ organizationId: activeOrganizationId, accountIds: lines.map(l => l.grootboekrekening_id) });
+      // Per boekingsregel; gooit bij een gemengde administratie of een mislukte download.
+      const result = exportPurchaseInvoicesCSV({
+        invoices: exportable, lines, accounts, clientId: exportClient.id, organizationId: activeOrganizationId,
+        clientName: exportClient.name, year: yearFilter === "all" ? undefined : yearFilter,
+      });
+      setExportRefusals(result.refused);
+      const ids = result.exportedInvoiceIds;
+      const refusedNote = result.refused.length ? `${result.refused.length} niet geëxporteerd; zie de lijst met redenen.` : undefined;
+      if (!ids.length) { toast({ title: "Geen facturen geëxporteerd", description: refusedNote, variant: "destructive" }); return; }
       try {
-        await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, invoiceIds: ids });
+        // H6-03 / Codex #299: per factuur alleen als updated_at nog exact de opgehaalde waarde is.
+        const fetchedUpdatedAt = new Map(exportable.map(i => [i.id, i.updated_at] as const));
+        await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, clientId: exportClient.id, invoiceIds: ids, fetchedUpdatedAt });
         queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
-        toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart` });
+        toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart`, description: refusedNote });
       } catch (statusErr: any) {
         // CSV is already downloaded; earlier batches may be committed.
         queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
         toast({
           title: "CSV gedownload, maar status bijwerken mislukt",
-          description: `Mogelijk staan niet alle facturen op 'geëxporteerd'. Probeer opnieuw of controleer de lijst. (${statusErr?.message ?? "onbekende fout"})`,
+          description: `Niet alle geëxporteerde facturen staan op 'geëxporteerd'; een volgende export neemt die opnieuw mee. ${
+            (statusErr?.unmarkedIds ?? []).length
+              ? `Niet gemarkeerd: ${(statusErr.unmarkedIds as string[]).slice(0, 5).map((id: string) => { const f = exportable.find(i => i.id === id); return f ? `${f.supplier}${f.invoice_number ? ` - ${f.invoice_number}` : ""}` : id; }).join(", ")}${statusErr.unmarkedIds.length > 5 ? ` en ${statusErr.unmarkedIds.length - 5} andere` : ""}. `
+              : ""}(${statusErr?.message ?? "onbekende fout"})`,
           variant: "destructive",
         });
       }
@@ -551,10 +570,25 @@ export default function Facturen() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
-        <Button size="sm" variant="outline" disabled={exporting} onClick={handleExportSnelstart}>
+        {exportBlockReason && (
+          <span id="inkoop-snelstart-export-uitleg" className="text-xs text-muted-foreground">{exportBlockReason}</span>
+        )}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={exporting || !exportClient}
+          aria-describedby={exportBlockReason ? "inkoop-snelstart-export-uitleg" : undefined}
+          onClick={handleExportSnelstart}
+        >
           {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}Export Snelstart
         </Button>
       </div>
+
+      <SnelstartExportRefusals
+        refusals={exportRefusals}
+        description="Deze facturen staan niet in het SnelStart-bestand en zijn niet als geëxporteerd gemarkeerd. Los de reden op en exporteer opnieuw."
+        onDismiss={() => setExportRefusals([])}
+      />
 
       <Tabs defaultValue="overview">
         <TabsList>
@@ -1124,10 +1158,8 @@ export default function Facturen() {
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setLinkTarget(null)}>Annuleren</Button>
-              <Button onClick={handlePurchaseLink}
-                disabled={upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending}>
-                {(upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending)
-                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+              <Button onClick={handlePurchaseLink} disabled={linkPending}>
+                {linkPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                 Koppelen
               </Button>
             </div>

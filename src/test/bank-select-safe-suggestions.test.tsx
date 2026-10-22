@@ -13,6 +13,8 @@ const state = {
   salesLoading: false,
   salesError: false,
   updateTxCalls: [] as any[],
+  /** Aanroepen van de betaalschrijver (P5): de enige schrijver van een koppeling. */
+  linkCalls: [] as any[],
 };
 
 // Default confidence is deliberately 80 (< 90): safety must NOT depend on
@@ -39,6 +41,19 @@ const makeTx = (over: Partial<any> = {}) => ({
 
 // ── Module mocks ────────────────────────────────────────────────────────────
 // Bank-matching tests isolate rejection feedback from network and React Query.
+// De betaalschrijver (P5): bevestigen = één link_bank_payment-aanroep per regel;
+// de matchvelden, het restant en betaald zet de database, niet de app.
+vi.mock("@/hooks/useBankPaymentLink", () => ({
+  useBankPaymentLink: () => ({
+    link: vi.fn(async (input: any) => {
+      state.linkCalls.push(input);
+      return { allocationId: `a-${input.bankTransactionId}`, outcome: "created", invoiceRemaining: 0,
+               invoiceStatus: "gecontroleerd", txMatchStatus: "gematcht", replayed: false };
+    }),
+    unlink: vi.fn(),
+    refresh: vi.fn(async () => undefined),
+  }),
+}));
 vi.mock("@/hooks/useBankMatchRejections", () => ({
   assertBankMatchNotRejected: vi.fn(async () => undefined),
   useBankMatchRejections: () => ({ data: [], isSuccess: true, isError: false }),
@@ -203,6 +218,7 @@ beforeEach(() => {
   state.salesLoading = false;
   state.salesError = false;
   state.updateTxCalls = [];
+  state.linkCalls = [];
 });
 
 describe("Bank — veilige matches (banner + selectieknop)", () => {
@@ -353,12 +369,14 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
       await screen.findByRole("button", { name: /Veilige matches bevestigen \(2\)/ }),
     );
 
-    await waitFor(() => expect(state.updateTxCalls.length).toBeGreaterThanOrEqual(2));
-    const confirmed = state.updateTxCalls.filter(c => c.match_status === "gematcht");
-    expect(confirmed.map(c => c.id).sort()).toEqual(["tx-1", "tx-2"]);
-    expect(confirmed.map(c => c.matched_invoice_id).sort()).toEqual(["inv-tx-1", "inv-tx-2"]);
-    // De onveilige rij is nooit bevestigd.
-    expect(state.updateTxCalls.some(c => c.id === "tx-unsafe")).toBe(false);
+    await waitFor(() => expect(state.linkCalls.length).toBeGreaterThanOrEqual(2));
+    expect(state.linkCalls.map(c => c.bankTransactionId).sort()).toEqual(["tx-1", "tx-2"]);
+    expect(state.linkCalls.map(c => c.invoiceId).sort()).toEqual(["inv-tx-1", "inv-tx-2"]);
+    // Het bedrag is dat van de bankregel (exacte match), nooit een eigen restantberekening.
+    expect(state.linkCalls.map(c => c.amount).sort((a, b) => a - b)).toEqual([100, 200]);
+    // De onveilige rij is nooit bevestigd, en de app zet zelf geen match.
+    expect(state.linkCalls.some(c => c.bankTransactionId === "tx-unsafe")).toBe(false);
+    expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
   });
 
   it("toont bij één veilige match het label met (1)", async () => {
@@ -404,6 +422,7 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
     );
     expect(screen.queryByRole("button", { name: /Veilige matches bevestigen/ })).toBeNull();
     expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
+    expect(state.linkCalls).toEqual([]);
   });
 
   it("valt nooit terug op een lager gerangschikte factuur als de topkandidaat een bedragverschil heeft", async () => {
@@ -434,6 +453,7 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
     expect(screen.queryByRole("button", { name: "Controleer" })).toBeNull();
     expect(screen.queryByRole("button", { name: "✓ Bevestig" })).toBeNull();
     expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
+    expect(state.linkCalls).toEqual([]);
   });
 
   it("verwerkt een exacte, correcte topkandidaat normaal, ook met lagere kandidaten erachter", async () => {
@@ -462,11 +482,10 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
     );
 
     await waitFor(() => {
-      const confirmed = state.updateTxCalls.filter(c => c.match_status === "gematcht");
-      expect(confirmed).toHaveLength(1);
+      expect(state.linkCalls).toHaveLength(1);
       // De hoogst gerangschikte kandidaat wordt gekoppeld, niet de lagere.
-      expect(confirmed[0].id).toBe("tx-top");
-      expect(confirmed[0].matched_invoice_id).toBe("inv-tx-top");
+      expect(state.linkCalls[0].bankTransactionId).toBe("tx-top");
+      expect(state.linkCalls[0].invoiceId).toBe("inv-tx-top");
     });
   });
 

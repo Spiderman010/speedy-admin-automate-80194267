@@ -53,6 +53,11 @@ function seedTransactions(count = 83): void {
 
 // ── Module mocks ────────────────────────────────────────────────────────────
 // Bank-matching tests isolate rejection feedback from network and React Query.
+// De betaalschrijver (P5) gebruikt de React Query-client voor het verversen; deze
+// test rendert Bank zonder QueryClientProvider en raakt geen koppelpad.
+vi.mock("@/hooks/useBankPaymentLink", () => ({
+  useBankPaymentLink: () => ({ link: vi.fn(), unlink: vi.fn(), refresh: vi.fn(async () => undefined) }),
+}));
 vi.mock("@/hooks/useBankMatchRejections", () => ({
   useBankMatchRejections: () => ({ data: [], isSuccess: true, isError: false }),
   useRecordBankMatchRejection: () => ({ mutateAsync: vi.fn(async () => undefined) }),

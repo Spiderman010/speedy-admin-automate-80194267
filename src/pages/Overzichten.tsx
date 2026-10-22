@@ -40,11 +40,17 @@ import {
 import { useClients } from "@/hooks/useClients";
 import { useClientContext } from "@/hooks/useClientContext";
 import { useActiveOrganization } from "@/hooks/useActiveOrganization";
-import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
+import {
+  usePurchaseInvoices,
+  fetchAllExportablePurchaseInvoices,
+  fetchPurchaseInvoiceExportLines,
+  fetchExportLedgerAccounts,
+} from "@/hooks/usePurchaseInvoices";
 import { useJournalEntries } from "@/hooks/useJournalEntries";
 import { useBankTransactions } from "@/hooks/useBankTransactions";
 import { useActiveGrootboekrekeningen } from "@/hooks/useGrootboekrekeningen";
-import { exportAllForClient } from "@/lib/snelstart-export";
+import { exportAllForClient, type SnelstartRefusal } from "@/lib/snelstart-export";
+import { SnelstartExportRefusals } from "@/components/SnelstartExportRefusals";
 import { useToast } from "@/hooks/use-toast";
 import { formatEuro } from "@/lib/format";
 
@@ -166,25 +172,47 @@ export default function Overzichten() {
     ]);
   };
 
+  // ZIP-export voor SnelStart, per administratie. Inkoop per boekingsregel uit
+  // een verse, volledige ophaling (A2-04); geen dagboekfallback (C-11); een
+  // geweigerde factuur staat met reden in de lijst. De ZIP markeert niets.
+  const [zipRefusals, setZipRefusals] = useState<SnelstartRefusal[]>([]);
+  const exportDataReady = !isLoading && !isError;
   const handleExportAll = async () => {
     if (!selectedClient) {
       toast({ title: "Selecteer eerst een klant", variant: "destructive" });
       return;
     }
     const clientRecord = clients?.find(c => c.id === selectedClient);
-    const clientName = clientRecord?.name ?? "klant";
-    const bankDagboek = clientRecord?.bank_dagboek ?? 1100;
+    if (!activeOrganizationId || !clientRecord || !exportDataReady) {
+      toast({ title: "Export niet gestart", description: "De gegevens van deze administratie zijn nog niet (volledig) geladen.", variant: "destructive" });
+      return;
+    }
+    const clientName = clientRecord.name;
     setExporting(true);
+    setZipRefusals([]);
     try {
-      await exportAllForClient(
+      const exportable = await fetchAllExportablePurchaseInvoices({ organizationId: activeOrganizationId, clientId: clientRecord.id });
+      const lines = exportable.length ? await fetchPurchaseInvoiceExportLines({ invoiceIds: exportable.map(i => i.id) }) : [];
+      const accounts = lines.length
+        ? await fetchExportLedgerAccounts({ organizationId: activeOrganizationId, accountIds: lines.map(l => l.grootboekrekening_id) })
+        : [];
+      const result = await exportAllForClient({
+        clientId: clientRecord.id,
+        organizationId: activeOrganizationId,
         clientName,
-        invoices?.filter(i => i.status === "gecontroleerd" || i.status === "betaald") ?? [],
-        entries ?? [],
-        transactions ?? [],
-        grootboekrekeningen ?? [],
-        bankDagboek,
-      );
-      toast({ title: "ZIP-bestand gedownload", description: `Export voor ${clientName} is klaar.` });
+        invoices: exportable,
+        lines,
+        accounts,
+        entries: entries ?? [],
+        transactions: transactions ?? [],
+        grootboekrekeningen: grootboekrekeningen ?? [],
+        bankDagboek: clientRecord.bank_dagboek,
+      });
+      setZipRefusals(result.purchaseRefused);
+      const refusedNote = result.purchaseRefused.length
+        ? ` ${result.purchaseRefused.length} inkoopfactu${result.purchaseRefused.length === 1 ? "ur" : "ren"} niet opgenomen; zie de lijst met redenen.`
+        : "";
+      toast({ title: "ZIP-bestand gedownload", description: `Export voor ${clientName} is klaar.${refusedNote}` });
     } catch (e: any) {
       toast({ title: "Exportfout", description: e.message, variant: "destructive" });
     } finally {
@@ -271,12 +299,18 @@ export default function Overzichten() {
               </Select>
             </div>
           ))}
-          <Button className="h-9 w-full whitespace-nowrap sm:col-span-2 lg:col-span-1 lg:w-auto" onClick={handleExportAll} disabled={exporting || !selectedClient}>
+          <Button className="h-9 w-full whitespace-nowrap sm:col-span-2 lg:col-span-1 lg:w-auto" onClick={handleExportAll} disabled={exporting || !selectedClient || !exportDataReady}>
             {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
             Export alles (Snelstart)
           </Button>
         </div>
       </section>
+
+      <SnelstartExportRefusals
+        refusals={zipRefusals}
+        description="Deze inkoopfacturen staan niet in de ZIP. Los de reden op en exporteer opnieuw."
+        onDismiss={() => setZipRefusals([])}
+      />
 
       {!selectedClient ? (
         <Card className="shadow-sm">

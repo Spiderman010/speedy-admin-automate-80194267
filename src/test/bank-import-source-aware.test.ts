@@ -220,6 +220,27 @@ describe("Codex-ronde op b60c15a", () => {
     expect(a).toBe(b);
   });
 
+  it("CAMT met boek- en valutadatum alleen als tijdstip (DtTm): de valutadatum wordt gelezen, de afdruk is gelijk aan MT940", async () => {
+    const mt940 = parseBankStatementFull(`:20:X
+:25:NL91INGB0001234567
+:28C:00001
+:60F:C261001EUR100,00
+:61:2610021003D80,00N544NONREF//B6J02XY0009999
+:86:Verzekering
+:62F:C20,00
+`);
+    const camt = parseBankStatementFull(`<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02"><BkToCstmrStmt><Stmt>
+<Acct><Id><IBAN>NL91INGB0001234567</IBAN></Id></Acct>
+<Ntry><Amt Ccy="EUR">80.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><BookgDt><DtTm>2026-10-03T08:15:00</DtTm></BookgDt><ValDt><DtTm>2026-10-02T00:00:00</DtTm></ValDt>
+<AcctSvcrRef>B6J02XY0009999</AcctSvcrRef><AddtlNtryInf>Verzekering</AddtlNtryInf></Ntry>
+</Stmt></BkToCstmrStmt></Document>`);
+    expect(camt.transactions[0]).toMatchObject({ date: "2026-10-03", valueDate: "2026-10-02" });
+    const [a] = await importFingerprints(mt940);
+    const [b] = await importFingerprints(camt);
+    expect(b).toBe(a);
+  });
+
   it("een bankreferentie die al bij een opgeslagen regel met een ander bedrag hoort: het afschrift vertrouwt zijn bankreferenties niet", async () => {
     const statement = parseBankStatementFull(MT940);
     const stored = [{ transaction_date: "2026-09-02", amount: -999, description: "vorige maand", counter_account: null, reference: "NONREF//B6J02XY0000001" }];

@@ -1,0 +1,544 @@
+{
+    "lines": [
+        {
+            "id": "00000000-0000-0000-3000-000000000011",
+            "sort_order": 0,
+            "amount_excl": 100.00,
+            "omschrijving": "Kantoorartikelen",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000001",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000012",
+            "sort_order": 1,
+            "amount_excl": 100.00,
+            "omschrijving": "Vakliteratuur",
+            "btw_percentage": 9,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000001",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f008"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000021",
+            "sort_order": 0,
+            "amount_excl": 50.00,
+            "omschrijving": "Premie",
+            "btw_percentage": 0,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000002",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f009"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000031",
+            "sort_order": 0,
+            "amount_excl": 250.00,
+            "omschrijving": "Papier",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000003",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000032",
+            "sort_order": 1,
+            "amount_excl": 80.00,
+            "omschrijving": "Boeken",
+            "btw_percentage": 9,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000003",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f008"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000033",
+            "sort_order": 2,
+            "amount_excl": 40.00,
+            "omschrijving": "Premie",
+            "btw_percentage": 0,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000003",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f009"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000041",
+            "sort_order": 0,
+            "amount_excl": 10.00,
+            "omschrijving": "Flyers",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000004",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000042",
+            "sort_order": 1,
+            "amount_excl": 20.50,
+            "omschrijving": "Posters",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000004",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000043",
+            "sort_order": 2,
+            "amount_excl": 33.33,
+            "omschrijving": "Visitekaart",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000004",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000051",
+            "sort_order": 0,
+            "amount_excl": 1.50,
+            "omschrijving": "Tijdschrift A",
+            "btw_percentage": 9,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000005",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f008"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000052",
+            "sort_order": 1,
+            "amount_excl": 1.50,
+            "omschrijving": "Tijdschrift B",
+            "btw_percentage": 9,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000005",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f008"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000061",
+            "sort_order": 0,
+            "amount_excl": 100.00,
+            "omschrijving": "Dienst",
+            "btw_percentage": null,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000006",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000081",
+            "sort_order": 0,
+            "amount_excl": 100.00,
+            "omschrijving": "Diversen",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000008",
+            "grootboekrekening_id": null
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000091",
+            "sort_order": 0,
+            "amount_excl": 1.30,
+            "omschrijving": "Pennen",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000009",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        },
+        {
+            "id": "00000000-0000-0000-3000-000000000092",
+            "sort_order": 1,
+            "amount_excl": 1.30,
+            "omschrijving": "Mappen",
+            "btw_percentage": 21,
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "purchase_invoice_id": "00000000-0000-0000-2000-000000000009",
+            "grootboekrekening_id": "00000000-0000-0000-0000-00000000f006"
+        }
+    ],
+    "ledger": [
+        {
+            "nummer": 4400,
+            "line_no": 1,
+            "source_id": "00000000-0000-0000-2000-000000000001",
+            "description": "Kantoorartikelen",
+            "debit_amount": 100.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 4600,
+            "line_no": 2,
+            "source_id": "00000000-0000-0000-2000-000000000001",
+            "description": "Vakliteratuur",
+            "debit_amount": 100.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1520,
+            "line_no": 3,
+            "source_id": "00000000-0000-0000-2000-000000000001",
+            "description": "BTW te vorderen",
+            "debit_amount": 30.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1600,
+            "line_no": 4,
+            "source_id": "00000000-0000-0000-2000-000000000001",
+            "description": "Leverancier BV",
+            "debit_amount": 0.00,
+            "credit_amount": 230.00
+        },
+        {
+            "nummer": 7000,
+            "line_no": 1,
+            "source_id": "00000000-0000-0000-2000-000000000002",
+            "description": "Premie",
+            "debit_amount": 50.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1600,
+            "line_no": 2,
+            "source_id": "00000000-0000-0000-2000-000000000002",
+            "description": "Verzekeraar NV",
+            "debit_amount": 0.00,
+            "credit_amount": 50.00
+        },
+        {
+            "nummer": 4400,
+            "line_no": 1,
+            "source_id": "00000000-0000-0000-2000-000000000003",
+            "description": "Papier",
+            "debit_amount": 250.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 4600,
+            "line_no": 2,
+            "source_id": "00000000-0000-0000-2000-000000000003",
+            "description": "Boeken",
+            "debit_amount": 80.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 7000,
+            "line_no": 3,
+            "source_id": "00000000-0000-0000-2000-000000000003",
+            "description": "Premie",
+            "debit_amount": 40.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1520,
+            "line_no": 4,
+            "source_id": "00000000-0000-0000-2000-000000000003",
+            "description": "BTW te vorderen",
+            "debit_amount": 59.70,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1600,
+            "line_no": 5,
+            "source_id": "00000000-0000-0000-2000-000000000003",
+            "description": "Groothandel BV",
+            "debit_amount": 0.00,
+            "credit_amount": 429.70
+        },
+        {
+            "nummer": 4400,
+            "line_no": 1,
+            "source_id": "00000000-0000-0000-2000-000000000004",
+            "description": "Flyers",
+            "debit_amount": 10.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 4400,
+            "line_no": 2,
+            "source_id": "00000000-0000-0000-2000-000000000004",
+            "description": "Posters",
+            "debit_amount": 20.50,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 4400,
+            "line_no": 3,
+            "source_id": "00000000-0000-0000-2000-000000000004",
+            "description": "Visitekaart",
+            "debit_amount": 33.33,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1520,
+            "line_no": 4,
+            "source_id": "00000000-0000-0000-2000-000000000004",
+            "description": "BTW te vorderen",
+            "debit_amount": 13.41,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1600,
+            "line_no": 5,
+            "source_id": "00000000-0000-0000-2000-000000000004",
+            "description": "Drukkerij BV",
+            "debit_amount": 0.00,
+            "credit_amount": 77.24
+        },
+        {
+            "nummer": 4600,
+            "line_no": 1,
+            "source_id": "00000000-0000-0000-2000-000000000005",
+            "description": "Tijdschrift A",
+            "debit_amount": 1.50,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 4600,
+            "line_no": 2,
+            "source_id": "00000000-0000-0000-2000-000000000005",
+            "description": "Tijdschrift B",
+            "debit_amount": 1.50,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1520,
+            "line_no": 3,
+            "source_id": "00000000-0000-0000-2000-000000000005",
+            "description": "BTW te vorderen",
+            "debit_amount": 0.27,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1600,
+            "line_no": 4,
+            "source_id": "00000000-0000-0000-2000-000000000005",
+            "description": "Boekhandel VOF",
+            "debit_amount": 0.00,
+            "credit_amount": 3.27
+        },
+        {
+            "nummer": 4400,
+            "line_no": 1,
+            "source_id": "00000000-0000-0000-2000-000000000006",
+            "description": "Dienst",
+            "debit_amount": 100.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1520,
+            "line_no": 2,
+            "source_id": "00000000-0000-0000-2000-000000000006",
+            "description": "BTW te vorderen",
+            "debit_amount": 21.00,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1600,
+            "line_no": 3,
+            "source_id": "00000000-0000-0000-2000-000000000006",
+            "description": "Onbekend Tarief BV",
+            "debit_amount": 0.00,
+            "credit_amount": 121.00
+        },
+        {
+            "nummer": 4400,
+            "line_no": 1,
+            "source_id": "00000000-0000-0000-2000-000000000009",
+            "description": "Pennen",
+            "debit_amount": 1.30,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 4400,
+            "line_no": 2,
+            "source_id": "00000000-0000-0000-2000-000000000009",
+            "description": "Mappen",
+            "debit_amount": 1.30,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1520,
+            "line_no": 3,
+            "source_id": "00000000-0000-0000-2000-000000000009",
+            "description": "BTW te vorderen",
+            "debit_amount": 0.55,
+            "credit_amount": 0.00
+        },
+        {
+            "nummer": 1600,
+            "line_no": 4,
+            "source_id": "00000000-0000-0000-2000-000000000009",
+            "description": "Kantoorshop BV",
+            "debit_amount": 0.00,
+            "credit_amount": 3.15
+        }
+    ],
+    "accounts": [
+        {
+            "id": "00000000-0000-0000-0000-00000000f004",
+            "nummer": 1520,
+            "client_id": null,
+            "organization_id": "00000000-0000-0000-0000-00000000a001"
+        },
+        {
+            "id": "00000000-0000-0000-0000-00000000f003",
+            "nummer": 1600,
+            "client_id": null,
+            "organization_id": "00000000-0000-0000-0000-00000000a001"
+        },
+        {
+            "id": "00000000-0000-0000-0000-00000000f006",
+            "nummer": 4400,
+            "client_id": null,
+            "organization_id": "00000000-0000-0000-0000-00000000a001"
+        },
+        {
+            "id": "00000000-0000-0000-0000-00000000f008",
+            "nummer": 4600,
+            "client_id": null,
+            "organization_id": "00000000-0000-0000-0000-00000000a001"
+        },
+        {
+            "id": "00000000-0000-0000-0000-00000000f009",
+            "nummer": 7000,
+            "client_id": null,
+            "organization_id": "00000000-0000-0000-0000-00000000a001"
+        }
+    ],
+    "invoices": [
+        {
+            "id": "00000000-0000-0000-2000-000000000001",
+            "posted": true,
+            "status": "gecontroleerd",
+            "supplier": "Leverancier BV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 30.00,
+            "amount_excl": 200.00,
+            "amount_incl": 230.00,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 21.00,
+            "invoice_number": "000123",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 230.00
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000002",
+            "posted": true,
+            "status": "gecontroleerd",
+            "supplier": "Verzekeraar NV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 0.00,
+            "amount_excl": 50.00,
+            "amount_incl": 50.00,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 0.00,
+            "invoice_number": "V-0",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 50.00
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000003",
+            "posted": true,
+            "status": "gecontroleerd",
+            "supplier": "Groothandel BV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 59.70,
+            "amount_excl": 370.00,
+            "amount_incl": 429.70,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": null,
+            "invoice_number": "G-77",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 429.70
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000004",
+            "posted": true,
+            "status": "gecontroleerd",
+            "supplier": "Drukkerij BV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 13.41,
+            "amount_excl": 63.83,
+            "amount_incl": 77.24,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 21.00,
+            "invoice_number": "D-4",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 77.24
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000005",
+            "posted": true,
+            "status": "gecontroleerd",
+            "supplier": "Boekhandel VOF",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 0.27,
+            "amount_excl": 3.00,
+            "amount_incl": 3.27,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 9.00,
+            "invoice_number": "B-5",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 3.27
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000006",
+            "posted": true,
+            "status": "gecontroleerd",
+            "supplier": "Onbekend Tarief BV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 21.00,
+            "amount_excl": 100.00,
+            "amount_incl": 121.00,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 21.00,
+            "invoice_number": "N-6",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 121.00
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000007",
+            "posted": false,
+            "status": "gecontroleerd",
+            "supplier": "Zonder Regels BV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 21.00,
+            "amount_excl": 100.00,
+            "amount_incl": 121.00,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 21.00,
+            "invoice_number": "Z-1",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 121.00
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000008",
+            "posted": false,
+            "status": "gecontroleerd",
+            "supplier": "Geen Rekening BV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 21.00,
+            "amount_excl": 100.00,
+            "amount_incl": 121.00,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 21.00,
+            "invoice_number": "R-1",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 121.00
+        },
+        {
+            "id": "00000000-0000-0000-2000-000000000009",
+            "posted": true,
+            "status": "gecontroleerd",
+            "supplier": "Kantoorshop BV",
+            "client_id": "00000000-0000-0000-0000-0000000000c1",
+            "btw_amount": 0.55,
+            "amount_excl": 2.60,
+            "amount_incl": 3.15,
+            "invoice_date": "2026-10-20",
+            "btw_percentage": 21.00,
+            "invoice_number": "K-9",
+            "organization_id": "00000000-0000-0000-0000-00000000a001",
+            "remaining_amount": 3.15
+        }
+    ],
+    "generated_by": "supabase/tests/snelstart-export-ledger/run-proof.sh",
+    "crediteuren_nummer": 1600,
+    "btw_te_vorderen_nummer": 1520
+}

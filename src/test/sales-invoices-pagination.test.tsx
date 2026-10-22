@@ -595,11 +595,13 @@ describe("Bank consumer source guarantee", () => {
     expect(source).toContain("isError: salesError");
     // a sales error is not treated as an empty success
     expect(source).toContain("const salesReady = hasSelection && !salesLoading && !salesError && !!salesInvs;");
-    expect(source).toContain("const matchingReady = wholeSetReady && salesReady;");
+    // Since P3 the purchase set is scoped and gated exactly like the sales set
+    // (behaviour: src/test/bank-purchase-scope.test.tsx).
+    expect(source).toContain("const matchingReady = wholeSetReady && salesReady && purchaseReady;");
     // afletter report + verwerken (reconciliation) require both datasets ready
     expect(source).toContain("disabled={!hasSelection || !matchingReady}"); // Afletterrapport CSV
     expect(source).toContain("disabled={!hasSelection || !matchingReady || openCount === 0}"); // Verwerken
     // sales-invoice error is surfaced with a retry
-    expect(source).toContain("(wholeSetError || salesError)");
+    expect(source).toContain("(wholeSetError || salesError || purchaseError)");
   });
 });

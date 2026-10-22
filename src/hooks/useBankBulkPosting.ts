@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { useAuth } from "./useAuth";
 import {
   BANK_BULK_MAX_BATCH,
@@ -37,15 +38,26 @@ export const BANK_BULK_CANDIDATES_QUERY_KEY = "bank-bulk-candidates" as const;
  * mogelijk: precies deze twee aanroepen, met echte parameter- en
  * resultaattypes — geen brede `any`-laag.
  */
+type BulkRpcError = { code?: string; message?: string };
+
+/**
+ * De preflight is een set-returning RPC: PostgREST kapt haar resultaat net zo
+ * af op de rijgrens als een tabel, en pagineert het met order/range.
+ */
+interface BankBulkCandidatesQuery {
+  order(column: "transaction_date" | "transaction_id", options: { ascending: boolean }): BankBulkCandidatesQuery;
+  range(from: number, to: number): PromiseLike<{ data: BankBulkCandidate[] | null; error: BulkRpcError | null }>;
+}
+
 interface BankBulkApi {
   rpc(
     fn: "bank_bulk_posting_candidates",
     args: { _client_id: string; _boekjaar: number | null },
-  ): PromiseLike<{ data: BankBulkCandidate[] | null; error: { code?: string; message?: string } | null }>;
+  ): BankBulkCandidatesQuery;
   rpc(
     fn: "post_bank_transactions_bulk",
     args: { _transaction_ids: string[] },
-  ): PromiseLike<{ data: BankBulkResult[] | null; error: { code?: string; message?: string } | null }>;
+  ): PromiseLike<{ data: BankBulkResult[] | null; error: BulkRpcError | null }>;
 }
 
 const bulkApi = () => supabase as unknown as BankBulkApi;
@@ -69,15 +81,24 @@ export function useBankBulkCandidates(options: {
     queryKey: [BANK_BULK_CANDIDATES_QUERY_KEY, clientId ?? "", boekjaar ?? "alle"],
     enabled: !!user && !!clientId && enabled,
     queryFn: async () => {
-      const { data, error } = await bulkApi().rpc("bank_bulk_posting_candidates", {
-        _client_id: clientId!,
-        _boekjaar: boekjaar,
-      });
-      if (error) {
+      // Volledig voorbij de rijgrens: pagina voor pagina. De functie sorteert
+      // zelf op (transaction_date, id); dezelfde totale volgorde gaat hier
+      // expliciet mee, zodat de paginavensters ook deterministisch blijven als
+      // de functie ooit anders gaat sorteren.
+      try {
+        return await fetchAllRows<BankBulkCandidate>(
+          (from, to) =>
+            bulkApi()
+              .rpc("bank_bulk_posting_candidates", { _client_id: clientId!, _boekjaar: boekjaar })
+              .order("transaction_date", { ascending: true })
+              .order("transaction_id", { ascending: true })
+              .range(from, to),
+          { key: (c) => c.transaction_id },
+        );
+      } catch (error) {
         if (isDeployWindowError(error)) return null;
         throw new Error(bulkErrorMessage(error));
       }
-      return data ?? [];
     },
   });
 }

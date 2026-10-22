@@ -39,6 +39,11 @@ const makeRow = (id: string, over: Partial<any> = {}) => ({
 });
 
 // Bank-matching tests isolate rejection feedback from network and React Query.
+// De betaalschrijver (P5) gebruikt de React Query-client voor het verversen; deze
+// test rendert Bank zonder QueryClientProvider en raakt geen koppelpad.
+vi.mock("@/hooks/useBankPaymentLink", () => ({
+  useBankPaymentLink: () => ({ link: vi.fn(), unlink: vi.fn(), refresh: vi.fn(async () => undefined) }),
+}));
 vi.mock("@/hooks/useBankMatchRejections", () => ({
   useBankMatchRejections: () => ({ data: [], isSuccess: true, isError: false }),
   useRecordBankMatchRejection: () => ({ mutateAsync: vi.fn(async () => undefined) }),
@@ -54,7 +59,8 @@ vi.mock("@/hooks/useActiveOrganization", () => ({
 
 vi.mock("@/hooks/useClients", () => ({
   useClients: () => ({
-    data: [{ id: "c1", name: "Klant 1", btw_status: "btw_plichtig" }],
+    // Zoals de echte rij: de import weigert een administratie buiten de actieve organisatie (B2-10).
+    data: [{ id: "c1", name: "Klant 1", organization_id: "org-1", btw_status: "btw_plichtig" }],
   }),
 }));
 
