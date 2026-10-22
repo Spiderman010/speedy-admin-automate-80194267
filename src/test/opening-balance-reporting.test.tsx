@@ -488,16 +488,12 @@ describe("statische bewaking", () => {
     expect(notice).not.toMatch(/useQuery|supabase/);
   });
 
-  it("de rapportagekern (ledger-reporting.ts) is buiten het bronblok byte-voor-byte ongewijzigd", () => {
-    let base: string;
-    try {
-      base = execFileSync("git", ["show", "origin/main:src/lib/ledger-reporting.ts"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    } catch {
-      return; // geen origin/main (ondiepe clone): niets te vergelijken
-    }
-    const cut = (s: string) => s.slice(0, s.indexOf("// ── Bron-drilldown"));
-    expect(cut(readFileSync("src/lib/ledger-reporting.ts", "utf8"))).toBe(cut(base));
-  });
+  // Voorheen: "de rapportagekern (ledger-reporting.ts) is buiten het bronblok
+  // byte-voor-byte ongewijzigd" t.o.v. origin/main. Dat was een scope-uitspraak
+  // van PR 3, geen invariant: elke terechte fix in de rapportagekern liet hem
+  // omvallen (nulmeting E-02). Dat het bronlabel en de beginbalans niets aan de
+  // cijfers veranderen, bewijzen de gedragstests in "geen dubbeltelling" ("21",
+  // "20", "22/39" en de overdracht van vorig jaar via het grootboek).
 
   it("25/26/27/33/34. geen migratie, types, package of nav in deze branch; de boekers zijn niet aangeraakt", () => {
     let changed: string[];

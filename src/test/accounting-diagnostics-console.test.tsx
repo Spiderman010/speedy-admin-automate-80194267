@@ -422,15 +422,18 @@ describe("statische grenzen", () => {
     // herschrijven.
     assertBranchSqlKeepsLedgerFoundation(changedList);
     assertBranchTouchesNoExistingWriter(changedList);
-    // De bestaande regel- en rapportagelagen blijven ongemoeid.
+    // De bestaande integriteitslaag blijft ongemoeid.
     //
     // `reporting-classification.ts` stond hier ook, maar dat was opnieuw een
     // scope-uitspraak: die laag is juist de plek waar de taxonomie thuishoort,
     // en een latere fase die haar terecht uitbreidt zou hier stranden. De
     // diagnoseconsole zelf blijft er hoe dan ook af — dat wordt hierboven al
     // bewaakt doordat geen enkel diagnosebestand rekenwerk mag bevatten.
+    // Hetzelfde gold voor `ledger-reporting.ts` (de rapportagekern): elke
+    // terechte fix daarin liet deze assertie omvallen (nulmeting E-02); de kern
+    // wordt met gedrag bewezen in ledger-reporting.test.ts.
     for (const f of [
-      "src/lib/ledger-integrity.ts", "src/lib/ledger-reporting.ts",
+      "src/lib/ledger-integrity.ts",
       "src/pages/GrootboekIntegriteit.tsx",
     ]) {
       expect(changed, f).not.toContain(f);

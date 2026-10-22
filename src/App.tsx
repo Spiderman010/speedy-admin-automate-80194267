@@ -1,9 +1,11 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { queryClient } from "@/lib/query-client";
+import { UserScopedQueryCache } from "@/components/UserScopedQueryCache";
 import { AppLayout } from "@/components/AppLayout";
 import Index from "./pages/Index";
 import Klanten from "./pages/Klanten";
@@ -50,8 +52,6 @@ function safeNextPath(raw: string | null): string {
   }
 }
 
-const queryClient = new QueryClient();
-
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex min-h-screen items-center justify-center"><p className="text-muted-foreground">Laden...</p></div>;
@@ -75,6 +75,8 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AuthProvider>
+        {/* B2-09: de querycache hoort bij één gebruiker; zie UserScopedQueryCache. */}
+        <UserScopedQueryCache>
         <BrowserRouter>
           <Routes>
             <Route path="/reset-password" element={<ResetPassword />} />
@@ -122,6 +124,7 @@ const App = () => (
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
+        </UserScopedQueryCache>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

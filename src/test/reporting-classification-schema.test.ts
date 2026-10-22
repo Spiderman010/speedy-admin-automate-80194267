@@ -308,21 +308,19 @@ describe("Balans/W&V PR 1 — branch-scope", () => {
     expect(migrations.filter((f) => f !== MIGRATION && bestaandOpMain.has(f))).toEqual([]);
   });
 
-  branchIt("24. de seed, de rapportagekern en de afhankelijkheden zijn onaangeraakt", () => {
+  branchIt("24. de seed blijft vrij van classificatie en er komt geen afhankelijkheid bij", () => {
     // Voorheen stonden hier ook "src/pages/Grootboek.tsx" en
     // "src/hooks/useGrootboekrekeningen.ts", plus "geen enkele src/-wijziging
     // buiten src/test/". Dat waren scope-uitspraken van PR 1 (schema only),
     // geen invarianten: PR 2 bouwt juist de classificatie-UI op precies die
-    // twee bestanden. Wat bewaakt moet blijven is dat dit schema-PR-spoor de
-    // seed en het rekenwerk niet aanraakt en geen afhankelijkheid toevoegt.
-    for (const f of [
-      "src/lib/ledger-reporting.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/ledger-completeness.ts",
-      "package.json",
-    ]) {
-      expect(changed, f).not.toContain(f);
-    }
+    // twee bestanden. Hetzelfde gold voor ledger-reporting.ts,
+    // proef-saldibalans.ts en ledger-completeness.ts ("niet in de diff"): elke
+    // terechte fix in de rapportagekern liet die assertie omvallen (nulmeting
+    // E-02). Het rekenwerk wordt met gedrag bewezen in ledger-reporting.test.ts
+    // en proef-saldibalans.test.ts; het schema zelf op een echte PostgreSQL in
+    // supabase/tests/reporting-classification. Wat hier blijft: de seed krijgt
+    // geen classificatieveld en er komt geen afhankelijkheid bij.
+    expect(changed).not.toContain("package.json");
     expect(changed!.filter((f) => /package-lock\.json|bun\.lockb|pnpm-lock\.yaml|yarn\.lock/.test(f))).toEqual([]);
     // De seedlijst (DEFAULT_ACCOUNTS) mag nooit een classificatieveld krijgen:
     // dat zou classificeren op zaadpositie zijn.

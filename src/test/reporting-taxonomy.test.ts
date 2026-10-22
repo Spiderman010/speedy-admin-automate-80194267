@@ -345,19 +345,11 @@ describe("de grenzen van deze branch", () => {
     }
   }
 
-  it("14. de bestaande rapportageberekening is niet aangeraakt", () => {
-    const changed = changedFiles();
-    if (!changed) return;
-    for (const kern of [
-      "src/lib/ledger-reporting.ts",
-      "src/lib/financial-statements.ts",
-      "src/lib/financial-statements-presentation.ts",
-      "src/lib/proef-saldibalans.ts",
-      "src/lib/ledger-completeness.ts",
-    ]) {
-      expect(changed, kern).not.toContain(kern);
-    }
-  });
+  // Voorheen "14. de bestaande rapportageberekening is niet aangeraakt": vijf
+  // rekenlagen mochten niet in de diff staan. Dat was een scope-uitspraak van de
+  // taxonomie-PR, geen invariant: elke terechte fix in de rapportagekern liet
+  // hem omvallen (nulmeting E-02). Dat de taxonomie niets aan een bedrag of
+  // saldo verandert, bewijzen de gedragstests hierboven ("8", "8c", "7–7c").
 
   it("15. geen boeking, geen schrijver en geen bestaande migratie is gewijzigd", () => {
     const changed = changedFiles();
