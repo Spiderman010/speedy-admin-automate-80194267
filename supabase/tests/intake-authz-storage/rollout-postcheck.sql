@@ -64,7 +64,7 @@ SELECT
   (SELECT count(*) FROM pg_trigger WHERE tgname = 'guard_invoice_document_pointer_trigger' AND tgenabled = 'O'
      AND tgrelid IN ('public.purchase_invoices'::regclass, 'public.sales_invoices'::regclass)) = 2 AS pointertrigger_ok,
   coalesce((SELECT prosecdef AND proconfig = ARRAY['search_path=public']
-              AND md5(prosrc) = '447c038accd041357fd2059804196b38'
+              AND md5(prosrc) = '0c285053e10c0d1420a7dfb5f07a2cda'
               AND NOT has_function_privilege('anon', oid, 'EXECUTE')
               AND NOT has_function_privilege('authenticated', oid, 'EXECUTE')
               AND NOT has_function_privilege('service_role', oid, 'EXECUTE')

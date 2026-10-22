@@ -25,7 +25,9 @@
 --   geüpload. Het pad moet exact de map van de factuur zijn —
 --     verkoop:  <uid>/sales/<client_id>/<bestand>   (Verkoop.tsx)
 --     inkoop:   <uid>/<client_id>/<bestand>         (process-invoice)
---   — en die administratie moet in de organisatie van de factuur liggen.
+--   — en die administratie moet in de organisatie van de factuur liggen
+--   (is organization_id nog NULL, dan leidt set_organization_id_trigger die
+--   na deze trigger af uit de klant; zie B-01 in REVIEW-P2d).
 --   Een upload voor administratie X van organisatie A kan zo nooit aan een
 --   factuur in organisatie B worden gehangen.
 --
@@ -94,7 +96,13 @@ BEGIN
                                        THEN ARRAY[v_uid::text, NEW.client_id::text]
                                        ELSE ARRAY[v_uid::text, 'sales', NEW.client_id::text] END)
      OR NOT EXISTS (SELECT 1 FROM public.clients c
-                    WHERE c.id = NEW.client_id AND c.organization_id = NEW.organization_id)
+                    WHERE c.id = NEW.client_id
+                      -- B-01: de app stuurt geen organization_id mee; die leidt
+                      -- set_organization_id_trigger pas ná deze trigger af uit
+                      -- de klant (BEFORE-triggers vuren alfabetisch). NULL
+                      -- betekent dus "de organisatie van de klant"; een
+                      -- gespoofde organisatie weigert RLS daarna alsnog.
+                      AND c.organization_id = COALESCE(NEW.organization_id, c.organization_id))
      OR EXISTS (SELECT 1 FROM public.purchase_invoices p                               -- (b)
                 WHERE p.file_path = v_path
                   AND (TG_TABLE_NAME <> 'purchase_invoices' OR p.id IS DISTINCT FROM NEW.id))

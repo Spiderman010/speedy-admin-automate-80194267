@@ -430,3 +430,72 @@ SELECT proof.expect('L10', 'trigger op beide tabellen, op het padveld; functie D
 \set fase 'na'
 \set exp_claim 'ERR 42501: Dit document kan niet aan deze factuur worden gekoppeld.'
 \ir pointer-claim.sql
+
+-- ═════ G — echte app-payload zonder organization_id (REVIEW-P2d B-01) ════════
+-- Verkoop.tsx → useAddSalesInvoice en useAddPurchaseInvoice sturen het formulier
+-- plus user_id = auth.uid(), maar geen organization_id; set_organization_id_trigger
+-- leidt die ná de pointertrigger af uit de klant.
+BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('b0000000-0000-4000-8000-000000000001');
+SELECT proof.expect('G01', 'Verkoop.tsx: eigen upload + verkoopfactuur zonder organization_id ⇒ toegestaan, leesbaar en verwijderbaar',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner_id) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/1767225600000.pdf', auth.uid()::text)$q$,
+    $q$INSERT INTO public.sales_invoices (client_id, customer_name, invoice_number, invoice_date, due_date, amount_excl, btw_percentage, btw_amount, amount_incl, remaining_amount, notes, pdf_path, user_id)
+       VALUES ('cb000000-0000-4000-8000-000000000001', 'Afnemer', 'G-1', '2026-05-01', NULL, 100, 21, 21, 121, 121, NULL,
+               'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/1767225600000.pdf', auth.uid())$q$],
+    'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/1767225600000.pdf'), 'OK leest 1|verwijdert 1');
+SELECT proof.expect('G02', '… en de organisatie is daarna afgeleid uit de klant',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner_id) VALUES ('invoices', 'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/g2.pdf', auth.uid()::text)$q$,
+    $q$INSERT INTO public.sales_invoices (client_id, customer_name, invoice_number, invoice_date, pdf_path, user_id)
+       VALUES ('cb000000-0000-4000-8000-000000000001', 'Afnemer', 'G-2', '2026-05-01', 'b0000000-0000-4000-8000-000000000001/sales/cb000000-0000-4000-8000-000000000001/g2.pdf', auth.uid())$q$,
+    $q$DO $d$ BEGIN IF (SELECT organization_id FROM public.sales_invoices WHERE invoice_number = 'G-2') IS DISTINCT FROM 'bbbbbbbb-0000-4000-8000-00000000000b' THEN RAISE EXCEPTION 'organisatie niet afgeleid'; END IF; END $d$$q$], NULL), 'OK');
+COMMIT;
+BEGIN; SET LOCAL ROLE authenticated; SELECT proof.als('a0000000-0000-4000-8000-000000000003');
+SELECT proof.expect('G03', 'inkoop-insert zonder organization_id, eigen upload in de map van de administratie ⇒ toegestaan',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner_id) VALUES ('invoices', 'a0000000-0000-4000-8000-000000000003/ca000000-0000-4000-8000-000000000001/g3.pdf', auth.uid()::text)$q$,
+    $q$INSERT INTO public.purchase_invoices (client_id, supplier, status, file_path, user_id)
+       VALUES ('ca000000-0000-4000-8000-000000000001', 'Leverancier', 'te_controleren', 'a0000000-0000-4000-8000-000000000003/ca000000-0000-4000-8000-000000000001/g3.pdf', auth.uid())$q$],
+    'a0000000-0000-4000-8000-000000000003/ca000000-0000-4000-8000-000000000001/g3.pdf'), 'OK leest 1|verwijdert 1');
+COMMIT;
+
+-- ═════ E — de acht R-01-varianten van REVIEW-P2d (ex-lid E, assistent in B) ═══
+-- Objecten en een tweede B-administratie worden als postgres in dezelfde
+-- (teruggedraaide) reeks aangemaakt; daarna handelt E als authenticated.
+BEGIN; SELECT proof.als('a0000000-0000-4000-8000-000000000006');
+CREATE TEMP TABLE r01_variant (n text, name text, sql text) ON COMMIT DROP;
+INSERT INTO r01_variant VALUES
+ ('E01', 'UPDATE B-inkoop naar de wees s-ex (verkoopmap A)',
+  $q$UPDATE public.purchase_invoices SET file_path = 'a0000000-0000-4000-8000-000000000006/sales/ca000000-0000-4000-8000-000000000001/s-ex.pdf' WHERE id = '2b000000-0000-4000-8000-000000000002'$q$),
+ ('E02', 'wees in de inkoopmap van A, B-inkoop met klant B',
+  $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path) VALUES ('a0000000-0000-4000-8000-000000000006','cb000000-0000-4000-8000-000000000001','bbbbbbbb-0000-4000-8000-00000000000b','x','te_controleren','a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/wees-a.pdf')$q$),
+ ('E03', 'klant A + organisatie B',
+  $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path) VALUES ('a0000000-0000-4000-8000-000000000006','ca000000-0000-4000-8000-000000000001','bbbbbbbb-0000-4000-8000-00000000000b','x','te_controleren','a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/wees-a.pdf')$q$),
+ ('E04', 'klant A + organisatie A (gespoofd)',
+  $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path) VALUES ('a0000000-0000-4000-8000-000000000006','ca000000-0000-4000-8000-000000000001','aaaaaaaa-0000-4000-8000-00000000000a','x','te_controleren','a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/wees-a.pdf')$q$),
+ ('E05', 'klant A + organisatie NULL (afgeleid, na de B-01-fix)',
+  $q$INSERT INTO public.purchase_invoices (user_id, client_id, supplier, status, file_path) VALUES ('a0000000-0000-4000-8000-000000000006','ca000000-0000-4000-8000-000000000001','x','te_controleren','a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/wees-a.pdf')$q$),
+ ('E06', 'UPDATE B-factuur: klant naar A en pad tegelijk',
+  $q$UPDATE public.purchase_invoices SET client_id = 'ca000000-0000-4000-8000-000000000001', file_path = 'a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/wees-a.pdf' WHERE id = '2b000000-0000-4000-8000-000000000002'$q$),
+ ('E07', 'eigen object van administratie B1 aan een factuur van administratie B2',
+  $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path) VALUES ('a0000000-0000-4000-8000-000000000006','cb000000-0000-4000-8000-000000000002','bbbbbbbb-0000-4000-8000-00000000000b','x','te_controleren','a0000000-0000-4000-8000-000000000006/cb000000-0000-4000-8000-000000000001/own.pdf')$q$),
+ ('E08', 'object uit de verkoopmap aan een inkoopfactuur (zelfde klant)',
+  $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path) VALUES ('a0000000-0000-4000-8000-000000000006','cb000000-0000-4000-8000-000000000001','bbbbbbbb-0000-4000-8000-00000000000b','x','te_controleren','a0000000-0000-4000-8000-000000000006/sales/cb000000-0000-4000-8000-000000000001/own-s.pdf')$q$);
+SELECT proof.expect(v.n, 'R-01-variant: ' || v.name || ' ⇒ geweigerd',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO public.clients (id, user_id, organization_id, name) VALUES ('cb000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-00000000000b', 'Klant B2')$q$,
+    $q$INSERT INTO storage.objects (bucket_id, name, owner_id) VALUES
+       ('invoices', 'a0000000-0000-4000-8000-000000000006/ca000000-0000-4000-8000-000000000001/wees-a.pdf', 'a0000000-0000-4000-8000-000000000006'),
+       ('invoices', 'a0000000-0000-4000-8000-000000000006/cb000000-0000-4000-8000-000000000001/own.pdf', 'a0000000-0000-4000-8000-000000000006'),
+       ('invoices', 'a0000000-0000-4000-8000-000000000006/sales/cb000000-0000-4000-8000-000000000001/own-s.pdf', 'a0000000-0000-4000-8000-000000000006')$q$,
+    $q$SET LOCAL ROLE authenticated$q$,
+    v.sql], NULL),
+  'ERR 42501%')
+FROM r01_variant v ORDER BY v.n;
+SELECT proof.expect('E09', 'controle: dezelfde opzet met een legitieme claim (eigen object, juiste map en organisatie) ⇒ toegestaan',
+  proof.reeks(ARRAY[
+    $q$INSERT INTO storage.objects (bucket_id, name, owner_id) VALUES ('invoices', 'a0000000-0000-4000-8000-000000000006/cb000000-0000-4000-8000-000000000001/own.pdf', 'a0000000-0000-4000-8000-000000000006')$q$,
+    $q$SET LOCAL ROLE authenticated$q$,
+    $q$INSERT INTO public.purchase_invoices (user_id, client_id, organization_id, supplier, status, file_path) VALUES ('a0000000-0000-4000-8000-000000000006','cb000000-0000-4000-8000-000000000001','bbbbbbbb-0000-4000-8000-00000000000b','x','te_controleren','a0000000-0000-4000-8000-000000000006/cb000000-0000-4000-8000-000000000001/own.pdf')$q$],
+    NULL), 'OK');
+COMMIT;
