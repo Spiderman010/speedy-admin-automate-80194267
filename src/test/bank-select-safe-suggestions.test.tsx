@@ -28,6 +28,7 @@ const makeTx = (over: Partial<any> = {}) => ({
   counter_account_name: null,
   amount: -100,
   match_status: "suggestie",
+  is_reversal: false, // fixture represents a source-verified ordinary payment
   match_confidence: 80,
   matched_invoice_id: null,
   matched_invoice_type: null,
