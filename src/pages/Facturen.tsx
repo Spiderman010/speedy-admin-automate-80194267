@@ -522,9 +522,9 @@ export default function Facturen() {
       const refusedNote = result.refused.length ? `${result.refused.length} niet geëxporteerd; zie de lijst met redenen.` : undefined;
       if (!ids.length) { toast({ title: "Geen facturen geëxporteerd", description: refusedNote, variant: "destructive" }); return; }
       try {
-        // H6-03: alleen facturen die sinds het ophalen niet bewerkt zijn (updated_at).
-        const notUpdatedAfter = exportable.filter(i => ids.includes(i.id)).map(i => i.updated_at).filter(Boolean).sort().at(-1) ?? null;
-        await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, clientId: exportClient.id, invoiceIds: ids, notUpdatedAfter });
+        // H6-03 / Codex #299: per factuur alleen als updated_at nog exact de opgehaalde waarde is.
+        const fetchedUpdatedAt = new Map(exportable.map(i => [i.id, i.updated_at] as const));
+        await markPurchaseInvoicesExported({ organizationId: activeOrganizationId, clientId: exportClient.id, invoiceIds: ids, fetchedUpdatedAt });
         queryClient.invalidateQueries({ queryKey: ["purchase_invoices"] });
         toast({ title: `${ids.length} facturen geëxporteerd voor Snelstart`, description: refusedNote });
       } catch (statusErr: any) {

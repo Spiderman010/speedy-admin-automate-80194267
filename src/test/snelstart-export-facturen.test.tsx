@@ -206,6 +206,36 @@ describe("Inkoop — SnelStart-export alleen per administratie (A2-05, D-04, B2-
     expect(downloads).toHaveLength(0);
   });
 
+  it("Codex #299: een factuur die na het lezen bewerkt is, wordt niet gemarkeerd — ook niet als een later gelezen factuur een nieuwere updated_at heeft", async () => {
+    h.selectedClientId = "c1";
+    // >1000 facturen, dus twee leesverzoeken. A (p-0000) zit in het eerste,
+    // B (p-a204) in het tweede. B is vóór het tweede verzoek bewerkt (09:00);
+    // A wordt na het eerste verzoek bewerkt (08:30), dus NA het lezen maar
+    // vóór B's tijdstempel. De CSV bevat A's oude kop: A mag niet op
+    // 'geëxporteerd'.
+    for (let i = 0; i < 1000; i++) {
+      const id = `p-${String(i).padStart(4, "0")}`;
+      fakeDb.tables.purchase_invoices.push(purchaseRow(id, "c1", { supplier: `Massa ${i} BV`, invoice_number: `M-${i}` }));
+      fakeDb.tables.purchase_invoice_lines.push(lineRow(`l-${id}`, id));
+    }
+    invoice("p-a204").updated_at = "2026-10-20T09:00:00+00:00";
+    let pages = 0;
+    fakeDb.afterSelect = (table) => {
+      if (table !== "purchase_invoices" || ++pages !== 1) return;
+      Object.assign(invoice("p-0000"), { amount_excl: 500, btw_amount: 105, amount_incl: 605, updated_at: "2026-10-20T08:30:00+00:00" });
+    };
+    renderFacturen();
+    fireEvent.click(exportButton());
+    await waitFor(() => expect(toastTitled(/status bijwerken mislukt/)).toBeTruthy());
+    expect(selectsOn("purchase_invoices").map((c) => c.returned)).toEqual([1000, 2]);
+    const { lines } = await csvLines(downloads[0]);
+    expect(lines.some((l) => l.includes("\"Massa 0 BV - M-0 - ") && l.includes(";\"121,00\";"))).toBe(true); // oude kop
+    expect(statusOf("p-0000")).toBe("gecontroleerd");
+    expect(statusOf("p-a204")).toBe("geexporteerd");
+    expect(statusOf("p-0001")).toBe("geexporteerd");
+    expect(String(toastTitled(/status bijwerken mislukt/)?.description)).toMatch(/Niet gemarkeerd: Massa 0 BV - M-0\./);
+  });
+
   it("leest meer dan 1000 boekingsregels volledig, in pagina's (PostgREST db-max-rows 1000)", async () => {
     h.selectedClientId = "c1";
     fakeDb.tables.purchase_invoices.push(

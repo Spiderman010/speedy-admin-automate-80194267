@@ -41,6 +41,11 @@ export const fakeDb = {
   updateFilter: null as null | ((table: string, rows: Row[]) => Row[]),
   /** Laat een verzoek met een fout terugkomen (bijvoorbeeld een RLS-weigering). */
   failWith: null as null | ((table: string, op: "select" | "update") => { message: string } | null),
+  /**
+   * Draait direct nadat een SELECT zijn rijen heeft gelezen: zo kan een test
+   * een bewerking door een ander "tussen het lezen en het markeren" nabootsen.
+   */
+  afterSelect: null as null | ((table: string, rows: Row[]) => void),
   reset() {
     this.tables = {};
     this.calls = [];
@@ -49,6 +54,7 @@ export const fakeDb = {
     this.ignoreClientFilter = false;
     this.updateFilter = null;
     this.failWith = null;
+    this.afterSelect = null;
   },
 };
 
@@ -157,7 +163,9 @@ class FakeQuery implements PromiseLike<{ data: any; error: any; count?: number |
     if (this.rangeArg) result = result.slice(this.rangeArg[0], this.rangeArg[1] + 1);
     result = result.slice(0, fakeDb.maxRows);
     fakeDb.calls.push({ table: this.table, op: "select", filters: this.filterText, returned: result.length });
-    return { data: result.map((r) => ({ ...r })), error: null, count: this.countExact ? total : null };
+    const data = result.map((r) => ({ ...r }));
+    fakeDb.afterSelect?.(this.table, data);
+    return { data, error: null, count: this.countExact ? total : null };
   }
 
   then<T1 = { data: any; error: any }, T2 = never>(
