@@ -10,6 +10,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Save, Upload, FileText, X } from "lucide-react";
+import { vatAmountsFromExclText } from "@/lib/btw-calc";
 
 interface Props {
   open: boolean;
@@ -67,17 +68,13 @@ export function SalesInvoiceDialog({ open, onOpenChange, clients, onSave, editDa
   const set = (key: keyof SalesInvoiceFormData, value: string) =>
     setForm(prev => ({ ...prev, [key]: value }));
 
+  // A3-10: btw en incl in HELE CENTEN, half-up — niet meer `excl * pct` in een
+  // float met twee losse toFixed-afrondingen. Die gaven bij ",50"-bedragen een
+  // incl ≠ excl + btw (post_sales_invoice weigerde dan) of een btw één cent
+  // onder half-up. Zie `vatAmountsFromExclText` in btw-calc.ts.
   const recalc = () => {
-    const excl = parseFloat(form.amount_excl);
-    const pct = parseFloat(form.btw_percentage);
-    if (!isNaN(excl) && !isNaN(pct)) {
-      const btw = excl * (pct / 100);
-      setForm(prev => ({
-        ...prev,
-        btw_amount: btw.toFixed(2),
-        amount_incl: (excl + btw).toFixed(2),
-      }));
-    }
+    const next = vatAmountsFromExclText(form.amount_excl, form.btw_percentage);
+    if (next) setForm(prev => ({ ...prev, ...next }));
   };
 
   const handleClientChange = (clientId: string) => {
@@ -85,46 +82,29 @@ export function SalesInvoiceDialog({ open, onOpenChange, clients, onSave, editDa
     const nextBtwPercentage = client?.btw_vrijgesteld ? "0" : emptyForm.btw_percentage;
 
     setForm((prev) => {
-      const excl = parseFloat(prev.amount_excl);
-      if (Number.isNaN(excl)) {
-        return {
-          ...prev,
-          client_id: clientId,
-          btw_percentage: nextBtwPercentage,
-        };
-      }
-
-      const btw = excl * (parseFloat(nextBtwPercentage) / 100);
+      const next = vatAmountsFromExclText(prev.amount_excl, nextBtwPercentage);
       return {
         ...prev,
         client_id: clientId,
         btw_percentage: nextBtwPercentage,
-        btw_amount: btw.toFixed(2),
-        amount_incl: (excl + btw).toFixed(2),
+        ...(next ?? {}),
       };
     });
   };
 
   const handleBtwChange = (value: string) => {
     setForm((prev) => {
-      const excl = parseFloat(prev.amount_excl);
-      if (Number.isNaN(excl)) {
-        return { ...prev, btw_percentage: value };
-      }
-
-      const btw = excl * (parseFloat(value) / 100);
-      return {
-        ...prev,
-        btw_percentage: value,
-        btw_amount: btw.toFixed(2),
-        amount_incl: (excl + btw).toFixed(2),
-      };
+      const next = vatAmountsFromExclText(prev.amount_excl, value);
+      return { ...prev, btw_percentage: value, ...(next ?? {}) };
     });
   };
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(form, file);
+    // De opgeslagen btw en incl volgen altijd uit excl en het percentage, ook
+    // als het excl-veld nog niet is verlaten: zo sluit excl + btw = incl.
+    const next = vatAmountsFromExclText(form.amount_excl, form.btw_percentage);
+    await onSave(next ? { ...form, ...next } : form, file);
     setSaving(false);
     onOpenChange(false);
   };

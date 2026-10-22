@@ -5,6 +5,10 @@ import {
   lineTolerance,
   validatePurchaseLines,
   derivePrefillLine,
+  isLineVatChoice,
+  lineVatChoiceFromStored,
+  lineVatInputToStored,
+  countLinesWithoutVatChoice,
 } from "@/lib/purchase-line-validation";
 
 
@@ -158,11 +162,26 @@ describe("derivePrefillLine", () => {
     })).toBeNull();
   });
 
-  it("incl-only with no pct treats invoice as 0% (excl = incl)", () => {
-    const r = derivePrefillLine({
+  // Voorheen: "incl-only with no pct treats invoice as 0% (excl = incl)". Dat
+  // legde een stille standaardwaarde vast (NULL → 0%), het spiegelbeeld van de
+  // stille 21% van A2-02 / D-01. Zonder percentage is excl niet uit incl af te
+  // leiden zonder te gokken; NULL en 0 zijn strikt verschillend.
+  it("incl-only with no pct derives NO line: excl cannot be derived without guessing a percentage", () => {
+    expect(derivePrefillLine({
       amount_excl: null, amount_incl: 100, btw_percentage: null, isBtwVrijgesteld: false,
-    });
-    expect(r).toEqual({ amount_excl: 100, btw_percentage: 0 });
+    })).toBeNull();
+  });
+
+  it("excl known but no pct: the line keeps the amount and gets NO percentage (nog niet gekozen)", () => {
+    expect(derivePrefillLine({
+      amount_excl: 100, amount_incl: 100, btw_percentage: null, isBtwVrijgesteld: false,
+    })).toEqual({ amount_excl: 100, btw_percentage: null });
+  });
+
+  it("an explicit 0 stays 0 (0 is a choice, NULL is not)", () => {
+    expect(derivePrefillLine({
+      amount_excl: null, amount_incl: 100, btw_percentage: 0, isBtwVrijgesteld: false,
+    })).toEqual({ amount_excl: 100, btw_percentage: 0 });
   });
 
   it("rounds derived excl to 2 decimals", () => {
@@ -203,4 +222,37 @@ describe("derivePrefillLine", () => {
   });
 });
 
+});
+
+describe("de btw-keuze per regel is expliciet (A2-02 / D-01)", () => {
+  it("alleen 0, 9 en 21 zijn een keuze; leeg en een ander getal niet", () => {
+    for (const v of ["0", "9", "21"]) expect(isLineVatChoice(v)).toBe(true);
+    for (const v of ["", "6", "19", "gemengd", null, undefined]) expect(isLineVatChoice(v as any)).toBe(false);
+  });
+
+  it("opgeslagen → invoer: NULL wordt 'nog niet gekozen' (nooit 0 of 21), 0 blijft 0, een ander getal blijft staan", () => {
+    expect(lineVatChoiceFromStored(null)).toBe("");
+    expect(lineVatChoiceFromStored(undefined)).toBe("");
+    expect(lineVatChoiceFromStored(0)).toBe("0");
+    expect(lineVatChoiceFromStored(9)).toBe("9");
+    expect(lineVatChoiceFromStored(21)).toBe("21");
+    // Blijft staan, maar is geen keuze: goedkeuren vraagt alsnog 0, 9 of 21.
+    expect(lineVatChoiceFromStored(6)).toBe("6");
+    expect(isLineVatChoice(lineVatChoiceFromStored(6))).toBe(false);
+  });
+
+  it("invoer → opgeslagen: leeg wordt NULL, een getal blijft dat getal", () => {
+    expect(lineVatInputToStored("")).toBeNull();
+    expect(lineVatInputToStored("0")).toBe(0);
+    expect(lineVatInputToStored("21")).toBe(21);
+    expect(lineVatInputToStored("6")).toBe(6);
+  });
+
+  it("telt alleen betekenisvolle regels zonder keuze; een lege invoerrij telt niet", () => {
+    const leeg = { omschrijving: "", amount_input: "", grootboekrekening_id: null, btw_percentage: "" };
+    const zonder = { omschrijving: "Premie", amount_input: "100,00", grootboekrekening_id: null, btw_percentage: "" };
+    const met = { omschrijving: "Premie", amount_input: "100,00", grootboekrekening_id: "gb-1", btw_percentage: "0" };
+    expect(countLinesWithoutVatChoice([leeg, zonder, met])).toBe(1);
+    expect(countLinesWithoutVatChoice([leeg, met])).toBe(0);
+  });
 });

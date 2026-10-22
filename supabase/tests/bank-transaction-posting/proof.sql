@@ -112,8 +112,14 @@ $$;
 GRANT EXECUTE ON FUNCTION proof.bank_row_count() TO public;
 
 -- ── banktransacties klaarzetten (als eigenaar, dus gecommit) ────────────────
-SELECT proof.seed_tx('00000000-0000-0000-0000-000000000101', '00000000-0000-0000-0000-0000000000c1', -100.00, NULL);   -- uitgaand, geen BTW
-SELECT proof.seed_tx('00000000-0000-0000-0000-000000000102', '00000000-0000-0000-0000-0000000000c1',  250.00, NULL,
+-- "Geen BTW" is een expliciete keuze: 0, niet NULL. De oude zaadjes gebruikten
+-- NULL voor "geen BTW" en legden daarmee bug E-06 vast (een ontbrekende keuze
+-- boekte stil als 0%). Sinds 20261021170000 weigert de schrijver NULL; dat en
+-- de rest van het nieuwe gedrag bewijst de fase 2 van run-proof.sh
+-- (proof-p4.sql). Hier, op de historische keten, boekt 0 precies zoals NULL
+-- toen: de bewijzen hieronder zijn ongewijzigd.
+SELECT proof.seed_tx('00000000-0000-0000-0000-000000000101', '00000000-0000-0000-0000-0000000000c1', -100.00, 0);      -- uitgaand, geen BTW
+SELECT proof.seed_tx('00000000-0000-0000-0000-000000000102', '00000000-0000-0000-0000-0000000000c1',  250.00, 0,
                      '00000000-0000-0000-0000-00000000f005');                                                          -- inkomend, geen BTW
 SELECT proof.seed_tx('00000000-0000-0000-0000-000000000103', '00000000-0000-0000-0000-0000000000c1', -109.00, 9);      -- uitgaand 9%
 SELECT proof.seed_tx('00000000-0000-0000-0000-000000000104', '00000000-0000-0000-0000-0000000000c1', -121.00, 21);     -- uitgaand 21%
@@ -122,11 +128,11 @@ SELECT proof.seed_tx('00000000-0000-0000-0000-000000000105', '00000000-0000-0000
 SELECT proof.seed_tx('00000000-0000-0000-0000-000000000106', '00000000-0000-0000-0000-0000000000c1',  242.00, 21,
                      '00000000-0000-0000-0000-00000000f005');                                                          -- inkomend 21%
 SELECT proof.seed_tx('00000000-0000-0000-0000-000000000107', '00000000-0000-0000-0000-0000000000c1', -100.00, 21);     -- afronding
-SELECT proof.seed_tx('00000000-0000-0000-0000-000000000108', '00000000-0000-0000-0000-0000000000c1', -50.00, NULL);    -- dubbel boeken
-SELECT proof.seed_tx('00000000-0000-0000-0000-000000000109', '00000000-0000-0000-0000-0000000000c1', -75.00, NULL);    -- atomiciteit
-SELECT proof.seed_tx('00000000-0000-0000-0000-000000000110', '00000000-0000-0000-0000-0000000000c9', -60.00, NULL,
+SELECT proof.seed_tx('00000000-0000-0000-0000-000000000108', '00000000-0000-0000-0000-0000000000c1', -50.00, 0);       -- dubbel boeken
+SELECT proof.seed_tx('00000000-0000-0000-0000-000000000109', '00000000-0000-0000-0000-0000000000c1', -75.00, 0);       -- atomiciteit
+SELECT proof.seed_tx('00000000-0000-0000-0000-000000000110', '00000000-0000-0000-0000-0000000000c9', -60.00, 0,
                      '00000000-0000-0000-0000-00000000f009');                                                          -- andere organisatie
-SELECT proof.seed_tx('00000000-0000-0000-0000-000000000111', '00000000-0000-0000-0000-0000000000c1', -40.00, NULL);    -- rolvloer
+SELECT proof.seed_tx('00000000-0000-0000-0000-000000000111', '00000000-0000-0000-0000-0000000000c1', -40.00, 0);       -- rolvloer
 
 -- ══ vanaf hier: de applicatierol ═══════════════════════════════════════════
 SELECT set_config('test.user_id', '00000000-0000-0000-0000-0000000000e1', false);
@@ -228,7 +234,7 @@ SELECT proof.expect_true('8', 'de oorspronkelijke banktransactie is onveranderd'
   SELECT (SELECT amount = -100.00 AND transaction_date = DATE '2027-03-01'
               AND match_status = 'handmatig_geboekt'
               AND grootboekrekening_id = '00000000-0000-0000-0000-00000000f002'
-              AND btw_percentage IS NULL
+              AND btw_percentage = 0
           FROM public.bank_transactions WHERE id = '00000000-0000-0000-0000-000000000101')
 $$);
 

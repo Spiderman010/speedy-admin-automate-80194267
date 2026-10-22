@@ -74,29 +74,130 @@ function herdefinieert(tekst: string, naam: string): boolean {
 
 const GUARD = /IF v_client\.afgesloten_boekjaar IS NOT NULL AND [\w.]+ <= v_client\.afgesloten_boekjaar THEN\s*RAISE EXCEPTION 'Boekjaar % is afgesloten voor deze administratie', [\w.]+\s*USING ERRCODE = '22023'; END IF;/;
 
+/**
+ * De enige beoordeelde latere herdefinitie van functies van PR H (zie test 1).
+ * Een volgende migratie die een van de acht functies herdefinieert, laat test 1
+ * omvallen tot zij hier na herbeoordeling bij komt.
+ */
+const HERBEOORDEELD = {
+  bestand: "20261021170000_btw_en_nan_validatie_in_schrijvers.sql",
+  functies: ["post_purchase_invoice", "post_sales_invoice", "post_bank_transaction", "bank_bulk_posting_candidates"],
+};
+
+/** De gezaghebbende datum per schrijver: de argumenten van de blokkadetoets. */
+const ARGUMENTEN: Record<string, string> = {
+  post_purchase_invoice: "v_inv.client_id, v_inv.invoice_date",
+  post_sales_invoice: "v_inv.client_id, v_inv.invoice_date",
+  post_bank_allocation: "v_alloc.client_id, v_tx.transaction_date",
+  post_manual_journal: "v_journal.client_id, v_journal.posting_date",
+  post_opening_balance: "v_header.client_id, v_header.opening_date",
+  reverse_posting_group: "v_client_id, _posting_date",
+  post_bank_transaction: "v_tx.client_id, v_tx.transaction_date",
+};
+
+/** md5(prosrc) van een functie in een migratietekst: de tekst tussen `AS $$` en `$$;`. */
+function prosrcMd5(text: string, naam: string): string {
+  const f = functie(text, naam);
+  const start = f.indexOf("AS $$") + "AS $$".length;
+  return createHash("md5").update(f.slice(start, f.lastIndexOf("$$;")), "utf8").digest("hex");
+}
+
+/**
+ * Wat een LATERE migratie moet aantonen als zij een van de acht functies van
+ * PR H herdefinieert: zij pint de NÁ-hash van PR H (anti-clobber; zij bouwt op
+ * dat lichaam voort), en haar lichaam houdt de blokkadetoets met dezelfde
+ * argumenten, na de rechtencontrole en vóór de eerste grootboekregel, zonder
+ * watermerk (de preflight: de blokkade-arm, zonder watermerk). Geeft de
+ * gevonden tekortkomingen terug; leeg = in orde.
+ */
+function tekortkomingenVanLatereDefinitie(ruw: string, namen: readonly string[]): string[] {
+  const fouten: string[] = [];
+  const tekst = code(ruw);
+  for (const naam of namen) {
+    if (!herdefinieert(tekst, naam)) continue;
+    if (!tekst.includes(`'${prosrcMd5(sql, naam)}'`)) fouten.push(`${naam}: pint de NÁ-hash van PR H niet`);
+    const body = code(functie(ruw, naam));
+    if (body === "") {
+      fouten.push(`${naam}: geen CREATE OR REPLACE-definitie te lezen`);
+      continue;
+    }
+    if (/afgesloten_boekjaar/.test(body)) fouten.push(`${naam}: kent het watermerk weer`);
+    if (naam === "bank_bulk_posting_candidates") {
+      if (!body.includes("WHEN c.posting_locked_through IS NOT NULL AND t.transaction_date <= c.posting_locked_through THEN 'blocked'")) {
+        fouten.push(`${naam}: de blokkade-arm ontbreekt`);
+      }
+      continue;
+    }
+    const toets = `PERFORM public.assert_posting_allowed(${ARGUMENTEN[naam]});`;
+    const plek = body.indexOf(toets);
+    if (plek < 0) fouten.push(`${naam}: de blokkadetoets ontbreekt of heeft andere argumenten`);
+    else {
+      if (!(plek < body.indexOf("INSERT INTO public.ledger_postings"))) fouten.push(`${naam}: de blokkadetoets staat niet vóór de eerste grootboekregel`);
+      const rechten = body.indexOf("Geen rechten");
+      if (!(rechten >= 0 && rechten < plek)) fouten.push(`${naam}: de rechtencontrole staat niet vóór de blokkadetoets`);
+    }
+  }
+  return fouten;
+}
+
 const git = (...args: string[]) =>
   execFileSync("git", args, { encoding: "utf8" }).split("\n").filter(Boolean);
 const changed = git("diff", "--name-only", "origin/main...HEAD");
 const introducedHere = git("diff", "--name-only", "--diff-filter=A", "origin/main...HEAD").includes(MIGRATION);
 
 describe("De migratie is afgeleid uit PR D", () => {
-  it("1. bestaat, definieert precies acht functies, en geen latere migratie herdefinieert er één", () => {
+  it("1. bestaat, definieert precies acht functies; alleen de herbeoordeelde 20261021170000 herdefinieert er, aantoonbaar voortbouwend", () => {
     const alle = readdirSync(resolve(process.cwd(), MIGRATION_DIR)).filter((f) => f.endsWith(".sql")).sort();
     // Voorheen: "ligt na elke andere migratie" — een uitspraak over de stand
     // van de repository op het moment van PR H, geen invariant: elke latere
-    // migratie (ook een die deze functies niet raakt) liet hem omvallen. Wat
-    // hij beschermde: de lichamen hieronder zijn de LAATSTE definitie van de
-    // acht functies. Dat wordt nu rechtstreeks bewaakt.
+    // migratie (ook een die deze functies niet raakt) liet hem omvallen.
+    // Daarna: "geen latere migratie herdefinieert er één" — evenmin een
+    // invariant: een latere, beoordeelde schrijverwijziging (20261021170000,
+    // btw- en NaN-validatie) liet hem omvallen. Wat hij beschermde: niemand
+    // vervangt deze lichamen ZONDER ze te kennen, en de blokkadetoets blijft
+    // waar zij hoort. Dat wordt nu rechtstreeks bewaakt
+    // (tekortkomingenVanLatereDefinitie); test 1c bewijst dat de bewaking
+    // omvalt op een definitie die dat niet kan aantonen.
     const positie = alle.indexOf("20261002120000_decouple_year_watermark_from_posting.sql");
     expect(positie).toBeGreaterThanOrEqual(0);
     const namen = [...code(sql).matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g)].map((m) => m[1]);
     expect(namen).toEqual([...SCHRIJVERS, "bank_bulk_posting_candidates"]);
     for (const later of alle.slice(positie + 1)) {
-      const tekst = code(lees(`${MIGRATION_DIR}/${later}`));
-      for (const naam of namen) {
-        expect(herdefinieert(tekst, naam), `${later} herdefinieert ${naam}`).toBe(false);
+      const ruw = lees(`${MIGRATION_DIR}/${later}`);
+      const herdefinieerd = namen.filter((naam) => herdefinieert(code(ruw), naam));
+      if (later === HERBEOORDEELD.bestand) {
+        // Beoordeeld (P4, btw- en NaN-validatie): uitsluitend deze vier, en aantoonbaar voortbouwend op PR H.
+        expect(herdefinieerd, later).toEqual(HERBEOORDEELD.functies);
+        expect(tekortkomingenVanLatereDefinitie(ruw, namen), later).toEqual([]);
+      } else {
+        // Elke andere latere migratie: geen herdefinitie. Een nieuwe vraagt een eigen herbeoordeling.
+        expect(herdefinieerd, later).toEqual([]);
       }
     }
+  });
+
+  it("1c. de bewaking van test 1 valt om op een latere definitie die PR H niet pint of de blokkade verliest", () => {
+    const namen = [...SCHRIJVERS, "bank_bulk_posting_candidates"];
+    const pin = `-- anti-clobber\nSELECT '${prosrcMd5(sql, "post_sales_invoice")}';\n`;
+    const echt = functie(sql, "post_sales_invoice");
+    const toets = "PERFORM public.assert_posting_allowed(v_inv.client_id, v_inv.invoice_date);";
+    expect(echt).toContain(toets);
+    // Gepind en met de toets op haar plek: in orde.
+    expect(tekortkomingenVanLatereDefinitie(pin + echt, namen)).toEqual([]);
+    // Niet gepind (ook niet als de pin alleen in commentaar staat): afgewezen.
+    expect(tekortkomingenVanLatereDefinitie(echt, namen)).toEqual(["post_sales_invoice: pint de NÁ-hash van PR H niet"]);
+    expect(tekortkomingenVanLatereDefinitie(`-- '${prosrcMd5(sql, "post_sales_invoice")}'\n${echt}`, namen)).toHaveLength(1);
+    // Gepind maar zonder blokkadetoets, of met andere argumenten: afgewezen.
+    expect(tekortkomingenVanLatereDefinitie(pin + echt.replace(toets, ""), namen)).toEqual([
+      "post_sales_invoice: de blokkadetoets ontbreekt of heeft andere argumenten",
+    ]);
+    expect(
+      tekortkomingenVanLatereDefinitie(pin + echt.replace(toets, "PERFORM public.assert_posting_allowed(v_inv.client_id, current_date);"), namen),
+    ).toHaveLength(1);
+    // Gepind maar met het watermerk terug: afgewezen.
+    expect(
+      tekortkomingenVanLatereDefinitie(pin + echt.replace(toets, `${toets}\n  IF v_client.afgesloten_boekjaar IS NOT NULL THEN NULL; END IF;`), namen),
+    ).toEqual(["post_sales_invoice: kent het watermerk weer"]);
   });
 
   it("1b. alleen een latere functieDEFINITIE blokkeert; rechten, eigenaar, commentaar en aanroepen niet", () => {
@@ -140,15 +241,6 @@ describe("De migratie is afgeleid uit PR D", () => {
   });
 
   it("3. de blokkadetoets staat bij alle zeven ongewijzigd op zijn plek, vóór de eerste grootboekregel", () => {
-    const ARGUMENTEN: Record<string, string> = {
-      post_purchase_invoice: "v_inv.client_id, v_inv.invoice_date",
-      post_sales_invoice: "v_inv.client_id, v_inv.invoice_date",
-      post_bank_allocation: "v_alloc.client_id, v_tx.transaction_date",
-      post_manual_journal: "v_journal.client_id, v_journal.posting_date",
-      post_opening_balance: "v_header.client_id, v_header.opening_date",
-      reverse_posting_group: "v_client_id, _posting_date",
-      post_bank_transaction: "v_tx.client_id, v_tx.transaction_date",
-    };
     for (const naam of SCHRIJVERS) {
       const body = code(functie(sql, naam));
       const toets = `PERFORM public.assert_posting_allowed(${ARGUMENTEN[naam]});`;

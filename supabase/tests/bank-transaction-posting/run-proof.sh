@@ -24,7 +24,13 @@
 #   20260920195805_...sql              the REAL deployed bank writer (untouched)
 #   20260921140000_...sql              the REAL corrective migration, TWICE
 #   fixtures.sql + proof.sql + concurrency.sql
-# and prints one line per numbered proof plus a summary.
+# and then, in a SECOND database (phase 2), the writer as it is NOW:
+#   ../writer-vat-nan-validation/build-chain.sh   the real chain … 20261020120000
+#   ../writer-vat-nan-validation/helpers.sql
+#   20261021170000_...sql              btw- en NaN-validatie (E-06: NULL geweigerd)
+#   proof-p4.sql                       the stronger replacement of the old
+#                                      NULL-means-no-VAT expectation
+# and prints one line per numbered proof plus a summary per database.
 
 set -euo pipefail
 
@@ -55,12 +61,26 @@ run -f "$HERE/fixtures.sql"                            > /dev/null
 run -f "$HERE/proof.sql"                               > /dev/null
 run -v conn="$CONN" -f "$HERE/concurrency.sql"         > /dev/null
 
-psql -q -d "$DB" -P pager=off -c "
-  SELECT CASE WHEN ok THEN 'PASS' ELSE 'FAIL' END AS uitslag, n, name, left(detail, 110) AS detail
-  FROM proof.result ORDER BY ok, n;"
+# ── fase 2: de schrijver van NU, op de volledige keten ──────────────────────
+DB2="${DB}_p4"
+P4H="$HERE/../writer-vat-nan-validation"
+"$P4H/build-chain.sh" "$DB2"
+psql -q -v ON_ERROR_STOP=1 -d "$DB2" -f "$P4H/helpers.sql"                                           > /dev/null
+psql -q -v ON_ERROR_STOP=1 -d "$DB2" -f "$MIG/20261021170000_btw_en_nan_validatie_in_schrijvers.sql" > /dev/null
+psql -q -v ON_ERROR_STOP=1 -d "$DB2" -f "$HERE/proof-p4.sql"                                         > /dev/null
 
-psql -q -d "$DB" -t -c "
-  SELECT format('%s van %s bewijzen geslaagd', count(*) FILTER (WHERE ok), count(*)) FROM proof.result;"
-
-FAILED=$(psql -q -d "$DB" -t -A -c "SELECT count(*) FROM proof.result WHERE NOT ok;")
-[ "$FAILED" = "0" ]
+FAILED=0
+for d in "$DB" "$DB2"; do
+  echo "═══ $d"
+  psql -q -d "$d" -P pager=off -c "
+    SELECT CASE WHEN ok THEN 'PASS' ELSE 'FAIL' END AS uitslag, n, name, left(detail, 110) AS detail
+    FROM proof.result ORDER BY ok, n;"
+  psql -q -d "$d" -t -c "
+    SELECT format('%s van %s bewijzen geslaagd', count(*) FILTER (WHERE ok), count(*)) FROM proof.result;"
+  F=$(psql -q -d "$d" -t -A -c "SELECT count(*) FROM proof.result WHERE NOT ok;")
+  FAILED=$((FAILED + F))
+done
+# Fase 2 kondigt haar bewijzen aan (proof.plan): een bewijs dat stil wegvalt is een FAIL.
+M2=$(psql -q -d "$DB2" -t -A -c "SELECT count(*) FROM proof.expected x WHERE NOT EXISTS (SELECT 1 FROM proof.result r WHERE r.n = x.n);")
+[ "$M2" = "0" ] || psql -q -d "$DB2" -t -A -c "SELECT 'ONTBREEKT: ' || n FROM proof.expected x WHERE NOT EXISTS (SELECT 1 FROM proof.result r WHERE r.n = x.n);"
+[ "$FAILED" = "0" ] && [ "$M2" = "0" ]
