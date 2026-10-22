@@ -49,8 +49,8 @@ import {
   BANK_STATUS_MATCH_VALUES,
   bankSanitizeSearchTerm,
 } from "@/hooks/useBankTransactions";
-import { usePurchaseInvoices, useUpdatePurchaseInvoice } from "@/hooks/usePurchaseInvoices";
-import { useSalesInvoices, useUpdateSalesInvoice } from "@/hooks/useSalesInvoices";
+import { usePurchaseInvoices } from "@/hooks/usePurchaseInvoices";
+import { useSalesInvoices } from "@/hooks/useSalesInvoices";
 import { exportBankTransactionsCSV, resolveBankExportGrootboek, SNELSTART_BANKDAGBOEK_ONTBREEKT } from "@/lib/snelstart-export";
 import { exportAfletterrapportCSV } from "@/lib/afletterrapport-export";
 import { useClients } from "@/hooks/useClients";
@@ -70,7 +70,10 @@ import { BankAfletteringDrawer } from "@/components/BankAfletteringDrawer";
 import { VerwerkingsScherm } from "@/components/VerwerkingsScherm";
 import type { Tables } from "@/integrations/supabase/types";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, useDeleteAllocationsForTransaction } from "@/hooks/useBankTransactionAllocations";
+import { useBankTransactionAllocations } from "@/hooks/useBankTransactionAllocations";
+import { useBankPaymentLink } from "@/hooks/useBankPaymentLink";
+import { bankPaymentErrorMessage, batchResultMessage, linkResultMessage, minAmount } from "@/lib/bank-payment-link";
+import { hasTiedTopCandidates } from "@/lib/bank-candidate-gate";
 import { BankTransactionDetailSheet } from "@/components/bank/BankTransactionDetailSheet";
 
 const formatCurrency = (amount: number) =>
@@ -151,8 +154,11 @@ function pickSafeMatchCandidate(
 ): InvoiceCandidate | null {
   if (!isSafeMatchEligibleStatus(tx.match_status)) return null;
   const expectedType = expectedInvoiceTypeForTx(tx);
-  const best = candidates.find(c => c.score > 0 && c.type === expectedType);
+  const eligible = candidates.filter(c => c.score > 0 && c.type === expectedType);
+  const best = eligible[0];
   if (!best) return null;
+  // Twee kandidaten met dezelfde topscore: niet veilig, de mens kiest (C-04).
+  if (hasTiedTopCandidates(eligible)) return null;
   if (best.isPartialPayment) return null;
   const txAmt = Math.abs(tx.amount);
   const invAmt = best.amount != null ? Math.abs(best.amount) : null;
@@ -419,8 +425,6 @@ export default function Bank() {
   const matchingReady = wholeSetReady && salesReady && purchaseReady;
   const addTx = useAddBankTransaction();
   const updateTx = useUpdateBankTransaction();
-  const updatePurchase = useUpdatePurchaseInvoice();
-  const updateSales = useUpdateSalesInvoice();
   const createVraagpost = useCreateVraagpost();
   const { data: rawVraagposten } = useVraagposten({
     organizationId: activeOrganizationId ?? undefined,
@@ -428,8 +432,8 @@ export default function Bank() {
     clientIds: singleClientId ? undefined : clientIdsForQuery,
     enabled: orgEnabled && hasSelection,
   });
-  const upsertAllocation = useUpsertBankTransactionAllocation();
-  const deleteAllocationsForTx = useDeleteAllocationsForTransaction();
+  // De enige schrijver van koppelingen, restant, `betaald` en matchvelden (P5, D1).
+  const { link: linkPayment, unlink: unlinkPayment, refresh: refreshPayments } = useBankPaymentLink();
   const { data: rawAllocations } = useBankTransactionAllocations({
     organizationId: activeOrganizationId ?? undefined,
     clientId: singleClientId,
@@ -599,134 +603,15 @@ export default function Bank() {
     return m;
   }, [vraagposten]);
 
-  // Resolves invoice, checks client consistency, queries live allocation state, and upserts
-  // one allocation row. Throws on any error so callers can surface it via toast.
-  // explicitAllocationAmount — when provided (manual match dialog), bypasses the auto-cap
-  // calculation and uses the user-supplied value, subject to hard safety caps.
-  const upsertSingleAllocationForMatch = useCallback(async (
-    tx: Tables<"bank_transactions">,
-    invoiceId: string,
-    explicitAllocationAmount?: number,
-  ) => {
-    const purchaseInv = invoices?.find(i => i.id === invoiceId);
-    const salesInv = salesInvs?.find(i => i.id === invoiceId);
-    const inv = purchaseInv ?? salesInv;
-    if (!inv) throw new Error(`Factuur ${invoiceId} niet gevonden voor allocatie`);
-
-    if (inv.client_id !== tx.client_id) {
-      throw new Error("Factuur en transactie hebben verschillende klanten; allocatie geweigerd");
-    }
-
-    const invoiceType: "inkoop" | "verkoop" = purchaseInv ? "inkoop" : "verkoop";
-    const txAmount = Math.abs(tx.amount);
-
-    // Fresh query so that concurrent calls inside the same bulk/import loop each see
-    // the rows written by the previous iteration — React query cache is not updated
-    // synchronously between await calls in the same loop.
-    const { data: liveRows, error: fetchError } = await supabase
-      .from("bank_transaction_allocations")
-      .select("bank_transaction_id, amount")
-      .eq("invoice_id", invoiceId);
-    if (fetchError) throw fetchError;
-
-    const alreadyAllocated = (liveRows ?? [])
-      .filter(r => r.bank_transaction_id !== tx.id)
-      .reduce((sum, r) => sum + (r.amount as number), 0);
-    const invoiceTotal = Math.abs(getInvoiceTotalAmount(inv) ?? txAmount);
-    const allocationOpen = Math.max(0, invoiceTotal - alreadyAllocated);
-    const autoAmount = Math.min(txAmount, allocationOpen);
-
-    let allocationAmount: number;
-    if (explicitAllocationAmount !== undefined) {
-      if (explicitAllocationAmount <= 0)
-        throw new Error("Allocatiebedrag moet groter zijn dan 0");
-      if (explicitAllocationAmount > txAmount + 0.001)
-        throw new Error("Allocatiebedrag is hoger dan het banktransactiebedrag");
-      if (explicitAllocationAmount > allocationOpen + 0.001)
-        throw new Error("Allocatiebedrag is hoger dan het openstaande factuurbedrag");
-      allocationAmount = Math.min(explicitAllocationAmount, txAmount, allocationOpen);
-    } else {
-      allocationAmount = autoAmount;
-      if (allocationAmount <= 0) return; // auto mode: nothing to allocate, skip silently
-    }
-
-    await upsertAllocation.mutateAsync({
-      bank_transaction_id: tx.id,
-      invoice_type: invoiceType,
-      invoice_id: invoiceId,
-      client_id: tx.client_id,
-      amount: allocationAmount,
-    });
-  }, [invoices, salesInvs, upsertAllocation]);
-
-  // After deleting allocation rows for one or more bank transactions, recalculate
-  // remaining_amount for every affected invoice.
-  //
-  // deletedTxIds  — IDs of bank transactions whose allocation rows were just deleted.
-  //                 Their rows are filtered out of allAllocations when summing survivors.
-  // extraInvoiceIds — additional invoice IDs to include (e.g. tx.matched_invoice_id) that
-  //                   may not appear in bank_transaction_allocations for the deleted txs.
-  //                   Invoice type is resolved via purchaseInvoiceById / salesInvoiceById.
-  //
-  // Uses the in-memory allAllocations cache with the deleted tx IDs filtered out,
-  // so no extra round-trip is needed and bulk deletions are handled correctly in one pass.
-  const recalculateRemainingAfterDeletions = useCallback(async (
-    deletedTxIds: string[],
-    extraInvoiceIds: string[] = [],
-  ) => {
-    if (deletedTxIds.length === 0 && extraInvoiceIds.length === 0) return;
-    const deletedSet = new Set(deletedTxIds);
-
-    // Collect unique (invoiceId → invoiceType) from allocation rows of deleted txs
-    const affectedInvoices = new Map<string, "inkoop" | "verkoop">();
-    for (const txId of deletedTxIds) {
-      for (const alloc of allocationsByTxId.get(txId) ?? []) {
-        if (!affectedInvoices.has(alloc.invoice_id)) {
-          affectedInvoices.set(alloc.invoice_id, alloc.invoice_type);
-        }
-      }
-    }
-
-    // Also include extra invoice IDs (e.g. matched_invoice_id); determine type by lookup
-    for (const invoiceId of extraInvoiceIds) {
-      if (affectedInvoices.has(invoiceId)) continue; // already covered by allocation rows
-      if (purchaseInvoiceById.has(invoiceId)) {
-        affectedInvoices.set(invoiceId, "inkoop");
-      } else if (salesInvoiceById.has(invoiceId)) {
-        affectedInvoices.set(invoiceId, "verkoop");
-      }
-    }
-
-    for (const [invoiceId, invoiceType] of affectedInvoices.entries()) {
-      // Sum surviving allocations for this invoice, excluding all deleted txs
-      const allocatedSum = (allAllocations ?? [])
-        .filter(a => a.invoice_id === invoiceId && !deletedSet.has(a.bank_transaction_id))
-        .reduce((sum, a) => sum + a.amount, 0);
-
-      if (invoiceType === "inkoop") {
-        const inv = invoices?.find(i => i.id === invoiceId);
-        if (!inv) continue;
-        const total = getInvoiceTotalAmount(inv);
-        if (total == null) continue;
-        const newRemaining = Math.max(0, total - allocatedSum);
-        await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-      } else {
-        const inv = salesInvs?.find(i => i.id === invoiceId);
-        if (!inv) continue;
-        const total = getInvoiceTotalAmount(inv);
-        if (total == null) continue;
-        const newRemaining = Math.max(0, total - allocatedSum);
-        if (newRemaining < 0.01) {
-          await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-        } else if (inv.status === "betaald") {
-          // Allocation removed — invoice is no longer fully paid; reset status
-          await updateSales.mutateAsync({ id: invoiceId, status: "gecontroleerd", remaining_amount: newRemaining });
-        } else {
-          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-        }
-      }
-    }
-  }, [allocationsByTxId, allAllocations, purchaseInvoiceById, salesInvoiceById, invoices, salesInvs, updatePurchase, updateSales]);
+  // Het bedrag voor een koppeling vanuit een automatisch of één-klik pad: wat er
+  // op de banktransactie nog niet is verdeeld, en nooit meer dan wat er op de
+  // factuur openstaat. De database toetst beide nog eens exact, onder grendels;
+  // dit is alleen het voorstel. null = er valt niets (meer) te koppelen.
+  const linkAmountFor = useCallback((tx: Tables<"bank_transactions">, invoiceOpen: number | null) => {
+    const allocated = (allocationsByTxId.get(tx.id) ?? []).reduce((sum, a) => sum + a.amount, 0);
+    const amount = minAmount(Math.abs(tx.amount) - allocated, invoiceOpen == null ? null : Math.abs(invoiceOpen));
+    return amount != null && amount > 0 ? amount : null;
+  }, [allocationsByTxId]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -1082,13 +967,16 @@ export default function Bank() {
     setAdditionalExcludedIds([]);
   }, []);
 
+  // Koppelen vanuit de dialoog (ook "Extra factuur koppelen"): één aanroep van
+  // de betaalschrijver met het bedrag dat de gebruiker koos. De database schrijft
+  // koppeling, restant, betaald en matchvelden atomair, of niets.
   const handleMatch = useCallback(async (
     transactionId: string,
     invoiceId: string,
     invoiceType: "inkoop" | "verkoop",
-    exactMatch: boolean,
-    isPartialPayment: boolean,
-    remainingAmount: number | null,
+    _exactMatch: boolean,
+    _isPartialPayment: boolean,
+    _remainingAmount: number | null,
     allocationAmount?: number,
   ) => {
     try {
@@ -1096,134 +984,34 @@ export default function Bank() {
       if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, tx.id, { id: invoiceId, type: invoiceType })) {
         throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
       }
-
-      await assertBankMatchNotRejected(tx.id, invoiceType, invoiceId, tx.client_id, activeOrganizationId!);
-
-      // Additional mode: only write the new allocation row and update the invoice's remaining_amount.
-      // Do NOT overwrite the tx record (matched_invoice_id is already set for the primary invoice).
-      if (matchDialogMode === "additional") {
-        if (tx && allocationAmount != null && allocationAmount > 0) {
-          // Safety guard: block if this invoice is already allocated to the same tx.
-          const alreadyAllocated = (allAllocations ?? []).some(
-            a => a.bank_transaction_id === transactionId && a.invoice_id === invoiceId,
-          );
-          if (alreadyAllocated) {
-            throw new Error("Deze factuur is al gekoppeld aan deze banktransactie");
-          }
-          await upsertSingleAllocationForMatch(tx, invoiceId, allocationAmount);
-
-          const purchaseInv = invoices?.find(i => i.id === invoiceId);
-          const salesInv = salesInvs?.find(i => i.id === invoiceId);
-          if (purchaseInv) {
-            const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? getInvoiceTotalAmount(purchaseInv) ?? 0;
-            const newRemaining = Math.max(0, currentRemaining - allocationAmount);
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-          } else if (salesInv) {
-            const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? getInvoiceTotalAmount(salesInv) ?? 0;
-            const newRemaining = Math.max(0, currentRemaining - allocationAmount);
-            if (newRemaining < 0.01) {
-              await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-            } else {
-              await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-            }
-          }
-
-          toast({ title: "Extra factuur gekoppeld" });
-        }
-        closeMatchDialog();
-        return;
+      if (allocationAmount == null || !(allocationAmount > 0)) {
+        throw new Error("Vul een koppelingsbedrag groter dan nul in");
       }
-
-      await updateTx.mutateAsync({
-        id: transactionId,
-        match_status: "gematcht",
-        matched_invoice_id: invoiceId,
-        match_confidence: exactMatch ? 100 : isPartialPayment ? 60 : 80,
-      });
-
-      // Upsert the allocation row first so bank_transaction_allocations is invalidated
-      // before the invoice update, allowing the Plus button to appear on next render.
-      if (tx) await upsertSingleAllocationForMatch(tx, invoiceId, allocationAmount);
-
-      // Update the invoice's remaining_amount.
-      // When the user supplied an explicit allocationAmount, derive newRemaining from it
-      // so the stored value matches the actual allocation and not the full tx amount.
-      // Fall back to candidate-derived values only when no explicit amount is given
-      // (automatic confirm / bulk flows that call handleMatch without allocationAmount).
-      let toastRemaining: number | null = remainingAmount;
-      if (allocationAmount != null) {
-        const purchaseInv = invoices?.find(i => i.id === invoiceId);
-        const salesInv = salesInvs?.find(i => i.id === invoiceId);
-        if (purchaseInv) {
-          const currentRemaining = getInvoiceRemainingAmount(purchaseInv) ?? getInvoiceTotalAmount(purchaseInv) ?? 0;
-          const newRemaining = Math.max(0, currentRemaining - allocationAmount);
-          toastRemaining = newRemaining;
-          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-        } else if (salesInv) {
-          const currentRemaining = getInvoiceRemainingAmount(salesInv) ?? getInvoiceTotalAmount(salesInv) ?? 0;
-          const newRemaining = Math.max(0, currentRemaining - allocationAmount);
-          toastRemaining = newRemaining;
-          if (newRemaining < 0.01) {
-            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-          }
-        }
-      } else if (exactMatch && !isPartialPayment) {
-        if (invoiceType === "inkoop") {
-          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
-        } else {
-          await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-        }
-      } else if (isPartialPayment && remainingAmount != null) {
-        if (invoiceType === "inkoop") {
-          await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
-        } else {
-          await updateSales.mutateAsync({ id: invoiceId, remaining_amount: remainingAmount });
-        }
-      }
-
-      if (toastRemaining != null && toastRemaining >= 0.01) {
-        toast({ title: "Deelbetaling gekoppeld", description: `Resterend: ${formatCurrency(toastRemaining)}` });
-      } else if (allocationAmount != null) {
-        toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
-      } else if (exactMatch && !isPartialPayment) {
-        toast({ title: "Transactie gekoppeld", description: "Factuur status → Betaald" });
-      } else {
-        toast({ title: "Transactie gekoppeld" });
-      }
-
+      const result = await linkPayment({ bankTransactionId: tx.id, invoiceType, invoiceId, amount: allocationAmount });
+      toast(linkResultMessage(result, invoiceType));
       closeMatchDialog();
-    } catch (e: any) {
-      toast({ title: "Fout bij koppelen", description: e.message, variant: "destructive" });
+    } catch (e) {
+      toast({ title: "Fout bij koppelen", description: bankPaymentErrorMessage(e), variant: "destructive" });
+    } finally {
+      await refreshPayments();
     }
-  }, [matchDialogMode, allAllocations, transactions, invoices, salesInvs, rejectionIndex, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, closeMatchDialog, toast]);
+  }, [transactions, rejectionIndex, linkPayment, refreshPayments, closeMatchDialog, toast]);
 
+  // Ontkoppelen: alle koppelingen van de banktransactie, via de betaalschrijver.
+  // De database zet restant, betaald → gecontroleerd en de matchvelden terug, of
+  // weigert (bv. een geboekte aflettering, of een oude match zonder koppeling).
   const handleUnlink = useCallback(async (tx: Tables<"bank_transactions">) => {
     try {
-      // Always include matched_invoice_id as an extra affected invoice so mixed
-      // legacy+modern cases (primary via matched_invoice_id, extras via allocation rows)
-      // are all recalculated — not just the ones found in allocation rows.
-      const extraIds = tx.matched_invoice_id ? [tx.matched_invoice_id] : [];
-
-      await deleteAllocationsForTx.mutateAsync(tx.id);
-
-      await updateTx.mutateAsync({
-        id: tx.id,
-        match_status: "niet_gematcht",
-        matched_invoice_id: null,
-        match_confidence: null,
-      });
-
-      await recalculateRemainingAfterDeletions([tx.id], extraIds);
-
-      await refetchPurchase();
-      await refetchSales();
-      toast({ title: "Koppeling verwijderd", description: "Transactie is weer open." });
-    } catch (e: any) {
-      toast({ title: "Fout bij ontkoppelen", description: e.message, variant: "destructive" });
+      const result = await unlinkPayment({ bankTransactionId: tx.id });
+      toast(result.outcome === "unchanged"
+        ? { title: "Niets te ontkoppelen", description: "Deze transactie heeft geen koppeling." }
+        : { title: "Koppeling verwijderd", description: "Transactie is weer open." });
+    } catch (e) {
+      toast({ title: "Fout bij ontkoppelen", description: bankPaymentErrorMessage(e), variant: "destructive" });
+    } finally {
+      await refreshPayments();
     }
-  }, [recalculateRemainingAfterDeletions, deleteAllocationsForTx, updateTx, refetchPurchase, refetchSales, toast]);
+  }, [unlinkPayment, refreshPayments, toast]);
 
   const handleManualBook = useCallback(async (transactionId: string, ledgerAccount: string, description: string, grootboekrekeningId: string | undefined, btwPercentage: number) => {
     try {
@@ -1296,23 +1084,27 @@ export default function Bank() {
     if (selectedIds.size === 0 || !bulkLedger || btwPercentage == null) return;
 
     const ids = Array.from(selectedIds);
+    // Een gekoppelde transactie coderen betekent: eerst ontkoppelen, via de
+    // betaalschrijver. Daarna staat de factuur weer open — dat vraagt een
+    // bevestiging (A1-18). Een geweigerde ontkoppeling laat de regel ongemoeid.
+    const linkedIds = new Set(ids.filter((id) => {
+      const tx = transactions?.find(t => t.id === id);
+      return !!tx && ((allocationsByTxId.get(id)?.length ?? 0) > 0 || tx.match_status === "gematcht");
+    }));
+    if (linkedIds.size > 0 && !window.confirm(
+      `${linkedIds.size} geselecteerde transactie(s) ${linkedIds.size === 1 ? "is" : "zijn"} aan een factuur gekoppeld. `
+      + "Coderen ontkoppelt ze eerst; die facturen staan daarna weer open. Doorgaan?",
+    )) return;
+
     let success = 0;
     const errors: string[] = [];
-    const deletedTxIds: string[] = [];
-    const extraInvoiceIds: string[] = [];
-
     for (const id of ids) {
       const tx = transactions?.find(t => t.id === id);
       if (!tx) continue;
-
       try {
-        // Delete allocation rows before overwriting the link; collect affected invoice IDs
-        if (tx.matched_invoice_id) {
-          await deleteAllocationsForTx.mutateAsync(id);
-          deletedTxIds.push(id);
-          extraInvoiceIds.push(tx.matched_invoice_id);
+        if (linkedIds.has(id)) {
+          await unlinkPayment({ bankTransactionId: id });
         }
-
         await updateTx.mutateAsync({
           id,
           match_status: "handmatig_geboekt",
@@ -1322,187 +1114,115 @@ export default function Bank() {
           match_confidence: null,
         });
         success++;
-      } catch (e: any) {
-        console.error("Bulk boeken error:", e);
-        errors.push(e.message || "Onbekende fout");
+      } catch (e) {
+        errors.push(bankPaymentErrorMessage(e));
       }
-    }
-
-    // Recalculate all affected invoices; wrapped so cleanup always runs
-    try {
-      await recalculateRemainingAfterDeletions(deletedTxIds, extraInvoiceIds);
-    } catch (e: any) {
-      errors.push(e.message || "Fout bij herberekenen openstaand bedrag");
     }
 
     setSelectedIds(new Set());
     setBulkLedger("");
     setBulkLedgerId("");
     setBulkBtw("");
+    await refreshPayments();
     await refetch();
-    await refetchPurchase();
-    await refetchSales();
 
-    if (success > 0) {
+    // Eén melding per handeling: een tweede toast zou de eerste wegdrukken (FD-N1).
+    if (errors.length > 0) {
+      toast({
+        title: success > 0 ? `${success} gecodeerd op ${bulkLedger}, ${errors.length} niet` : "Coderen is niet gelukt",
+        description: errors.length > 1 ? `${errors[0]} (en ${errors.length - 1} andere)` : errors[0],
+        variant: "destructive",
+      });
+    } else if (success > 0) {
       // Coding only records the account; the rows are not in the ledger yet.
       toast({
         title: `${success} transactie(s) gecodeerd op ${bulkLedger}`,
         description: codedNotPostedMessage(bulkLedger).description,
       });
     }
-    if (errors.length > 0) {
-      toast({ title: "Fout bij coderen", description: `${errors.length} transactie(s) mislukt: ${errors[0]}`, variant: "destructive" });
-    }
-  }, [selectedIds, bulkLedger, bulkLedgerId, bulkBtw, transactions, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, bulkLedger, bulkLedgerId, bulkBtw, transactions, allocationsByTxId, unlinkPayment, updateTx, refreshPayments, toast, refetch]);
 
   const handleBulkUnlink = useCallback(async () => {
     if (selectedIds.size === 0) return;
 
-    const ids = Array.from(selectedIds);
     let success = 0;
+    let nothing = 0;
     const errors: string[] = [];
-    const deletedTxIds: string[] = [];
-    const extraInvoiceIds: string[] = [];
-
-    for (const id of ids) {
+    for (const id of Array.from(selectedIds)) {
       const tx = transactions?.find(t => t.id === id);
       if (!tx) continue;
-
       try {
-        await deleteAllocationsForTx.mutateAsync(tx.id);
-
-        await updateTx.mutateAsync({
-          id: tx.id,
-          match_status: "niet_gematcht",
-          matched_invoice_id: null,
-          match_confidence: null,
-          grootboekrekening_id: null,
-        });
-
-        // Always collect the tx ID and its primary invoice so both allocation-backed
-        // and legacy-primary invoices are recalculated in the single pass below.
-        deletedTxIds.push(tx.id);
-        if (tx.matched_invoice_id) extraInvoiceIds.push(tx.matched_invoice_id);
-
-        success++;
-      } catch (e: any) {
-        errors.push(e.message || "Onbekende fout");
+        if (tx.match_status === "handmatig_geboekt" && (allocationsByTxId.get(id)?.length ?? 0) === 0) {
+          // Een codering is geen betaling: alleen de codering weghalen.
+          await updateTx.mutateAsync({ id, match_status: "niet_gematcht", grootboekrekening_id: null, matched_invoice_id: null, match_confidence: null });
+          success++;
+        } else {
+          const result = await unlinkPayment({ bankTransactionId: id });
+          if (result.outcome === "unlinked") success++;
+          else nothing++;
+        }
+      } catch (e) {
+        errors.push(bankPaymentErrorMessage(e));
       }
-    }
-
-    // Recalculate all affected invoices in one pass; wrapped so cleanup always runs
-    try {
-      await recalculateRemainingAfterDeletions(deletedTxIds, extraInvoiceIds);
-    } catch (e: any) {
-      errors.push(e.message || "Fout bij herberekenen openstaand bedrag");
     }
 
     setSelectedIds(new Set());
     setConfirmUnlinkOpen(false);
+    await refreshPayments();
     await refetch();
-    await refetchPurchase();
-    await refetchSales();
 
-    if (success > 0) {
-      toast({ title: `${success} transactie(s) ontkoppeld` });
-    }
-    if (errors.length > 0) {
-      toast({ title: "Fout bij ontkoppelen", description: errors[0], variant: "destructive" });
-    }
-  }, [selectedIds, transactions, deleteAllocationsForTx, updateTx, recalculateRemainingAfterDeletions, toast, refetch, refetchPurchase, refetchSales]);
+    const message = batchResultMessage(success, errors, { done: "transactie(s) ontkoppeld", failed: "niet ontkoppeld" });
+    toast(nothing > 0 && errors.length === 0
+      ? { ...message, description: `${nothing} zonder koppeling overgeslagen` }
+      : message);
+  }, [selectedIds, transactions, allocationsByTxId, unlinkPayment, updateTx, refreshPayments, toast, refetch]);
 
+  // Een oude match (gematcht, met een factuur, maar zonder koppelingsrij) als
+  // koppeling vastleggen, via de betaalschrijver. Die beslist exact: bevat het
+  // opgeslagen restant deze betaling al, dan blijft het restant staan
+  // (vastgelegd); staat het nog open, dan gaat het restant omlaag; past geen
+  // van beide, dan weigert hij met "herstel nodig" en verandert er niets.
   const handleRepairAflettering = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions) return;
 
-    let updated = 0;
+    let linked = 0;
     let skipped = 0;
     const errors: string[] = [];
-
-    // Step 1: collect eligible tx ids — gematcht, has matched_invoice_id,
-    // and the linked invoice still appears unreconciled (remaining ≈ total or null).
-    // Group them by matched_invoice_id so each invoice is written only once.
-    const groups = new Map<string, { invoiceId: string; txIds: string[] }>();
-
     for (const id of Array.from(selectedIds)) {
       const tx = transactions.find(t => t.id === id);
-      if (!tx || tx.match_status !== "gematcht" || !tx.matched_invoice_id) continue;
-
-      const inv =
-        invoices?.find(i => i.id === tx.matched_invoice_id) ??
-        salesInvs?.find(i => i.id === tx.matched_invoice_id);
-      if (!inv) { skipped++; continue; }
-
-      const totalAmount = getInvoiceTotalAmount(inv);
-      if (totalAmount == null) { skipped++; continue; }
-
-      // Only eligible when remaining_amount is null (never set) or ≈ total (never subtracted)
-      const isUnreconciled =
-        inv.remaining_amount == null ||
-        Math.abs((inv.remaining_amount) - totalAmount) < 0.02;
-
-      if (!isUnreconciled) { skipped++; continue; }
-
-      const existing = groups.get(tx.matched_invoice_id);
-      if (existing) {
-        existing.txIds.push(id);
-      } else {
-        groups.set(tx.matched_invoice_id, { invoiceId: tx.matched_invoice_id, txIds: [id] });
+      if (!tx || tx.match_status !== "gematcht" || !tx.matched_invoice_id || (allocationsByTxId.get(id)?.length ?? 0) > 0) {
+        skipped++;
+        continue;
       }
-    }
-
-    // Step 2: process each invoice group with a single write.
-    for (const { invoiceId, txIds } of groups.values()) {
-      const purchaseInv = invoices?.find(i => i.id === invoiceId);
-      const salesInv = salesInvs?.find(i => i.id === invoiceId);
+      const purchaseInv = purchaseInvoiceById.get(tx.matched_invoice_id);
+      const salesInv = salesInvoiceById.get(tx.matched_invoice_id);
       const inv = purchaseInv ?? salesInv;
-      if (!inv) { skipped += txIds.length; continue; }
-
-      const totalAmount = getInvoiceTotalAmount(inv);
-      if (totalAmount == null) { skipped += txIds.length; continue; }
-
-      const startingRemaining = inv.remaining_amount ?? totalAmount;
-
-      // Sum all selected payment amounts for this invoice in one pass
-      const totalPayment = txIds.reduce((sum, id) => {
-        const tx = transactions.find(t => t.id === id);
-        return sum + (tx ? Math.abs(tx.amount) : 0);
-      }, 0);
-
-      const newRemaining = Math.max(0, startingRemaining - totalPayment);
-
+      const invoiceType: "inkoop" | "verkoop" = purchaseInv ? "inkoop" : "verkoop";
+      if (!inv || inv.amount_incl == null) { skipped++; continue; }
+      const allocatedOnInvoice = (allAllocations ?? [])
+        .filter(a => a.invoice_id === inv.id && a.invoice_type === invoiceType)
+        .reduce((sum, a) => sum + a.amount, 0);
+      const amount = minAmount(Math.abs(tx.amount), inv.amount_incl - allocatedOnInvoice);
+      if (amount == null || amount <= 0) { skipped++; continue; }
       try {
-        if (newRemaining < 0.02) {
-          if (purchaseInv) {
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
-          }
-        } else {
-          if (purchaseInv) {
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-          } else {
-            await updateSales.mutateAsync({ id: invoiceId, remaining_amount: newRemaining });
-          }
-        }
-        updated += txIds.length;
-      } catch (e: any) {
-        errors.push(e.message || "Onbekende fout");
-        skipped += txIds.length;
+        const result = await linkPayment({ bankTransactionId: tx.id, invoiceType, invoiceId: inv.id, amount });
+        if (result.outcome === "created") linked++;
+        else skipped++;
+      } catch (e) {
+        errors.push(bankPaymentErrorMessage(e));
       }
     }
 
-    await refetchPurchase();
-    await refetchSales();
+    await refreshPayments();
 
-    if (updated > 0) {
-      toast({ title: `${updated} aflettering(en) bijgewerkt${skipped > 0 ? `, ${skipped} overgeslagen` : ""}` });
-    } else if (skipped > 0) {
-      toast({ title: `${skipped} transactie(s) overgeslagen (al afgeletterd of factuur niet gevonden)` });
-    }
     if (errors.length > 0) {
-      toast({ title: "Fout bij herberekening", description: errors[0], variant: "destructive" });
+      toast(batchResultMessage(linked, errors, { done: "oude match(es) vastgelegd", failed: "niet vastgelegd" }));
+    } else if (linked > 0) {
+      toast({ title: `${linked} oude match(es) vastgelegd${skipped > 0 ? `, ${skipped} overgeslagen` : ""}` });
+    } else {
+      toast({ title: `${skipped} transactie(s) overgeslagen`, description: "Geen oude match zonder koppeling, of er staat niets meer open." });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, updatePurchase, updateSales, toast, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, allocationsByTxId, purchaseInvoiceById, salesInvoiceById, allAllocations, linkPayment, refreshPayments, toast]);
 
   const handleBulkConfirmSuggestions = useCallback(async () => {
     if (selectedIds.size === 0 || !transactions || !invoices || !salesInvs) return;
@@ -1510,55 +1230,44 @@ export default function Bank() {
     let confirmed = 0;
     let skipped = 0;
     const errors: string[] = [];
+    // Een factuur die in deze reeks al een betaling kreeg, valt voor de rest af.
+    const claimed = new Set<string>();
 
     for (const id of Array.from(selectedIds)) {
       const tx = transactions.find(t => t.id === id);
       if (!tx) { skipped++; continue; }
 
       // Use the shared helper — enforces eligible status (niet_gematcht/suggestie),
-      // correct direction, !isPartialPayment, and amount diff <= €0.01 in one place.
+      // correct direction, unique top score, !isPartialPayment, and amount diff <= €0.01.
       const best = getSafeMatchCandidate(tx, invoices, salesInvs, rejectionIndex);
-      if (!best) { skipped++; continue; }
+      const amount = best ? linkAmountFor(tx, best.amount) : null;
+      if (!best || amount == null || claimed.has(best.id)) { skipped++; continue; }
+      claimed.add(best.id);
 
       try {
-        await assertBankMatchNotRejected(tx.id, best.type, best.id, tx.client_id, activeOrganizationId!);
-        await updateTx.mutateAsync({
-          id: tx.id,
-          match_status: "gematcht",
-          matched_invoice_id: best.id,
-          match_confidence: 100,
-        });
-        if (best.type === "inkoop") {
-          await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
-        } else {
-          await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
-        }
-        await upsertSingleAllocationForMatch(tx, best.id);
-        confirmed++;
-      } catch (e: any) {
-        errors.push(e.message || "Onbekende fout");
+        const result = await linkPayment({ bankTransactionId: tx.id, invoiceType: best.type, invoiceId: best.id, amount });
+        if (result.outcome === "created") confirmed++;
+        else skipped++;
+      } catch (e) {
+        errors.push(bankPaymentErrorMessage(e));
       }
     }
 
     setSelectedIds(new Set());
+    await refreshPayments();
     await refetch();
-    await refetchPurchase();
-    await refetchSales();
 
-    if (confirmed > 0 || skipped > 0) {
-      if (skipped > 0) {
-        toast({
-          title: "Matches deels bevestigd",
-          description: `${confirmed} matches bevestigd. ${skipped} matches overgeslagen omdat ze niet veilig genoeg waren.`,
-        });
-      } else {
-        toast({ title: `${confirmed} match(es) bevestigd` });
-      }
-    }
     if (errors.length > 0) {
-      toast({ title: "Fout bij bevestigen", description: errors[0], variant: "destructive" });
+      toast(batchResultMessage(confirmed, errors, { done: "match(es) bevestigd", failed: "niet bevestigd" }));
+    } else if (skipped > 0) {
+      toast({
+        title: "Matches deels bevestigd",
+        description: `${confirmed} matches bevestigd. ${skipped} matches overgeslagen omdat ze niet veilig genoeg waren.`,
+      });
+    } else if (confirmed > 0) {
+      toast({ title: `${confirmed} match(es) bevestigd` });
     }
-  }, [selectedIds, transactions, invoices, salesInvs, rejectionIndex, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast, refetch, refetchPurchase, refetchSales]);
+  }, [selectedIds, transactions, invoices, salesInvs, rejectionIndex, linkAmountFor, linkPayment, refreshPayments, toast, refetch]);
 
   // Identify the actual invoice being rejected before clearing the suggestion.
   // Never invent an invoice identity when no candidate is available.
@@ -1694,15 +1403,14 @@ export default function Bank() {
   // hoeft de gebruiker alleen te bevestigen.
   const [autoScanRunning, setAutoScanRunning] = useState(false);
   const [undoingBatch, setUndoingBatch] = useState(false);
-  type UndoEntry = {
-    txBefore: { id: string; match_status: string; matched_invoice_id: string | null; match_confidence: number | null };
-    invoiceBefore?:
-      | { type: "inkoop"; id: string; remaining_amount: number | null }
-      | { type: "verkoop"; id: string; remaining_amount: number | null; status: string };
-    allocation?:
-      | { kind: "created"; invoiceId: string }
-      | { kind: "existed"; invoiceId: string; amount: number };
-  };
+  // Wat de undo terugdraait: een koppeling via de betaalschrijver (precies die
+  // koppeling ontkoppelen), of een klaargezette suggestie (de matchvelden terug).
+  type UndoEntry =
+    | { kind: "linked"; txId: string; allocationId: string }
+    | {
+        kind: "suggested";
+        txBefore: { id: string; match_status: string; matched_invoice_id: string | null; match_confidence: number | null };
+      };
   const [lastBatch, setLastBatch] = useState<UndoEntry[] | null>(null);
 
   const handleAutoScan = useCallback(async () => {
@@ -1712,6 +1420,8 @@ export default function Bank() {
     let proposed = 0;
     const errors: string[] = [];
     const undoLog: UndoEntry[] = [];
+    // Een factuur die in deze scan al een betaling kreeg, valt voor de rest af.
+    const claimed = new Set<string>();
     for (const t of transactions) {
       if (!isSafeMatchEligibleStatus(t.match_status)) continue;
       try {
@@ -1724,53 +1434,28 @@ export default function Bank() {
         // Same safe predicate as the banner preview and the safe-match button,
         // so this handler confirms exactly what the preview announced.
         const safeCandidate = pickSafeMatchCandidate(t, candidates);
+        const amount = safeCandidate ? linkAmountFor(t, safeCandidate.amount) : null;
 
-        if (safeCandidate) {
-          const best = safeCandidate;
-          await assertBankMatchNotRejected(t.id, best.type, best.id, t.client_id, activeOrganizationId!);
-          // Veilig: direct bevestigen + factuur op betaald + allocatie schrijven.
-
-          // Snapshot vóór mutaties voor undo.
-          const entry: UndoEntry = {
-            txBefore: {
-              id: t.id,
-              match_status: t.match_status,
-              matched_invoice_id: t.matched_invoice_id,
-              match_confidence: t.match_confidence,
-            },
-          };
-          if (best.type === "inkoop") {
-            const inv = invoices.find(i => i.id === best.id);
-            entry.invoiceBefore = { type: "inkoop", id: best.id, remaining_amount: inv?.remaining_amount ?? null };
-          } else {
-            const inv = salesInvs.find(i => i.id === best.id);
-            entry.invoiceBefore = { type: "verkoop", id: best.id, remaining_amount: inv?.remaining_amount ?? null, status: inv?.status ?? "openstaand" };
-          }
-          const existingAlloc = (allocationsByTxId.get(t.id) ?? []).find(a => a.invoice_id === best.id);
-          entry.allocation = existingAlloc
-            ? { kind: "existed", invoiceId: best.id, amount: existingAlloc.amount }
-            : { kind: "created", invoiceId: best.id };
-
-          await updateTx.mutateAsync({
-            id: t.id,
-            match_status: "gematcht",
-            matched_invoice_id: best.id,
-            match_confidence: 100,
+        if (safeCandidate && amount != null && !claimed.has(safeCandidate.id)) {
+          // Veilig: via de betaalschrijver koppelen (restant en betaald leidt de database af).
+          claimed.add(safeCandidate.id);
+          const result = await linkPayment({
+            bankTransactionId: t.id,
+            invoiceType: safeCandidate.type,
+            invoiceId: safeCandidate.id,
+            amount,
           });
-          if (best.type === "inkoop") {
-            await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
+          if (result.outcome === "created") {
+            undoLog.push({ kind: "linked", txId: t.id, allocationId: result.allocationId });
+            confirmed++;
           }
-          await upsertSingleAllocationForMatch(t, best.id);
-          undoLog.push(entry);
-          confirmed++;
         } else if (t.match_status === "niet_gematcht") {
           // Onzeker: als suggestie klaarzetten voor menselijke controle.
           const best = candidates.find(c => c.score > 0 && c.type === expectedType);
           if (!best) continue;
           const conf = best.isPartialPayment ? 60 : 80;
           const entry: UndoEntry = {
+            kind: "suggested",
             txBefore: {
               id: t.id,
               match_status: t.match_status,
@@ -1788,15 +1473,14 @@ export default function Bank() {
           undoLog.push(entry);
           proposed++;
         }
-      } catch (e: any) {
-        errors.push(e.message || "Onbekende fout");
+      } catch (e) {
+        errors.push(bankPaymentErrorMessage(e));
       }
     }
     setAutoScanRunning(false);
     setLastBatch(undoLog.length > 0 ? undoLog : null);
+    await refreshPayments();
     await refetch();
-    await refetchPurchase();
-    await refetchSales();
 
     const parts: string[] = [];
     if (confirmed > 0) parts.push(`${confirmed} automatisch bevestigd`);
@@ -1804,9 +1488,10 @@ export default function Bank() {
     if (parts.length === 0) parts.push("Geen nieuwe voorstellen gevonden");
     toast({
       title: "Automatisch voorstellen klaar",
-      description: parts.join(" · ") + (errors.length ? ` · ${errors.length} fout(en)` : ""),
+      description: parts.join(" · ") + (errors.length ? ` · ${errors.length} fout(en): ${errors[0]}` : ""),
+      variant: errors.length ? "destructive" : undefined,
     });
-  }, [transactions, invoices, salesInvs, rankAllowedCandidates, autoScanRunning, allocationsByTxId, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, refetch, refetchPurchase, refetchSales, toast]);
+  }, [transactions, invoices, salesInvs, rankAllowedCandidates, autoScanRunning, activeOrganizationId, linkAmountFor, linkPayment, updateTx, refreshPayments, refetch, toast]);
 
   const handleUndoLastBatch = useCallback(async () => {
     if (!lastBatch || lastBatch.length === 0 || undoingBatch) return;
@@ -1817,62 +1502,32 @@ export default function Bank() {
     for (let i = lastBatch.length - 1; i >= 0; i--) {
       const entry = lastBatch[i];
       try {
-        // Allocatie eerst terugdraaien.
-        if (entry.allocation) {
-          if (entry.allocation.kind === "created") {
-            const { error } = await supabase
-              .from("bank_transaction_allocations")
-              .delete()
-              .eq("bank_transaction_id", entry.txBefore.id)
-              .eq("invoice_id", entry.allocation.invoiceId);
-            if (error) throw error;
-          } else {
-            const { error } = await supabase
-              .from("bank_transaction_allocations")
-              .update({ amount: entry.allocation.amount })
-              .eq("bank_transaction_id", entry.txBefore.id)
-              .eq("invoice_id", entry.allocation.invoiceId);
-            if (error) throw error;
-          }
+        if (entry.kind === "linked") {
+          // Precies de koppeling van deze batch; restant en status zet de database terug.
+          await unlinkPayment({ bankTransactionId: entry.txId, allocationId: entry.allocationId });
+        } else {
+          await updateTx.mutateAsync({
+            id: entry.txBefore.id,
+            match_status: entry.txBefore.match_status,
+            matched_invoice_id: entry.txBefore.matched_invoice_id,
+            match_confidence: entry.txBefore.match_confidence,
+          });
         }
-        // Factuur terugzetten.
-        if (entry.invoiceBefore) {
-          if (entry.invoiceBefore.type === "inkoop") {
-            await updatePurchase.mutateAsync({
-              id: entry.invoiceBefore.id,
-              remaining_amount: entry.invoiceBefore.remaining_amount,
-            });
-          } else {
-            await updateSales.mutateAsync({
-              id: entry.invoiceBefore.id,
-              remaining_amount: entry.invoiceBefore.remaining_amount,
-              status: entry.invoiceBefore.status,
-            });
-          }
-        }
-        // Transactie terugzetten.
-        await updateTx.mutateAsync({
-          id: entry.txBefore.id,
-          match_status: entry.txBefore.match_status,
-          matched_invoice_id: entry.txBefore.matched_invoice_id,
-          match_confidence: entry.txBefore.match_confidence,
-        });
         reverted++;
-      } catch (e: any) {
-        errors.push(e.message || "Onbekende fout");
+      } catch (e) {
+        errors.push(bankPaymentErrorMessage(e));
       }
     }
     setUndoingBatch(false);
     setLastBatch(null);
+    await refreshPayments();
     await refetch();
-    await refetchPurchase();
-    await refetchSales();
     toast({
       title: "Laatste batch teruggedraaid",
-      description: `${reverted} transactie(s) hersteld` + (errors.length ? ` · ${errors.length} fout(en)` : ""),
+      description: `${reverted} transactie(s) hersteld` + (errors.length ? ` · ${errors.length} fout(en): ${errors[0]}` : ""),
       variant: errors.length ? "destructive" : undefined,
     });
-  }, [lastBatch, undoingBatch, updateTx, updatePurchase, updateSales, refetch, refetchPurchase, refetchSales, toast]);
+  }, [lastBatch, undoingBatch, unlinkPayment, updateTx, refreshPayments, refetch, toast]);
 
 
 
@@ -1881,29 +1536,20 @@ export default function Bank() {
   // BankMatchDialog when the criteria are not met (unsafe suggestion or stale data).
   const handleSafeSuggestionConfirm = useCallback(async (t: Tables<"bank_transactions">) => {
     const best = getSafeMatchCandidate(t, invoices ?? [], salesInvs ?? [], rejectionIndex);
-    if (!best) {
+    const amount = best ? linkAmountFor(t, best.amount) : null;
+    if (!best || amount == null) {
       setMatchTx(t);
       return;
     }
     try {
-      await assertBankMatchNotRejected(t.id, best.type, best.id, t.client_id, activeOrganizationId!);
-      await updateTx.mutateAsync({
-        id: t.id,
-        match_status: "gematcht",
-        matched_invoice_id: best.id,
-        match_confidence: 100,
-      });
-      if (best.type === "inkoop") {
-        await updatePurchase.mutateAsync({ id: best.id, remaining_amount: 0 });
-      } else {
-        await updateSales.mutateAsync({ id: best.id, status: "betaald", remaining_amount: 0 });
-      }
-      await upsertSingleAllocationForMatch(t, best.id);
-      toast({ title: "Transactie bevestigd", description: "Factuur status → Betaald" });
-    } catch (e: any) {
-      toast({ title: "Fout", description: e.message, variant: "destructive" });
+      const result = await linkPayment({ bankTransactionId: t.id, invoiceType: best.type, invoiceId: best.id, amount });
+      toast(linkResultMessage(result, best.type));
+    } catch (e) {
+      toast({ title: "Fout bij bevestigen", description: bankPaymentErrorMessage(e), variant: "destructive" });
+    } finally {
+      await refreshPayments();
     }
-  }, [invoices, salesInvs, rejectionIndex, updateTx, updatePurchase, updateSales, upsertSingleAllocationForMatch, toast]);
+  }, [invoices, salesInvs, rejectionIndex, linkAmountFor, linkPayment, refreshPayments, toast]);
 
   const handleRejectSuggestion = useCallback(async (t: Tables<"bank_transactions">) => {
     try {
@@ -2082,7 +1728,8 @@ export default function Bank() {
       setDetailTx(null);
       if (tx.match_status === "handmatig_geboekt") {
         updateTx.mutateAsync({ id: tx.id, match_status: "niet_gematcht", grootboekrekening_id: null })
-          .then(() => toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." }));
+          .then(() => toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." }))
+          .catch((e) => toast({ title: "Fout bij ontkoppelen", description: bankPaymentErrorMessage(e), variant: "destructive" }));
       } else {
         handleUnlink(tx);
       }
@@ -2912,6 +2559,8 @@ export default function Bank() {
                                         grootboekrekening_id: null,
                                       }).then(() => {
                                         toast({ title: "Handmatige boeking verwijderd", description: "Transactie is weer open." });
+                                      }).catch((e) => {
+                                        toast({ title: "Fout bij ontkoppelen", description: bankPaymentErrorMessage(e), variant: "destructive" });
                                       });
                                     } else {
                                       handleUnlink(t);
@@ -3058,12 +2707,13 @@ export default function Bank() {
           {(() => {
             const repairCount = Array.from(selectedIds).filter(id => {
               const tx = transactions?.find(t => t.id === id);
-              return tx?.match_status === "gematcht" && tx.matched_invoice_id != null;
+              return tx?.match_status === "gematcht" && tx.matched_invoice_id != null
+                && (allocationsByTxId.get(id)?.length ?? 0) === 0;
             }).length;
             return repairCount > 0 ? (
               <Button size="sm" variant="outline" onClick={handleRepairAflettering}>
                 <RefreshCw className="mr-1 h-4 w-4" />
-                Herbereken aflettering ({repairCount})
+                Oude match vastleggen ({repairCount})
               </Button>
             ) : null;
           })()}
@@ -3147,25 +2797,20 @@ export default function Bank() {
           if (!rejectionIndex || !tx || isRejectedCandidate(rejectionIndex, id, { id: invoiceId, type: invoiceType })) {
             throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
           }
-          await assertBankMatchNotRejected(id, invoiceType, invoiceId, tx.client_id, activeOrganizationId!);
-          await updateTx.mutateAsync({ id, match_status: "gematcht", matched_invoice_id: invoiceId, match_confidence: 100 });
-          if (invoiceType === "inkoop") {
-            await updatePurchase.mutateAsync({ id: invoiceId, remaining_amount: 0 });
-          } else {
-            await updateSales.mutateAsync({ id: invoiceId, status: "betaald", remaining_amount: 0 });
+          // Wat er op de transactie nog niet is verdeeld, en nooit meer dan wat er
+          // op de factuur openstaat. Een fout gaat terug naar het verwerkscherm,
+          // dat haar als één melding toont; dan is er niets geschreven.
+          const inv = invoiceType === "inkoop" ? purchaseInvoiceById.get(invoiceId) : salesInvoiceById.get(invoiceId);
+          const amount = inv ? linkAmountFor(tx, getInvoiceRemainingAmount(inv)) : null;
+          if (amount == null) {
+            throw new Error("Op deze factuur of transactie staat niets meer open om te koppelen");
           }
-          const matchedTx = transactions?.find(t => t.id === id);
-          if (matchedTx) {
-            try {
-              await upsertSingleAllocationForMatch(matchedTx, invoiceId);
-            } catch (e: any) {
-              toast({ title: "Allocatierij niet aangemaakt", description: e.message, variant: "destructive" });
-            }
+          try {
+            const result = await linkPayment({ bankTransactionId: id, invoiceType, invoiceId, amount });
+            toast(linkResultMessage(result, invoiceType));
+          } finally {
+            await refreshPayments();
           }
-          toast({ title: "Factuur gekoppeld" });
-          refetch();
-          refetchPurchase();
-          refetchSales();
         }}
         onSkip={(id) => {
           toast({ title: "Transactie overgeslagen" });

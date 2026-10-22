@@ -47,8 +47,10 @@ import { InvoiceNumberCopyButton } from "@/components/InvoiceNumberCopyButton";
 import type { Tables } from "@/integrations/supabase/types";
 import { getDocumentRouteLabel, DOCUMENT_ROUTE_OPTIONS } from "@/lib/document-route";
 import { getInvoiceRemainingAmount, getInvoiceTotalAmount } from "@/lib/invoice-balances";
-import { useBankTransactionAllocations, useUpsertBankTransactionAllocation, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
-import { useBankTransactions, useUpdateBankTransaction } from "@/hooks/useBankTransactions";
+import { useBankTransactionAllocations, type BankTransactionAllocation } from "@/hooks/useBankTransactionAllocations";
+import { useBankPaymentLink } from "@/hooks/useBankPaymentLink";
+import { bankPaymentErrorMessage, linkResultMessage } from "@/lib/bank-payment-link";
+import { useBankTransactions } from "@/hooks/useBankTransactions";
 import { getDisplayDescription } from "@/lib/mt940-description-parser";
 import { useNavigate } from "react-router-dom";
 import { FilterChip } from "@/components/FilterChip";
@@ -270,8 +272,9 @@ export default function Facturen() {
   const [linkAmount, setLinkAmount] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
 
-  const upsertAllocation = useUpsertBankTransactionAllocation();
-  const updateBankTx = useUpdateBankTransaction();
+  // De enige schrijver van koppelingen, restant, betaald en matchvelden (P5, D1).
+  const { link: linkPayment, refresh: refreshPayments } = useBankPaymentLink();
+  const [linkPending, setLinkPending] = useState(false);
 
   const { data: allAllocations } = useBankTransactionAllocations({
     organizationId: activeOrganizationId ?? undefined,
@@ -315,46 +318,32 @@ export default function Facturen() {
     setUploadClientId(selectedClientId !== "all" ? selectedClientId : "");
   }, [selectedClientId]);
 
+  // Koppelen via de betaalschrijver: één aanroep, die koppeling, restant,
+  // en de matchvelden van de banktransactie atomair
+  // vastlegt — of niets, met een melding. De app rekent hier niets meer uit.
   const handlePurchaseLink = async () => {
     if (!afletteringInvoice || !linkTarget) return;
     const amount = parseFloat(linkAmount);
     const inv = afletteringInvoice;
     const { tx } = linkTarget;
-
-    // 1. Duplicate check — abort if this (tx, invoice) pair is already allocated
-    const alreadyLinked = (allAllocations ?? []).some(
-      a => a.bank_transaction_id === tx.id && a.invoice_id === inv.id && a.invoice_type === "inkoop"
-    );
-    if (alreadyLinked) { toast({ title: "Deze banktransactie is al gekoppeld aan deze factuur", variant: "destructive" }); return; }
-
-    // 2. Fresh bank-unallocated from latest local allAllocations
-    const bankAllocatedNow = (allAllocations ?? [])
-      .filter(a => a.bank_transaction_id === tx.id)
-      .reduce((sum, a) => sum + a.amount, 0);
-    const bankUnallocatedNow = Math.abs(tx.amount) - bankAllocatedNow;
-    if (bankUnallocatedNow < 0.01) { toast({ title: "Deze banktransactie is al volledig gealloceerd", variant: "destructive" }); return; }
-
-    // 3. Fresh invoice-open from current state
-    const invoiceOpen = getInvoiceRemainingAmount(inv) ?? 0;
-    if (invoiceOpen < 0.01) { toast({ title: "Deze factuur staat niet meer open", variant: "destructive" }); return; }
-
     if (isNaN(amount) || amount <= 0) { toast({ title: "Ongeldig bedrag", variant: "destructive" }); return; }
-    if (amount > invoiceOpen + 0.005) { toast({ title: "Bedrag groter dan openstaand factuurbedrag", variant: "destructive" }); return; }
-    if (amount > bankUnallocatedNow + 0.005) { toast({ title: "Bedrag groter dan beschikbaar banksaldo", variant: "destructive" }); return; }
 
+    setLinkPending(true);
     try {
-      await upsertAllocation.mutateAsync({ bank_transaction_id: tx.id, invoice_type: "inkoop", invoice_id: inv.id, client_id: inv.client_id, amount });
-      const newRemaining = Math.max(0, invoiceOpen - amount);
-      await updateInvoice.mutateAsync({ id: inv.id, remaining_amount: newRemaining });
-      const bankUpdates: { id: string; match_status: string; matched_invoice_id?: string } = { id: tx.id, match_status: "gematcht" };
-      if (!tx.matched_invoice_id) bankUpdates.matched_invoice_id = inv.id;
-      await updateBankTx.mutateAsync(bankUpdates);
-      setAfletteringInvoice({ ...inv, remaining_amount: newRemaining });
+      const result = await linkPayment({ bankTransactionId: tx.id, invoiceType: "inkoop", invoiceId: inv.id, amount });
+      setAfletteringInvoice({
+        ...inv,
+        ...(result.invoiceRemaining != null ? { remaining_amount: result.invoiceRemaining } : {}),
+        ...(result.invoiceStatus ? { status: result.invoiceStatus } : {}),
+      });
       setLinkTarget(null);
       setLinkAmount("");
-      toast({ title: "Koppeling aangemaakt" });
-    } catch (e: any) {
-      toast({ title: "Koppelen mislukt", description: e.message, variant: "destructive" });
+      toast(linkResultMessage(result, "inkoop"));
+    } catch (e) {
+      toast({ title: "Koppelen mislukt", description: bankPaymentErrorMessage(e), variant: "destructive" });
+    } finally {
+      setLinkPending(false);
+      await refreshPayments();
     }
   };
 
@@ -1164,10 +1153,8 @@ export default function Facturen() {
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setLinkTarget(null)}>Annuleren</Button>
-              <Button onClick={handlePurchaseLink}
-                disabled={upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending}>
-                {(upsertAllocation.isPending || updateInvoice.isPending || updateBankTx.isPending)
-                  ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+              <Button onClick={handlePurchaseLink} disabled={linkPending}>
+                {linkPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
                 Koppelen
               </Button>
             </div>

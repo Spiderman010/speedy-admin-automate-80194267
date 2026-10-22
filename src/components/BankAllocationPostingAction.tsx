@@ -18,8 +18,8 @@ import type { BankTransactionAllocation } from "@/hooks/useBankTransactionAlloca
  * bedragen, rekeningen of datums.
  *
  * Persisted-state: de drawer heeft geen lokaal concept van koppelingsbedragen.
- * Bank.tsx schrijft koppelingen direct weg via
- * useUpsertBankTransactionAllocation / de delete-mutaties en de lijst wordt
+ * Bank.tsx schrijft koppelingen via de betaalschrijver (link_bank_payment /
+ * unlink_bank_payment) en de lijst wordt
  * opnieuw uit React Query gelezen, dus deze kaart toont altijd de opgeslagen
  * rij. Het "niet-opgeslagen formulier"-risico van de verkoopdialoog bestaat
  * hier dus niet. Of er op dit moment nog een koppelingsmutatie onderweg is, is

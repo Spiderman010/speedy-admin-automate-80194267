@@ -19,6 +19,11 @@ const state = vi.hoisted(() => ({
   toasts: [] as any[],
 }));
 
+// De betaalschrijver (P5) gebruikt de React Query-client voor het verversen; deze
+// test rendert Bank zonder QueryClientProvider en raakt geen koppelpad.
+vi.mock("@/hooks/useBankPaymentLink", () => ({
+  useBankPaymentLink: () => ({ link: vi.fn(), unlink: vi.fn(), refresh: vi.fn(async () => undefined) }),
+}));
 vi.mock("@/hooks/useBankMatchRejections", () => ({
   useBankMatchRejections: () => ({ data: [], isSuccess: true, isError: false }),
   useRecordBankMatchRejection: () => ({ mutateAsync: vi.fn(async () => undefined) }),

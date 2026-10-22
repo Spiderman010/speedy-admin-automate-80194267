@@ -28,6 +28,11 @@ const CLIENTS: Record<string, any[]> = {
   "org-2": [{ id: "c2", name: "Klant 2", organization_id: "org-2", ibans: [] }],
 };
 
+// De betaalschrijver (P5) gebruikt de React Query-client voor het verversen; deze
+// test rendert Bank zonder QueryClientProvider en raakt geen koppelpad.
+vi.mock("@/hooks/useBankPaymentLink", () => ({
+  useBankPaymentLink: () => ({ link: vi.fn(), unlink: vi.fn(), refresh: vi.fn(async () => undefined) }),
+}));
 vi.mock("@/hooks/useBankMatchRejections", () => ({
   useBankMatchRejections: () => ({ data: h.rejectionsLoaded ? [] : undefined, isSuccess: h.rejectionsLoaded, isError: false }),
   useRecordBankMatchRejection: () => ({ mutateAsync: vi.fn(async () => undefined) }),

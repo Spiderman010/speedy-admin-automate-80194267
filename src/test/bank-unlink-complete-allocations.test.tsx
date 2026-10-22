@@ -9,9 +9,11 @@
  * de herberekening is nu volledig, en de herberekening komt daardoor uit op
  * S1 → 70 en S2 → 50.
  *
- * Het schrijfpad zelf (de herberekening in de client en de losse factuurwrites)
- * is van P5 en blijft hier ongewijzigd; deze test bewijst alleen dat de lijst
- * waarop het rekent compleet is.
+ * Het schrijfpad is sinds P5 de betaalschrijver: ontkoppelen is één aanroep van
+ * unlink_bank_payment, en de database herberekent het restant uit ALLE
+ * koppelingen (onder grendels). De client rekent en schrijft niets meer; deze
+ * test bewijst dat de lijst compleet is én dat ontkoppelen geen eigen
+ * herberekening, factuurwrite of koppelingsdelete meer doet.
  */
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -27,6 +29,8 @@ const h = vi.hoisted(() => ({
   sales: [] as any[],
   updateSalesCalls: [] as any[],
   updateTxCalls: [] as any[],
+  rpcCalls: [] as any[],
+  withRpc: true,
 }));
 
 vi.mock("@/integrations/supabase/client", () => ({
@@ -114,7 +118,22 @@ function seed() {
     { id: "a-new-s1", bank_transaction_id: "tx-new", invoice_id: "S1", amount: 70, created_at: "2026-10-02T09:00:00.000Z" },
     { id: "a-new-s2", bank_transaction_id: "tx-new", invoice_id: "S2", amount: 50, created_at: "2026-10-02T09:00:01.000Z" },
   ].map((r) => ({ ...r, invoice_type: "verkoop", client_id: "c1", organization_id: "org-1", user_id: "u1", updated_at: r.created_at }));
-  emu = createPostgrestEmulator({ maxRows: CAP, tables: { bank_transaction_allocations: [...filler, ...recent] } });
+  h.rpcCalls = [];
+  emu = createPostgrestEmulator({
+    maxRows: CAP,
+    tables: { bank_transaction_allocations: [...filler, ...recent] },
+    rpc: h.withRpc ? {
+      // Wat de database doet: alle koppelingen van de transactie weg, restant en
+      // status afgeleid. Hier alleen het weghalen; de afleiding bewijst het DB-harnas.
+      unlink_bank_payment: (args: any) => {
+        h.rpcCalls.push({ fn: "unlink_bank_payment", args });
+        const rows = emu.tables.bank_transaction_allocations;
+        const removed = rows.filter((a) => a.bank_transaction_id === args._bank_transaction_id).length;
+        emu.tables.bank_transaction_allocations = rows.filter((a) => a.bank_transaction_id !== args._bank_transaction_id);
+        return [{ outcome: removed > 0 ? "unlinked" : "unchanged", removed_count: removed, tx_match_status: "niet_gematcht", replayed: false }];
+      },
+    } : undefined,
+  });
   h.client = emu.client;
   h.sales = [sale("S1", 100), sale("S2", 50)];
   h.transactions = [tx({}), tx({ id: "tx-other", amount: 30, transaction_date: "2026-09-30" })];
@@ -123,8 +142,18 @@ function seed() {
 beforeEach(() => {
   h.updateSalesCalls = [];
   h.updateTxCalls = [];
+  h.withRpc = true;
   seed();
 });
+
+function renderBank() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/bank"]}><Bank /></MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 describe("ontkoppelen bij meer dan 1000 koppelingen (F3-scenario, echte hook)", () => {
   it("de server kapt een verzoek zonder range af: de nieuwste koppelingen zouden ontbreken", async () => {
@@ -133,13 +162,8 @@ describe("ontkoppelen bij meer dan 1000 koppelingen (F3-scenario, echte hook)", 
     expect(data.some((a: Row) => a.bank_transaction_id === "tx-new")).toBe(false);
   });
 
-  it("de koppelingenlijst is volledig, en de herberekening na ontkoppelen ziet daardoor alle overgebleven koppelingen", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={qc}>
-        <MemoryRouter initialEntries={["/bank"]}><Bank /></MemoryRouter>
-      </QueryClientProvider>,
-    );
+  it("de koppelingenlijst is volledig, en ontkoppelen is één aanroep van de betaalschrijver — geen eigen herberekening of write", async () => {
+    renderBank();
     // De lijst is binnen zodra de hook pagina voor pagina tot een lege pagina heeft gelezen.
     await waitFor(() => {
       const reads = readsOn(emu.log, "bank_transaction_allocations");
@@ -151,14 +175,33 @@ describe("ontkoppelen bij meer dan 1000 koppelingen (F3-scenario, echte hook)", 
 
     await waitFor(() => expect(document.querySelector("svg.lucide-unlink")).not.toBeNull());
     fireEvent.click(document.querySelector("svg.lucide-unlink")!.closest("button")!);
-    await waitFor(() => expect(h.updateSalesCalls).toHaveLength(2));
+    await waitFor(() => expect(h.rpcCalls).toHaveLength(1));
 
-    // De server verwijderde beide koppelingen van tx-new …
+    expect(h.rpcCalls[0].args).toEqual({
+      _bank_transaction_id: "tx-new",
+      _request_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      _allocation_id: null,
+    });
+    // De database verwijderde de koppelingen van tx-new; die van tx-other blijft.
     expect(emu.tables.bank_transaction_allocations.filter((a) => a.bank_transaction_id === "tx-new")).toEqual([]);
-    // … en de herberekening rekent met de volledige lijst: S1 houdt de € 30 van tx-other, S2 heeft niets meer.
-    expect(h.updateSalesCalls).toEqual(expect.arrayContaining([
-      { id: "S1", status: "gecontroleerd", remaining_amount: 70 },
-      { id: "S2", status: "gecontroleerd", remaining_amount: 50 },
-    ]));
+    expect(emu.tables.bank_transaction_allocations.some((a) => a.id === "a-other-s1")).toBe(true);
+    // Geen eigen restant- of statuswrite, geen eigen match-reset, geen directe delete.
+    expect(h.updateSalesCalls).toEqual([]);
+    expect(h.updateTxCalls).toEqual([]);
+    expect(emu.log.some((l) => l.table === "bank_transaction_allocations" && l.op === "delete")).toBe(false);
+  });
+
+  it("zonder de betaalschrijver in de database (PGRST202) wordt er niets geschreven", async () => {
+    h.withRpc = false;
+    seed();
+    renderBank();
+    await waitFor(() => expect(document.querySelector("svg.lucide-unlink")).not.toBeNull());
+    fireEvent.click(document.querySelector("svg.lucide-unlink")!.closest("button")!);
+    await waitFor(() => expect(emu.log.some((l) => l.table === "rpc:unlink_bank_payment")).toBe(true));
+    // Fail-closed: geen enkele andere schrijfactie, de koppelingen staan er nog.
+    expect(emu.tables.bank_transaction_allocations.filter((a) => a.bank_transaction_id === "tx-new")).toHaveLength(2);
+    expect(h.updateSalesCalls).toEqual([]);
+    expect(h.updateTxCalls).toEqual([]);
+    expect(emu.log.some((l) => l.op === "delete" || l.op === "update" || l.op === "upsert" || l.op === "insert")).toBe(false);
   });
 });
