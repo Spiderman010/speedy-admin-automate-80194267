@@ -37,6 +37,23 @@ export const SALES_POSTABLE_STATUSES = ["gecontroleerd", "betaald"] as const;
  */
 export const DIRECT_BANK_POSTABLE_STATUS = "handmatig_geboekt" as const;
 
+/**
+ * Review N-1: een bankregel vóór de openingsdatum van de GEBOEKTE beginbalans
+ * kan de directe bankschrijver nooit boeken —
+ * enforce_no_posting_before_opening_balance() weigert elke grootboekregel
+ * daarvóór (22023). Zij telt dus niet als postbaar, exact zoals de banktak van
+ * close_fiscal_year() (`NOT EXISTS … obp.opening_date > bt.transaction_date`).
+ * Een regel zonder datum telt wel (de database kan haar niet uitsluiten).
+ */
+export function directBankPostableAfterOpening(
+  transactionDate: string | null | undefined,
+  openingDates: readonly (string | null | undefined)[],
+): boolean {
+  if (!transactionDate) return true;
+  const datum = transactionDate.slice(0, 10);
+  return !openingDates.some((d) => !!d && d.slice(0, 10) > datum);
+}
+
 export type LedgerSourceKey =
   | "purchase_invoice"
   | "sales_invoice"

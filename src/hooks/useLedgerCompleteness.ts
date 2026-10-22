@@ -7,6 +7,7 @@ import {
   computeLedgerCompleteness,
   computeOpeningBalanceCompleteness,
   DIRECT_BANK_POSTABLE_STATUS,
+  directBankPostableAfterOpening,
   PURCHASE_POSTABLE_STATUSES,
   reportYearForPeriod,
   SALES_POSTABLE_STATUSES,
@@ -51,6 +52,7 @@ async function fetchIds<T extends Record<string, unknown>>(
     | "bank_transaction_allocations"
     | "bank_transactions"
     | "bank_transaction_postings"
+    | "opening_balance_postings"
     | "purchase_invoice_postings"
     | "sales_invoice_postings"
     | "purchase_invoices"
@@ -102,6 +104,7 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     allocations,
     directEligibleIds,
     directMarkers,
+    openingMarkers,
   ] = await Promise.all([
     fetchIds<{ id: string }>("purchase_invoices", "id", "id", clientId, (q) =>
       q.in("status", [...PURCHASE_POSTABLE_STATUSES]),
@@ -125,7 +128,7 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
     // <> 0. Het bedrag is uitsluitend een FILTER in de database; er wordt hier
     // geen bedragkolom gelezen. Of de regel gekoppeld is, volgt uit de
     // koppelingen hierboven — exact de regels van post_bank_transaction().
-    fetchIds<{ id: string }>("bank_transactions", "id", "id", clientId, (q) =>
+    fetchIds<{ id: string; transaction_date: string | null }>("bank_transactions", "id, transaction_date", "id", clientId, (q) =>
       q
         .eq("match_status", DIRECT_BANK_POSTABLE_STATUS)
         .not("grootboekrekening_id", "is", null)
@@ -141,6 +144,8 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
       "bank_transaction_id",
       clientId,
     ),
+    // Review N-1: de openingsdatum van de geboekte beginbalans (hooguit één).
+    fetchIds<{ opening_date: string }>("opening_balance_postings", "opening_date", "opening_balance_id", clientId),
   ]);
 
   const postedPurchase = new Set(purchaseMarkers.map((m) => m.purchase_invoice_id));
@@ -158,7 +163,10 @@ export async function fetchLedgerCompletenessCounts(clientId: string): Promise<L
   // Een gekoppelde bankregel hoort bij de afletteringstak; zo telt niets dubbel.
   const gekoppeld = new Set(allocations.map((a) => a.bank_transaction_id));
   const directeBoekingen = new Set(directMarkers.map((m) => m.bank_transaction_id));
-  const directEligible = directEligibleIds.filter((t) => !gekoppeld.has(t.id));
+  const openingDates = openingMarkers.map((m) => m.opening_date);
+  const directEligible = directEligibleIds.filter(
+    (t) => !gekoppeld.has(t.id) && directBankPostableAfterOpening(t.transaction_date, openingDates),
+  );
   const directPosted = directEligible.filter((t) => directeBoekingen.has(t.id)).length;
 
   return {

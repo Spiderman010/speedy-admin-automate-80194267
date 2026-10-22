@@ -45,6 +45,11 @@
 --      niet postbaar en telt niet; tellen zou de afsluiting voorgoed
 --      blokkeren met een opdracht ("boek eerst") die onuitvoerbaar is
 --      (review H-1). Zulke regels telt rollout/…/impact.sql apart.
+--      Om dezelfde reden telt de banktak geen regel van vóór de openingsdatum
+--      van een geboekte beginbalans: de trigger
+--      enforce_no_posting_before_opening_balance() (20260919120000) weigert
+--      elke grootboekregel daarvóór (22023), dus de schrijver kan haar nooit
+--      boeken (review N-1). Ook die regels telt impact.sql apart.
 --      Grootboekregels en memoriaalboekingen hebben een NOT NULL organisatie
 --      en krijgen een gewone gelijkheid.
 --   3. De weigeringstekst van controle D zegt niet langer dat afsluiten werk
@@ -107,7 +112,7 @@ DO $migratie$
 DECLARE
   v_hash text;
   v_voor constant text := '14cdfaa498bbbc305e95dbf0faa52e26';
-  v_na   constant text := 'aea0f0adc7e44613112615365d4eb38a';
+  v_na   constant text := '37c8935ad10923ca6ed5d1d58473e4f7';
 BEGIN
   IF to_regprocedure('public.close_fiscal_year(uuid,integer)') IS NULL THEN
     RAISE EXCEPTION 'P7 vereist public.close_fiscal_year(uuid,integer) (PR E, 20261001120000)';
@@ -402,6 +407,14 @@ BEGIN
       AND NOT EXISTS (
         SELECT 1 FROM public.bank_transaction_postings m
         WHERE m.bank_transaction_id = bt.id
+      )
+      -- Review N-1: wat de schrijver nooit kan boeken, telt niet.
+      -- enforce_no_posting_before_opening_balance() weigert elke grootboek-
+      -- regel vóór de openingsdatum van de geboekte beginbalans (22023).
+      AND NOT EXISTS (
+        SELECT 1 FROM public.opening_balance_postings obp
+        WHERE obp.client_id = bt.client_id
+          AND obp.opening_date > bt.transaction_date
       )
   )
   SELECT count(*) FILTER (WHERE p.boekjaar IS NOT NULL AND p.boekjaar <= _fiscal_year),

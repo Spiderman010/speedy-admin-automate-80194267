@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import {
   DIRECT_BANK_POSTABLE_STATUS,
+  directBankPostableAfterOpening,
   PURCHASE_POSTABLE_STATUSES,
   reportDocumentCompleteness,
   SALES_POSTABLE_STATUSES,
@@ -62,6 +63,7 @@ type Tabel =
   | "bank_allocation_postings"
   | "bank_transactions"
   | "bank_transaction_postings"
+  | "opening_balance_postings"
   | "manual_journals"
   | "manual_journal_postings";
 
@@ -109,7 +111,7 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
     salesEligible, salesMarkers,
     allocations, allocationMarkers, bankTransactions,
     manualJournals, manualMarkers,
-    directCandidates, directMarkers,
+    directCandidates, directMarkers, openingMarkers,
   ] = await Promise.all([
     fetchAll<{ id: string; invoice_date: string | null }>(
       "purchase_invoices", "id, invoice_date", "id", clientId,
@@ -155,6 +157,10 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
     fetchAll<{ bank_transaction_id: string }>(
       "bank_transaction_postings", "bank_transaction_id", "bank_transaction_id", clientId,
     ),
+    // Review N-1: de openingsdatum van de geboekte beginbalans (hooguit één).
+    fetchAll<{ opening_date: string }>(
+      "opening_balance_postings", "opening_date", "opening_balance_id", clientId,
+    ),
   ]);
 
   const geboekteInkoop = new Set(purchaseMarkers.map((m) => m.purchase_invoice_id));
@@ -194,8 +200,11 @@ export async function fetchUnpostedSourceWork(clientId: string): Promise<Unposte
   // niets dubbel. Een marker betekent: al geboekt door de directe schrijver.
   const gekoppeld = new Set(allocations.map((a) => a.bank_transaction_id));
   const directGeboekt = new Set(directMarkers.map((m) => m.bank_transaction_id));
+  const openingDates = openingMarkers.map((m) => m.opening_date);
   for (const tx of directCandidates) {
     if (gekoppeld.has(tx.id) || directGeboekt.has(tx.id)) continue;
+    // Review N-1: vóór de beginbalans kan de schrijver haar nooit boeken.
+    if (!directBankPostableAfterOpening(tx.transaction_date, openingDates)) continue;
     items.push({ source: "bank_transaction", id: tx.id, boekjaar: boekjaarVan(tx.transaction_date) });
   }
   for (const journal of manualJournals) {

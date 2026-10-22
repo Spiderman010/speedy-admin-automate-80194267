@@ -9,7 +9,7 @@
 SET client_min_messages = warning;
 
 SELECT proof.expect_true('F1', 'opnieuw toegepast: exact het P7-lichaam, met de rechten van PR E',
-  $q$proof.close_md5() = 'aea0f0adc7e44613112615365d4eb38a'
+  $q$proof.close_md5() = '37c8935ad10923ca6ed5d1d58473e4f7'
      AND (SELECT proacl::text = proof.get('acl_pr_e') FROM pg_proc WHERE oid = 'public.close_fiscal_year(uuid,integer)'::regprocedure)$q$);
 SELECT proof.record('F2', 'opnieuw toegepast: K7 (gecodeerde bankregel van 2027) weigert 2027 weer, K10 (bank zonder organisatie, onboekbaar) en K8 (andere organisatie) sluiten af',
   proof.try_close(proof.client(7), 2027) LIKE '[23514]%postbaar brondocument(en) open%'

@@ -93,8 +93,15 @@ SELECT proof.as_user(proof.accountant());
 SELECT proof.expect_error('12b', '... want post_bank_transaction weigert die regel altijd (42501 "Banktransactie niet beschikbaar")',
   format('SELECT public.post_bank_transaction(%L)', proof.uid(1000, 1001)), '42501', 'Banktransactie niet beschikbaar');
 SELECT proof.as_user(NULL);
-SELECT proof.record('12c', 'VASTGELEGD, ontwerpbesluit D8: controle D kent geen ondergrens — bankwerk van 2025 (vóór de beginbalans per 1-1-2026) blokkeert het afsluiten van 2025',
-  proof.try_close(proof.client(14), 2025) LIKE '[23514]%postbaar brondocument(en) open met boekjaar t/m 2025%', proof.try_close(proof.client(14), 2025));
+SELECT proof.put('post_k14_2025', proof.try_close(proof.client(14), 2025));
+SELECT proof.record('12c', 'review N-1: een gecodeerde bankregel van vóór de beginbalans (2025, beginbalans per 1-1-2026) telt NIET — de afsluiting van 2025 slaagt',
+  proof.get('post_k14_2025') = 'created=true', proof.get('post_k14_2025'));
+SELECT proof.as_user(proof.accountant());
+SELECT proof.expect_error('12d', '... want die regel is niet te boeken: de beginbalanstrigger weigert elke grootboekregel daarvóór (22023)',
+  format('SELECT public.post_bank_transaction(%L)', proof.uid(1000, 1401)), '22023', 'beginbalans');
+SELECT proof.as_user(NULL);
+SELECT proof.record('12e', '... terwijl een gecodeerde regel NA de beginbalans (2026) wél telt: de grens is exact de openingsdatum',
+  proof.try_close(proof.client(14), 2026) LIKE '[23514]%postbaar brondocument(en) open met boekjaar t/m 2026%', proof.try_close(proof.client(14), 2026));
 SELECT proof.expect_true('13', 'de rijen van de andere organisatie zijn onaangeroerd en nog steeds ongeboekt',
   format($q$(SELECT count(*) = 2 FROM (
                SELECT id FROM public.purchase_invoices WHERE id = %L AND organization_id = '00000000-0000-0000-0000-00000000a002'
@@ -187,8 +194,8 @@ SELECT proof.expect_true('26', 'PR H ongewijzigd: een assistent boekt in het afg
 SELECT proof.as_user(NULL);
 
 -- ── 6. functiedefinitie, rechten en wat er verder NIET veranderde ───────────
-SELECT proof.expect_true('27', 'het lichaam is exact het beoordeelde P7-lichaam (md5 aea0f0ad…)',
-  $q$proof.close_md5() = 'aea0f0adc7e44613112615365d4eb38a'$q$);
+SELECT proof.expect_true('27', 'het lichaam is exact het beoordeelde P7-lichaam (md5 37c8935a…)',
+  $q$proof.close_md5() = '37c8935ad10923ca6ed5d1d58473e4f7'$q$);
 SELECT proof.expect_true('27b', 'SECURITY DEFINER, search_path = public, dezelfde eigenaar en exact de ACL van PR E',
   $q$(SELECT prosecdef AND proconfig = ARRAY['search_path=public'] AND proacl::text = proof.get('acl_pr_e')
              AND proowner::regrole::text = proof.get('owner_pr_e')

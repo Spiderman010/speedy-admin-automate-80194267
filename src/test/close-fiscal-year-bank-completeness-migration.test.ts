@@ -85,7 +85,7 @@ describe("P7 — close_fiscal_year telt de directe bankschrijver en alleen de ei
     expect(voor).toBe(md5(bodyPrE));
     expect(na).toBe(md5(bodyP7));
     expect(voor).toBe("14cdfaa498bbbc305e95dbf0faa52e26");
-    expect(na).toBe("aea0f0adc7e44613112615365d4eb38a");
+    expect(na).toBe("37c8935ad10923ca6ed5d1d58473e4f7");
     const sql = code(text);
     expect(sql.indexOf("md5(p.prosrc)")).toBeGreaterThan(-1);
     expect(sql.indexOf("md5(p.prosrc)")).toBeLessThan(sql.indexOf("CREATE OR REPLACE FUNCTION public.close_fiscal_year("));
@@ -120,6 +120,9 @@ describe("P7 — close_fiscal_year telt de directe bankschrijver en alleen de ei
     // organisatie altijd (42501), dus de tak telt alleen de eigen organisatie.
     expect(takCode).toMatch(/AND bt\.organization_id = v_org\n/);
     expect(takCode).not.toMatch(/bt\.organization_id IS NULL/);
+    // Review N-1: niets vóór de openingsdatum van de geboekte beginbalans —
+    // enforce_no_posting_before_opening_balance() weigert dat altijd.
+    expect(takCode).toMatch(/NOT EXISTS \(\s*SELECT 1 FROM public\.opening_balance_postings obp\s+WHERE obp\.client_id = bt\.client_id\s+AND obp\.opening_date > bt\.transaction_date\s*\)/);
     expect(takCode).toMatch(/bt\.match_status = 'handmatig_geboekt'/);
     expect(takCode).toMatch(/bt\.grootboekrekening_id IS NOT NULL/);
     expect(takCode).toMatch(/bt\.amount <> 0/);
@@ -156,7 +159,7 @@ describe("P7 — close_fiscal_year telt de directe bankschrijver en alleen de ei
     expect(sectie4).toMatch(/COMMENT ON FUNCTION public\.close_fiscal_year\(uuid, integer\) IS\n'[^']*Rolvloer: accountant\.';$/);
     expect(rollback.includes(sectie4)).toBe(true);
     const guard = rollback.slice(0, rollback.indexOf(sectie4));
-    expect(guard).toMatch(/NOT IN \('aea0f0adc7e44613112615365d4eb38a', '14cdfaa498bbbc305e95dbf0faa52e26'\)/);
+    expect(guard).toMatch(/NOT IN \('37c8935ad10923ca6ed5d1d58473e4f7', '14cdfaa498bbbc305e95dbf0faa52e26'\)/);
     expect(guard).toMatch(/RAISE EXCEPTION 'Rollback geweigerd/);
   });
 

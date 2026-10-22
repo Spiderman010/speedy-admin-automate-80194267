@@ -339,9 +339,10 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA proof TO public;
 --     vrijgave zet de regel terug op niet_gematcht zonder rekening
 -- K12 rol, tenant, idempotentie, herafsluiten, gelijktijdigheid
 -- K13 de bankregel wordt geboekt terwijl een afsluiting wacht
--- K14 D8: een gecodeerde bankregel van 2025, aangemaakt vóór de directe
---     bankschrijver, in een administratie met een geboekte beginbalans per
---     1-1-2026 (alleen de marker, nagebootst); voor impact.sql en bewijs 12c
+-- K14 N-1/D8: een administratie met een geboekte beginbalans per 1-1-2026
+--     (alleen de marker, nagebootst). 1401: gecodeerd in 2025, vóór de
+--     beginbalans → onboekbaar (22023), telt niet. 1402: gecodeerd in 2026,
+--     aangemaakt vóór de directe bankschrijver → telt wel (impact.sql, D8)
 -- KB  een administratie van de andere organisatie
 
 SELECT proof.new_client(1,  'K1 — A3-02');
@@ -407,12 +408,13 @@ SELECT proof.sales_posted(1202, proof.client(12), DATE '2026-03-01', 500);
 -- K13: één gecodeerde, ongeboekte bankregel; geboekt in de gelijktijdigheidsproef.
 SELECT proof.tx(1301, proof.client(13), DATE '2026-06-01', -121);
 
--- K14: de regel van 2025 en de beginbalansmarker per 1-1-2026. De marker is
+-- K14: de regels van 2025 en 2026 en de beginbalansmarker per 1-1-2026. De marker is
 --     alleen voor de telling in impact.sql nagebootst (replica-modus, geen
 --     grootboekregels); geen ander bewijs leest K14.
 SELECT proof.tx(1401, proof.client(14), DATE '2025-11-01', -121);
+SELECT proof.tx(1402, proof.client(14), DATE '2026-02-01', -121);
 SET session_replication_role = replica;
-UPDATE public.bank_transactions SET created_at = TIMESTAMPTZ '2026-05-01 12:00:00+00' WHERE id = proof.uid(1000, 1401);
+UPDATE public.bank_transactions SET created_at = TIMESTAMPTZ '2026-05-01 12:00:00+00' WHERE id = proof.uid(1000, 1402);
 INSERT INTO public.opening_balance_postings
   (opening_balance_id, posting_group_id, organization_id, client_id, boekjaar, opening_date, line_count, total_amount, user_id)
 VALUES (proof.uid(3000, 1401), proof.uid(3001, 1401), '00000000-0000-0000-0000-00000000a001', proof.client(14),

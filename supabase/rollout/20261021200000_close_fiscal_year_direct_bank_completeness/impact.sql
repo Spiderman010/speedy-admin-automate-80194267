@@ -7,17 +7,21 @@
 --
 -- De regel is letterlijk de nieuwe tak van controle D: een bankregel met
 -- match_status = 'handmatig_geboekt', een grootboekrekening, een bedrag <> 0,
--- geen koppeling en geen directe boeking (marker), van de eigen organisatie.
--- Boekjaar = jaar van transaction_date. Een bankregel ZONDER organisatie telt
--- niet: post_bank_transaction() weigert haar altijd (42501), dus zij is niet
--- postbaar (review H-1). IMPACT 1 telt haar wel apart, ter informatie.
+-- geen koppeling en geen directe boeking (marker), van de eigen organisatie,
+-- en NIET vóór de openingsdatum van een geboekte beginbalans. Boekjaar = jaar
+-- van transaction_date. Alleen wat de schrijver zou accepteren telt:
+--   - een bankregel ZONDER organisatie weigert post_bank_transaction() altijd
+--     (42501; review H-1);
+--   - een bankregel vóór de beginbalans weigert de trigger
+--     enforce_no_posting_before_opening_balance() altijd (22023; review N-1).
+-- Beide soorten blokkeren de afsluiting dus NIET; IMPACT 1 telt ze apart,
+-- ter informatie. Of zulke regels opgeschoond of gemarkeerd moeten worden, is
+-- een eigenaarsbesluit (D8) dat de afsluiting niet meer raakt.
 --
--- D8 (OPEN ontwerpbesluit): controle D kent per boekjaar alleen een
--- BOVENgrens (boekjaar <= doeljaar), zoals onder PR E voor facturen. Bankwerk
--- van vóór de beginbalans of van vóór de grootboekschrijvers (september 2026)
--- telt dus mee, en het alsnog boeken ervan kan naast een beginbalans dubbel
--- tellen. IMPACT 1 en 2 tellen die regels APART, zodat de eigenaar vóór de
--- GO ziet hoeveel het er zijn; P7 verzint geen ondergrens.
+-- D8 (informatief): regels_van_voor_de_schrijvers zijn regels die WEL tellen
+-- (na de beginbalans of zonder beginbalans), maar zijn aangemaakt vóór de
+-- directe bankschrijver (migratie 20260920195805; de werkelijke deploydatum
+-- kan afwijken). Zij blokkeren tot ze geboekt zijn.
 --
 -- Een boekjaar dat al is afgesloten (t/m clients.afgesloten_boekjaar) blijft
 -- afgesloten: close_fiscal_year() geeft daar het bestaande bewijs terug vóór
@@ -30,15 +34,14 @@
 
 
 -- ── IMPACT 1. Samenvatting (één rij) ────────────────────────────────────────
--- De laatste vier kolommen zijn informatief:
---   regels_voor_beginbalans       (D8) in een open jaar, met een datum vóór de
---                                 openingsdatum van een GEBOEKTE beginbalans
---                                 van dezelfde administratie
---   regels_van_voor_de_schrijvers (D8) in een open jaar, aangemaakt vóór de
---                                 directe bankschrijver (20260920195805)
---   administraties_met_d8_regels  (D8) hoeveel administraties dat raakt
---   bank_zonder_org_onboekbaar    (H-1) dezelfde regel zonder organisatie;
---                                 telt NIET (de schrijver weigert haar)
+-- De laatste drie kolommen zijn informatief:
+--   regels_van_voor_de_schrijvers     (D8) tellende regels in een open jaar,
+--                                     aangemaakt vóór de directe bankschrijver
+--   bank_voor_beginbalans_onboekbaar  (N-1) gecodeerde regels van de eigen
+--                                     organisatie vóór de openingsdatum van
+--                                     een geboekte beginbalans; tellen NIET
+--   bank_zonder_org_onboekbaar        (H-1) gecodeerde regels zonder
+--                                     organisatie; tellen NIET
 WITH open_bank AS (
   SELECT bt.client_id, bt.transaction_date, bt.created_at,
          EXTRACT(YEAR FROM bt.transaction_date)::integer AS boekjaar
@@ -50,30 +53,35 @@ WITH open_bank AS (
     AND bt.amount <> 0
     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = bt.id)
     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m WHERE m.bank_transaction_id = bt.id)
+    AND NOT EXISTS (SELECT 1 FROM public.opening_balance_postings obp
+                    WHERE obp.client_id = bt.client_id AND obp.opening_date > bt.transaction_date)
 ), per_regel AS (
   SELECT o.*,
          (c.afgesloten_boekjaar IS NULL OR o.boekjaar IS NULL OR o.boekjaar > c.afgesloten_boekjaar) AS in_open_jaar,
-         EXISTS (SELECT 1 FROM public.opening_balance_postings obp
-                 WHERE obp.client_id = o.client_id AND obp.opening_date > o.transaction_date)        AS voor_beginbalans,
          (o.created_at < TIMESTAMPTZ '2026-09-20 19:58:05+00')                                         AS voor_schrijvers
   FROM open_bank o JOIN public.clients c ON c.id = o.client_id
+), gecodeerd AS (
+  -- dezelfde regel zonder de twee schrijverweigeringen (organisatie, beginbalans)
+  SELECT bt.*
+  FROM public.bank_transactions bt
+  WHERE bt.match_status = 'handmatig_geboekt'
+    AND bt.grootboekrekening_id IS NOT NULL
+    AND bt.amount <> 0
+    AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = bt.id)
+    AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m WHERE m.bank_transaction_id = bt.id)
 )
 SELECT
   count(DISTINCT client_id) FILTER (WHERE in_open_jaar)          AS administraties_geraakt,
   count(*) FILTER (WHERE in_open_jaar)                           AS regels_in_open_jaren,
   count(*) FILTER (WHERE NOT in_open_jaar)                       AS regels_in_al_afgesloten_jaren,
   count(*) FILTER (WHERE boekjaar IS NULL)                       AS regels_zonder_datum,
-  count(*) FILTER (WHERE in_open_jaar AND voor_beginbalans)      AS regels_voor_beginbalans,
   count(*) FILTER (WHERE in_open_jaar AND voor_schrijvers)       AS regels_van_voor_de_schrijvers,
-  count(DISTINCT client_id) FILTER (WHERE in_open_jaar AND (voor_beginbalans OR voor_schrijvers))
-                                                                 AS administraties_met_d8_regels,
-  (SELECT count(*) FROM public.bank_transactions bt
-   WHERE bt.organization_id IS NULL
-     AND bt.match_status = 'handmatig_geboekt'
-     AND bt.grootboekrekening_id IS NOT NULL
-     AND bt.amount <> 0
-     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = bt.id)
-     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m WHERE m.bank_transaction_id = bt.id))
+  (SELECT count(*) FROM gecodeerd g JOIN public.clients c ON c.id = g.client_id
+   WHERE g.organization_id = c.organization_id
+     AND EXISTS (SELECT 1 FROM public.opening_balance_postings obp
+                 WHERE obp.client_id = g.client_id AND obp.opening_date > g.transaction_date))
+                                                                 AS bank_voor_beginbalans_onboekbaar,
+  (SELECT count(*) FROM gecodeerd g WHERE g.organization_id IS NULL)
                                                                  AS bank_zonder_org_onboekbaar
 FROM per_regel;
 
@@ -90,6 +98,8 @@ WITH open_bank AS (
     AND bt.amount <> 0
     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_allocations a WHERE a.bank_transaction_id = bt.id)
     AND NOT EXISTS (SELECT 1 FROM public.bank_transaction_postings m WHERE m.bank_transaction_id = bt.id)
+    AND NOT EXISTS (SELECT 1 FROM public.opening_balance_postings obp
+                    WHERE obp.client_id = bt.client_id AND obp.opening_date > bt.transaction_date)
 )
 SELECT
   c.organization_id,
@@ -99,13 +109,10 @@ SELECT
   min(o.boekjaar)                                                  AS eerste_jaar_dat_niet_meer_afsluit,
   count(*)                                                         AS ongeboekte_gecodeerde_bankregels,
   array_agg(DISTINCT o.boekjaar ORDER BY o.boekjaar)               AS boekjaren,
-  -- D8: de openingsdatum van de geboekte beginbalans, en hoeveel van deze
-  -- regels daarvóór liggen of van vóór de directe bankschrijver zijn.
+  -- D8 (informatief): de openingsdatum van de geboekte beginbalans, en hoeveel
+  -- van deze (tellende) regels van vóór de directe bankschrijver zijn.
   (SELECT min(obp.opening_date) FROM public.opening_balance_postings obp
    WHERE obp.client_id = c.id)                                     AS beginbalans_per,
-  count(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.opening_balance_postings obp
-                                 WHERE obp.client_id = o.client_id AND obp.opening_date > o.transaction_date))
-                                                                   AS regels_voor_beginbalans,
   count(*) FILTER (WHERE o.created_at < TIMESTAMPTZ '2026-09-20 19:58:05+00')
                                                                    AS regels_van_voor_de_schrijvers
 FROM open_bank o

@@ -74,7 +74,7 @@ import {
   useReportDocumentCompleteness,
 } from "@/hooks/useUnpostedSourceWork";
 import { fetchLedgerCompletenessCounts } from "@/hooks/useLedgerCompleteness";
-import { computeLedgerCompleteness } from "@/lib/ledger-completeness";
+import { computeLedgerCompleteness, directBankPostableAfterOpening } from "@/lib/ledger-completeness";
 import { LedgerCompletenessNotice } from "@/components/grootboek/LedgerCompletenessNotice";
 import { bucketUnpostedWork, unpostedWorkThroughYear } from "@/lib/year-close-readiness";
 
@@ -104,10 +104,15 @@ function seed() {
     tx("t-gematcht", { match_status: "gematcht", grootboekrekening_id: null, amount: 605 }), // K2 FD-N3 → telt niet (D7)
     tx("t-gematcht-rekening", { match_status: "gematcht" }), // H-5: gematcht MÉT rekening → telt ook niet
     tx("t-zonder-org", { organization_id: null }), // H-1: zonder organisatie → schrijver weigert, telt niet
+    tx("t-voor-beginbalans", { transaction_date: "2025-12-31" }), // N-1: vóór de beginbalans → trigger weigert, telt niet
     tx("t-2027", { transaction_date: "2027-01-15" }), // K7: later jaar
     tx("t-ander", { client_id: "c-2" }), // andere administratie
   ];
   tables.bank_transaction_postings = [{ bank_transaction_id: "t-geboekt", client_id: C }];
+  tables.opening_balance_postings = [
+    { opening_balance_id: "ob-1", client_id: C, opening_date: "2026-01-01" },
+    { opening_balance_id: "ob-2", client_id: "c-2", opening_date: "2027-01-01" }, // andere administratie: telt niet mee
+  ];
   tables.bank_transaction_allocations = [
     { id: "a-1", client_id: C, bank_transaction_id: "t-gekoppeld", invoice_id: "pi-x", invoice_type: "inkoop" },
   ];
@@ -251,5 +256,28 @@ describe("A3-11 — het bronwerk per rapport, door de echte hooks", () => {
     );
     await waitFor(() => expect(r2025.current.data).toBeDefined());
     expect(r2025.current.data!.status).toBe("complete");
+  });
+});
+
+describe("review N-1 — bankwerk van vóór de beginbalans is niet postbaar", () => {
+  beforeEach(seed);
+
+  it("11. de regel vóór de openingsdatum telt niet als open bronwerk; de grens is exact de openingsdatum", async () => {
+    const items = await fetchUnpostedSourceWork(C);
+    expect(items.map((i) => i.id)).not.toContain("t-voor-beginbalans");
+    expect(directBankPostableAfterOpening("2025-12-31", ["2026-01-01"])).toBe(false);
+    expect(directBankPostableAfterOpening("2026-01-01", ["2026-01-01"])).toBe(true);
+    expect(directBankPostableAfterOpening("2025-12-31", [])).toBe(true);
+    expect(directBankPostableAfterOpening(null, ["2026-01-01"])).toBe(true);
+  });
+
+  it("12. de volledigheidsmeter telt haar evenmin, en leest de beginbalans per administratie", async () => {
+    const metBeginbalans = await fetchLedgerCompletenessCounts(C);
+    tables.opening_balance_postings = [];
+    const zonderBeginbalans = await fetchLedgerCompletenessCounts(C);
+    expect(zonderBeginbalans.bankDirect.eligible - metBeginbalans.bankDirect.eligible).toBe(1);
+    const ob = calls.filter((c) => c.table === "opening_balance_postings");
+    expect(ob.length).toBeGreaterThan(0);
+    for (const c of ob) expect(c.filters).toContainEqual(["client_id", "eq", C]);
   });
 });
