@@ -67,7 +67,7 @@ function autoMatch(
     let bestMatch: PurchaseInvoice | null = null;
     let bestScore = 0;
 
-    for (const inv of invoices) {
+    for (const inv of tx.isReversal ? [] : invoices) {
       let score = 0;
       if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 0.02) {
         score += 60;
@@ -254,6 +254,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         matchedInvoiceLabel: null,
       };
     } else {
+      if (updated[index].isReversal) return;
       const inv = invoices.find(i => i.id === invoiceId && i.client_id === previewClientId);
       if (!inv) return;
       updated[index] = {
