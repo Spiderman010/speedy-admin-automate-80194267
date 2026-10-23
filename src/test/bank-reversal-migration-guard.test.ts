@@ -11,6 +11,8 @@ describe("storno migration safety contract", () => {
   it("blocks known reversals at the bank match row", () => {
     expect(migration).toContain("bank_reversal_cannot_be_invoice_match");
     expect(migration).toContain("matched_invoice_id IS NULL");
+    expect(migration).toContain("CHECK (is_reversal IS FALSE OR");
+    expect(migration).toContain("NOT VALID;");
   });
   it("blocks unknown and reversal rows at the allocation writer boundary", () => {
     expect(migration).toContain("CREATE TRIGGER reject_unverified_bank_payment_allocation");
