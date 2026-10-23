@@ -17,9 +17,12 @@ CREATE INDEX IF NOT EXISTS idx_bank_transactions_reversal
 
 -- Defense in depth without adding a trigger (bank posting trigger contract must stay unchanged).
 -- Existing rows retain NULL (unclassified) until source evidence is independently reviewed.
+-- NOT VALID avoids rejecting historical matches until they can be classified; new
+-- and updated rows must not acquire or retain an invoice match while UNKNOWN.
+-- Before validating, audit historical NULL rows and repair them explicitly.
 ALTER TABLE public.bank_transactions
   ADD CONSTRAINT bank_reversal_cannot_be_invoice_match
-  CHECK (is_reversal IS DISTINCT FROM TRUE OR (matched_invoice_id IS NULL AND match_status <> 'gematcht'));
+  CHECK (is_reversal IS FALSE OR (matched_invoice_id IS NULL AND match_status <> 'gematcht')) NOT VALID;
 
 -- rollback (manual only, separately authorized):
 -- ALTER TABLE public.bank_transactions DROP CONSTRAINT bank_reversal_cannot_be_invoice_match;
