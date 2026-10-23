@@ -70,7 +70,7 @@ describe("BankStatementUploadDialog — storno-invariant", () => {
         open
         onOpenChange={() => {}}
         clients={[CLIENT]}
-        invoices={[]}
+        invoices={[{ id: "invoice-a", client_id: CLIENT.id, supplier: "leverancier", amount_incl: 12.5, invoice_number: "REVERSAL" } as any]}
         onImport={onImport}
         loadExistingTransactions={vi.fn().mockResolvedValue([])}
         defaultClientId={CLIENT.id}
