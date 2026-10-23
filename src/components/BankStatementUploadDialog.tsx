@@ -198,7 +198,21 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     const clientInvoices = invoices.filter(i => i.client_id === forClientId);
     const matched = autoMatch(statement.transactions, clientInvoices);
     const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, forClientId)
-      .map((t, i) => ({ ...t, importFingerprint: fingerprints[i] ?? null, importSource: t.source ?? null }));
+      .map((t, i) => ({
+        ...t,
+        importFingerprint: fingerprints[i] ?? null,
+        importSource: t.source ?? null,
+        // A booking template must never reclassify a source-proven reversal.
+        ...(t.isReversal === true ? {
+          matchedInvoiceId: null,
+          matchedInvoiceLabel: null,
+          matchConfidence: null,
+          matchStatus: "niet_gematcht" as const,
+          grootboekrekeningId: null,
+          btwPercentage: null,
+          templateName: null,
+        } : {}),
+      }));
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(statement.transactions, existing);
