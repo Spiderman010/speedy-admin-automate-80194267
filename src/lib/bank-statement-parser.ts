@@ -128,7 +128,7 @@ function parseMT940Transaction(
   const date = `${year}-${month}-${day}`;
 
   let pos = 6;
-  if (/^\d{4}[CD]/.test(raw.substring(pos))) {
+  if (/^\d{4}R?[CD]/.test(raw.substring(pos))) {
     pos += 4;
   }
 
