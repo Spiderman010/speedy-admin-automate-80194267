@@ -57,6 +57,40 @@ function renderDialog(loadExistingTransactions: (clientId: string) => Promise<Ex
   return { onImport };
 }
 
+describe("BankStatementUploadDialog — storno-invariant", () => {
+  it("bewaart een MT940 RC-storno en geeft nooit een factuurmatch mee", async () => {
+    const reversalStatement = `:20:REVERSAL
+:25:NL91RABO0123456789
+:61:260302RC12,50N544RETURN
+:86:Terugboeking leverancier
+`;
+    const onImport = vi.fn().mockResolvedValue(undefined);
+    render(
+      <BankStatementUploadDialog
+        open
+        onOpenChange={() => {}}
+        clients={[CLIENT]}
+        invoices={[]}
+        onImport={onImport}
+        loadExistingTransactions={vi.fn().mockResolvedValue([])}
+        defaultClientId={CLIENT.id}
+      />,
+    );
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [file(reversalStatement)] },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /1 transacties importeren/ }));
+    await waitFor(() => expect(onImport).toHaveBeenCalledTimes(1));
+    const rows = onImport.mock.calls[0][1];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      isReversal: true,
+      matchedInvoiceId: null,
+      matchStatus: "niet_gematcht",
+    });
+  });
+});
+
 describe("BankStatementUploadDialog — duplicaatcontrole", () => {
   it("controleert tegen precies de importklant", async () => {
     const load = vi.fn().mockResolvedValue([]);
