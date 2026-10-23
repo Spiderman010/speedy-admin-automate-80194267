@@ -233,6 +233,9 @@ describe("P1 reversal evidence survives statement parsing", () => {
     ].join("\n");
     const rows = parseBankStatementFull(statement).transactions;
     expect(rows.map((r) => r.isReversal)).toEqual([false, false, true, true]);
+    const withEntryDate = parseBankStatementFull(":61:2410011002RC12,00N029REV\\n:86:Returned").transactions;
+    expect(withEntryDate).toHaveLength(1);
+    expect(withEntryDate[0].isReversal).toBe(true);
   });
 
   it("detects CAMT reversal indicators with true/false", () => {
