@@ -67,7 +67,7 @@ function autoMatch(
     let bestMatch: PurchaseInvoice | null = null;
     let bestScore = 0;
 
-    for (const inv of tx.isReversal ? [] : invoices) {
+    for (const inv of tx.isReversal !== false ? [] : invoices) {
       let score = 0;
       if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 0.02) {
         score += 60;
@@ -203,7 +203,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         importFingerprint: fingerprints[i] ?? null,
         importSource: t.source ?? null,
         // A booking template must never reclassify a source-proven reversal.
-        ...(t.isReversal === true ? {
+        ...(t.isReversal !== false ? {
           matchedInvoiceId: null,
           matchedInvoiceLabel: null,
           matchConfidence: null,
@@ -268,7 +268,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         matchedInvoiceLabel: null,
       };
     } else {
-      if (updated[index].isReversal) return;
+      if (updated[index].isReversal !== false) return;
       const inv = invoices.find(i => i.id === invoiceId && i.client_id === previewClientId);
       if (!inv) return;
       updated[index] = {
