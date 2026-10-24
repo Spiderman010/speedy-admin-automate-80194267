@@ -67,7 +67,7 @@ function autoMatch(
     let bestMatch: PurchaseInvoice | null = null;
     let bestScore = 0;
 
-    for (const inv of invoices) {
+    for (const inv of tx.isReversal !== false ? [] : invoices) {
       let score = 0;
       if (inv.amount_incl != null && Math.abs(Math.abs(tx.amount) - inv.amount_incl) < 0.02) {
         score += 60;
@@ -198,7 +198,21 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
     const clientInvoices = invoices.filter(i => i.client_id === forClientId);
     const matched = autoMatch(statement.transactions, clientInvoices);
     const withTemplates = applyBookingTemplatesToTransactions(matched, bookingTemplates, forClientId)
-      .map((t, i) => ({ ...t, importFingerprint: fingerprints[i] ?? null, importSource: t.source ?? null }));
+      .map((t, i) => ({
+        ...t,
+        importFingerprint: fingerprints[i] ?? null,
+        importSource: t.source ?? null,
+        // A booking template must never reclassify a source-proven reversal.
+        ...(t.isReversal !== false ? {
+          matchedInvoiceId: null,
+          matchedInvoiceLabel: null,
+          matchConfidence: null,
+          matchStatus: "niet_gematcht" as const,
+          grootboekrekeningId: null,
+          btwPercentage: null,
+          templateName: null,
+        } : {}),
+      }));
     setParsed(withTemplates);
 
     const dupInfos = detectDuplicates(statement.transactions, existing);
@@ -254,6 +268,7 @@ export function BankStatementUploadDialog({ open, onOpenChange, clients, invoice
         matchedInvoiceLabel: null,
       };
     } else {
+      if (updated[index].isReversal !== false) return;
       const inv = invoices.find(i => i.id === invoiceId && i.client_id === previewClientId);
       if (!inv) return;
       updated[index] = {

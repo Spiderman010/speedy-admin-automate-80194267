@@ -1,3 +1,4 @@
+import { canAutomaticallyMatchBankTransaction, assertOrdinaryBankPayment } from "@/lib/bank-reversal-policy";
 import { useState, useCallback, useMemo, useEffect, useRef, type ComponentProps } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { GrootboekCombobox } from "@/components/GrootboekCombobox";
@@ -149,6 +150,7 @@ function pickSafeMatchCandidate(
   tx: Tables<"bank_transactions">,
   candidates: InvoiceCandidate[],
 ): InvoiceCandidate | null {
+  if (!canAutomaticallyMatchBankTransaction(tx as { is_reversal?: boolean | null })) return null;
   if (!isSafeMatchEligibleStatus(tx.match_status)) return null;
   const expectedType = expectedInvoiceTypeForTx(tx);
   const best = candidates.find(c => c.score > 0 && c.type === expectedType);
@@ -556,6 +558,7 @@ export default function Bank() {
     invoiceId: string,
     explicitAllocationAmount?: number,
   ) => {
+    assertOrdinaryBankPayment(tx as { is_reversal?: boolean | null });
     const purchaseInv = invoices?.find(i => i.id === invoiceId);
     const salesInv = salesInvs?.find(i => i.id === invoiceId);
     const inv = purchaseInv ?? salesInv;
@@ -1028,6 +1031,7 @@ export default function Bank() {
       if (!rejectionIndex) throw new Error("Bankmatch-afwijzingen zijn nog niet beschikbaar");
       const tx = transactions?.find(t => t.id === id);
       if (!tx) return;
+      assertOrdinaryBankPayment(tx as { is_reversal?: boolean | null });
 
       // Re-evaluate safety at confirmation time, including persisted import links.
       // A stale or unsafe link must be reviewed manually, never promoted blindly.
@@ -1129,6 +1133,7 @@ export default function Bank() {
         throw new Error("Factuurkoppeling niet beschikbaar of eerder afgewezen");
       }
 
+      assertOrdinaryBankPayment(tx as { is_reversal?: boolean | null });
       await assertBankMatchNotRejected(tx.id, invoiceType, invoiceId, tx.client_id, activeOrganizationId!);
 
       // Additional mode: only write the new allocation row and update the invoice's remaining_amount.
@@ -1992,6 +1997,12 @@ export default function Bank() {
           match_status: tx.matchStatus,
           match_confidence: tx.matchConfidence,
           matched_invoice_id: tx.matchedInvoiceId,
+          // Never discard source-proven reversal metadata on import.
+          // Without the migration, the reversal insert fails rather than downgrading it.
+          is_reversal: tx.isReversal === true ? true : tx.isReversal === false ? false : null,
+          ...(tx.isReversal !== false
+            ? { matched_invoice_id: null, match_status: "niet_gematcht", match_confidence: null }
+            : {}),
           grootboekrekening_id: tx.grootboekrekeningId ?? undefined,
           // A recognition rule may carry its VAT; without one the row stays
           // "controle nodig" in the Inhaalslag instead of posting at 0%.

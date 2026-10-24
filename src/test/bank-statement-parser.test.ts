@@ -217,3 +217,35 @@ describe("detectDuplicates", () => {
     expect(result.length).toBe(incoming.length);
   });
 });
+
+describe("P1 reversal evidence survives statement parsing", () => {
+  it("detects MT940 RC and RD but not ordinary C/D entries", () => {
+    const statement = [
+      ":20:REVERSALS",
+      ":61:241001RC10,00N029REVERSAL-C",
+      ":86:Storno credit",
+      ":61:241002RD20,00N029REVERSAL-D",
+      ":86:Storno debit",
+      ":61:241003C30,00N029ORDINARY-C",
+      ":86:Ordinary credit",
+      ":61:241004D40,00N029ORDINARY-D",
+      ":86:Ordinary debit",
+    ].join("\n");
+    const rows = parseBankStatementFull(statement).transactions;
+    expect(rows.map((r) => r.isReversal)).toEqual([false, false, true, true]);
+    const withEntryDate = parseBankStatementFull(":61:2410011002RC12,00N029REV\\n:86:Returned").transactions;
+    expect(withEntryDate).toHaveLength(1);
+    expect(withEntryDate[0].isReversal).toBe(true);
+  });
+
+  it("detects CAMT reversal indicators with true/false", () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:camt.053.001.02">
+<BkToCstmrStmt><Stmt>
+<Ntry><Amt Ccy="EUR">10.00</Amt><CdtDbtInd>CRDT</CdtDbtInd><RvslInd>true</RvslInd><BookgDt><Dt>2024-10-01</Dt></BookgDt></Ntry>
+<Ntry><Amt Ccy="EUR">20.00</Amt><CdtDbtInd>DBIT</CdtDbtInd><RvslInd>false</RvslInd><BookgDt><Dt>2024-10-02</Dt></BookgDt></Ntry>
+</Stmt></BkToCstmrStmt></Document>`;
+    const rows = parseBankStatementFull(xml).transactions;
+    expect(rows.map((r) => r.isReversal)).toEqual([false, true]);
+  });
+});

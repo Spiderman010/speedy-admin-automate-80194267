@@ -28,6 +28,7 @@ const makeTx = (over: Partial<any> = {}) => ({
   counter_account_name: null,
   amount: -100,
   match_status: "suggestie",
+  is_reversal: false, // fixture represents a source-verified ordinary payment
   match_confidence: 80,
   matched_invoice_id: null,
   matched_invoice_type: null,
@@ -468,6 +469,28 @@ describe("Bank — veilige matches (banner + selectieknop)", () => {
       expect(confirmed[0].id).toBe("tx-top");
       expect(confirmed[0].matched_invoice_id).toBe("inv-tx-top");
     });
+  });
+
+  it("biedt geen automatische match aan voor een bekende storno", async () => {
+    state.transactions = [makeTx({ id: "tx-storno", is_reversal: true, match_status: "niet_gematcht" })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(safeButton()).toBeNull();
+    expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
+  });
+
+  it("biedt geen automatische match aan zolang storno-status onbekend is", async () => {
+    state.transactions = [makeTx({ id: "tx-legacy", is_reversal: undefined, match_status: "niet_gematcht" })];
+    state.pagedTransactions = state.transactions;
+    state.pagedTotal = 1;
+    renderBank();
+    await waitFor(() => expect(screen.getByText("Bankafschriften")).toBeInTheDocument());
+    expect(screen.queryByText(BANNER_RE)).toBeNull();
+    expect(safeButton()).toBeNull();
+    expect(state.updateTxCalls.filter(c => c.match_status === "gematcht")).toEqual([]);
   });
 
   it("heeft op mobiel een interactieve hoogte van minimaal 44px", async () => {

@@ -12,6 +12,8 @@ export interface ParsedTransaction {
   reference: string | null;
   /** Which parser produced this line; reference semantics differ per format. */
   source?: BankStatementSource;
+  /** Proven bank reversal marker from MT940 RC/RD or CAMT RvslInd. */
+  isReversal?: boolean;
   /**
    * The bank's own reference for this transaction, when the statement carries
    * one: MT940 the part after "//" in :61:, CAMT.053 <AcctSvcrRef>. Unique per
@@ -126,7 +128,7 @@ function parseMT940Transaction(
   const date = `${year}-${month}-${day}`;
 
   let pos = 6;
-  if (/^\d{4}[CD]/.test(raw.substring(pos))) {
+  if (/^\d{4}R?[CD]/.test(raw.substring(pos))) {
     pos += 4;
   }
 
@@ -181,6 +183,7 @@ function parseMT940Transaction(
     counterAccount,
     reference,
     source: "mt940",
+    isReversal: cdMatch[1].startsWith("R"),
     bankReference,
     valueDate: date,
   };
@@ -308,6 +311,7 @@ function parseCAMTEntry(entry: Element, ns: string): ParsedTransaction | null {
     counterAccount,
     reference,
     source: "camt053",
+    isReversal: getTextNS(entry, ns, "RvslInd").trim().toLowerCase() === "true",
     bankReference,
     valueDate,
     ustrd,
